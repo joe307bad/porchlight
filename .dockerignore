@@ -1,0 +1,9 @@
+# Build context for infra/prod/server/Dockerfile. browser/dist is included on purpose.
+.git
+**/bin
+**/obj
+**/.DS_Store
+unity
+builds
+infra
+shared/tests

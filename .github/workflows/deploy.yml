@@ -1,0 +1,212 @@
+name: Deploy
+
+# Production on Fly.io, driven entirely from here. Every run is idempotent:
+#   1. infra:         creates the Fly apps, the Postgres volume and the database credentials if missing,
+#                     then works out what needs deploying (what changed, or what has no machines yet).
+#   2. deploy-db:     deploys Postgres (infra/prod/db) when its config changed or it isn't running.
+#   3. webgl:         builds the Unity WebGL builder with GameCI, cached by the content of unity/ + shared/.
+#   4. deploy-server: builds the server image with that WebGL build inside and deploys it.
+#
+# Repo secrets: FLY_API_TOKEN (an org token, so it can create apps: `flyctl tokens create org`),
+# and for the browser builder UNITY_LICENSE, UNITY_EMAIL and UNITY_PASSWORD (see README).
+# Optional repo variable: FLY_ORG (defaults to personal).
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/prod/**'
+      - 'server/**'
+      - 'shared/**'
+      - 'unity/**'
+      - '.dockerignore'
+      - '.github/workflows/deploy.yml'
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+  FLY_ORG: ${{ vars.FLY_ORG || 'personal' }}
+  FLY_REGION: iad
+  DB_APP: porchlight-db
+  SERVER_APP: porchlight-server
+
+jobs:
+  infra:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_db: ${{ steps.plan.outputs.deploy_db }}
+      deploy_server: ${{ steps.plan.outputs.deploy_server }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            db:
+              - 'infra/prod/db/**'
+            server:
+              - 'infra/prod/server/**'
+              - 'server/**'
+              - 'shared/**'
+              - '.dockerignore'
+              - '.github/workflows/deploy.yml'
+            webgl:
+              - 'unity/**'
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Ensure Fly apps exist
+        run: |
+          for app in "$DB_APP" "$SERVER_APP"; do
+            if flyctl apps create "$app" --org "$FLY_ORG" > create.log 2>&1; then
+              echo "Created $app"
+            elif flyctl status --app "$app" > /dev/null 2>&1; then
+              echo "$app already exists"
+            else
+              cat create.log
+              echo "::error::Couldn't create or access Fly app $app"
+              exit 1
+            fi
+          done
+
+      - name: Ensure Postgres volume exists
+        run: |
+          if [ "$(flyctl volumes list --app "$DB_APP" --json | jq 'length')" = "0" ]; then
+            flyctl volumes create pgdata --app "$DB_APP" --region "$FLY_REGION" --size 1 --yes
+          else
+            echo "Volume already exists"
+          fi
+
+      - name: Ensure database credentials
+        run: |
+          db_has=$(flyctl secrets list --app "$DB_APP" | grep -c POSTGRES_PASSWORD || true)
+          server_has=$(flyctl secrets list --app "$SERVER_APP" | grep -c ConnectionStrings__Porchlight || true)
+
+          if [ "$db_has" = "0" ] && [ "$server_has" = "0" ]; then
+            # Generated once, here, and stored only as Fly secrets. Hex never needs escaping.
+            password=$(openssl rand -hex 24)
+            echo "::add-mask::$password"
+            flyctl secrets set --app "$DB_APP" --stage "POSTGRES_PASSWORD=$password" > /dev/null
+            flyctl secrets set --app "$SERVER_APP" --stage \
+              "ConnectionStrings__Porchlight=Host=$DB_APP.internal;Port=5432;Username=porchlight;Password=$password;Database=porchlight" > /dev/null
+            echo "Generated database credentials"
+          elif [ "$db_has" = "0" ] || [ "$server_has" = "0" ]; then
+            echo "::error::Only one of POSTGRES_PASSWORD ($DB_APP) and ConnectionStrings__Porchlight ($SERVER_APP) is set. Restore the missing one by hand; regenerating would lock the server out of the existing database."
+            exit 1
+          else
+            echo "Database credentials already set"
+          fi
+
+      - name: Plan deploys
+        id: plan
+        run: |
+          machines() { flyctl machines list --app "$1" --json 2>/dev/null | jq 'length' 2>/dev/null || echo 0; }
+
+          manual=${{ github.event_name == 'workflow_dispatch' }}
+          db=false
+          server=false
+          if [ "$manual" = true ] || [ "${{ steps.changes.outputs.db }}" = true ] || [ "$(machines "$DB_APP")" = "0" ]; then
+            db=true
+          fi
+          if [ "$manual" = true ] || [ "${{ steps.changes.outputs.server }}" = true ] || [ "${{ steps.changes.outputs.webgl }}" = true ] || [ "$(machines "$SERVER_APP")" = "0" ]; then
+            server=true
+          fi
+
+          echo "deploy_db=$db" >> "$GITHUB_OUTPUT"
+          echo "deploy_server=$server" >> "$GITHUB_OUTPUT"
+          echo "### Plan: deploy db=$db, server=$server" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-db:
+    needs: infra
+    if: needs.infra.outputs.deploy_db == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # One machine owns the volume, hence --ha=false.
+      - run: flyctl deploy infra/prod/db --config infra/prod/db/fly.toml --app "$DB_APP" --ha=false --yes
+
+  webgl:
+    needs: infra
+    if: needs.infra.outputs.deploy_server == 'true'
+    runs-on: ubuntu-latest
+    env:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The WebGL build only depends on the Unity project and the shared package it imports, so a
+      # server-only change reuses the last build instead of spending ~15 minutes in Unity.
+      - name: Restore WebGL build
+        id: dist
+        uses: actions/cache@v4
+        with:
+          path: browser/dist
+          key: webgl-${{ hashFiles('unity/Assets/**', 'unity/Packages/**', 'unity/ProjectSettings/**', 'shared/com.porchlight.shared/**') }}
+
+      - name: Restore Unity Library
+        if: steps.dist.outputs.cache-hit != 'true' && env.UNITY_LICENSE != ''
+        uses: actions/cache@v4
+        with:
+          path: unity/Library
+          key: library-webgl-${{ hashFiles('unity/Assets/**', 'unity/Packages/**', 'unity/ProjectSettings/**', 'shared/com.porchlight.shared/**') }}
+          restore-keys: library-webgl-
+
+      - name: Build WebGL
+        if: steps.dist.outputs.cache-hit != 'true' && env.UNITY_LICENSE != ''
+        uses: game-ci/unity-builder@v4
+        with:
+          projectPath: unity
+          targetPlatform: WebGL
+          buildMethod: Porchlight.EditorTools.BuildScripts.BuildWebGL
+          customParameters: -buildOutput /github/workspace/browser/dist
+          allowDirtyBuild: true
+
+      - name: No Unity license
+        if: steps.dist.outputs.cache-hit != 'true' && env.UNITY_LICENSE == ''
+        run: echo "::warning::UNITY_LICENSE isn't set, so this deploy has no browser builder (API only). See README > Production."
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser-dist
+          path: browser/dist
+          if-no-files-found: ignore
+
+  deploy-server:
+    needs: [infra, deploy-db, webgl]
+    if: |
+      always() &&
+      needs.infra.result == 'success' &&
+      needs.infra.outputs.deploy_server == 'true' &&
+      (needs.deploy-db.result == 'success' || needs.deploy-db.result == 'skipped') &&
+      needs.webgl.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch WebGL build
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: browser-dist
+          path: browser/dist
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - run: |
+          flyctl deploy . \
+            --config infra/prod/server/fly.toml \
+            --dockerfile infra/prod/server/Dockerfile \
+            --remote-only --yes
+
+      - name: Smoke test
+        run: curl -fsS --retry 10 --retry-delay 5 --retry-all-errors "https://$SERVER_APP.fly.dev/api/health"

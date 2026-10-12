@@ -14,6 +14,7 @@ server/        ASP.NET Core (.NET 10) API + Npgsql; also serves the WebGL build
 unity/         One Unity 6 (URP) project → WebGL builder build AND Switch viewer build
 browser/       WebGL build output (dist/) and any web-only extras
 infra/dev/     docker-compose for Postgres
+infra/prod/    Fly.io config for the server and Postgres apps (deployed by GitHub Actions)
 browser-dev.sh Starts Postgres + the server (optionally builds WebGL first)
 ```
 
@@ -67,6 +68,42 @@ edit, and stores `TownMetrics` as columns so the town list never loads layouts.
 | Fast | Shift | Left stick click |
 | Builder tools | 1 Build · 2 Road · 3 Remove · Q/E rotate · Esc end road | — |
 | Back to towns (viewer) | Esc | East button |
+
+## Production (Fly.io)
+
+Production is driven entirely by GitHub Actions (`.github/workflows/deploy.yml`). Pushing to `main`
+under `infra/prod/`, `server/`, `shared/` or `unity/` (or running the workflow by hand) runs it.
+Every run is idempotent:
+
+1. **infra** creates the Fly apps, the Postgres volume and the database credentials if they're missing.
+   The password is generated once and stored only as Fly secrets.
+2. **deploy-db** deploys Postgres when `infra/prod/db/` changed or it has no machine.
+3. **webgl** builds the browser builder with [GameCI](https://game.ci), cached by the content of
+   `unity/` + `shared/`, so server-only changes skip Unity.
+4. **deploy-server** builds `infra/prod/server/Dockerfile` with that WebGL build inside, deploys it,
+   and smoke-tests `/api/health`.
+
+| App | What | Reachable at |
+|---|---|---|
+| `porchlight-server` | API + browser builder | https://porchlight-server.fly.dev |
+| `porchlight-db` | `postgres:17-alpine` on a 1 GB Fly volume | `porchlight-db.internal:5432` (private network only) |
+
+### One-time setup (repo secrets)
+
+| Secret | How to get it |
+|---|---|
+| `FLY_API_TOKEN` | `flyctl tokens create org personal`. It must be an **org** token so the workflow can create apps. |
+| `UNITY_LICENSE` | Contents of `/Library/Application Support/Unity/Unity_lic.ulf` (macOS). If that file doesn't exist, follow GameCI's [activation guide](https://game.ci/docs/github/activation) to create one. Without it, deploys are API-only. |
+| `UNITY_EMAIL`, `UNITY_PASSWORD` | Your Unity ID login, used by GameCI to activate the license |
+
+Set them with `gh secret set NAME`. Optionally set the repo variable `FLY_ORG` if you don't use `personal`.
+
+The Switch and macOS viewer builds are compiled with `PORCHLIGHT_PROD`, so they talk to
+https://porchlight-server.fly.dev. In the editor, toggle **Porchlight > Use Production Server**.
+
+The server machine stops when idle and wakes on the next request (a few seconds cold). The
+database machine runs all the time. Back it up with
+`flyctl ssh console -a porchlight-db -C "pg_dump -U porchlight porchlight" > backup.sql`.
 
 ## Useful commands
 

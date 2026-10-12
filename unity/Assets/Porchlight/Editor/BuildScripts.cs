@@ -21,18 +21,18 @@ namespace Porchlight.EditorTools
             Build(BuildTarget.WebGL, OutputArg() ?? Path.Combine(RepoRoot, "browser/dist"), clean: true);
         }
 
-        /// <summary>A desktop build running the Switch viewer flow, for checking it without a devkit.</summary>
+        /// <summary>A desktop build of the Switch viewer, pointed at production, for checking it without a devkit.</summary>
         [MenuItem("Porchlight/Build/macOS viewer (Switch preview)")]
         public static void BuildMacViewer()
         {
-            Build(BuildTarget.StandaloneOSX, OutputArg() ?? Path.Combine(RepoRoot, "builds/mac-viewer/Porchlight.app"), clean: false, "PORCHLIGHT_VIEWER_ONLY");
+            Build(BuildTarget.StandaloneOSX, OutputArg() ?? Path.Combine(RepoRoot, "builds/mac-viewer/Porchlight.app"), clean: false, "PORCHLIGHT_VIEWER_ONLY", "PORCHLIGHT_PROD");
         }
 
         /// <summary>Needs the Nintendo Switch build module, which you get through the Nintendo Developer Portal.</summary>
         [MenuItem("Porchlight/Build/Nintendo Switch")]
         public static void BuildSwitch()
         {
-            Build(BuildTarget.Switch, OutputArg() ?? Path.Combine(RepoRoot, "builds/switch/Porchlight.nsp"), clean: false);
+            Build(BuildTarget.Switch, OutputArg() ?? Path.Combine(RepoRoot, "builds/switch/Porchlight.nsp"), clean: false, "PORCHLIGHT_PROD");
         }
 
         private static void Build(BuildTarget target, string output, bool clean, params string[] defines)

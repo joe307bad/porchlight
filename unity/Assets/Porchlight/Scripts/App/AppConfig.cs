@@ -10,7 +10,17 @@ namespace Porchlight.App
     public static class AppConfig
     {
         public const string ViewerModePref = "Porchlight.ViewerMode";
-        private const string DefaultApi = "http://localhost:5080";
+        public const string ProductionServerPref = "Porchlight.UseProductionServer";
+
+        /// <summary>The Fly.io deployment (infra/prod). Builds with PORCHLIGHT_PROD default to it.</summary>
+        public const string ProductionApi = "https://porchlight-server.fly.dev";
+        public const string LocalApi = "http://localhost:5080";
+
+#if UNITY_SWITCH || PORCHLIGHT_PROD
+        private const string DefaultApi = ProductionApi;
+#else
+        private const string DefaultApi = LocalApi;
+#endif
 
         public static bool CanEdit
         {
@@ -30,7 +40,9 @@ namespace Porchlight.App
 
         /// <summary>
         /// The WebGL build talks to the server that served it. Everything else uses -api &lt;url&gt;,
-        /// then the PORCHLIGHT_API environment variable, then localhost.
+        /// then the PORCHLIGHT_API environment variable, then the build's default: production for
+        /// Switch and PORCHLIGHT_PROD builds, localhost otherwise. In the editor,
+        /// Porchlight > Use Production Server switches to production.
         /// </summary>
         public static string ApiBaseUrl
         {
@@ -46,7 +58,12 @@ namespace Porchlight.App
                 if (!string.IsNullOrEmpty(fromArgs)) return fromArgs.TrimEnd('/');
 
                 var fromEnv = Environment.GetEnvironmentVariable("PORCHLIGHT_API");
-                return string.IsNullOrEmpty(fromEnv) ? DefaultApi : fromEnv.TrimEnd('/');
+                if (!string.IsNullOrEmpty(fromEnv)) return fromEnv.TrimEnd('/');
+
+#if UNITY_EDITOR
+                if (UnityEditor.EditorPrefs.GetBool(ProductionServerPref, false)) return ProductionApi;
+#endif
+                return DefaultApi;
             }
         }
 

@@ -50,6 +50,19 @@ namespace Porchlight.EditorTools
             return true;
         }
 
+        [MenuItem("Porchlight/Use Production Server")]
+        private static void ToggleProductionServer()
+        {
+            EditorPrefs.SetBool(AppConfig.ProductionServerPref, !EditorPrefs.GetBool(AppConfig.ProductionServerPref, false));
+        }
+
+        [MenuItem("Porchlight/Use Production Server", true)]
+        private static bool ToggleProductionServerValidate()
+        {
+            Menu.SetChecked("Porchlight/Use Production Server", EditorPrefs.GetBool(AppConfig.ProductionServerPref, false));
+            return true;
+        }
+
         private static void EnsureRenderPipeline()
         {
             if (GraphicsSettings.defaultRenderPipeline != null) return;
