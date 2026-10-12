@@ -130,8 +130,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      # One machine owns the volume, hence --ha=false.
-      - run: flyctl deploy infra/prod/db --config infra/prod/db/fly.toml --app "$DB_APP" --ha=false --yes
+      # One machine owns the volume, hence --ha=false. Run from the config's folder: flyctl resolves
+      # --config relative to the deploy directory, so naming both doubles the path.
+      - working-directory: infra/prod/db
+        run: flyctl deploy --app "$DB_APP" --ha=false --yes
 
   webgl:
     needs: infra
