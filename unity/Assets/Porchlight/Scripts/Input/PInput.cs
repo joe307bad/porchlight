@@ -212,13 +212,24 @@ namespace Porchlight.Input
 #endif
         }
 
-        /// <summary>Confirm: Enter or the gamepad's south button. Remap for Nintendo A/B when the Switch build lands.</summary>
+#if ENABLE_INPUT_SYSTEM
+        // Nintendo puts confirm (A) on the right and back (B) on the bottom; everyone else does the opposite.
+#if UNITY_SWITCH
+        private static UnityEngine.InputSystem.Controls.ButtonControl ConfirmButton(Gamepad g) => g.buttonEast;
+        private static UnityEngine.InputSystem.Controls.ButtonControl BackButton(Gamepad g) => g.buttonSouth;
+#else
+        private static UnityEngine.InputSystem.Controls.ButtonControl ConfirmButton(Gamepad g) => g.buttonSouth;
+        private static UnityEngine.InputSystem.Controls.ButtonControl BackButton(Gamepad g) => g.buttonEast;
+#endif
+#endif
+
+        /// <summary>Confirm: Enter, or A on a Switch / the bottom face button elsewhere.</summary>
         public static bool Submit()
         {
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current;
             return (k != null && (k.enterKey.wasPressedThisFrame || k.numpadEnterKey.wasPressedThisFrame))
-                || (Gamepad.current?.buttonSouth.wasPressedThisFrame ?? false);
+                || (Gamepad.current != null && ConfirmButton(Gamepad.current).wasPressedThisFrame);
 #else
             return UnityEngine.Input.GetKeyDown(KeyCode.Return) || UnityEngine.Input.GetKeyDown(KeyCode.KeypadEnter);
 #endif
@@ -228,7 +239,7 @@ namespace Porchlight.Input
         {
 #if ENABLE_INPUT_SYSTEM
             return (Keyboard.current?.escapeKey.wasPressedThisFrame ?? false)
-                || (Gamepad.current?.buttonEast.wasPressedThisFrame ?? false);
+                || (Gamepad.current != null && BackButton(Gamepad.current).wasPressedThisFrame);
 #else
             return UnityEngine.Input.GetKeyDown(KeyCode.Escape);
 #endif

@@ -294,10 +294,11 @@ namespace Porchlight.App
 
         private void DrawViewerHud()
         {
-            GUILayout.BeginArea(new Rect(10f, 10f, 320f, 170f), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(10f, 10f, 320f, 195f), GUI.skin.box);
             GUILayout.Label(_town.Name, Ui.Title);
             GUILayout.Label($"Population {_metrics.Population}    Jobs {_metrics.Jobs}    Buildings {_metrics.BuildingCount}");
             GUILayout.Label("Move: arrows / left stick · Look: WASD, right mouse / right stick · Up/down: Space, C / triggers", Ui.Small);
+            FlyCamera.InvertY = GUILayout.Toggle(FlyCamera.InvertY, " Invert Y (mouse / right stick)");
             if (GUILayout.Button("Back to towns (Esc)")) ExitTown();
             GUILayout.EndArea();
         }

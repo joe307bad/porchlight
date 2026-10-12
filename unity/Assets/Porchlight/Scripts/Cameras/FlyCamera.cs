@@ -20,6 +20,28 @@ namespace Porchlight.Cameras
         public float MinHeight = 2f;
         public float MaxHeight = 400f;
 
+        private const string InvertYPref = "Porchlight.InvertY";
+        private static int _invertY = -1;
+
+        /// <summary>
+        /// Flips up/down for the mouse and right stick (W/S always look up/down). Saved in PlayerPrefs,
+        /// which also works on the Switch.
+        /// </summary>
+        public static bool InvertY
+        {
+            get
+            {
+                if (_invertY < 0) _invertY = PlayerPrefs.GetInt(InvertYPref, 0);
+                return _invertY == 1;
+            }
+            set
+            {
+                _invertY = value ? 1 : 0;
+                PlayerPrefs.SetInt(InvertYPref, _invertY);
+                PlayerPrefs.Save();
+            }
+        }
+
         private float _yaw;
         private float _pitch;
         private float _bounds = 500f;
@@ -44,10 +66,11 @@ namespace Porchlight.Cameras
         {
             var dt = Time.unscaledDeltaTime;
 
+            var pointerLook = PInput.MouseLookDelta() * MouseSensitivity + PInput.StickLook() * (StickLookSpeed * dt);
+            if (InvertY) pointerLook.y = -pointerLook.y;
+
             var keys = PInput.KeyLook();
-            var look = PInput.MouseLookDelta() * MouseSensitivity
-                + PInput.StickLook() * (StickLookSpeed * dt)
-                + new Vector2(keys.x * KeyTurnSpeed, keys.y * KeyTiltSpeed) * dt;
+            var look = pointerLook + new Vector2(keys.x * KeyTurnSpeed, keys.y * KeyTiltSpeed) * dt;
             _yaw += look.x;
             _pitch = Mathf.Clamp(_pitch - look.y, -20f, 89f);
             transform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);

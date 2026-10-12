@@ -1,5 +1,6 @@
 using System;
 using Porchlight.App;
+using Porchlight.Cameras;
 using Porchlight.Input;
 using Porchlight.Net;
 using Porchlight.Rendering;
@@ -412,6 +413,7 @@ namespace Porchlight.Builder
 
             if (_confirmLeave) GUILayout.Label("You have unsaved changes.", Ui.Hint);
 
+            FlyCamera.InvertY = GUILayout.Toggle(FlyCamera.InvertY, " Invert Y (mouse / right stick)");
             GUILayout.Label("Move: arrows · Look: WASD or hold right mouse · Up/down: Space / C · Fast: Shift", Ui.Small);
             GUILayout.EndArea();
         }
