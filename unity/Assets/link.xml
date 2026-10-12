@@ -1,0 +1,4 @@
+<!-- IL2CPP strips code it thinks is unused. The DTOs are only built by Newtonsoft via reflection, so keep them. -->
+<linker>
+  <assembly fullname="Porchlight.Shared" preserve="all" />
+</linker>

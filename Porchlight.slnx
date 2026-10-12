@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/server/">
+    <Project Path="server/Porchlight.Server/Porchlight.Server.csproj" />
+  </Folder>
+  <Folder Name="/shared/">
+    <Project Path="shared/Porchlight.Shared.csproj" />
+  </Folder>
+  <Folder Name="/shared/tests/">
+    <Project Path="shared/tests/Porchlight.Shared.Tests/Porchlight.Shared.Tests.csproj" />
+  </Folder>
+</Solution>
