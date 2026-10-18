@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Porchlight.Shared.Content;
+using Porchlight.Shared.Geometry;
 using Porchlight.Shared.Model;
 using Porchlight.Shared.Rules;
 using UnityEngine;
@@ -127,83 +128,76 @@ namespace Porchlight.Rendering
             }
         }
 
-        /// <summary>Patchwork grass for the buildable area, plus a darker skirt so the edge isn't a cliff.</summary>
-        public static Mesh Ground(float size)
+        /// <summary>Patchwork grass for the buildable area, following the terrain, plus darker countryside around it so the edge isn't a cliff.</summary>
+        public static Mesh Ground(TownDto town)
         {
             var mb = new MeshBuilder();
-            var half = size * 0.5f;
+            var half = town.Size * 0.5f;
 
+            // A frame around the town, not a sheet under it, so ground dug below 0 isn't covered up.
             const float outskirtScale = 3f;
             var o = half * outskirtScale;
-            mb.Quad(new Vector3(-o, -0.05f, -o), new Vector3(-o, -0.05f, o), new Vector3(o, -0.05f, o), new Vector3(o, -0.05f, -o), Outskirts, Vector3.up);
+            Quad(-o, -o, o, -half);
+            Quad(-o, half, o, o);
+            Quad(-o, -half, -half, half);
+            Quad(half, -half, o, half);
+            void Quad(float x0, float z0, float x1, float z1) =>
+                mb.Quad(new Vector3(x0, -0.05f, z0), new Vector3(x0, -0.05f, z1), new Vector3(x1, -0.05f, z1), new Vector3(x1, -0.05f, z0), Outskirts, Vector3.up);
 
+            // Patches of a lighter and darker green, about 16 m across.
             const float tile = 16f;
-            var tiles = Mathf.Max(1, Mathf.RoundToInt(size / tile));
-            var step = size / tiles;
+            var tiles = Mathf.Max(1, Mathf.RoundToInt(town.Size / tile));
+            var step = town.Size / tiles;
+            Color Patch(float x, float z)
+            {
+                var i = Mathf.FloorToInt((x + half) / step + 0.001f);
+                var j = Mathf.FloorToInt((z + half) / step + 0.001f);
+                return ((i * 7 + j * 13) % 5 == 0) ? GrassB : GrassA;
+            }
+
+            if (TownTerrain.IsShaped(town))
+            {
+                TerrainMeshes.Surface(mb, town, 0f, Patch);
+                return mb.ToMesh(name: "ground");
+            }
+
+            // Flat: one quad per patch is enough.
             for (var i = 0; i < tiles; i++)
             {
                 for (var j = 0; j < tiles; j++)
                 {
                     float x0 = -half + i * step, z0 = -half + j * step;
-                    var color = ((i * 7 + j * 13) % 5 == 0) ? GrassB : GrassA;
-                    mb.Quad(new Vector3(x0, 0f, z0), new Vector3(x0, 0f, z0 + step), new Vector3(x0 + step, 0f, z0 + step), new Vector3(x0 + step, 0f, z0), color, Vector3.up);
+                    mb.Quad(new Vector3(x0, 0f, z0), new Vector3(x0, 0f, z0 + step), new Vector3(x0 + step, 0f, z0 + step), new Vector3(x0 + step, 0f, z0), Patch(x0, z0), Vector3.up);
                 }
             }
 
             return mb.ToMesh(name: "ground");
         }
 
-        /// <summary>All roads as one mesh: a quad per segment plus a disc per node to fill the joints.</summary>
+        /// <summary>All roads as one mesh, lying on the ground: a strip per segment plus a disc per node to fill the joints.</summary>
         public static void Roads(TownDto town, Mesh target)
         {
             var mb = new MeshBuilder();
-            var nodeWidths = new Dictionary<string, (Vector3 Position, float Width, Color Color)>();
+            var nodeWidths = new Dictionary<string, (Vec2 Position, float Width, Color Color)>();
 
             foreach (var road in TownRules.Roads(town))
             {
                 var color = Hex(road.Type.Color);
-                var a = new Vector3(road.A.X, 0f, road.A.Z);
-                var b = new Vector3(road.B.X, 0f, road.B.Z);
-                Segment(mb, a, b, road.Type.Width, color, 0.04f);
+                TerrainMeshes.Strip(mb, town, road.A, road.B, road.Type.Width, color, 0.04f);
 
-                Remember(nodeWidths, road.Segment.StartNodeId, a, road.Type.Width, color);
-                Remember(nodeWidths, road.Segment.EndNodeId, b, road.Type.Width, color);
+                Remember(nodeWidths, road.Segment.StartNodeId, road.A, road.Type.Width, color);
+                Remember(nodeWidths, road.Segment.EndNodeId, road.B, road.Type.Width, color);
             }
 
             foreach (var node in nodeWidths.Values)
             {
-                Disc(mb, node.Position + Vector3.up * 0.045f, node.Width * 0.5f, node.Color);
+                TerrainMeshes.Disc(mb, town, node.Position, node.Width * 0.5f, node.Color, 0.045f);
             }
 
             mb.ToMesh(target, "roads");
         }
 
-        public static void Segment(MeshBuilder mb, Vector3 a, Vector3 b, float width, Color color, float height)
-        {
-            var direction = b - a;
-            direction.y = 0f;
-            if (direction.sqrMagnitude < 1e-6f) return;
-
-            var side = Vector3.Cross(Vector3.up, direction.normalized) * (width * 0.5f);
-            var lift = Vector3.up * height;
-            mb.Quad(a - side + lift, b - side + lift, b + side + lift, a + side + lift, color, Vector3.up);
-        }
-
-        public static void Disc(MeshBuilder mb, Vector3 center, float radius, Color color)
-        {
-            const int sides = 10;
-            for (var i = 0; i < sides; i++)
-            {
-                var a0 = i * Mathf.PI * 2f / sides;
-                var a1 = (i + 1) * Mathf.PI * 2f / sides;
-                mb.Triangle(center,
-                    center + new Vector3(Mathf.Cos(a0), 0f, Mathf.Sin(a0)) * radius,
-                    center + new Vector3(Mathf.Cos(a1), 0f, Mathf.Sin(a1)) * radius,
-                    color, Vector3.up);
-            }
-        }
-
-        private static void Remember(Dictionary<string, (Vector3, float, Color)> nodes, string id, Vector3 position, float width, Color color)
+        private static void Remember(Dictionary<string, (Vec2, float, Color)> nodes, string id, Vec2 position, float width, Color color)
         {
             if (!nodes.TryGetValue(id, out var existing) || existing.Item2 < width) nodes[id] = (position, width, color);
         }

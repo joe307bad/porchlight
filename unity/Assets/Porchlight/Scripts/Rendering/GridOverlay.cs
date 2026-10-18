@@ -1,11 +1,13 @@
 using Porchlight.Shared.Geometry;
+using Porchlight.Shared.Model;
+using Porchlight.Shared.Rules;
 using UnityEngine;
 using UnityEngine.Rendering;
 
 namespace Porchlight.Rendering
 {
     /// <summary>
-    /// The <see cref="TownGrid"/> drawn across the whole town floor as one transparent quad, plus the
+    /// The <see cref="TownGrid"/> drawn across the whole town floor as one transparent layer over the ground, plus the
     /// red cross the builder puts on the intersection under the pointer.
     /// </summary>
     public sealed class GridOverlay : MonoBehaviour
@@ -30,11 +32,13 @@ namespace Porchlight.Rendering
             gameObject.SetActive(false);
         }
 
-        public void Show(float townSize)
+        /// <summary>Lays the grid over the town's ground. Call again after the terrain changes.</summary>
+        public void Show(TownDto town)
         {
-            var half = townSize * 0.5f;
+            var half = town.Size * 0.5f;
             var mb = new MeshBuilder();
-            mb.Quad(new Vector3(-half, Lift, -half), new Vector3(-half, Lift, half), new Vector3(half, Lift, half), new Vector3(half, Lift, -half), Color.white, Vector3.up);
+            if (TownTerrain.IsShaped(town)) TerrainMeshes.Surface(mb, town, Lift, (x, z) => Color.white);
+            else mb.Quad(new Vector3(-half, Lift, -half), new Vector3(-half, Lift, half), new Vector3(half, Lift, half), new Vector3(half, Lift, -half), Color.white, Vector3.up);
             if (_floor.sharedMesh != null) Destroy(_floor.sharedMesh);
             _floor.sharedMesh = mb.ToMesh(name: "grid");
             HideCross();
@@ -43,11 +47,11 @@ namespace Porchlight.Rendering
 
         public void Hide() => gameObject.SetActive(false);
 
-        /// <summary>Puts the red cross on the grid intersection nearest to <paramref name="point"/>.</summary>
-        public void ShowCross(Vec2 point)
+        /// <summary>Puts the red cross on the grid intersection nearest to <paramref name="point"/>, lying flat on the ground there.</summary>
+        public void ShowCross(TownDto town, Vec2 point)
         {
             var snapped = TownGrid.Snap(point);
-            _cross.position = new Vector3(snapped.X, 0f, snapped.Z);
+            _cross.SetPositionAndRotation(TerrainMeshes.OnGround(town, snapped), Quaternion.FromToRotation(Vector3.up, TerrainMeshes.Normal(town, snapped)));
             _cross.gameObject.SetActive(true);
         }
 

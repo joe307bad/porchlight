@@ -2,13 +2,14 @@ using System;
 using Porchlight.Builder;
 using Porchlight.Rendering;
 using Porchlight.Shared.Content;
+using Porchlight.Shared.Rules;
 using UnityEngine;
 
 namespace Porchlight.App
 {
     /// <summary>
     /// The builder's bottom bar: the town's numbers, the tool, a card for each building or road type,
-    /// placement options, and Save / Walk / Back. Keyboard shortcuts still work (1-3, Q/E, Tab).
+    /// placement or terrain options, and Save / Walk / Back. Keyboard shortcuts still work (1-4, Q/E, Tab).
     /// </summary>
     public sealed class BuilderHud : IHudContent
     {
@@ -41,7 +42,7 @@ namespace Porchlight.App
             {
                 var b = _builder;
                 var m = b.Metrics;
-                return $"{b.Town?.Name}|{b.CurrentTool}|{b.BuildingTypeId}|{b.RoadTypeId}|{b.Rotation}|{b.AlignToRoads}|{b.SnapToGrid}|{b.Hint}|" +
+                return $"{b.Town?.Name}|{b.CurrentTool}|{b.BuildingTypeId}|{b.RoadTypeId}|{b.Rotation}|{b.AlignToRoads}|{b.SnapToGrid}|{b.RaiseTerrain}|{b.PadSize}|{b.Hint}|" +
                        $"{m.Population}|{m.Jobs}|{m.BuildingCount}|{m.ConnectedBuildingCount}|{m.RoadLengthMeters:0}|{b.IsDirty}|{b.Saving}|{b.SaveStatus}|{b.ConfirmingLeave}";
             }
         }
@@ -73,12 +74,17 @@ namespace Porchlight.App
         private void DrawTools(HudCanvas c, float x)
         {
             c.Header("Tool", x, HeaderZ);
-            var tools = new[] { (BuilderTool.Tool.Build, "Build", "1"), (BuilderTool.Tool.Road, "Road", "2"), (BuilderTool.Tool.Remove, "Remove", "3") };
-            var height = (ContentTop - ContentBottom - 0.8f) / tools.Length;
+            var tools = new[]
+            {
+                (BuilderTool.Tool.Build, "Build", "1"), (BuilderTool.Tool.Road, "Road", "2"),
+                (BuilderTool.Tool.Remove, "Remove", "3"), (BuilderTool.Tool.Terrain, "Terrain", "4"),
+            };
+            const float gap = 0.4f;
+            var height = (ContentTop - ContentBottom - gap * (tools.Length - 1)) / tools.Length;
             for (var i = 0; i < tools.Length; i++)
             {
                 var (tool, label, key) = tools[i];
-                var top = ContentTop - i * (height + 0.4f);
+                var top = ContentTop - i * (height + gap);
                 c.Button(new Rect(x, top - height, ToolWidth, height), label, key, _builder.CurrentTool == tool, () => _builder.SetTool(tool));
             }
         }
@@ -99,6 +105,11 @@ namespace Porchlight.App
                     c.Label("Click to start a road, then click again", cardRight + 1.5f, 1.4f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: right - cardRight - 1.5f);
                     c.Label("for each stretch. Ends snap to junctions.", cardRight + 1.5f, -0.2f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: right - cardRight - 1.5f);
                     c.Label("Esc stops the road you're drawing.", cardRight + 1.5f, -1.8f, HudCanvas.LabelSize, MenuStyle.OnPrimaryMuted, maxWidth: right - cardRight - 1.5f);
+                    break;
+
+                case BuilderTool.Tool.Terrain:
+                    c.Header("Terrain", left, HeaderZ);
+                    DrawTerrainOptions(c, left, right);
                     break;
 
                 default:
@@ -181,6 +192,55 @@ namespace Porchlight.App
             }
 
             return left + Catalog.Roads.Count * (width + gap) - gap;
+        }
+
+        /// <summary>Raise and Lower cards, the pad sizes, and how the tool works.</summary>
+        private void DrawTerrainOptions(HudCanvas c, float left, float right)
+        {
+            const float width = 8f, gap = 0.5f;
+            var height = ContentTop - ContentBottom;
+            var modes = new[] { (true, "Raise", $"Up {TownTerrain.Step:0} m a click"), (false, "Lower", $"Down {TownTerrain.Step:0} m a click") };
+            for (var i = 0; i < modes.Length; i++)
+            {
+                var (raise, name, detail) = modes[i];
+                var rect = new Rect(left + i * (width + gap), ContentBottom, width, height);
+                var selected = _builder.RaiseTerrain == raise;
+                var top = c.Panel(rect, selected, c.IsHovered(rect));
+
+                // A pad seen from above, like contour lines: lighter in the middle for a hill, darker for a pit.
+                var shades = raise ? new[] { "#6E8F5B", "#8DB274", "#B5D39A" } : new[] { "#93B97A", "#6E8F5B", "#4E6E40" };
+                var middle = new Vector3(rect.center.x, top, rect.yMax - 2.1f);
+                for (var k = 0; k < shades.Length; k++)
+                {
+                    var side = 3.2f - k * 1f;
+                    var shade = LowPolyMeshes.Hex(shades[k]);
+                    c.Shapes.Box(middle + Vector3.up * (k * 0.02f), side * 1.6f, 0.02f, side, shade, shade);
+                }
+
+                var ink = selected ? MenuStyle.OnSurface : MenuStyle.OnPrimary;
+                var muted = selected ? MenuStyle.OnSurfaceMuted : MenuStyle.OnPrimaryMuted;
+                c.Label(name, rect.xMin + 0.6f, rect.yMin + 2.4f, HudCanvas.BodySize, ink, weight: FontWeight.SemiBold, y: top);
+                c.Label(detail, rect.xMin + 0.6f, rect.yMin + 1f, HudCanvas.LabelSize, muted, y: top);
+                c.OnClick(rect, () => _builder.RaiseTerrain = raise);
+            }
+
+            // Pad sizes, stacked like the tools.
+            var padX = left + modes.Length * (width + gap) + 1f;
+            const float padWidth = 9f, padGap = 0.4f;
+            var sizes = BuilderTool.PadSizes;
+            var padHeight = (height - padGap * (sizes.Length - 1)) / sizes.Length;
+            for (var i = 0; i < sizes.Length; i++)
+            {
+                var index = i;
+                var rect = new Rect(padX, ContentTop - i * (padHeight + padGap) - padHeight, padWidth, padHeight);
+                c.Button(rect, sizes[i].Name, $"{sizes[i].HalfSize * 2f:0} m", _builder.PadSize == i, () => _builder.PadSize = index);
+            }
+
+            var textX = padX + padWidth + 1.5f;
+            var textWidth = right - textX;
+            c.Label("Click to level the ground there.", textX, 1.4f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: textWidth);
+            c.Label("The slopes around it stay gentle,", textX, -0.2f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: textWidth);
+            c.Label("so you can build on top.", textX, -1.8f, HudCanvas.LabelSize, MenuStyle.OnPrimaryMuted, maxWidth: textWidth);
         }
 
         private void DrawActions(HudCanvas c, float x)

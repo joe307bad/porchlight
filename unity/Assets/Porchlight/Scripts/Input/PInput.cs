@@ -13,6 +13,7 @@ namespace Porchlight.Input
         Alpha1,
         Alpha2,
         Alpha3,
+        Alpha4,
         Tab,
         R,
         Backspace,
@@ -251,6 +252,7 @@ namespace Porchlight.Input
                 case PKey.Alpha1: return k.digit1Key.wasPressedThisFrame;
                 case PKey.Alpha2: return k.digit2Key.wasPressedThisFrame;
                 case PKey.Alpha3: return k.digit3Key.wasPressedThisFrame;
+                case PKey.Alpha4: return k.digit4Key.wasPressedThisFrame;
                 case PKey.Tab: return k.tabKey.wasPressedThisFrame;
                 case PKey.R: return k.rKey.wasPressedThisFrame;
                 case PKey.Backspace: return k.backspaceKey.wasPressedThisFrame;
@@ -265,6 +267,7 @@ namespace Porchlight.Input
                 case PKey.Alpha1: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha1);
                 case PKey.Alpha2: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha2);
                 case PKey.Alpha3: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha3);
+                case PKey.Alpha4: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha4);
                 case PKey.Tab: return UnityEngine.Input.GetKeyDown(KeyCode.Tab);
                 case PKey.R: return UnityEngine.Input.GetKeyDown(KeyCode.R);
                 case PKey.Backspace: return UnityEngine.Input.GetKeyDown(KeyCode.Backspace);

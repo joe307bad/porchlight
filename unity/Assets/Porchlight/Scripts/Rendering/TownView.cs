@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Porchlight.Shared.Model;
+using Porchlight.Shared.Rules;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -43,12 +44,19 @@ namespace Porchlight.Rendering
         public void Show(TownDto town)
         {
             Clear();
-            if (_ground.sharedMesh != null) Destroy(_ground.sharedMesh);
-            _ground.sharedMesh = LowPolyMeshes.Ground(town.Size);
             gameObject.SetActive(true);
+            SyncTerrain(town);
+        }
+
+        /// <summary>Rebuilds the ground after the terrain changes, and moves everything on it.</summary>
+        public void SyncTerrain(TownDto town)
+        {
+            if (_ground.sharedMesh != null) Destroy(_ground.sharedMesh);
+            _ground.sharedMesh = LowPolyMeshes.Ground(town);
             Sync(town);
         }
 
+        /// <summary>Adds, moves and removes buildings to match the town, and redraws the roads. Buildings stand on the ground.</summary>
         public void Sync(TownDto town)
         {
             var seen = new HashSet<string>();
@@ -62,7 +70,7 @@ namespace Porchlight.Rendering
                 }
 
                 go.transform.SetPositionAndRotation(
-                    new Vector3(building.X, 0f, building.Z),
+                    new Vector3(building.X, TownTerrain.BaseHeight(town, building), building.Z),
                     Quaternion.Euler(0f, building.RotationDeg, 0f));
             }
 

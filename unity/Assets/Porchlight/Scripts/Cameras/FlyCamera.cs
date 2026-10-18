@@ -1,5 +1,9 @@
 using Porchlight.App;
 using Porchlight.Input;
+using Porchlight.Rendering;
+using Porchlight.Shared.Geometry;
+using Porchlight.Shared.Model;
+using Porchlight.Shared.Rules;
 using UnityEngine;
 
 namespace Porchlight.Cameras
@@ -61,9 +65,13 @@ namespace Porchlight.Cameras
         private bool _orbiting;
         private Vector3 _orbitPivot;
 
+        private TownDto _town;
+
         /// <summary>Puts the camera south of the town, looking north and down at it.</summary>
-        public void Frame(float townSize)
+        public void Frame(TownDto town)
         {
+            _town = town;
+            var townSize = town.Size;
             _bounds = townSize * 0.75f;
             _yaw = 0f;
             _pitch = 35f;
@@ -105,9 +113,13 @@ namespace Porchlight.Cameras
 
             position.x = Mathf.Clamp(position.x, -_bounds, _bounds);
             position.z = Mathf.Clamp(position.z, -_bounds, _bounds);
-            position.y = Mathf.Clamp(position.y, MinHeight, MaxHeight);
+            position.y = Mathf.Clamp(position.y, Floor(position), MaxHeight);
             transform.position = position;
         }
+
+        /// <summary>The lowest the camera may go here: <see cref="MinHeight"/> above the ground.</summary>
+        private float Floor(Vector3 position) =>
+            MinHeight + (_town == null ? 0f : Mathf.Max(0f, TownTerrain.HeightAt(_town, new Vec2(position.x, position.z))));
 
         /// <summary>
         /// Ctrl-drag (with either button, since a Mac browser turns Ctrl+click into a right click)
@@ -138,7 +150,7 @@ namespace Porchlight.Cameras
             var rotation = Quaternion.Euler(_pitch, _yaw, 0f);
             var distance = Vector3.Distance(transform.position, _orbitPivot);
             var position = _orbitPivot - rotation * Vector3.forward * distance;
-            position.y = Mathf.Clamp(position.y, MinHeight, MaxHeight);
+            position.y = Mathf.Clamp(position.y, Floor(position), MaxHeight);
             transform.SetPositionAndRotation(position, rotation);
             return true;
         }
@@ -187,8 +199,7 @@ namespace Porchlight.Cameras
             if (_camera == null) _camera = GetComponent<Camera>();
             var ray = _camera.ScreenPointToRay(screenPoint);
             if (ray.direction.y > -0.02f) return false;
-            point = ray.origin + ray.direction * (-ray.origin.y / ray.direction.y);
-            return true;
+            return TerrainMeshes.Raycast(_town, ray, out point);
         }
     }
 }

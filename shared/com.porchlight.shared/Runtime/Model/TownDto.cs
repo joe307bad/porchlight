@@ -29,13 +29,30 @@ namespace Porchlight.Shared.Model
         public List<BuildingDto> Buildings { get; set; } = new List<BuildingDto>();
         public RoadNetworkDto Roads { get; set; } = new RoadNetworkDto();
 
+        /// <summary>The shape of the ground. Null for a town that's still flat, which is every town until it's first edited.</summary>
+        public TerrainDto Terrain { get; set; }
+
         public TownDto Clone()
         {
             var copy = (TownDto)MemberwiseClone();
             copy.Buildings = Buildings.ConvertAll(b => b.Clone());
             copy.Roads = Roads.Clone();
+            copy.Terrain = Terrain?.Clone();
             return copy;
         }
+    }
+
+    /// <summary>
+    /// A heightmap over the town: <see cref="Cells"/> squares a side, so (Cells + 1)² corner heights,
+    /// row by row from -Z, each row from -X. Heights are whole centimetres, so saved data stays small
+    /// and every client agrees exactly. See <see cref="Rules.TownTerrain"/> for how it's read and shaped.
+    /// </summary>
+    public sealed class TerrainDto
+    {
+        public int Cells { get; set; }
+        public List<int> Heights { get; set; } = new List<int>();
+
+        public TerrainDto Clone() => new TerrainDto { Cells = Cells, Heights = new List<int>(Heights) };
     }
 
     public sealed class BuildingDto

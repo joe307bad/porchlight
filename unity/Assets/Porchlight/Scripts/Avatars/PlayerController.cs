@@ -72,8 +72,10 @@ namespace Porchlight.Avatars
                 _grounded = false;
             }
 
+            // Downhill, stay on the ground; off the edge of a park, drop.
             var y = position.y;
-            if (_grounded && y > ground + 0.05f) _grounded = false; // walked off the edge of a park
+            if (_grounded && y > ground + 0.05f + TownTerrain.MaxSlope * Vec2.Distance(from, to)) _grounded = false;
+            else if (_grounded) y = Mathf.Min(y, ground);
             if (!_grounded)
             {
                 _verticalSpeed -= Gravity * dt;

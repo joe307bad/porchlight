@@ -150,6 +150,60 @@ namespace Porchlight.Shared.Rules
                 if (footprint.Overlaps(road.Rect, tolerance)) return EditResult.Fail("Overlaps a road");
             }
 
+            if (!TownTerrain.IsLevel(town, footprint)) return EditResult.Fail("The ground here isn't level");
+
+            return EditResult.Success;
+        }
+
+        /// <summary>
+        /// Checks a terrain tool click (see <see cref="TownTerrain.Shape"/>) and hands back the heights it
+        /// would leave. Buildings ride up and down with the ground, but none may be left on a slope.
+        /// </summary>
+        public static EditResult CanShapeTerrain(TownDto town, Vec2 center, float padHalfSize, float delta, out List<int> heights)
+        {
+            heights = null;
+            if (!IsFinite(center.X) || !IsFinite(center.Z)) return EditResult.Fail("Invalid position");
+            if (!InSquare(center, town.Size * 0.5f)) return EditResult.Fail("Outside the town boundary");
+            if (!(padHalfSize >= 0f && padHalfSize <= TownTerrain.MaxPadHalfSize)) return EditResult.Fail("Invalid pad size");
+            if (!(MathF.Abs(delta) <= TownTerrain.MaxHeight - TownTerrain.MinHeight)) return EditResult.Fail("Invalid height change");
+
+            var shaped = TownTerrain.Shape(town, center, padHalfSize, delta);
+
+            // Only buildings near ground that moved need checking.
+            var cells = TownTerrain.CellsFor(town.Size);
+            var spacing = town.Size / cells;
+            var half = town.Size * 0.5f;
+            int i0 = int.MaxValue, i1 = -1, j0 = int.MaxValue, j1 = -1;
+            for (var j = 0; j <= cells; j++)
+            {
+                for (var i = 0; i <= cells; i++)
+                {
+                    var before = (int)MathF.Round(TownTerrain.HeightAt(town, i, j) * 100f);
+                    if (shaped[j * (cells + 1) + i] == before) continue;
+                    i0 = Math.Min(i0, i);
+                    i1 = Math.Max(i1, i);
+                    j0 = Math.Min(j0, j);
+                    j1 = Math.Max(j1, j);
+                }
+            }
+
+            if (i1 < 0) return EditResult.Fail(delta > 0f ? "The ground can't go any higher here" : "The ground can't go any lower here");
+
+            // Ground moves up to a cell beyond the last lattice point that changed.
+            var min = new Vec2(-half + (i0 - 1) * spacing, -half + (j0 - 1) * spacing);
+            var max = new Vec2(-half + (i1 + 1) * spacing, -half + (j1 + 1) * spacing);
+            var after = new TownDto { Size = town.Size, Terrain = new TerrainDto { Cells = cells, Heights = shaped } };
+            foreach (var building in town.Buildings)
+            {
+                if (!TryFootprint(building, out var footprint)) continue;
+                var reachX = footprint.ExtentAlong(new Vec2(1f, 0f));
+                var reachZ = footprint.ExtentAlong(new Vec2(0f, 1f));
+                if (footprint.Center.X + reachX < min.X || footprint.Center.X - reachX > max.X
+                    || footprint.Center.Z + reachZ < min.Z || footprint.Center.Z - reachZ > max.Z) continue;
+                if (!TownTerrain.IsLevel(after, footprint)) return EditResult.Fail("That would leave a building on a slope");
+            }
+
+            heights = shaped;
             return EditResult.Success;
         }
 
@@ -293,6 +347,15 @@ namespace Porchlight.Shared.Rules
                 {
                     if (footprint.Overlaps(road.Rect, ServerTolerance))
                         result.Add($"Building {building.Id} overlaps road {road.Segment.Id}");
+                }
+            }
+
+            if (TownTerrain.Validate(town, result))
+            {
+                foreach (var (building, footprint) in footprints)
+                {
+                    if (!TownTerrain.IsLevel(town, footprint, TownTerrain.LevelTolerance + ServerTolerance))
+                        result.Add($"Building {building.Id} is on a slope");
                 }
             }
 

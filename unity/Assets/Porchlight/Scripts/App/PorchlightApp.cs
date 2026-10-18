@@ -245,7 +245,7 @@ namespace Porchlight.App
                 _showingStock = true;
             }
 
-            _grid.Show(_stockTown.Size);
+            _grid.Show(_stockTown);
 
             // Glide between menus (angled title to the flat menus and back); jump there from anywhere else.
             _menuCamera = MenuStyle.CameraPose(_camera, angled: mode == Mode.Title);
@@ -343,7 +343,7 @@ namespace Porchlight.App
             _menuCameraMoving = false;
             _showingStock = false;
             _view.Show(town);
-            if (_building) _grid.Show(town.Size);
+            if (_building) _grid.Show(town);
             else _grid.Hide();
             _status = null;
             _mode = Mode.Town;
@@ -361,7 +361,7 @@ namespace Porchlight.App
             if (_building)
             {
                 // The builder starts from above; Tab drops the character in to look around.
-                _fly.Frame(town.Size);
+                _fly.Frame(town);
                 _fly.enabled = true;
                 _builder.Begin(town, _view, _grid, _source, _camera, _material, ExitTown);
                 _hud.Show(new BuilderHud(_builder, _material, ToggleWalking));
@@ -398,7 +398,7 @@ namespace Porchlight.App
             if (_walking)
             {
                 StopWalking();
-                _grid.Show(_town.Size);
+                _grid.Show(_town);
                 _hud.Show(new BuilderHud(_builder, _material, ToggleWalking));
                 _camera.transform.SetPositionAndRotation(_flyPosition, _flyRotation);
                 _fly.enabled = true;
@@ -410,9 +410,8 @@ namespace Porchlight.App
             _flyRotation = _camera.transform.rotation;
             var look = _camera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
             var target = Vec2.Zero;
-            if (look.direction.y < -0.05f)
+            if (look.direction.y < -0.05f && TerrainMeshes.Raycast(_town, look, out var hit))
             {
-                var hit = look.origin + look.direction * (-look.origin.y / look.direction.y);
                 var half = _town.Size * 0.5f - 1f;
                 target = new Vec2(Mathf.Clamp(hit.x, -half, half), Mathf.Clamp(hit.z, -half, half));
             }

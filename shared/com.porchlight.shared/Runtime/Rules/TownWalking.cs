@@ -39,14 +39,15 @@ namespace Porchlight.Shared.Rules
             return new Vec2(Math.Clamp(p.X, -half, half), Math.Clamp(p.Z, -half, half));
         }
 
-        /// <summary>Height of the ground at a point: the top of a park, or 0.</summary>
+        /// <summary>Height of the ground at a point: the top of a park, or the terrain.</summary>
         public static float GroundHeight(TownDto town, Vec2 point)
         {
-            var height = 0f;
+            var height = TownTerrain.HeightAt(town, point);
             foreach (var building in town.Buildings)
             {
                 if (!Catalog.TryGetBuilding(building.TypeId, out var type) || type.Height > StepHeight) continue;
-                if (TownRules.Footprint(type, building.X, building.Z, building.RotationDeg).Contains(point)) height = Math.Max(height, type.Height);
+                var footprint = TownRules.Footprint(type, building.X, building.Z, building.RotationDeg);
+                if (footprint.Contains(point)) height = Math.Max(height, TownTerrain.BaseHeight(town, footprint) + type.Height);
             }
 
             return height;
@@ -62,7 +63,7 @@ namespace Porchlight.Shared.Rules
 
                 // Gabled roofs rise above the walls, up to about 0.8 of the half-depth.
                 var roof = type.Roof == RoofStyle.Gabled ? Math.Min(type.Width, type.Depth) * 0.4f : 0f;
-                if (y <= type.Height + roof) return true;
+                if (y <= TownTerrain.BaseHeight(town, footprint) + type.Height + roof) return true;
             }
 
             return false;

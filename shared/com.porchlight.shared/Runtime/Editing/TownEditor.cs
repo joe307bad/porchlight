@@ -48,6 +48,18 @@ namespace Porchlight.Shared.Editing
         public string SegmentId { get; set; } = "";
     }
 
+    /// <summary>
+    /// The terrain tool: levels a square pad around a point at the height there plus <see cref="Delta"/>,
+    /// sloping the ground around it. See <see cref="TownTerrain.Shape"/>.
+    /// </summary>
+    public sealed class ShapeTerrainCommand : TownCommand
+    {
+        public float X { get; set; }
+        public float Z { get; set; }
+        public float PadHalfSize { get; set; }
+        public float Delta { get; set; }
+    }
+
     public static class TownEditor
     {
         public static EditResult Apply(TownDto town, TownCommand command)
@@ -58,6 +70,7 @@ namespace Porchlight.Shared.Editing
                 case RemoveBuildingCommand c: return RemoveBuilding(town, c);
                 case AddRoadCommand c: return AddRoad(town, c);
                 case RemoveRoadCommand c: return RemoveRoad(town, c);
+                case ShapeTerrainCommand c: return ShapeTerrain(town, c);
                 default: return EditResult.Fail($"Unknown command {command?.GetType().Name ?? "null"}");
             }
         }
@@ -122,6 +135,15 @@ namespace Porchlight.Shared.Editing
             town.Roads.Segments.RemoveAt(index);
             RemoveNodeIfOrphaned(town, segment.StartNodeId);
             RemoveNodeIfOrphaned(town, segment.EndNodeId);
+            return EditResult.Success;
+        }
+
+        private static EditResult ShapeTerrain(TownDto town, ShapeTerrainCommand c)
+        {
+            var check = TownRules.CanShapeTerrain(town, TownMath.Quantize(new Vec2(c.X, c.Z)), c.PadHalfSize, c.Delta, out var heights);
+            if (!check.Ok) return check;
+
+            town.Terrain = new TerrainDto { Cells = TownTerrain.CellsFor(town.Size), Heights = heights };
             return EditResult.Success;
         }
 

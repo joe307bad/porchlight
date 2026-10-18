@@ -9,7 +9,7 @@ namespace Porchlight.Cameras
     /// <summary>
     /// Follows the player's character from behind and orbits around them. Looking uses the same
     /// inputs as <see cref="FlyCamera"/> (WASD, right mouse, right stick, Invert Y); the scroll wheel
-    /// zooms. The camera pulls in rather than ending up inside a building.
+    /// zooms. The camera pulls in rather than ending up inside a building or a hill.
     /// </summary>
     public sealed class ThirdPersonCamera : MonoBehaviour
     {
@@ -77,7 +77,7 @@ namespace Porchlight.Cameras
             for (var d = 0.4f; d <= Distance; d += 0.25f)
             {
                 var p = _focus + back * d;
-                if (p.y < 0.2f || TownWalking.IsInsideBuilding(_town, new Vec2(p.x, p.z), p.y))
+                if (p.y < TownTerrain.HeightAt(_town, new Vec2(p.x, p.z)) + 0.2f || TownWalking.IsInsideBuilding(_town, new Vec2(p.x, p.z), p.y))
                 {
                     clear = Mathf.Max(MinDistance * 0.5f, d - 0.4f);
                     break;
@@ -87,7 +87,7 @@ namespace Porchlight.Cameras
             // Snap in quickly so walls never block the view; ease back out.
             _distance = dt <= 0f || clear < _distance ? clear : Mathf.Lerp(_distance, clear, 1f - Mathf.Exp(-3f * dt));
             var position = _focus + back * _distance;
-            position.y = Mathf.Max(position.y, 0.2f);
+            position.y = Mathf.Max(position.y, TownTerrain.HeightAt(_town, new Vec2(position.x, position.z)) + 0.2f);
             transform.SetPositionAndRotation(position, rotation);
         }
     }
