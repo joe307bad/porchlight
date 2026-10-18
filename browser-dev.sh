@@ -2,21 +2,25 @@
 # Starts the Porchlight browser dev stack: Postgres in Docker, then the API server, which also
 # serves the Unity WebGL build from browser/dist at http://localhost:5080.
 #
-#   ./browser-dev.sh            start Postgres and the server
-#   ./browser-dev.sh --build    also build the WebGL player with Unity first (close the Unity editor)
+#   ./browser-dev.sh                    start Postgres and the server
+#   ./browser-dev.sh --build            also build the WebGL player first: a quick development build
+#                                       (about 20 s after a small change; close the Unity editor)
+#   ./browser-dev.sh --build --release  build the fully optimised player instead, like CI deploys
 #
-# Day to day, iterate in the Unity editor's Play mode, which talks to the same server. WebGL
-# builds take minutes, so only rebuild when you want to check the browser build itself.
+# Day to day, Play mode in the Unity editor is quickest and talks to the same server. Use a
+# WebGL build when you want to check the browser itself.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="$ROOT/infra/dev/docker-compose.yml"
 BUILD=0
+METHOD=BuildWebGLDev
 
 for arg in "$@"; do
   case "$arg" in
     --build) BUILD=1 ;;
-    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+    --release) METHOD=BuildWebGL ;;
+    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg" >&2; exit 1 ;;
   esac
 done
@@ -45,10 +49,10 @@ docker compose -f "$COMPOSE_FILE" up -d --wait
 
 if [[ "$BUILD" == 1 ]]; then
   UNITY="$(find_unity)"
-  echo "==> Building WebGL player with $UNITY (this takes a while)"
+  echo "==> Building WebGL player ($METHOD) with $UNITY"
   "$UNITY" -batchmode -nographics -quit \
     -projectPath "$ROOT/unity" \
-    -executeMethod Porchlight.EditorTools.BuildScripts.BuildWebGL \
+    -executeMethod "Porchlight.EditorTools.BuildScripts.$METHOD" \
     -buildOutput "$ROOT/browser/dist" \
     -logFile -
 fi

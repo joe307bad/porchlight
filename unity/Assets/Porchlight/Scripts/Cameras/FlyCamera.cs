@@ -1,3 +1,4 @@
+using Porchlight.App;
 using Porchlight.Input;
 using UnityEngine;
 
@@ -7,6 +8,9 @@ namespace Porchlight.Cameras
     /// Free-flying camera. Arrow keys move, WASD looks (A/D turn, W/S tilt), Space/C change height,
     /// holding the right mouse button also looks around, Shift goes faster. On a gamepad: left stick
     /// moves, right stick looks, triggers change height. Moves faster the higher it is, so a big town doesn't feel slow.
+    /// With the mouse, dragging with the left or middle button pans (the ground under the pointer
+    /// stays under it), the scroll wheel zooms towards whatever is under the pointer, and holding
+    /// Ctrl while dragging orbits around the middle of the view to change the viewing angle.
     /// </summary>
     public sealed class FlyCamera : MonoBehaviour
     {
@@ -19,6 +23,12 @@ namespace Porchlight.Cameras
         public float KeyTiltSpeed = 60f;
         public float MinHeight = 2f;
         public float MaxHeight = 400f;
+
+        /// <summary>How much closer one notch of the scroll wheel brings you.</summary>
+        public float ZoomStep = 0.15f;
+
+        /// <summary>Degrees of orbit per pixel of Ctrl-drag.</summary>
+        public float OrbitSensitivity = 0.25f;
 
         private const string InvertYPref = "Porchlight.InvertY";
         private static int _invertY = -1;
@@ -45,6 +55,11 @@ namespace Porchlight.Cameras
         private float _yaw;
         private float _pitch;
         private float _bounds = 500f;
+        private Camera _camera;
+        private bool _panning;
+        private Vector3 _panAnchor;
+        private bool _orbiting;
+        private Vector3 _orbitPivot;
 
         /// <summary>Puts the camera south of the town, looking north and down at it.</summary>
         public void Frame(float townSize)
@@ -65,6 +80,7 @@ namespace Porchlight.Cameras
         private void Update()
         {
             var dt = Time.unscaledDeltaTime;
+            if (Orbit()) return;
 
             var pointerLook = PInput.MouseLookDelta() * MouseSensitivity + PInput.StickLook() * (StickLookSpeed * dt);
             if (InvertY) pointerLook.y = -pointerLook.y;
@@ -76,6 +92,8 @@ namespace Porchlight.Cameras
             transform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);
 
             var position = transform.position;
+            Pan(ref position);
+            Zoom(ref position);
             var heightBoost = Mathf.Lerp(0.6f, 3f, Mathf.InverseLerp(MinHeight, 200f, position.y));
             var speed = Speed * heightBoost * (PInput.Fast() ? FastMultiplier : 1f);
 
@@ -89,6 +107,88 @@ namespace Porchlight.Cameras
             position.z = Mathf.Clamp(position.z, -_bounds, _bounds);
             position.y = Mathf.Clamp(position.y, MinHeight, MaxHeight);
             transform.position = position;
+        }
+
+        /// <summary>
+        /// Ctrl-drag (with either button, since a Mac browser turns Ctrl+click into a right click)
+        /// circles the camera around the ground in the middle of the view, keeping it in the middle.
+        /// Returns true while orbiting, when the other controls are skipped.
+        /// </summary>
+        private bool Orbit()
+        {
+            var held = PInput.Control() && (PointerGesture.Dragging || PInput.SecondaryHeld());
+            if (!held)
+            {
+                _orbiting = false;
+                return false;
+            }
+
+            if (!_orbiting)
+            {
+                if (_camera == null) _camera = GetComponent<Camera>();
+                if (!GroundUnder(_camera.pixelRect.center, out _orbitPivot)) _orbitPivot = transform.position + transform.forward * 50f;
+                _orbiting = true;
+            }
+
+            var delta = PInput.PointerDelta() * OrbitSensitivity;
+            if (InvertY) delta.y = -delta.y;
+            _yaw += delta.x;
+            _pitch = Mathf.Clamp(_pitch - delta.y, 5f, 89f);
+
+            var rotation = Quaternion.Euler(_pitch, _yaw, 0f);
+            var distance = Vector3.Distance(transform.position, _orbitPivot);
+            var position = _orbitPivot - rotation * Vector3.forward * distance;
+            position.y = Mathf.Clamp(position.y, MinHeight, MaxHeight);
+            transform.SetPositionAndRotation(position, rotation);
+            return true;
+        }
+
+        /// <summary>Grab-and-drag: keeps the ground point that was under the pointer at the start under it.</summary>
+        private void Pan(ref Vector3 position)
+        {
+            if (PointerGesture.DragStarted || (PInput.MiddlePressedThisFrame() && !HudBar.PointerInBar()))
+            {
+                // Anchor where the press began, so the first few pixels of the drag aren't lost.
+                var start = PInput.MiddlePressedThisFrame() ? PInput.PointerPosition() : PointerGesture.PressPosition;
+                _panning = GroundUnder(start, out _panAnchor);
+            }
+
+            if (!PointerGesture.Dragging && !PInput.MiddleHeld())
+            {
+                _panning = false;
+                return;
+            }
+
+            if (_panning && GroundUnder(PInput.PointerPosition(), out var under))
+            {
+                position.x += _panAnchor.x - under.x;
+                position.z += _panAnchor.z - under.z;
+                transform.position = position;
+            }
+        }
+
+        /// <summary>Moves along the line to the ground under the pointer, so that spot stays put.</summary>
+        private void Zoom(ref Vector3 position)
+        {
+            var notches = Mathf.Clamp(PInput.Scroll(), -3f, 3f);
+            if (Mathf.Abs(notches) < 0.01f || HudBar.PointerInBar() || !GroundUnder(PInput.PointerPosition(), out var focus)) return;
+
+            var offset = position - focus;
+            var scale = Mathf.Pow(1f - ZoomStep, notches);
+
+            // Stop at the height limits rather than sliding along them.
+            if (offset.y > 0.01f) scale = Mathf.Clamp(scale, (MinHeight - focus.y) / offset.y, (MaxHeight - focus.y) / offset.y);
+            position = focus + offset * scale;
+        }
+
+        private bool GroundUnder(Vector2 screenPoint, out Vector3 point)
+        {
+            point = default;
+            if (_camera == null) _camera = GetComponent<Camera>();
+            var ray = _camera.ScreenPointToRay(screenPoint);
+            if (ray.direction.y > -0.02f) return false;
+            point = ray.origin + ray.direction * (-ray.origin.y / ray.direction.y);
+            return true;
         }
     }
 }

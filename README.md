@@ -14,8 +14,9 @@ A low-poly town builder. Build towns in the browser, then explore them on the Ni
 Requires Docker, the .NET 10 SDK and Unity 6000.6.5f1 with WebGL Build Support.
 
 ```sh
-./browser-dev.sh            # Postgres + API on http://localhost:5080
-./browser-dev.sh --build    # also builds the WebGL builder first (close the Unity editor)
+./browser-dev.sh                    # Postgres + API on http://localhost:5080
+./browser-dev.sh --build            # also makes a quick development WebGL build first (~20 s; close the Unity editor)
+./browser-dev.sh --build --release  # the fully optimised build instead, as deployed
 ```
 
 Then either open http://localhost:5080 for the browser builder, or open `unity/` in Unity Hub and press **Play**.
@@ -23,7 +24,16 @@ Then either open http://localhost:5080 for the browser builder, or open `unity/`
 In the editor, **Porchlight > Viewer Mode** previews the Switch experience, and
 **Porchlight > Use Production Server** loads towns from production.
 
-**Controls:** arrow keys move, WASD looks around, Space/C go up and down, Shift is faster.
+The browser opens on a title screen laid out on the plaza of a ready-made town. **Play** picks a
+character (Ellie or Evie), then a town, and walks around it in third person. **Build** goes straight
+to the town list and the builder, which draws a 4 m grid over the town and marks the intersection under
+the pointer with a red cross. The Switch has no builder, so it starts at Play.
+
+**Walking:** arrow keys / left stick move, Shift runs, Space / A jumps, WASD / right mouse / right stick
+turn the camera, scroll zooms, Esc / + leaves the town.
+
+**Building (browser):** arrow keys move, WASD looks around, Space/C go up and down, Shift is faster.
+Tab switches between building and walking around as your character.
 
 ## Tests
 

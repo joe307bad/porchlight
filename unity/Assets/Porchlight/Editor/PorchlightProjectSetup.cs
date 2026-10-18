@@ -90,6 +90,10 @@ namespace Porchlight.EditorTools
             if (PlayerSettings.productName != "Porchlight") PlayerSettings.productName = "Porchlight";
             if (PlayerSettings.colorSpace != ColorSpace.Linear) PlayerSettings.colorSpace = ColorSpace.Linear;
 
+            // No "Made with Unity" splash: the game should open straight into Porchlight. Unity 6 allows
+            // turning it off on every license tier.
+            if (PlayerSettings.SplashScreen.show) PlayerSettings.SplashScreen.show = false;
+
             // The dev server is plain http on localhost. Tighten this before release.
             if (PlayerSettings.insecureHttpOption != InsecureHttpOption.AlwaysAllowed)
                 PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;

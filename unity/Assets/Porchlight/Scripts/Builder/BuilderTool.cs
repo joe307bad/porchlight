@@ -17,24 +17,25 @@ namespace Porchlight.Builder
     /// <summary>
     /// The town builder: place buildings, lay roads, remove things, and save. Every rule check and
     /// mutation goes through the shared TownRules and TownEditor, so the server agrees with what the
-    /// player sees. Only builds with editing enabled turn this on (not the Switch viewer).
+    /// player sees. Only builds with editing enabled turn this on (not the Switch viewer). The
+    /// controls live in the bottom bar (<see cref="App.BuilderHud"/>), which reads and changes the state here.
     /// </summary>
     public sealed class BuilderTool : MonoBehaviour
     {
-        private enum Tool
+        public enum Tool
         {
             Build,
             Road,
             Remove,
         }
 
-        private const float RotationStep = 15f;
-        private static readonly string[] ToolNames = { "Build (1)", "Road (2)", "Remove (3)" };
+        public const float RotationStep = 15f;
         private static readonly Color ValidTint = new Color(0.55f, 1f, 0.55f, 1f);
         private static readonly Color InvalidTint = new Color(1f, 0.35f, 0.35f, 1f);
 
         private TownDto _town;
         private TownView _view;
+        private GridOverlay _grid;
         private ITownSource _source;
         private Camera _camera;
         private Action _onExit;
@@ -55,23 +56,62 @@ namespace Porchlight.Builder
         private string _saveStatus;
         private bool _confirmLeave;
         private bool _exitRequested;
-        private Vector2 _scroll;
 
         private Material _validMaterial;
         private Material _invalidMaterial;
         private MeshFilter _ghost;
         private MeshFilter _roadGhost;
 
-        private bool IsDirty => _editCount != _savedEditCount;
-        private static Rect PanelRect => new Rect(10f, 10f, 270f, Ui.Height - 20f);
+        /// <summary>While the player walks around the town, the builder hides its panel and ignores the mouse.</summary>
+        public bool Paused { get; set; }
 
-        public void Begin(TownDto town, TownView view, ITownSource source, Camera camera, Material baseMaterial, Action onExit)
+        public TownDto Town => _town;
+        public TownMetrics Metrics => _metrics;
+        public Tool CurrentTool => _tool;
+        public float Rotation => _rotation;
+        public bool IsDirty => _editCount != _savedEditCount;
+        public bool Saving => _saving;
+        public string SaveStatus => _saveStatus;
+
+        /// <summary>True after Leave was asked for with unsaved changes; asking again leaves anyway.</summary>
+        public bool ConfirmingLeave => _confirmLeave;
+
+        /// <summary>Why the thing under the pointer can't be placed or removed, if it can't.</summary>
+        public string Hint => _hint;
+
+        public string BuildingTypeId
+        {
+            get => _buildingTypeId;
+            set => _buildingTypeId = value;
+        }
+
+        public string RoadTypeId
+        {
+            get => _roadTypeId;
+            set => _roadTypeId = value;
+        }
+
+        public bool AlignToRoads
+        {
+            get => _alignToRoads;
+            set => _alignToRoads = value;
+        }
+
+        public bool SnapToGrid
+        {
+            get => _snapToGrid;
+            set => _snapToGrid = value;
+        }
+
+        public void Begin(TownDto town, TownView view, GridOverlay grid, ITownSource source, Camera camera, Material baseMaterial, Action onExit)
         {
             _town = town;
             _view = view;
+            _grid = grid;
             _source = source;
             _camera = camera;
             _onExit = onExit;
+            Paused = false;
             _metrics = TownMetrics.Compute(town);
             _editCount = _savedEditCount = 0;
             _saveStatus = null;
@@ -100,6 +140,7 @@ namespace Porchlight.Builder
 
             if (_validMaterial != null) Destroy(_validMaterial);
             if (_invalidMaterial != null) Destroy(_invalidMaterial);
+            if (_grid != null) _grid.HideCross();
             _town = null;
             enabled = false;
         }
@@ -115,14 +156,25 @@ namespace Porchlight.Builder
                 return;
             }
 
+            if (Paused)
+            {
+                HideGhosts();
+                _grid.HideCross();
+                return;
+            }
+
             HandleHotkeys();
             _hint = null;
 
-            if (Ui.PointerIn(PanelRect) || !TryGroundPoint(out var cursor))
+            if (HudBar.PointerInBar() || !TryGroundPoint(out var cursor) || !InTown(cursor))
             {
                 HideGhosts();
+                _grid.HideCross();
                 return;
             }
+
+            // The red cross marks the grid intersection under the pointer, whatever the tool.
+            _grid.ShowCross(cursor);
 
             switch (_tool)
             {
@@ -137,12 +189,21 @@ namespace Porchlight.Builder
             if (PInput.KeyDown(PKey.Alpha1)) SetTool(Tool.Build);
             if (PInput.KeyDown(PKey.Alpha2)) SetTool(Tool.Road);
             if (PInput.KeyDown(PKey.Alpha3)) SetTool(Tool.Remove);
-            if (PInput.KeyDown(PKey.Q)) _rotation -= RotationStep;
-            if (PInput.KeyDown(PKey.E)) _rotation += RotationStep;
+            if (PInput.KeyDown(PKey.Q)) Rotate(-RotationStep);
+            if (PInput.KeyDown(PKey.E)) Rotate(RotationStep);
             if (PInput.KeyDown(PKey.Escape)) _roadStart = null;
         }
 
-        private void SetTool(Tool tool)
+        public void Rotate(float degrees) => _rotation = TownMath.NormalizeAngle(_rotation + degrees);
+
+        /// <summary>Back to the town list. With unsaved changes, the first call asks and the second leaves.</summary>
+        public void Leave()
+        {
+            if (IsDirty && !_confirmLeave) _confirmLeave = true;
+            else _exitRequested = true;
+        }
+
+        public void SetTool(Tool tool)
         {
             _tool = tool;
             _roadStart = null;
@@ -153,7 +214,7 @@ namespace Porchlight.Builder
         {
             if (!Catalog.TryGetBuilding(_buildingTypeId, out var type)) return;
 
-            var position = _snapToGrid ? new Vec2(Mathf.Round(cursor.X), Mathf.Round(cursor.Z)) : cursor;
+            var position = _snapToGrid ? TownGrid.Snap(cursor) : cursor;
             var rotation = _rotation;
             if (_alignToRoads && TownQueries.TrySnapToRoad(_town, type, cursor, out var snapped, out var heading))
             {
@@ -169,7 +230,7 @@ namespace Porchlight.Builder
             ShowGhost(MeshCache.Building(type.Id), position, rotation, 1f, check.Ok);
             _hint = check.Ok ? null : check.Error;
 
-            if (check.Ok && PInput.PrimaryPressedThisFrame())
+            if (check.Ok && PointerGesture.Clicked)
             {
                 Apply(new PlaceBuildingCommand
                 {
@@ -191,7 +252,7 @@ namespace Porchlight.Builder
             {
                 ShowRoadGhost(end.Position, end.Position, type.Width, true);
                 _hint = "Click to start a road";
-                if (PInput.PrimaryPressedThisFrame()) _roadStart = end.Position;
+                if (PointerGesture.Clicked) _roadStart = end.Position;
                 return;
             }
 
@@ -200,7 +261,7 @@ namespace Porchlight.Builder
             ShowRoadGhost(start, end.Position, type.Width, check.Ok);
             _hint = check.Ok ? "Click to lay this segment. Esc to finish." : check.Error;
 
-            if (check.Ok && PInput.PrimaryPressedThisFrame())
+            if (check.Ok && PointerGesture.Clicked)
             {
                 var placed = Apply(new AddRoadCommand
                 {
@@ -224,7 +285,7 @@ namespace Porchlight.Builder
             {
                 ShowGhost(MeshCache.Building(building.TypeId), new Vec2(building.X, building.Z), building.RotationDeg, 1.04f, false);
                 _hint = "Click to remove this building";
-                if (PInput.PrimaryPressedThisFrame()) Apply(new RemoveBuildingCommand { BuildingId = building.Id });
+                if (PointerGesture.Clicked) Apply(new RemoveBuildingCommand { BuildingId = building.Id });
                 return;
             }
 
@@ -233,7 +294,7 @@ namespace Porchlight.Builder
             {
                 ShowRoadGhost(road.Value.A, road.Value.B, road.Value.Type.Width + 0.4f, false);
                 _hint = "Click to remove this road";
-                if (PInput.PrimaryPressedThisFrame()) Apply(new RemoveRoadCommand { SegmentId = road.Value.Segment.Id });
+                if (PointerGesture.Clicked) Apply(new RemoveRoadCommand { SegmentId = road.Value.Segment.Id });
                 return;
             }
 
@@ -257,7 +318,7 @@ namespace Porchlight.Builder
             return true;
         }
 
-        private async void Save()
+        public async void Save()
         {
             if (_saving) return;
             _saving = true;
@@ -288,6 +349,12 @@ namespace Porchlight.Builder
             {
                 _saving = false;
             }
+        }
+
+        private bool InTown(Vec2 point)
+        {
+            var half = _town.Size * 0.5f;
+            return Mathf.Abs(point.X) <= half && Mathf.Abs(point.Z) <= half;
         }
 
         private bool TryGroundPoint(out Vec2 point)
@@ -344,85 +411,6 @@ namespace Porchlight.Builder
         {
             if (_ghost != null) _ghost.gameObject.SetActive(false);
             if (_roadGhost != null) _roadGhost.gameObject.SetActive(false);
-        }
-
-        private void OnGUI()
-        {
-            if (_town == null) return;
-            Ui.Begin();
-
-            GUILayout.BeginArea(PanelRect, GUI.skin.box);
-            _scroll = GUILayout.BeginScrollView(_scroll);
-
-            GUILayout.Label(_town.Name, Ui.Title);
-            GUILayout.Label($"Population {_metrics.Population}    Jobs {_metrics.Jobs}");
-            GUILayout.Label($"{_metrics.BuildingCount} buildings ({_metrics.ConnectedBuildingCount} on a road)");
-            GUILayout.Label($"{_metrics.RoadLengthMeters:0} m of road");
-            GUILayout.Space(8f);
-
-            var tool = (Tool)GUILayout.Toolbar((int)_tool, ToolNames);
-            if (tool != _tool) SetTool(tool);
-            GUILayout.Space(6f);
-
-            switch (_tool)
-            {
-                case Tool.Build:
-                    foreach (var type in Catalog.Buildings)
-                    {
-                        if (GUILayout.Toggle(_buildingTypeId == type.Id, $"{type.DisplayName}  ({Describe(type)})", GUI.skin.button))
-                        {
-                            _buildingTypeId = type.Id;
-                        }
-                    }
-
-                    GUILayout.Label($"Rotation {_rotation:0}°  (Q / E)");
-                    _alignToRoads = GUILayout.Toggle(_alignToRoads, " Snap beside roads");
-                    _snapToGrid = GUILayout.Toggle(_snapToGrid, " Snap to 1 m grid");
-                    break;
-
-                case Tool.Road:
-                    foreach (var type in Catalog.Roads)
-                    {
-                        if (GUILayout.Toggle(_roadTypeId == type.Id, $"{type.DisplayName}  ({type.Width:0} m)", GUI.skin.button))
-                        {
-                            _roadTypeId = type.Id;
-                        }
-                    }
-
-                    GUILayout.Label("Click to start, click again for each segment. Ends snap to nearby junctions.", Ui.Wrap);
-                    break;
-
-                case Tool.Remove:
-                    GUILayout.Label("Click a building or road to remove it.", Ui.Wrap);
-                    break;
-            }
-
-            if (!string.IsNullOrEmpty(_hint)) GUILayout.Label(_hint, Ui.Hint);
-            GUILayout.EndScrollView();
-
-            GUI.enabled = !_saving;
-            if (GUILayout.Button(IsDirty ? "Save *" : "Save", GUILayout.Height(32f))) Save();
-            GUI.enabled = true;
-            if (!string.IsNullOrEmpty(_saveStatus)) GUILayout.Label(_saveStatus, Ui.Wrap);
-
-            if (GUILayout.Button(_confirmLeave ? "Discard changes and leave" : "Back to towns"))
-            {
-                if (IsDirty && !_confirmLeave) _confirmLeave = true;
-                else _exitRequested = true;
-            }
-
-            if (_confirmLeave) GUILayout.Label("You have unsaved changes.", Ui.Hint);
-
-            FlyCamera.InvertY = GUILayout.Toggle(FlyCamera.InvertY, " Invert Y (mouse / right stick)");
-            GUILayout.Label("Move: arrows · Look: WASD or hold right mouse · Up/down: Space / C · Fast: Shift", Ui.Small);
-            GUILayout.EndArea();
-        }
-
-        private static string Describe(BuildingType type)
-        {
-            if (type.Population > 0) return $"{type.Population} residents";
-            if (type.Jobs > 0) return $"{type.Jobs} jobs";
-            return "decor";
         }
     }
 }

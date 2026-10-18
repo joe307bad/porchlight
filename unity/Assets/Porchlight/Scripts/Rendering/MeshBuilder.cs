@@ -17,6 +17,12 @@ namespace Porchlight.Rendering
         private readonly List<int> _triangles = new List<int>();
 
         /// <summary>
+        /// Added to every normal before it's stored. Tilting normals up keeps the undersides of rounded
+        /// shapes (chins, curls) from going dark, since the flat shader has only a little ambient light.
+        /// </summary>
+        public Vector3 NormalBias { get; set; }
+
+        /// <summary>
         /// Adds a quad. Corners go around the edge in order; <paramref name="outward"/> is roughly the
         /// way the face should point, and the winding is fixed up to match, so callers don't have to
         /// think about it.
@@ -30,6 +36,7 @@ namespace Porchlight.Rendering
                 normal = -normal;
             }
 
+            normal = (normal + NormalBias).normalized;
             var i = _vertices.Count;
             _vertices.Add(a);
             _vertices.Add(b);
@@ -58,6 +65,7 @@ namespace Porchlight.Rendering
                 normal = -normal;
             }
 
+            normal = (normal + NormalBias).normalized;
             var i = _vertices.Count;
             _vertices.Add(a);
             _vertices.Add(b);
@@ -95,6 +103,53 @@ namespace Porchlight.Rendering
             Quad(new Vector3(x0, b, z0), new Vector3(x0, t, z0), new Vector3(x1, t, z0), new Vector3(x1, b, z0), color, Vector3.back);
             Quad(new Vector3(x1, b, z0), new Vector3(x1, t, z0), new Vector3(x1, t, z1), new Vector3(x1, b, z1), color, Vector3.right);
             Quad(new Vector3(x0, b, z0), new Vector3(x0, t, z0), new Vector3(x0, t, z1), new Vector3(x0, b, z1), color, Vector3.left);
+        }
+
+        /// <summary>
+        /// A faceted ellipsoid. <paramref name="keepFace"/> gets each face's direction from the centre
+        /// (on the unit sphere) and can drop faces, e.g. to leave a hole for a face under the hair.
+        /// </summary>
+        public void Ball(Vector3 center, Vector3 radii, Color color, int sides = 8, int rings = 5, System.Func<Vector3, bool> keepFace = null)
+        {
+            Vector3 Point(int ring, int side)
+            {
+                var lat = Mathf.PI * ring / rings - Mathf.PI * 0.5f;
+                var lon = Mathf.PI * 2f * side / sides;
+                return new Vector3(Mathf.Cos(lat) * Mathf.Sin(lon), Mathf.Sin(lat), Mathf.Cos(lat) * Mathf.Cos(lon));
+            }
+
+            Vector3 World(Vector3 unit) => center + Vector3.Scale(unit, radii);
+
+            for (var r = 0; r < rings; r++)
+            {
+                for (var s = 0; s < sides; s++)
+                {
+                    Vector3 a = Point(r, s), b = Point(r, s + 1), c = Point(r + 1, s + 1), d = Point(r + 1, s);
+                    var direction = (a + b + c + d).normalized;
+                    if (keepFace != null && !keepFace(direction)) continue;
+
+                    var outward = Vector3.Scale(direction, new Vector3(1f / radii.x, 1f / radii.y, 1f / radii.z));
+                    if (r == 0) Triangle(World(a), World(c), World(d), color, outward);
+                    else if (r == rings - 1) Triangle(World(a), World(b), World(c), color, outward);
+                    else Quad(World(a), World(b), World(c), World(d), color, outward);
+                }
+            }
+        }
+
+        /// <summary>An upright, capped prism (a low-poly cylinder or cone) resting on <paramref name="bottomCenter"/>.</summary>
+        public void Prism(Vector3 bottomCenter, float bottomRadius, float topRadius, float height, Color color, int sides = 6)
+        {
+            var top = bottomCenter + Vector3.up * height;
+            for (var i = 0; i < sides; i++)
+            {
+                var a0 = Mathf.PI * 2f * i / sides;
+                var a1 = Mathf.PI * 2f * (i + 1) / sides;
+                var d0 = new Vector3(Mathf.Sin(a0), 0f, Mathf.Cos(a0));
+                var d1 = new Vector3(Mathf.Sin(a1), 0f, Mathf.Cos(a1));
+                Quad(bottomCenter + d0 * bottomRadius, top + d0 * topRadius, top + d1 * topRadius, bottomCenter + d1 * bottomRadius, color, d0 + d1);
+                Triangle(top, top + d0 * topRadius, top + d1 * topRadius, color, Vector3.up);
+                Triangle(bottomCenter, bottomCenter + d0 * bottomRadius, bottomCenter + d1 * bottomRadius, color, Vector3.down);
+            }
         }
 
         public Mesh ToMesh(Mesh target = null, string name = null)

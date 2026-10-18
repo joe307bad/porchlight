@@ -13,6 +13,9 @@ namespace Porchlight.Input
         Alpha1,
         Alpha2,
         Alpha3,
+        Tab,
+        R,
+        Backspace,
     }
 
     /// <summary>
@@ -148,7 +151,83 @@ namespace Porchlight.Input
 #endif
         }
 
-        /// <summary>Scroll wheel: positive is up. Only the sign is meaningful across platforms.</summary>
+        public static bool PrimaryHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var m = Mouse.current;
+            return m != null && m.leftButton.isPressed;
+#else
+            return UnityEngine.Input.GetMouseButton(0);
+#endif
+        }
+
+        public static bool PrimaryReleasedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var m = Mouse.current;
+            return m != null && m.leftButton.wasReleasedThisFrame;
+#else
+            return UnityEngine.Input.GetMouseButtonUp(0);
+#endif
+        }
+
+        /// <summary>Either Ctrl key.</summary>
+        public static bool Control()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current;
+            return k != null && (k.leftCtrlKey.isPressed || k.rightCtrlKey.isPressed);
+#else
+            return UnityEngine.Input.GetKey(KeyCode.LeftControl) || UnityEngine.Input.GetKey(KeyCode.RightControl);
+#endif
+        }
+
+        /// <summary>The right button. On a Mac, browsers report Ctrl+click as this too.</summary>
+        public static bool SecondaryHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var m = Mouse.current;
+            return m != null && m.rightButton.isPressed;
+#else
+            return UnityEngine.Input.GetMouseButton(1);
+#endif
+        }
+
+        /// <summary>How far the pointer moved this frame, in pixels.</summary>
+        public static Vector2 PointerDelta()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var m = Mouse.current;
+            return m != null ? m.delta.ReadValue() : Vector2.zero;
+#else
+            return new Vector2(UnityEngine.Input.GetAxis("Mouse X"), UnityEngine.Input.GetAxis("Mouse Y")) * 10f;
+#endif
+        }
+
+        public static bool MiddlePressedThisFrame()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var m = Mouse.current;
+            return m != null && m.middleButton.wasPressedThisFrame;
+#else
+            return UnityEngine.Input.GetMouseButtonDown(2);
+#endif
+        }
+
+        public static bool MiddleHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var m = Mouse.current;
+            return m != null && m.middleButton.isPressed;
+#else
+            return UnityEngine.Input.GetMouseButton(2);
+#endif
+        }
+
+        /// <summary>
+        /// Scroll wheel in notches: positive is up, about 1 per notch (the Input System's default
+        /// uniform range), fractions from a trackpad.
+        /// </summary>
         public static float Scroll()
         {
 #if ENABLE_INPUT_SYSTEM
@@ -172,6 +251,9 @@ namespace Porchlight.Input
                 case PKey.Alpha1: return k.digit1Key.wasPressedThisFrame;
                 case PKey.Alpha2: return k.digit2Key.wasPressedThisFrame;
                 case PKey.Alpha3: return k.digit3Key.wasPressedThisFrame;
+                case PKey.Tab: return k.tabKey.wasPressedThisFrame;
+                case PKey.R: return k.rKey.wasPressedThisFrame;
+                case PKey.Backspace: return k.backspaceKey.wasPressedThisFrame;
                 default: return false;
             }
 #else
@@ -183,6 +265,9 @@ namespace Porchlight.Input
                 case PKey.Alpha1: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha1);
                 case PKey.Alpha2: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha2);
                 case PKey.Alpha3: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha3);
+                case PKey.Tab: return UnityEngine.Input.GetKeyDown(KeyCode.Tab);
+                case PKey.R: return UnityEngine.Input.GetKeyDown(KeyCode.R);
+                case PKey.Backspace: return UnityEngine.Input.GetKeyDown(KeyCode.Backspace);
                 default: return false;
             }
 #endif
@@ -209,6 +294,28 @@ namespace Porchlight.Input
                 || (g != null && (g.dpad.down.wasPressedThisFrame || g.leftStick.down.wasPressedThisFrame));
 #else
             return UnityEngine.Input.GetKeyDown(KeyCode.DownArrow);
+#endif
+        }
+
+        public static bool NavLeft()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var g = Gamepad.current;
+            return (Keyboard.current?.leftArrowKey.wasPressedThisFrame ?? false)
+                || (g != null && (g.dpad.left.wasPressedThisFrame || g.leftStick.left.wasPressedThisFrame));
+#else
+            return UnityEngine.Input.GetKeyDown(KeyCode.LeftArrow);
+#endif
+        }
+
+        public static bool NavRight()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var g = Gamepad.current;
+            return (Keyboard.current?.rightArrowKey.wasPressedThisFrame ?? false)
+                || (g != null && (g.dpad.right.wasPressedThisFrame || g.leftStick.right.wasPressedThisFrame));
+#else
+            return UnityEngine.Input.GetKeyDown(KeyCode.RightArrow);
 #endif
         }
 
@@ -243,6 +350,67 @@ namespace Porchlight.Input
 #else
             return UnityEngine.Input.GetKeyDown(KeyCode.Escape);
 #endif
+        }
+
+        /// <summary>Jump: Space, or A on a Switch / the bottom face button elsewhere.</summary>
+        public static bool Jump()
+        {
+#if ENABLE_INPUT_SYSTEM
+            return (Keyboard.current?.spaceKey.wasPressedThisFrame ?? false)
+                || (Gamepad.current != null && ConfirmButton(Gamepad.current).wasPressedThisFrame);
+#else
+            return UnityEngine.Input.GetKeyDown(KeyCode.Space);
+#endif
+        }
+
+        /// <summary>Leave the town: Escape, or + (Start) on a controller, so B can't be pressed by accident.</summary>
+        public static bool Pause()
+        {
+#if ENABLE_INPUT_SYSTEM
+            return (Keyboard.current?.escapeKey.wasPressedThisFrame ?? false)
+                || (Gamepad.current != null && Gamepad.current.startButton.wasPressedThisFrame);
+#else
+            return UnityEngine.Input.GetKeyDown(KeyCode.Escape);
+#endif
+        }
+    
+#if ENABLE_INPUT_SYSTEM
+        private static readonly System.Text.StringBuilder Typed = new System.Text.StringBuilder();
+        private static Keyboard _typingKeyboard;
+
+        private static void OnTextInput(char c) => Typed.Append(c);
+#endif
+
+        /// <summary>
+        /// Printable characters typed since the last call, for text fields. Call it every frame while
+        /// a field has focus; it starts listening on the first call, so earlier keys are ignored.
+        /// </summary>
+        public static string TypedText()
+        {
+            string text;
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current;
+            if (k != _typingKeyboard)
+            {
+                if (_typingKeyboard != null) _typingKeyboard.onTextInput -= OnTextInput;
+                if (k != null) k.onTextInput += OnTextInput;
+                _typingKeyboard = k;
+                Typed.Clear();
+            }
+
+            text = Typed.ToString();
+            Typed.Clear();
+#else
+            text = UnityEngine.Input.inputString;
+#endif
+            // Keep printable characters only; Enter, Escape and Backspace are handled as keys.
+            var printable = new System.Text.StringBuilder(text.Length);
+            foreach (var c in text)
+            {
+                if (!char.IsControl(c)) printable.Append(c);
+            }
+
+            return printable.ToString();
         }
     }
 }
