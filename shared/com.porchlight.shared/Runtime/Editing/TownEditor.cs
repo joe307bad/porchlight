@@ -84,8 +84,11 @@ namespace Porchlight.Shared.Editing
             var z = TownMath.Quantize(c.Z);
             var rotation = TownMath.NormalizeAngle(c.RotationDeg);
 
-            var check = TownRules.CanPlaceBuilding(town, c.TypeId, x, z, rotation);
+            var check = TownRules.CanPlaceBuilding(town, c.TypeId, x, z, rotation, out var ground);
             if (!check.Ok) return check;
+
+            // On a slope, the ground under the building is levelled first.
+            if (ground != null) town.Terrain = ground;
 
             town.Buildings.Add(new BuildingDto { Id = c.BuildingId, TypeId = c.TypeId, X = x, Z = z, RotationDeg = rotation });
             return EditResult.Success;

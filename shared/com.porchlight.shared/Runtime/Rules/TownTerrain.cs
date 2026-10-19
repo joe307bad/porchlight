@@ -10,14 +10,21 @@ namespace Porchlight.Shared.Rules
     /// cell between lattice points is two flat triangles, split from its -X -Z corner to its +X +Z corner.
     /// The renderer draws exactly those triangles, so <see cref="HeightAt"/> is the height you see.
     ///
-    /// Shaping keeps three things true, so there's always somewhere sensible to build and walk: no slope
-    /// between neighbouring points is steeper than <see cref="MaxSlope"/>, the edge of the town stays at 0
-    /// to meet the countryside, and heights stay between <see cref="MinHeight"/> and <see cref="MaxHeight"/>.
+    /// The terrain tool makes slopes no steeper than <see cref="MaxSlope"/>. Levelling the ground for a
+    /// building may leave steeper banks beside it, up to <see cref="BankSlope"/>, so the hillside around
+    /// it stays as it was. The edge of the town stays at 0 to meet the countryside, and heights stay
+    /// between <see cref="MinHeight"/> and <see cref="MaxHeight"/>.
     /// </summary>
     public static class TownTerrain
     {
         /// <summary>Rise over run. 0.3 is about 17°: easy to walk up, and gentle enough to look like hills.</summary>
         public const float MaxSlope = 0.3f;
+
+        /// <summary>
+        /// The steepest the ground may be anywhere: 1 is 45°. Only the banks left beside a building that
+        /// was levelled into a hillside get this steep.
+        /// </summary>
+        public const float BankSlope = 1f;
 
         public const float MinHeight = -8f;
         public const float MaxHeight = 30f;
@@ -158,12 +165,102 @@ namespace Porchlight.Shared.Rules
         /// </summary>
         public static List<int> Shape(TownDto town, Vec2 center, float padHalfSize, float delta)
         {
+            var target = Math.Clamp(HeightAt(town, center) + delta, MinHeight, MaxHeight);
+            return Flatten(town, target, MaxSlope, null, (x, z) =>
+            {
+                var dx = Math.Max(MathF.Abs(x - center.X) - padHalfSize, 0f);
+                var dz = Math.Max(MathF.Abs(z - center.Z) - padHalfSize, 0f);
+                return MathF.Sqrt(dx * dx + dz * dz);
+            });
+        }
+
+        /// <summary>
+        /// Levels the ground for a building: every cell under its footprint and one grid square in front
+        /// of it (local +Z, where the door is) goes flat, so there's a step out of the front door. The
+        /// height is whatever needs the least digging and filling. Lattice points in <paramref name="keep"/>
+        /// (under other buildings) don't move, and the rest level to match them. Ground beyond only moves
+        /// where the bank left beside the building would be steeper than <see cref="BankSlope"/>, which is
+        /// nowhere on slopes the terrain tool makes. Returns the new heights.
+        /// </summary>
+        public static List<int> Level(TownDto town, in OrientedRect footprint, HashSet<(int I, int J)> keep, out float height)
+        {
+            var front = TownGrid.Spacing * 0.5f;
+            var area = new OrientedRect(footprint.Center + footprint.AxisZ * front, footprint.HalfWidth, footprint.HalfDepth + front, footprint.RotationDeg);
+            var level = Underneath(town, area);
+
+            var spacing = Spacing(town.Size);
+            var half = town.Size * 0.5f;
+            var points = new List<Vec2>(level.Count);
+            float low = float.MaxValue, high = float.MinValue, kept = 0f;
+            var keptCount = 0;
+            foreach (var (i, j) in level)
+            {
+                points.Add(new Vec2(-half + i * spacing, -half + j * spacing));
+                var h = HeightAt(town, i, j);
+                low = Math.Min(low, h);
+                high = Math.Max(high, h);
+                if (keep == null || !keep.Contains((i, j))) continue;
+                kept += h;
+                keptCount++;
+            }
+
+            var target = keptCount > 0 ? kept / keptCount : (low + high) * 0.5f;
+            height = MathF.Round(Math.Clamp(target, MinHeight, MaxHeight) * 100f) * 0.01f;
+            return Flatten(town, height, BankSlope, (i, j) => keep != null && keep.Contains((i, j)), (x, z) =>
+            {
+                var nearest = float.MaxValue;
+                foreach (var p in points)
+                {
+                    var dx = x - p.X;
+                    var dz = z - p.Z;
+                    nearest = Math.Min(nearest, dx * dx + dz * dz);
+                }
+
+                return MathF.Sqrt(nearest);
+            });
+        }
+
+        /// <summary>The lattice points of every cell a rectangle covers: the ones that shape the ground under it.</summary>
+        public static HashSet<(int I, int J)> Underneath(TownDto town, in OrientedRect rect)
+        {
+            var cells = CellsFor(town.Size);
+            var spacing = town.Size / cells;
+            var half = town.Size * 0.5f;
+            var reachX = rect.ExtentAlong(new Vec2(1f, 0f));
+            var reachZ = rect.ExtentAlong(new Vec2(0f, 1f));
+            var i0 = Math.Max(0, (int)MathF.Floor((rect.Center.X - reachX + half) / spacing));
+            var i1 = Math.Min(cells - 1, (int)MathF.Floor((rect.Center.X + reachX + half) / spacing));
+            var j0 = Math.Max(0, (int)MathF.Floor((rect.Center.Z - reachZ + half) / spacing));
+            var j1 = Math.Min(cells - 1, (int)MathF.Floor((rect.Center.Z + reachZ + half) / spacing));
+            var points = new HashSet<(int I, int J)>();
+            for (var j = j0; j <= j1; j++)
+            {
+                for (var i = i0; i <= i1; i++)
+                {
+                    var cell = new OrientedRect(new Vec2(-half + (i + 0.5f) * spacing, -half + (j + 0.5f) * spacing), spacing * 0.5f, spacing * 0.5f, 0f);
+                    if (!cell.Overlaps(rect)) continue;
+                    points.Add((i, j));
+                    points.Add((i + 1, j));
+                    points.Add((i, j + 1));
+                    points.Add((i + 1, j + 1));
+                }
+            }
+
+            return points;
+        }
+
+        /// <summary>
+        /// Brings the ground to <paramref name="target"/> where <paramref name="distance"/> is 0 and eases it
+        /// back to the existing ground further out, no steeper than <paramref name="slope"/>. Points where
+        /// <paramref name="keep"/> is true don't move. Keeps the town's edge at 0 and heights in range.
+        /// </summary>
+        private static List<int> Flatten(TownDto town, float target, float slope, Func<int, int, bool> keep, Func<float, float, float> distance)
+        {
             var cells = CellsFor(town.Size);
             var spacing = town.Size / cells;
             var half = town.Size * 0.5f;
             var n = cells + 1;
             var hasOld = TryGrid(town, out _, out var old);
-            var target = Math.Clamp(HeightAt(town, center) + delta, MinHeight, MaxHeight);
 
             var heights = new List<int>(n * n);
             for (var j = 0; j <= cells; j++)
@@ -171,17 +268,23 @@ namespace Porchlight.Shared.Rules
                 for (var i = 0; i <= cells; i++)
                 {
                     var h = hasOld ? old[j * n + i] * 0.01f : 0f;
+                    if (keep != null && keep(i, j))
+                    {
+                        heights.Add((int)MathF.Round(h * 100f));
+                        continue;
+                    }
 
-                    // Within reach of the pad, the ground can't be further from the target than the
-                    // slope allows. Clamping both ways levels the pad and ramps the ground around it.
-                    var dx = Math.Max(MathF.Abs(-half + i * spacing - center.X) - padHalfSize, 0f);
-                    var dz = Math.Max(MathF.Abs(-half + j * spacing - center.Z) - padHalfSize, 0f);
-                    var reach = MaxSlope * MathF.Sqrt(dx * dx + dz * dz);
-                    h = Math.Clamp(h, target - reach, target + reach);
+                    // Within reach of the area, the ground can't be further from the target than the
+                    // slope allows. Clamping both ways levels the area and ramps the ground around it.
+                    var reach = slope * distance(-half + i * spacing, -half + j * spacing);
+                    var moved = Math.Clamp(h, target - reach, target + reach);
 
-                    // The same rule pins the edge of town to 0.
-                    var edge = MaxSlope * spacing * Math.Min(Math.Min(i, cells - i), Math.Min(j, cells - j));
-                    h = Math.Clamp(h, -edge, edge);
+                    // The same rule pins the edge of town to 0, for ground this moves. Ground it leaves alone was already fine.
+                    if (moved != h)
+                    {
+                        var edge = slope * spacing * Math.Min(Math.Min(i, cells - i), Math.Min(j, cells - j));
+                        h = Math.Clamp(moved, -edge, edge);
+                    }
 
                     heights.Add((int)MathF.Round(Math.Clamp(h, MinHeight, MaxHeight) * 100f));
                 }
@@ -205,29 +308,45 @@ namespace Porchlight.Shared.Rules
             }
 
             var heights = terrain.Heights;
-            var maxStep = (int)MathF.Ceiling(MaxSlope * (town.Size / cells) * 100f) + RoundingSlack;
+            foreach (var h in heights)
+            {
+                if (h < MinHeight * 100f || h > MaxHeight * 100f)
+                {
+                    result.Add($"Terrain heights must be between {MinHeight} and {MaxHeight} m");
+                    return false;
+                }
+            }
+
+            for (var k = 0; k <= cells; k++)
+            {
+                if (heights[k] != 0 || heights[cells * n + k] != 0 || heights[k * n] != 0 || heights[k * n + cells] != 0)
+                {
+                    result.Add("Terrain must be at 0 along the edge of the town");
+                    return false;
+                }
+            }
+
+            if (!IsGentle(town.Size, heights))
+            {
+                result.Add("Terrain is too steep");
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>Whether no two neighbouring lattice points are further apart in height than <see cref="BankSlope"/> allows.</summary>
+        internal static bool IsGentle(float townSize, List<int> heights)
+        {
+            var cells = CellsFor(townSize);
+            var n = cells + 1;
+            var maxStep = (int)MathF.Ceiling(BankSlope * (townSize / cells) * 100f) + RoundingSlack;
             for (var j = 0; j <= cells; j++)
             {
                 for (var i = 0; i <= cells; i++)
                 {
                     var h = heights[j * n + i];
-                    if (h < MinHeight * 100f || h > MaxHeight * 100f)
-                    {
-                        result.Add($"Terrain heights must be between {MinHeight} and {MaxHeight} m");
-                        return false;
-                    }
-
-                    if ((i == 0 || j == 0 || i == cells || j == cells) && h != 0)
-                    {
-                        result.Add("Terrain must be at 0 along the edge of the town");
-                        return false;
-                    }
-
-                    if ((i > 0 && Math.Abs(h - heights[j * n + i - 1]) > maxStep) || (j > 0 && Math.Abs(h - heights[(j - 1) * n + i]) > maxStep))
-                    {
-                        result.Add("Terrain is too steep");
-                        return false;
-                    }
+                    if ((i > 0 && Math.Abs(h - heights[j * n + i - 1]) > maxStep) || (j > 0 && Math.Abs(h - heights[(j - 1) * n + i]) > maxStep)) return false;
                 }
             }
 

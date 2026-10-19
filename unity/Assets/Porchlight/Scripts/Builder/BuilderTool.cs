@@ -15,7 +15,8 @@ using UnityEngine;
 namespace Porchlight.Builder
 {
     /// <summary>
-    /// The town builder: place buildings, lay roads, shape the ground, remove things, and save. Every rule check and
+    /// The town builder: place buildings, lay roads, shape the ground and remove things. Edits save
+    /// themselves a moment after you stop (<see cref="AutoSaveDelay"/>). Every rule check and
     /// mutation goes through the shared TownRules and TownEditor, so the server agrees with what the
     /// player sees. Only builds with editing enabled turn this on (not the Switch viewer). The
     /// controls live in the bottom bar (<see cref="App.BuilderHud"/>), which reads and changes the state here.
@@ -31,6 +32,12 @@ namespace Porchlight.Builder
         }
 
         public const float RotationStep = 15f;
+
+        /// <summary>Seconds after the last edit before the town saves itself, so a burst of clicks is one save.</summary>
+        public const float AutoSaveDelay = 1f;
+
+        /// <summary>Seconds to wait before trying again after a save fails.</summary>
+        private const float RetryDelay = 5f;
 
         /// <summary>The level pads the terrain tool can make, by half their side length in metres.</summary>
         public static readonly (string Name, float HalfSize)[] PadSizes = { ("Small", 4f), ("Medium", 8f), ("Large", 16f) };
@@ -49,8 +56,8 @@ namespace Porchlight.Builder
         private string _buildingTypeId = Catalog.Buildings[0].Id;
         private string _roadTypeId = Catalog.Roads[0].Id;
         private float _rotation;
-        private bool _alignToRoads = true;
         private bool _snapToGrid;
+        private bool _snapToRoads = true;
         private Vec2? _roadStart;
         private bool _raiseTerrain = true;
         private int _padSize = 1;
@@ -60,6 +67,11 @@ namespace Porchlight.Builder
         private (Vec2 Center, float HalfSize, float Delta, int Edits) _terrainCheckKey;
         private EditResult _terrainCheck;
 
+        // Likewise the last placement check, since on a slope it works out how to level the ground.
+        private (string Type, Vec2 Position, float Rotation, int Edits) _placeCheckKey;
+        private EditResult _placeCheck;
+        private float _placeGround;
+
         private TownMetrics _metrics;
         private int _editCount;
         private int _savedEditCount;
@@ -67,6 +79,13 @@ namespace Porchlight.Builder
         private string _saveStatus;
         private bool _confirmLeave;
         private bool _exitRequested;
+        private bool _leaveAfterSave;
+
+        /// <summary>When to save next, in unscaled time. Infinity while there's nothing to save.</summary>
+        private float _saveAt = float.PositiveInfinity;
+
+        /// <summary>Someone else saved this town; saving again would only conflict, so stop until it's reopened.</summary>
+        private bool _conflicted;
 
         private Material _validMaterial;
         private Material _invalidMaterial;
@@ -102,16 +121,17 @@ namespace Porchlight.Builder
             set => _roadTypeId = value;
         }
 
-        public bool AlignToRoads
-        {
-            get => _alignToRoads;
-            set => _alignToRoads = value;
-        }
-
         public bool SnapToGrid
         {
             get => _snapToGrid;
             set => _snapToGrid = value;
+        }
+
+        /// <summary>Near a road, put buildings beside it facing it. With this and grid snapping off, placement is free form.</summary>
+        public bool SnapToRoads
+        {
+            get => _snapToRoads;
+            set => _snapToRoads = value;
         }
 
         /// <summary>Whether the terrain tool raises the ground (or lowers it).</summary>
@@ -140,9 +160,11 @@ namespace Porchlight.Builder
             _metrics = TownMetrics.Compute(town);
             _editCount = _savedEditCount = 0;
             _saveStatus = null;
-            _confirmLeave = _exitRequested = false;
+            _confirmLeave = _exitRequested = _leaveAfterSave = _conflicted = false;
+            _saveAt = float.PositiveInfinity;
             _roadStart = null;
             _terrainCheckKey = default;
+            _placeCheckKey = default;
 
             _validMaterial = new Material(baseMaterial) { name = "Ghost (valid)" };
             _validMaterial.SetColor("_Tint", ValidTint);
@@ -182,6 +204,9 @@ namespace Porchlight.Builder
                 return;
             }
 
+            // Saving carries on while walking around, too.
+            if (IsDirty && !_saving && Time.unscaledTime >= _saveAt) Save();
+
             if (Paused)
             {
                 HideGhosts();
@@ -199,8 +224,8 @@ namespace Porchlight.Builder
                 return;
             }
 
-            // The red cross marks the grid intersection under the pointer, whatever the tool.
-            _grid.ShowCross(_town, cursor);
+            // The red cross marks the grid point under the pointer, whatever the tool. Roads use half steps.
+            _grid.ShowCross(_town, cursor, _tool == Tool.Road ? TownGrid.HalfStep : TownGrid.Spacing);
 
             switch (_tool)
             {
@@ -224,11 +249,20 @@ namespace Porchlight.Builder
 
         public void Rotate(float degrees) => _rotation = TownMath.NormalizeAngle(_rotation + degrees);
 
-        /// <summary>Back to the town list. With unsaved changes, the first call asks and the second leaves.</summary>
+        /// <summary>
+        /// Back to the town list, saving first if there's anything unsaved. If that save fails, it asks,
+        /// and calling again leaves anyway.
+        /// </summary>
         public void Leave()
         {
-            if (IsDirty && !_confirmLeave) _confirmLeave = true;
-            else _exitRequested = true;
+            if (!IsDirty || _confirmLeave)
+            {
+                _exitRequested = true;
+                return;
+            }
+
+            _leaveAfterSave = true;
+            if (!_saving) Save();
         }
 
         public void SetTool(Tool tool)
@@ -244,7 +278,7 @@ namespace Porchlight.Builder
 
             var position = _snapToGrid ? TownGrid.Snap(cursor) : cursor;
             var rotation = _rotation;
-            if (_alignToRoads && TownQueries.TrySnapToRoad(_town, type, cursor, out var snapped, out var heading))
+            if (_snapToRoads && TownQueries.TrySnapToRoad(_town, type, cursor, out var snapped, out var heading))
             {
                 // Beside a road, Q/E rotate relative to "facing the road".
                 position = snapped;
@@ -254,9 +288,18 @@ namespace Porchlight.Builder
             position = TownMath.Quantize(position);
             rotation = TownMath.NormalizeAngle(rotation);
 
-            var check = TownRules.CanPlaceBuilding(_town, type.Id, position.X, position.Z, rotation);
-            var ground = TownTerrain.BaseHeight(_town, TownRules.Footprint(type, position.X, position.Z, rotation));
-            ShowGhost(MeshCache.Building(type.Id), position, ground, rotation, 1f, check.Ok);
+            // On a slope the ground gets levelled, so show the building at the height it will end up at.
+            var key = (type.Id, position, rotation, _editCount);
+            if (!key.Equals(_placeCheckKey))
+            {
+                _placeCheckKey = key;
+                _placeCheck = TownRules.CanPlaceBuilding(_town, type.Id, position.X, position.Z, rotation, out var levelled);
+                var after = levelled == null ? _town : new TownDto { Size = _town.Size, Terrain = levelled };
+                _placeGround = TownTerrain.BaseHeight(after, TownRules.Footprint(type, position.X, position.Z, rotation));
+            }
+
+            var check = _placeCheck;
+            ShowGhost(MeshCache.Building(type.Id), position, _placeGround, rotation, 1f, check.Ok);
             _hint = check.Ok ? null : check.Error;
 
             if (check.Ok && PointerGesture.Clicked)
@@ -276,18 +319,20 @@ namespace Porchlight.Builder
         {
             if (!Catalog.TryGetRoad(_roadTypeId, out var type)) return;
 
-            var end = TownRules.SnapToNode(_town, TownMath.Quantize(cursor));
+            // Road ends go on half-grid points, or join a junction right there.
+            var end = TownRules.SnapToNode(_town, TownGrid.Snap(cursor, TownGrid.HalfStep));
             if (_roadStart == null)
             {
-                ShowRoadGhost(end.Position, end.Position, type.Width, true);
+                ShowRoadGhost(end.Position, end.Position, type.Width, true, end.NodeId != null, false);
                 _hint = "Click to start a road";
                 if (PointerGesture.Clicked) _roadStart = end.Position;
                 return;
             }
 
-            var start = _roadStart.Value;
-            var check = TownRules.CanAddRoad(_town, type.Id, start, end.Position);
-            ShowRoadGhost(start, end.Position, type.Width, check.Ok);
+            // Ends that would run into a building stop flush against its wall.
+            var (start, fittedEnd) = TownRules.FitRoadToBuildings(_town, type.Id, _roadStart.Value, end.Position);
+            var check = TownRules.CanAddRoad(_town, type.Id, start, fittedEnd);
+            ShowRoadGhost(start, fittedEnd, type.Width, check.Ok, TownRules.SnapToNode(_town, start).NodeId != null, TownRules.SnapToNode(_town, fittedEnd).NodeId != null);
             _hint = check.Ok ? "Click to lay this segment. Esc to finish." : check.Error;
 
             if (check.Ok && PointerGesture.Clicked)
@@ -298,12 +343,12 @@ namespace Porchlight.Builder
                     TypeId = type.Id,
                     StartX = start.X,
                     StartZ = start.Z,
-                    EndX = end.Position.X,
-                    EndZ = end.Position.Z,
+                    EndX = fittedEnd.X,
+                    EndZ = fittedEnd.Z,
                 });
 
-                // Keep drawing from where this segment ended.
-                if (placed) _roadStart = end.Position;
+                // Keep drawing from where this segment ended, unless it ended at a building.
+                if (placed) _roadStart = fittedEnd.Equals(end.Position) ? fittedEnd : (Vec2?)null;
             }
         }
 
@@ -321,7 +366,7 @@ namespace Porchlight.Builder
             var road = TownQueries.FindRoadAt(_town, cursor);
             if (road.HasValue)
             {
-                ShowRoadGhost(road.Value.A, road.Value.B, road.Value.Type.Width + 0.4f, false);
+                ShowRoadGhost(road.Value.A, road.Value.B, road.Value.Type.Width + 0.4f, false, false, false);
                 _hint = "Click to remove this road";
                 if (PointerGesture.Clicked) Apply(new RemoveRoadCommand { SegmentId = road.Value.Segment.Id });
                 return;
@@ -359,6 +404,7 @@ namespace Porchlight.Builder
 
         private bool Apply(TownCommand command)
         {
+            var terrain = _town.Terrain;
             var result = TownEditor.Apply(_town, command);
             if (!result.Ok)
             {
@@ -366,7 +412,8 @@ namespace Porchlight.Builder
                 return false;
             }
 
-            if (command is ShapeTerrainCommand)
+            // Shaping the ground, or placing a building on a slope, changes the terrain.
+            if (_town.Terrain != terrain)
             {
                 _view.SyncTerrain(_town);
                 _grid.Show(_town);
@@ -380,14 +427,17 @@ namespace Porchlight.Builder
             _editCount++;
             _saveStatus = null;
             _confirmLeave = false;
+            if (!_conflicted) _saveAt = Time.unscaledTime + AutoSaveDelay;
             return true;
         }
 
+        /// <summary>Saves now. Normally this happens by itself shortly after each edit.</summary>
         public async void Save()
         {
-            if (_saving) return;
+            if (_saving || !IsDirty) return;
             _saving = true;
-            _saveStatus = "Saving...";
+            _saveAt = float.PositiveInfinity;
+            _saveStatus = "Saving…";
             var editsAtSave = _editCount;
             var town = _town;
             try
@@ -396,24 +446,48 @@ namespace Porchlight.Builder
                 if (this == null || _town != town) return;
                 _town.Version = saved.Version;
                 _savedEditCount = editsAtSave;
-                _saveStatus = IsDirty ? "Saved (newer edits still unsaved)" : "Saved";
+                _saveStatus = "All changes saved";
+
+                // Edits made while this save was on its way get their own save.
+                if (IsDirty) _saveAt = Time.unscaledTime + AutoSaveDelay;
+                else if (_leaveAfterSave) _exitRequested = true;
             }
             catch (TownApiException e)
             {
-                if (this == null) return;
-                _saveStatus = e.IsConflict
-                    ? "Someone else saved this town. Go back and reopen it to get their changes."
-                    : "Save failed: " + e.Message;
+                if (this == null || _town != town) return;
+                if (e.IsConflict)
+                {
+                    _conflicted = true;
+                    _saveStatus = "Someone else saved this town. Go back and reopen it to get their changes.";
+                }
+                else
+                {
+                    _saveStatus = "Couldn't save: " + e.Message;
+                    _saveAt = Time.unscaledTime + RetryDelay;
+                }
+
+                SaveFailed();
             }
             catch (Exception e)
             {
                 Debug.LogException(e);
-                if (this != null) _saveStatus = "Save failed: " + e.Message;
+                if (this == null || _town != town) return;
+                _saveStatus = "Couldn't save: " + e.Message;
+                _saveAt = Time.unscaledTime + RetryDelay;
+                SaveFailed();
             }
             finally
             {
                 _saving = false;
             }
+        }
+
+        /// <summary>If we were saving on the way out, ask before leaving without it.</summary>
+        private void SaveFailed()
+        {
+            if (!_leaveAfterSave) return;
+            _leaveAfterSave = false;
+            _confirmLeave = true;
         }
 
         private bool InTown(Vec2 point)
@@ -451,12 +525,13 @@ namespace Porchlight.Builder
             _ghost.gameObject.SetActive(true);
         }
 
-        private void ShowRoadGhost(Vec2 a, Vec2 b, float width, bool valid)
+        /// <summary>A road to be laid or removed. Ends get a round cap where they join another road, like the real thing.</summary>
+        private void ShowRoadGhost(Vec2 a, Vec2 b, float width, bool valid, bool capA, bool capB)
         {
             var mb = new MeshBuilder();
             TerrainMeshes.Strip(mb, _town, a, b, width, Color.white, 0.08f);
-            TerrainMeshes.Disc(mb, _town, a, width * 0.5f, Color.white, 0.08f);
-            TerrainMeshes.Disc(mb, _town, b, width * 0.5f, Color.white, 0.08f);
+            if (capA || a.Equals(b)) TerrainMeshes.Disc(mb, _town, a, width * 0.5f, Color.white, 0.08f);
+            if (capB) TerrainMeshes.Disc(mb, _town, b, width * 0.5f, Color.white, 0.08f);
             ShowFlatGhost(mb, valid);
         }
 

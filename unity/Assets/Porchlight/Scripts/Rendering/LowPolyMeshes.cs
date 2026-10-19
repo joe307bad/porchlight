@@ -22,6 +22,7 @@ namespace Porchlight.Rendering
         private static readonly Color GrassA = Hex("#9DC183");
         private static readonly Color GrassB = Hex("#93B97A");
         private static readonly Color Outskirts = Hex("#7FA06A");
+        private static readonly Color Bank = Hex("#9C8462");
 
         public static Mesh Building(BuildingType type)
         {
@@ -157,7 +158,7 @@ namespace Porchlight.Rendering
 
             if (TownTerrain.IsShaped(town))
             {
-                TerrainMeshes.Surface(mb, town, 0f, Patch);
+                TerrainMeshes.Surface(mb, town, 0f, Patch, Bank);
                 return mb.ToMesh(name: "ground");
             }
 
@@ -174,32 +175,63 @@ namespace Porchlight.Rendering
             return mb.ToMesh(name: "ground");
         }
 
-        /// <summary>All roads as one mesh, lying on the ground: a strip per segment plus a disc per node to fill the joints.</summary>
+        /// <summary>
+        /// All roads as one mesh, lying on the ground: a strip per segment, plus a disc to fill each
+        /// junction or bend. Dead ends stay square, and anywhere a road meets a building it's cut off at
+        /// the building's wall.
+        /// </summary>
         public static void Roads(TownDto town, Mesh target)
         {
             var mb = new MeshBuilder();
-            var nodeWidths = new Dictionary<string, (Vec2 Position, float Width, Color Color)>();
+            var footprints = new List<OrientedRect>();
+            foreach (var building in town.Buildings)
+            {
+                if (TownRules.TryFootprint(building, out var footprint)) footprints.Add(footprint);
+            }
 
+            var nodes = new Dictionary<string, (Vec2 Position, float Width, Color Color, int Roads)>();
             foreach (var road in TownRules.Roads(town))
             {
                 var color = Hex(road.Type.Color);
-                TerrainMeshes.Strip(mb, town, road.A, road.B, road.Type.Width, color, 0.04f);
+                TerrainMeshes.Strip(mb, town, road.A, road.B, road.Type.Width, color, 0.04f, Near(footprints, road.A, road.B, road.Type.Width));
 
-                Remember(nodeWidths, road.Segment.StartNodeId, road.A, road.Type.Width, color);
-                Remember(nodeWidths, road.Segment.EndNodeId, road.B, road.Type.Width, color);
+                Remember(nodes, road.Segment.StartNodeId, road.A, road.Type.Width, color);
+                Remember(nodes, road.Segment.EndNodeId, road.B, road.Type.Width, color);
             }
 
-            foreach (var node in nodeWidths.Values)
+            foreach (var node in nodes.Values)
             {
-                TerrainMeshes.Disc(mb, town, node.Position, node.Width * 0.5f, node.Color, 0.045f);
+                if (node.Roads < 2) continue;
+                TerrainMeshes.Disc(mb, town, node.Position, node.Width * 0.5f, node.Color, 0.045f, Near(footprints, node.Position, node.Position, node.Width));
             }
 
             mb.ToMesh(target, "roads");
         }
 
-        private static void Remember(Dictionary<string, (Vec2, float, Color)> nodes, string id, Vec2 position, float width, Color color)
+        /// <summary>The footprints close enough to a stretch of road to touch it.</summary>
+        private static List<OrientedRect> Near(List<OrientedRect> footprints, Vec2 a, Vec2 b, float width)
         {
-            if (!nodes.TryGetValue(id, out var existing) || existing.Item2 < width) nodes[id] = (position, width, color);
+            List<OrientedRect> near = null;
+            foreach (var footprint in footprints)
+            {
+                if (Segments.Distance(footprint.Center, a, b) > footprint.BoundingRadius + width * 0.5f) continue;
+                near ??= new List<OrientedRect>();
+                near.Add(footprint);
+            }
+
+            return near;
+        }
+
+        /// <summary>Counts the roads meeting at a node, keeping the widest one's size and colour for its disc.</summary>
+        private static void Remember(Dictionary<string, (Vec2 Position, float Width, Color Color, int Roads)> nodes, string id, Vec2 position, float width, Color color)
+        {
+            if (!nodes.TryGetValue(id, out var node))
+            {
+                nodes[id] = (position, width, color, 1);
+                return;
+            }
+
+            nodes[id] = node.Width < width ? (position, width, color, node.Roads + 1) : (node.Position, node.Width, node.Color, node.Roads + 1);
         }
 
         /// <summary>Parses #RRGGBB. Vertex colours aren't converted by Unity, so convert to linear here when the project is linear.</summary>

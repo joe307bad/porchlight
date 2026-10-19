@@ -9,7 +9,8 @@ namespace Porchlight.App
 {
     /// <summary>
     /// The builder's bottom bar: the town's numbers, the tool, a card for each building or road type,
-    /// placement or terrain options, and Save / Walk / Back. Keyboard shortcuts still work (1-4, Q/E, Tab).
+    /// placement or terrain options, and the save status / Walk / Back. Edits save themselves. Keyboard
+    /// shortcuts still work (1-4, Q/E, Tab).
     /// </summary>
     public sealed class BuilderHud : IHudContent
     {
@@ -42,7 +43,7 @@ namespace Porchlight.App
             {
                 var b = _builder;
                 var m = b.Metrics;
-                return $"{b.Town?.Name}|{b.CurrentTool}|{b.BuildingTypeId}|{b.RoadTypeId}|{b.Rotation}|{b.AlignToRoads}|{b.SnapToGrid}|{b.RaiseTerrain}|{b.PadSize}|{b.Hint}|" +
+                return $"{b.Town?.Name}|{b.CurrentTool}|{b.BuildingTypeId}|{b.RoadTypeId}|{b.Rotation}|{b.SnapToGrid}|{b.SnapToRoads}|{b.RaiseTerrain}|{b.PadSize}|{b.Hint}|" +
                        $"{m.Population}|{m.Jobs}|{m.BuildingCount}|{m.ConnectedBuildingCount}|{m.RoadLengthMeters:0}|{b.IsDirty}|{b.Saving}|{b.SaveStatus}|{b.ConfirmingLeave}";
             }
         }
@@ -103,7 +104,7 @@ namespace Porchlight.App
                     c.Header("Roads", left, HeaderZ);
                     var cardRight = DrawRoadCards(c, left);
                     c.Label("Click to start a road, then click again", cardRight + 1.5f, 1.4f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: right - cardRight - 1.5f);
-                    c.Label("for each stretch. Ends snap to junctions.", cardRight + 1.5f, -0.2f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: right - cardRight - 1.5f);
+                    c.Label("for each stretch, in half-grid steps.", cardRight + 1.5f, -0.2f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: right - cardRight - 1.5f);
                     c.Label("Esc stops the road you're drawing.", cardRight + 1.5f, -1.8f, HudCanvas.LabelSize, MenuStyle.OnPrimaryMuted, maxWidth: right - cardRight - 1.5f);
                     break;
 
@@ -115,7 +116,7 @@ namespace Porchlight.App
                 default:
                     c.Header("Remove", left, HeaderZ);
                     c.Label("Click a building or road to remove it.", left, 1.2f, HudCanvas.TitleSize, MenuStyle.OnBackground, weight: FontWeight.SemiBold, maxWidth: right - left);
-                    c.Label("Removing can't be undone, but nothing is saved until you press Save.", left, -0.8f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: right - left);
+                    c.Label("Removing can't be undone, and it saves straight away like any other edit.", left, -0.8f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: right - left);
                     break;
             }
 
@@ -159,8 +160,9 @@ namespace Porchlight.App
             c.Button(new Rect(buttonsX, CaptionZ - 0.6f, 3.4f, 1.2f), $"−{BuilderTool.RotationStep:0}°", null, false, () => _builder.Rotate(-BuilderTool.RotationStep));
             c.Button(new Rect(buttonsX + 3.8f, CaptionZ - 0.6f, 3.4f, 1.2f), $"+{BuilderTool.RotationStep:0}°", null, false, () => _builder.Rotate(BuilderTool.RotationStep));
             var switches = buttonsX + 9.2f;
-            c.Switch(switches, CaptionZ, "Snap beside roads", _builder.AlignToRoads, () => _builder.AlignToRoads = !_builder.AlignToRoads);
-            c.Switch(switches + 13.5f, CaptionZ, "Snap to grid", _builder.SnapToGrid, () => _builder.SnapToGrid = !_builder.SnapToGrid);
+            // Both off is free-form placement.
+            c.Switch(switches, CaptionZ, "Snap to roads", _builder.SnapToRoads, () => _builder.SnapToRoads = !_builder.SnapToRoads);
+            c.Switch(switches + 12f, CaptionZ, "Snap to grid", _builder.SnapToGrid, () => _builder.SnapToGrid = !_builder.SnapToGrid);
         }
 
         /// <summary>A card per road type, showing a stretch of that road. Returns where the cards end.</summary>
@@ -247,13 +249,15 @@ namespace Porchlight.App
         {
             c.Header("Menu", x, HeaderZ);
             const float height = 2.1f, gap = 0.4f;
-            var saveLabel = _builder.Saving ? "Saving…" : "Save";
-            c.Button(new Rect(x, ContentTop - height, ActionWidth, height), saveLabel, null, _builder.IsDirty && !_builder.Saving, _builder.Save, enabled: !_builder.Saving);
+            // Edits save themselves; this shows where that's got to, and saves straight away if pressed.
+            var canSave = _builder.IsDirty && !_builder.Saving;
+            var saveLabel = _builder.Saving ? "Saving…" : _builder.IsDirty ? "Save now" : "Saved";
+            c.Button(new Rect(x, ContentTop - height, ActionWidth, height), saveLabel, null, false, _builder.Save, enabled: canSave);
             c.Button(new Rect(x, ContentTop - height * 2f - gap, ActionWidth, height), "Walk around", "Tab", false, _walk);
             c.Button(new Rect(x, ContentTop - height * 3f - gap * 2f, ActionWidth, height),
                 _builder.ConfirmingLeave ? "Leave without saving" : "Back to towns", null, _builder.ConfirmingLeave, _builder.Leave);
 
-            var status = _builder.ConfirmingLeave ? "You have unsaved changes." : _builder.SaveStatus;
+            var status = _builder.ConfirmingLeave ? "Your latest changes aren't saved." : _builder.SaveStatus;
             if (!string.IsNullOrEmpty(status)) c.Label(status, x, CaptionZ, HudCanvas.LabelSize, _builder.ConfirmingLeave ? MenuStyle.Warning : MenuStyle.OnBackground, maxWidth: ActionWidth);
         }
 

@@ -47,10 +47,13 @@ namespace Porchlight.Rendering
 
         public void Hide() => gameObject.SetActive(false);
 
-        /// <summary>Puts the red cross on the grid intersection nearest to <paramref name="point"/>, lying flat on the ground there.</summary>
-        public void ShowCross(TownDto town, Vec2 point)
+        /// <summary>
+        /// Puts the red cross on the grid point nearest to <paramref name="point"/>, <paramref name="step"/>
+        /// metres apart (the grid, or half of it for roads), lying flat on the ground there.
+        /// </summary>
+        public void ShowCross(TownDto town, Vec2 point, float step = TownGrid.Spacing)
         {
-            var snapped = TownGrid.Snap(point);
+            var snapped = TownGrid.Snap(point, step);
             _cross.SetPositionAndRotation(TerrainMeshes.OnGround(town, snapped), Quaternion.FromToRotation(Vector3.up, TerrainMeshes.Normal(town, snapped)));
             _cross.gameObject.SetActive(true);
         }

@@ -130,8 +130,19 @@ namespace Porchlight.Shared.Rules
 
         public static EditResult CanPlaceBuilding(
             TownDto town, string typeId, float x, float z, float rotationDeg,
+            string ignoreBuildingId = null, float tolerance = ClientTolerance) =>
+            CanPlaceBuilding(town, typeId, x, z, rotationDeg, out _, ignoreBuildingId, tolerance);
+
+        /// <summary>
+        /// Checks a building placement. On a slope, the ground under the building and a grid square in
+        /// front of it gets levelled (<see cref="TownTerrain.Level"/>): <paramref name="ground"/> is the
+        /// terrain to apply first, or null when the ground is already level.
+        /// </summary>
+        public static EditResult CanPlaceBuilding(
+            TownDto town, string typeId, float x, float z, float rotationDeg, out TerrainDto ground,
             string ignoreBuildingId = null, float tolerance = ClientTolerance)
         {
+            ground = null;
             if (!Catalog.TryGetBuilding(typeId, out var type)) return EditResult.Fail($"Unknown building type '{typeId}'");
             if (!IsFinite(x) || !IsFinite(z) || !IsFinite(rotationDeg)) return EditResult.Fail("Invalid position");
             if (ignoreBuildingId == null && town.Buildings.Count >= TownLimits.MaxBuildings) return EditResult.Fail("Town is full");
@@ -145,13 +156,30 @@ namespace Porchlight.Shared.Rules
                 if (footprint.Overlaps(otherFootprint, tolerance)) return EditResult.Fail("Overlaps another building");
             }
 
-            foreach (var road in Roads(town))
+            // Buildings may sit over roads: the road is drawn cut off at the building's walls.
+            if (TownTerrain.IsLevel(town, footprint)) return EditResult.Success;
+
+            // Ground under other buildings stays put; this one levels to match it where they share cells.
+            var keep = new HashSet<(int I, int J)>();
+            foreach (var other in town.Buildings)
             {
-                if (footprint.Overlaps(road.Rect, tolerance)) return EditResult.Fail("Overlaps a road");
+                if (other.Id != ignoreBuildingId && TryFootprint(other, out var otherFootprint)) keep.UnionWith(TownTerrain.Underneath(town, otherFootprint));
             }
 
-            if (!TownTerrain.IsLevel(town, footprint)) return EditResult.Fail("The ground here isn't level");
+            var heights = TownTerrain.Level(town, footprint, keep, out _);
+            var levelled = WithHeights(town, heights);
+            if (!TownTerrain.IsGentle(town.Size, heights)) return EditResult.Fail("The ground here is too steep to level");
+            if (!TownTerrain.IsLevel(levelled, footprint))
+            {
+                return EditResult.Fail(footprint.FitsInSquare(town.Size * 0.5f - TownTerrain.Spacing(town.Size) * 2f)
+                    ? "Can't level this beside a building on different ground"
+                    : "Too close to the edge of town to level the ground");
+            }
 
+            var tipped = CheckBuildingsStayLevel(town, levelled, ignoreBuildingId, out _);
+            if (!tipped.Ok) return tipped;
+
+            ground = levelled.Terrain;
             return EditResult.Success;
         }
 
@@ -168,40 +196,10 @@ namespace Porchlight.Shared.Rules
             if (!(MathF.Abs(delta) <= TownTerrain.MaxHeight - TownTerrain.MinHeight)) return EditResult.Fail("Invalid height change");
 
             var shaped = TownTerrain.Shape(town, center, padHalfSize, delta);
-
-            // Only buildings near ground that moved need checking.
-            var cells = TownTerrain.CellsFor(town.Size);
-            var spacing = town.Size / cells;
-            var half = town.Size * 0.5f;
-            int i0 = int.MaxValue, i1 = -1, j0 = int.MaxValue, j1 = -1;
-            for (var j = 0; j <= cells; j++)
-            {
-                for (var i = 0; i <= cells; i++)
-                {
-                    var before = (int)MathF.Round(TownTerrain.HeightAt(town, i, j) * 100f);
-                    if (shaped[j * (cells + 1) + i] == before) continue;
-                    i0 = Math.Min(i0, i);
-                    i1 = Math.Max(i1, i);
-                    j0 = Math.Min(j0, j);
-                    j1 = Math.Max(j1, j);
-                }
-            }
-
-            if (i1 < 0) return EditResult.Fail(delta > 0f ? "The ground can't go any higher here" : "The ground can't go any lower here");
-
-            // Ground moves up to a cell beyond the last lattice point that changed.
-            var min = new Vec2(-half + (i0 - 1) * spacing, -half + (j0 - 1) * spacing);
-            var max = new Vec2(-half + (i1 + 1) * spacing, -half + (j1 + 1) * spacing);
-            var after = new TownDto { Size = town.Size, Terrain = new TerrainDto { Cells = cells, Heights = shaped } };
-            foreach (var building in town.Buildings)
-            {
-                if (!TryFootprint(building, out var footprint)) continue;
-                var reachX = footprint.ExtentAlong(new Vec2(1f, 0f));
-                var reachZ = footprint.ExtentAlong(new Vec2(0f, 1f));
-                if (footprint.Center.X + reachX < min.X || footprint.Center.X - reachX > max.X
-                    || footprint.Center.Z + reachZ < min.Z || footprint.Center.Z - reachZ > max.Z) continue;
-                if (!TownTerrain.IsLevel(after, footprint)) return EditResult.Fail("That would leave a building on a slope");
-            }
+            var check = CheckBuildingsStayLevel(town, WithHeights(town, shaped), null, out var changed);
+            if (!changed) return EditResult.Fail(delta > 0f ? "The ground can't go any higher here" : "The ground can't go any lower here");
+            if (!check.Ok) return check;
+            if (!TownTerrain.IsGentle(town.Size, shaped)) return EditResult.Fail("The banks beside a building there are too steep to reshape");
 
             heights = shaped;
             return EditResult.Success;
@@ -223,6 +221,104 @@ namespace Porchlight.Shared.Rules
             }
 
             return best == null ? new RoadEndpoint(point, null) : new RoadEndpoint(new Vec2(best.X, best.Z), best.Id);
+        }
+
+        /// <summary>
+        /// Fits a road being drawn to the buildings around it. An end inside or against a building is
+        /// pulled back to stop flush against its wall, and a start on or against a building moves out
+        /// until it's clear. In between, the road may pass under buildings. Ends that join an existing road aren't moved. Returns the fitted ends, snapped
+        /// to junctions and quantised like <see cref="Editing.TownEditor"/> stores them; check them with
+        /// <see cref="CanAddRoad"/> as usual.
+        /// </summary>
+        public static (Vec2 Start, Vec2 End) FitRoadToBuildings(TownDto town, string typeId, Vec2 start, Vec2 end)
+        {
+            var a = SnapToNode(town, Editing.TownMath.Quantize(start));
+            var b = SnapToNode(town, Editing.TownMath.Quantize(end));
+            start = a.Position;
+            end = b.Position;
+            var length = Vec2.Distance(start, end);
+            if (!Catalog.TryGetRoad(typeId, out var type) || length < TownLimits.MinRoadLength) return (start, end);
+
+            // Only buildings the road could reach matter.
+            var nearby = new List<OrientedRect>();
+            foreach (var building in town.Buildings)
+            {
+                if (!TryFootprint(building, out var footprint)) continue;
+                var reach = footprint.BoundingRadius + type.Width * 0.5f;
+                if (Segments.Distance(footprint.Center, start, end) <= reach) nearby.Add(footprint);
+            }
+
+            if (nearby.Count == 0) return (start, end);
+
+            var direction = (end - start) * (1f / length);
+            bool Blocked(Vec2 from, Vec2 to)
+            {
+                var rect = OrientedRect.FromSegment(from, to, type.Width);
+                foreach (var footprint in nearby)
+                {
+                    if (rect.Overlaps(footprint, ClientTolerance)) return true;
+                }
+
+                return false;
+            }
+
+            const float probe = 0.1f, step = 0.25f, precision = 0.005f;
+            const float quantum = TownLimits.PositionQuantum;
+
+            // A new start on or against a building walks out of it.
+            if (a.NodeId == null && Blocked(start, start + direction * probe))
+            {
+                var clear = step;
+                while (clear < length && Blocked(start + direction * clear, start + direction * (clear + probe))) clear += step;
+                if (clear >= length) return (start, end);
+
+                var inside = clear - step;
+                while (clear - inside > precision)
+                {
+                    var mid = (inside + clear) * 0.5f;
+                    if (Blocked(start + direction * mid, start + direction * (mid + probe))) inside = mid;
+                    else clear = mid;
+                }
+
+                // Rounding to the position grid can land back inside, so step out a little further if needed.
+                var fitted = start;
+                for (var k = 0; k < 4; k++)
+                {
+                    fitted = Editing.TownMath.Quantize(start + direction * (clear + k * quantum));
+                    if (!Blocked(fitted, fitted + direction * probe)) break;
+                }
+
+                start = fitted;
+            }
+
+            // A new end inside or against a building backs out to its wall. Roads may pass under
+            // buildings on the way, so only the end itself matters.
+            var span = Vec2.Distance(start, end);
+            if (b.NodeId == null && span > probe && Blocked(end - direction * probe, end))
+            {
+                var clear = span - step;
+                while (clear > probe && Blocked(start + direction * (clear - probe), start + direction * clear)) clear -= step;
+                if (clear <= probe) return (start, end);
+
+                var inside = clear + step;
+                while (inside - clear > precision)
+                {
+                    var mid = (inside + clear) * 0.5f;
+                    if (Blocked(start + direction * (mid - probe), start + direction * mid)) inside = mid;
+                    else clear = mid;
+                }
+
+                var fitted = end;
+                for (var k = 0; k < 4; k++)
+                {
+                    fitted = Editing.TownMath.Quantize(start + direction * (clear - k * quantum));
+                    if (!Blocked(fitted - direction * probe, fitted)) break;
+                }
+
+                end = fitted;
+            }
+
+            return (start, end);
         }
 
         public static EditResult CanAddRoad(TownDto town, string typeId, Vec2 start, Vec2 end, float tolerance = ClientTolerance)
@@ -251,15 +347,7 @@ namespace Porchlight.Shared.Rules
                 }
             }
 
-            var rect = OrientedRect.FromSegment(a.Position, b.Position, type.Width);
-            foreach (var building in town.Buildings)
-            {
-                if (TryFootprint(building, out var footprint) && rect.Overlaps(footprint, tolerance))
-                {
-                    return EditResult.Fail("Road would cut through a building");
-                }
-            }
-
+            // Roads can go anywhere, under buildings too: they're drawn cut off at the walls.
             return EditResult.Success;
         }
 
@@ -341,15 +429,6 @@ namespace Porchlight.Shared.Rules
                     result.Add($"Road segment {segment.Id} is too short");
             }
 
-            foreach (var road in Roads(town))
-            {
-                foreach (var (building, footprint) in footprints)
-                {
-                    if (footprint.Overlaps(road.Rect, ServerTolerance))
-                        result.Add($"Building {building.Id} overlaps road {road.Segment.Id}");
-                }
-            }
-
             if (TownTerrain.Validate(town, result))
             {
                 foreach (var (building, footprint) in footprints)
@@ -360,6 +439,54 @@ namespace Porchlight.Shared.Rules
             }
 
             return result;
+        }
+
+        /// <summary>A stand-in town with just the size and new heights, for asking what the ground would be like.</summary>
+        private static TownDto WithHeights(TownDto town, List<int> heights) => new TownDto
+        {
+            Size = town.Size,
+            Terrain = new TerrainDto { Cells = TownTerrain.CellsFor(town.Size), Heights = heights },
+        };
+
+        /// <summary>
+        /// Buildings ride up and down with the ground, but none may be left on a slope. Only buildings
+        /// near ground that moved are checked. <paramref name="changed"/> says whether any ground moved.
+        /// </summary>
+        private static EditResult CheckBuildingsStayLevel(TownDto town, TownDto after, string ignoreBuildingId, out bool changed)
+        {
+            var cells = TownTerrain.CellsFor(town.Size);
+            var spacing = town.Size / cells;
+            var half = town.Size * 0.5f;
+            int i0 = int.MaxValue, i1 = -1, j0 = int.MaxValue, j1 = -1;
+            for (var j = 0; j <= cells; j++)
+            {
+                for (var i = 0; i <= cells; i++)
+                {
+                    if (TownTerrain.HeightAt(after, i, j) == TownTerrain.HeightAt(town, i, j)) continue;
+                    i0 = Math.Min(i0, i);
+                    i1 = Math.Max(i1, i);
+                    j0 = Math.Min(j0, j);
+                    j1 = Math.Max(j1, j);
+                }
+            }
+
+            changed = i1 >= 0;
+            if (!changed) return EditResult.Success;
+
+            // Ground moves up to a cell beyond the last lattice point that changed.
+            var min = new Vec2(-half + (i0 - 1) * spacing, -half + (j0 - 1) * spacing);
+            var max = new Vec2(-half + (i1 + 1) * spacing, -half + (j1 + 1) * spacing);
+            foreach (var building in town.Buildings)
+            {
+                if (building.Id == ignoreBuildingId || !TryFootprint(building, out var footprint)) continue;
+                var reachX = footprint.ExtentAlong(new Vec2(1f, 0f));
+                var reachZ = footprint.ExtentAlong(new Vec2(0f, 1f));
+                if (footprint.Center.X + reachX < min.X || footprint.Center.X - reachX > max.X
+                    || footprint.Center.Z + reachZ < min.Z || footprint.Center.Z - reachZ > max.Z) continue;
+                if (!TownTerrain.IsLevel(after, footprint)) return EditResult.Fail("That would leave a building on a slope");
+            }
+
+            return EditResult.Success;
         }
 
         internal static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);

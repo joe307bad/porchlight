@@ -69,9 +69,13 @@ public class TownRulesTests
     {
         var town = NewTown();
         Assert.True(Road(town, 0, 0, 40, 0).Ok);
-        Assert.True(Road(town, 41, 1.5f, 40, 40).Ok);
+        Assert.True(Road(town, 40.5f, 0.5f, 40, 40).Ok);
         Assert.Equal(3, town.Roads.Nodes.Count);
         Assert.Equal(2, town.Roads.Segments.Count);
+
+        // A half-grid step away is a new node, not the junction.
+        Assert.True(Road(town, 0, 2, 0, 20).Ok);
+        Assert.Equal(5, town.Roads.Nodes.Count);
     }
 
     [Fact]
@@ -84,14 +88,15 @@ public class TownRulesTests
     }
 
     [Fact]
-    public void RoadsAndBuildingsCannotOverlap()
+    public void RoadsAndBuildingsCanOverlap()
     {
         var town = NewTown();
         Assert.True(Road(town, -50, 0, 50, 0).Ok);
-        Assert.Equal("Overlaps a road", Place(town, "house_small", 0, 1).Error);
+        Assert.True(Place(town, "house_small", 0, 1).Ok);
 
         Assert.True(Place(town, "house_small", 0, 30).Ok);
-        Assert.Equal("Road would cut through a building", Road(town, 0, 10, 0, 50).Error);
+        Assert.True(Road(town, 0, 10, 0, 50).Ok);
+        Assert.True(TownRules.ValidateTown(town).IsValid);
     }
 
     [Fact]
@@ -105,6 +110,18 @@ public class TownRulesTests
         Assert.True(pos.Z > 0);
         Assert.Equal(180f, TownMath.NormalizeAngle(rot)); // north of the road, so it faces south
         Assert.True(Place(town, "house_small", pos.X, pos.Z, rot).Ok);
+        Assert.Equal(1, TownMetrics.Compute(town).ConnectedBuildingCount);
+    }
+
+    [Fact]
+    public void BuildingBesideARoadCountsAsConnected()
+    {
+        var town = NewTown();
+        Assert.True(Road(town, -50, 0, 50, 0).Ok);
+        Catalog.TryGetBuilding("house_small", out var cottage);
+
+        // North of the street, facing south onto it.
+        Assert.True(Place(town, "house_small", 5, 3f + cottage.Depth * 0.5f + 0.25f, 180f).Ok);
 
         var metrics = TownMetrics.Compute(town);
         Assert.Equal(1, metrics.ConnectedBuildingCount);
@@ -167,5 +184,56 @@ public class TownRulesTests
         Assert.Equal(town.Buildings[0].Id, back.Buildings[0].Id);
         Assert.Equal(town.Roads.Segments[0].StartNodeId, back.Roads.Segments[0].StartNodeId);
         Assert.True(TownRules.ValidateTown(back).IsValid);
+    }
+}
+
+public class RoadFittingTests
+{
+    private static TownDto TownWithHouse()
+    {
+        var town = TownFactory.CreateEmpty(Ids.New(), "Driveways");
+
+        // A cottage 7 m wide and 6 m deep at the origin: its walls are at x = ±3.5 and z = ±3.
+        Assert.True(TownEditor.Apply(town, new PlaceBuildingCommand { BuildingId = Ids.New(), TypeId = "house_small", X = 0, Z = 0 }).Ok);
+        return town;
+    }
+
+    [Fact]
+    public void ARoadIntoABuildingStopsAtItsWall()
+    {
+        var town = TownWithHouse();
+        var (start, end) = TownRules.FitRoadToBuildings(town, "street", new Vec2(0f, 30f), new Vec2(0f, 1f));
+        Assert.Equal(new Vec2(0f, 30f), start);
+        Assert.InRange(end.Z, 3f, 3.06f);
+        Assert.True(TownRules.CanAddRoad(town, "street", start, end).Ok);
+    }
+
+    [Fact]
+    public void ARoadStartedOnABuildingStartsAtItsWall()
+    {
+        var town = TownWithHouse();
+        var (start, end) = TownRules.FitRoadToBuildings(town, "street", new Vec2(0f, 0f), new Vec2(0f, -30f));
+        Assert.InRange(start.Z, -3.06f, -3f);
+        Assert.Equal(new Vec2(0f, -30f), end);
+        Assert.True(TownRules.CanAddRoad(town, "street", start, end).Ok);
+    }
+
+    [Fact]
+    public void ARoadCanPassUnderABuilding()
+    {
+        var town = TownWithHouse();
+        var (start, end) = TownRules.FitRoadToBuildings(town, "street", new Vec2(0f, 30f), new Vec2(0f, -30f));
+        Assert.Equal(new Vec2(0f, 30f), start);
+        Assert.Equal(new Vec2(0f, -30f), end);
+        Assert.True(TownRules.CanAddRoad(town, "street", start, end).Ok);
+    }
+
+    [Fact]
+    public void ARoadThatMissesBuildingsIsUnchanged()
+    {
+        var town = TownWithHouse();
+        var (start, end) = TownRules.FitRoadToBuildings(town, "street", new Vec2(20f, 30f), new Vec2(20f, -30f));
+        Assert.Equal(new Vec2(20f, 30f), start);
+        Assert.Equal(new Vec2(20f, -30f), end);
     }
 }

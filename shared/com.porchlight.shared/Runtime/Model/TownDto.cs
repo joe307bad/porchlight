@@ -139,10 +139,14 @@ namespace Porchlight.Shared.Model
         public const int MaxRoadSegments = 5000;
         public const int MaxRoadNodes = 10000;
 
-        public const float MinRoadLength = 3f;
+        /// <summary>One half-grid step, the shortest stretch the builder can draw.</summary>
+        public const float MinRoadLength = 2f;
 
-        /// <summary>A road endpoint within this many metres of an existing node joins that node.</summary>
-        public const float NodeSnapRadius = 4f;
+        /// <summary>
+        /// A road endpoint within this many metres of an existing node joins that node. Less than half
+        /// a half-grid step, so ends can go on any half-grid point next to a junction.
+        /// </summary>
+        public const float NodeSnapRadius = 0.9f;
 
         /// <summary>Positions are rounded to this grid so saved data stays small and deterministic.</summary>
         public const float PositionQuantum = 0.05f;

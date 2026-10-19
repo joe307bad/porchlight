@@ -72,14 +72,90 @@ public class TownTerrainTests
     }
 
     [Fact]
-    public void BuildingsGoOnPadsButNotSlopes()
+    public void BuildingsGoOnPadsWithoutChangingThem()
     {
         var town = NewTown();
         Assert.True(Shape(town, 0, 0, 3f, pad: 12f).Ok);
+        var before = town.Terrain.Heights.ToList();
         Assert.True(Place(town, "house_small", 0, 0).Ok);
         Assert.Equal(3f, TownTerrain.BaseHeight(town, town.Buildings[0]), 2);
+        Assert.Equal(before, town.Terrain.Heights);
+    }
 
-        Assert.Equal("The ground here isn't level", Place(town, "house_large", 16, 0).Error);
+    /// <summary>A long ramp rising towards +X, about as steep as terrain gets.</summary>
+    private static TownDto Hillside()
+    {
+        var town = NewTown();
+        for (var i = 0; i < 12; i++) Assert.True(Shape(town, 60, 0, 1f, pad: 16f).Ok);
+        return town;
+    }
+
+    [Fact]
+    public void PlacingOnASlopeLevelsTheGroundUnderIt()
+    {
+        var town = Hillside();
+        var slopeHeight = TownTerrain.HeightAt(town, new Vec2(20f, 0f));
+        Assert.True(TownTerrain.HeightAt(town, new Vec2(26f, 0f)) - TownTerrain.HeightAt(town, new Vec2(14f, 0f)) > 2f);
+
+        Assert.True(Place(town, "house_large", 20, 0).Ok);
+        var house = town.Buildings[0];
+        Assert.True(TownRules.TryFootprint(house, out var footprint));
+        Assert.True(TownTerrain.IsLevel(town, footprint, 0.01f));
+        Assert.Equal(slopeHeight, TownTerrain.BaseHeight(town, house), 1);
+        Assert.True(TownRules.ValidateTown(town).IsValid);
+    }
+
+    [Fact]
+    public void LevellingLeavesAFlatStepInFrontOfTheDoor()
+    {
+        var town = Hillside();
+
+        // Facing +X, uphill: the door side is levelled a grid square further out.
+        Assert.True(TownEditor.Apply(town, new PlaceBuildingCommand { BuildingId = Ids.New(), TypeId = "house_small", X = 20, Z = 0, RotationDeg = 90 }).Ok);
+        var level = TownTerrain.BaseHeight(town, town.Buildings[0]);
+        var doorstep = new OrientedRect(new Vec2(20f + 3f + TownGrid.Spacing * 0.5f, 0f), TownGrid.Spacing * 0.5f, 3.5f, 0f);
+        TownTerrain.Range(town, doorstep, out var min, out var max);
+        Assert.Equal(level, min, 2);
+        Assert.Equal(level, max, 2);
+
+        // Behind the house the ground isn't flattened beyond the footprint's own cells.
+        Assert.NotEqual(level, TownTerrain.HeightAt(town, new Vec2(20f - 12f, 0f)), 1);
+    }
+
+    [Fact]
+    public void LevellingLeavesTheHillsideAroundAlone()
+    {
+        var town = Hillside();
+        var before = town.Terrain.Heights.ToList();
+        Assert.True(Place(town, "house_large", 20, 0).Ok);
+        Assert.True(TownRules.TryFootprint(town.Buildings[0], out var footprint));
+
+        // Only the cells under the house and its doorstep change; banks take up the difference.
+        var front = TownGrid.Spacing * 0.5f;
+        var area = new OrientedRect(footprint.Center + footprint.AxisZ * front, footprint.HalfWidth, footprint.HalfDepth + front, footprint.RotationDeg);
+        var underneath = TownTerrain.Underneath(town, area);
+        var n = town.Terrain.Cells + 1;
+        for (var k = 0; k < before.Count; k++)
+        {
+            if (!underneath.Contains((k % n, k / n))) Assert.Equal(before[k], town.Terrain.Heights[k]);
+        }
+
+        Assert.True(TownRules.ValidateTown(town).IsValid);
+    }
+
+    [Fact]
+    public void ARowOfHousesOnASlopeLevelsToMatch()
+    {
+        var town = Hillside();
+        Assert.True(Place(town, "house_small", 20, 0).Ok);
+        var first = town.Buildings[0];
+        var height = TownTerrain.BaseHeight(town, first);
+
+        // Uphill, sharing a row of lattice points with the first house, which mustn't move.
+        Assert.True(Place(town, "house_small", 29, 0).Ok);
+        Assert.Equal(height, TownTerrain.BaseHeight(town, first), 2);
+        Assert.Equal(height, TownTerrain.BaseHeight(town, town.Buildings[1]), 1);
+        Assert.True(TownRules.ValidateTown(town).IsValid);
     }
 
     [Fact]
