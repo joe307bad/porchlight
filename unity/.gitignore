@@ -16,3 +16,6 @@
 
 # Burst compiler output from WebGL builds
 /[Dd]ata/
+
+# Mono crash dumps Unity sometimes leaves in the project folder
+mono_crash.*
