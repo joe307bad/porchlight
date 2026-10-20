@@ -65,7 +65,107 @@ namespace Porchlight.Shared.Model
         public float Z { get; set; }
         public float RotationDeg { get; set; }
 
-        public BuildingDto Clone() => (BuildingDto)MemberwiseClone();
+        /// <summary>
+        /// The inside of a building that has one (only cottages so far). Null until it's first edited,
+        /// which means the default layout from <see cref="Rules.CottageInterior.Default"/>.
+        /// </summary>
+        public InteriorDto Interior { get; set; }
+
+        public BuildingDto Clone()
+        {
+            var copy = (BuildingDto)MemberwiseClone();
+            copy.Interior = Interior?.Clone();
+            return copy;
+        }
+    }
+
+    /// <summary>
+    /// The inside of a cottage, in the building's own frame: metres from its centre, +X to its right
+    /// and +Z out of its front door, with rotations in multiples of 90 degrees. See
+    /// <see cref="Rules.CottageInterior"/> for the layout and <see cref="Rules.InteriorRules"/> for what's allowed.
+    /// </summary>
+    public sealed class InteriorDto
+    {
+        public StairsDto Stairs { get; set; } = new StairsDto();
+
+        /// <summary>Ground floor first. Starts empty (not pre-filled) so JSON readers that add to lists don't double up.</summary>
+        public List<InteriorFloorDto> Floors { get; set; } = new List<InteriorFloorDto>();
+
+        public InteriorDto Clone() => new InteriorDto
+        {
+            Stairs = Stairs?.Clone(),
+            Floors = Floors?.ConvertAll(f => f?.Clone()),
+        };
+    }
+
+    /// <summary>
+    /// A straight flight from the ground floor to the one above. (X, Z) is its middle; it climbs
+    /// towards its local +Z, so at 0 degrees the bottom step is at the -Z end.
+    /// </summary>
+    public sealed class StairsDto
+    {
+        public float X { get; set; }
+        public float Z { get; set; }
+        public float RotationDeg { get; set; }
+
+        public StairsDto Clone() => (StairsDto)MemberwiseClone();
+    }
+
+    public sealed class InteriorFloorDto
+    {
+        public List<InteriorWallDto> Walls { get; set; } = new List<InteriorWallDto>();
+        public List<OpeningDto> Openings { get; set; } = new List<OpeningDto>();
+        public List<FurnitureDto> Items { get; set; } = new List<FurnitureDto>();
+
+        public InteriorFloorDto Clone() => new InteriorFloorDto
+        {
+            Walls = Walls?.ConvertAll(w => w?.Clone()),
+            Openings = Openings?.ConvertAll(o => o?.Clone()),
+            Items = Items?.ConvertAll(i => i?.Clone()),
+        };
+    }
+
+    /// <summary>An inside wall along its centre line, which runs along either X or Z.</summary>
+    public sealed class InteriorWallDto
+    {
+        public string Id { get; set; } = "";
+        public float X0 { get; set; }
+        public float Z0 { get; set; }
+        public float X1 { get; set; }
+        public float Z1 { get; set; }
+
+        public InteriorWallDto Clone() => (InteriorWallDto)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// A door or window in a wall. <see cref="WallId"/> is an inside wall's id or one of the outside
+    /// walls (<see cref="Rules.CottageInterior.FrontWall"/> and friends). <see cref="At"/> is where its
+    /// middle is along the wall: the X coordinate for a wall running along X, otherwise Z.
+    /// </summary>
+    public sealed class OpeningDto
+    {
+        public string Id { get; set; } = "";
+        public string TypeId { get; set; } = "";
+        public string WallId { get; set; } = "";
+        public float At { get; set; }
+
+        public OpeningDto Clone() => (OpeningDto)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// A piece of furniture. (X, Z) is its middle and it faces its local +Z. A TV standing on a
+    /// dresser names it in <see cref="OnId"/>; everything else stands on the floor or hangs on a wall.
+    /// </summary>
+    public sealed class FurnitureDto
+    {
+        public string Id { get; set; } = "";
+        public string TypeId { get; set; } = "";
+        public float X { get; set; }
+        public float Z { get; set; }
+        public float RotationDeg { get; set; }
+        public string OnId { get; set; }
+
+        public FurnitureDto Clone() => (FurnitureDto)MemberwiseClone();
     }
 
     /// <summary>

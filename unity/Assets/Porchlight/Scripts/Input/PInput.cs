@@ -17,6 +17,7 @@ namespace Porchlight.Input
         Tab,
         R,
         Backspace,
+        F,
     }
 
     /// <summary>
@@ -256,6 +257,7 @@ namespace Porchlight.Input
                 case PKey.Tab: return k.tabKey.wasPressedThisFrame;
                 case PKey.R: return k.rKey.wasPressedThisFrame;
                 case PKey.Backspace: return k.backspaceKey.wasPressedThisFrame;
+                case PKey.F: return k.fKey.wasPressedThisFrame;
                 default: return false;
             }
 #else
@@ -271,6 +273,7 @@ namespace Porchlight.Input
                 case PKey.Tab: return UnityEngine.Input.GetKeyDown(KeyCode.Tab);
                 case PKey.R: return UnityEngine.Input.GetKeyDown(KeyCode.R);
                 case PKey.Backspace: return UnityEngine.Input.GetKeyDown(KeyCode.Backspace);
+                case PKey.F: return UnityEngine.Input.GetKeyDown(KeyCode.F);
                 default: return false;
             }
 #endif

@@ -60,6 +60,60 @@ namespace Porchlight.Shared.Editing
         public float Delta { get; set; }
     }
 
+    /// <summary>Changes the inside of a building. <see cref="Floor"/> is 0 for the ground floor.</summary>
+    public abstract class InteriorCommand : TownCommand
+    {
+        public string BuildingId { get; set; } = "";
+        public int Floor { get; set; }
+    }
+
+    /// <summary>An inside wall from (X0, Z0) to (X1, Z1). See <see cref="InteriorRules.CanAddWall"/>.</summary>
+    public sealed class AddInteriorWallCommand : InteriorCommand
+    {
+        public string WallId { get; set; } = "";
+        public float X0 { get; set; }
+        public float Z0 { get; set; }
+        public float X1 { get; set; }
+        public float Z1 { get; set; }
+    }
+
+    /// <summary>A door or window in a wall. See <see cref="InteriorRules.CanAddOpening"/>.</summary>
+    public sealed class AddOpeningCommand : InteriorCommand
+    {
+        public string OpeningId { get; set; } = "";
+        public string TypeId { get; set; } = "";
+        public string WallId { get; set; } = "";
+        public float At { get; set; }
+    }
+
+    /// <summary>A piece of furniture. See <see cref="InteriorRules.CanPlaceItem"/>.</summary>
+    public sealed class PlaceFurnitureCommand : InteriorCommand
+    {
+        public string ItemId { get; set; } = "";
+        public string TypeId { get; set; } = "";
+        public float X { get; set; }
+        public float Z { get; set; }
+        public float RotationDeg { get; set; }
+        public string OnId { get; set; }
+    }
+
+    /// <summary>Moves the stairs (they span both floors, so <see cref="InteriorCommand.Floor"/> is ignored).</summary>
+    public sealed class MoveStairsCommand : InteriorCommand
+    {
+        public float X { get; set; }
+        public float Z { get; set; }
+        public float RotationDeg { get; set; }
+    }
+
+    /// <summary>
+    /// Removes a wall, door, window or piece of furniture from a floor, along with whatever depended
+    /// on it: the doors and windows in a wall, or the TV on a dresser.
+    /// </summary>
+    public sealed class RemoveInteriorPartCommand : InteriorCommand
+    {
+        public string PartId { get; set; } = "";
+    }
+
     public static class TownEditor
     {
         public static EditResult Apply(TownDto town, TownCommand command)
@@ -71,6 +125,7 @@ namespace Porchlight.Shared.Editing
                 case AddRoadCommand c: return AddRoad(town, c);
                 case RemoveRoadCommand c: return RemoveRoad(town, c);
                 case ShapeTerrainCommand c: return ShapeTerrain(town, c);
+                case InteriorCommand c: return EditInterior(town, c);
                 default: return EditResult.Fail($"Unknown command {command?.GetType().Name ?? "null"}");
             }
         }
@@ -148,6 +203,115 @@ namespace Porchlight.Shared.Editing
 
             town.Terrain = new TerrainDto { Cells = TownTerrain.CellsFor(town.Size), Heights = heights };
             return EditResult.Success;
+        }
+
+        /// <summary>
+        /// Interior edits work on a copy of the inside (the default layout, the first time), which
+        /// replaces the building's only if the change is allowed.
+        /// </summary>
+        private static EditResult EditInterior(TownDto town, InteriorCommand c)
+        {
+            var building = town.Buildings.Find(b => b.Id == c.BuildingId);
+            if (building == null) return EditResult.Fail("No such building");
+            if (!CottageInterior.HasInterior(building) || !Content.Catalog.TryGetBuilding(building.TypeId, out var type)) return EditResult.Fail("This building has no inside to edit");
+
+            var interior = CottageInterior.Of(building).Clone();
+            if (!(c is MoveStairsCommand) && (c.Floor < 0 || c.Floor >= interior.Floors.Count)) return EditResult.Fail("No such floor");
+
+            EditResult result;
+            switch (c)
+            {
+                case AddInteriorWallCommand w:
+                {
+                    if (string.IsNullOrEmpty(w.WallId) || HasPart(interior, w.WallId)) return EditResult.Fail("Wall id missing or already used");
+                    var a = TownMath.Quantize(new Vec2(w.X0, w.Z0));
+                    var b = TownMath.Quantize(new Vec2(w.X1, w.Z1));
+                    result = InteriorRules.CanAddWall(type, interior, w.Floor, a, b);
+                    if (result.Ok) interior.Floors[w.Floor].Walls.Add(new InteriorWallDto { Id = w.WallId, X0 = a.X, Z0 = a.Z, X1 = b.X, Z1 = b.Z });
+                    break;
+                }
+
+                case AddOpeningCommand o:
+                {
+                    if (string.IsNullOrEmpty(o.OpeningId) || HasPart(interior, o.OpeningId)) return EditResult.Fail("Opening id missing or already used");
+                    var at = TownMath.Quantize(o.At);
+                    result = InteriorRules.CanAddOpening(type, interior, o.Floor, o.TypeId, o.WallId, at);
+                    if (result.Ok) interior.Floors[o.Floor].Openings.Add(new OpeningDto { Id = o.OpeningId, TypeId = o.TypeId, WallId = o.WallId, At = at });
+                    break;
+                }
+
+                case PlaceFurnitureCommand f:
+                {
+                    if (string.IsNullOrEmpty(f.ItemId) || HasPart(interior, f.ItemId)) return EditResult.Fail("Item id missing or already used");
+                    var x = TownMath.Quantize(f.X);
+                    var z = TownMath.Quantize(f.Z);
+                    var rotation = TownMath.NormalizeAngle(f.RotationDeg);
+                    result = InteriorRules.CanPlaceItem(type, interior, f.Floor, f.TypeId, x, z, rotation, f.OnId);
+                    if (result.Ok) interior.Floors[f.Floor].Items.Add(new FurnitureDto { Id = f.ItemId, TypeId = f.TypeId, X = x, Z = z, RotationDeg = rotation, OnId = f.OnId });
+                    break;
+                }
+
+                case MoveStairsCommand m:
+                {
+                    var x = TownMath.Quantize(m.X);
+                    var z = TownMath.Quantize(m.Z);
+                    var rotation = TownMath.NormalizeAngle(m.RotationDeg);
+                    result = InteriorRules.CanMoveStairs(type, interior, x, z, rotation);
+                    if (result.Ok) interior.Stairs = new StairsDto { X = x, Z = z, RotationDeg = rotation };
+                    break;
+                }
+
+                case RemoveInteriorPartCommand r:
+                    result = RemovePart(type, interior.Floors[r.Floor], r.PartId);
+                    break;
+
+                default:
+                    return EditResult.Fail($"Unknown command {c.GetType().Name}");
+            }
+
+            if (result.Ok) building.Interior = interior;
+            return result;
+        }
+
+        private static EditResult RemovePart(Content.BuildingType type, InteriorFloorDto floor, string id)
+        {
+            var wall = floor.Walls.Find(w => w.Id == id);
+            if (wall != null)
+            {
+                // Its doors and windows go with it, and so does anything that has to be against a wall
+                // and was against this one: counters, and TVs hung on it.
+                var faces = CottageInterior.WallFaces(type, floor);
+                floor.Walls.Remove(wall);
+                floor.Openings.RemoveAll(o => o.WallId == id);
+                floor.Items.RemoveAll(i => NeedsWall(i) && CottageInterior.TryItemBox(i, out _, out var box)
+                    && CottageInterior.TryBackingFace(faces, box, i.RotationDeg, out var backing) && backing.OwnerId == id);
+                return EditResult.Success;
+            }
+
+            if (floor.Openings.RemoveAll(o => o.Id == id) > 0) return EditResult.Success;
+
+            if (floor.Items.RemoveAll(i => i.Id == id) > 0)
+            {
+                floor.Items.RemoveAll(i => i.OnId == id);
+                return EditResult.Success;
+            }
+
+            return EditResult.Fail(id == CottageInterior.FrontDoorId ? "The front door stays" : "Nothing to remove there");
+        }
+
+        private static bool NeedsWall(FurnitureDto item) =>
+            Content.Furnishings.TryGetFurniture(item.TypeId, out var kind)
+            && (kind.Placement == Content.FurniturePlacement.AgainstWall || (kind.Placement == Content.FurniturePlacement.DresserOrWall && item.OnId == null));
+
+        private static bool HasPart(InteriorDto interior, string id)
+        {
+            if (id == CottageInterior.FrontDoorId) return true;
+            foreach (var floor in interior.Floors)
+            {
+                if (floor.Walls.Exists(w => w.Id == id) || floor.Openings.Exists(o => o.Id == id) || floor.Items.Exists(i => i.Id == id)) return true;
+            }
+
+            return false;
         }
 
         private static string AddNode(TownDto town, string id, Vec2 position)

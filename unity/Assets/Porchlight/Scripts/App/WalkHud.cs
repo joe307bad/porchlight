@@ -33,6 +33,7 @@ namespace Porchlight.App
             ("Jump", "Space  ·  A"),
             ("Camera", "WASD  ·  Right mouse / stick"),
             ("Zoom", "Scroll wheel"),
+            ("Sit / lie", "Walk into a couch, chair or bed"),
         };
 
         private readonly TownDto _town;

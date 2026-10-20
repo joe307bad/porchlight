@@ -95,6 +95,9 @@ namespace Porchlight.Builder
         /// <summary>While the player walks around the town, the builder hides its panel and ignores the mouse.</summary>
         public bool Paused { get; set; }
 
+        /// <summary>A cottage was clicked with the Build tool: edit its inside.</summary>
+        public event Action<BuildingDto> InteriorRequested;
+
         public TownDto Town => _town;
         public TownMetrics Metrics => _metrics;
         public Tool CurrentTool => _tool;
@@ -274,6 +277,16 @@ namespace Porchlight.Builder
 
         private void UpdateBuild(Vec2 cursor)
         {
+            // Over a cottage, a click goes inside it instead.
+            var existing = TownQueries.FindBuildingAt(_town, cursor);
+            if (existing != null && CottageInterior.HasInterior(existing))
+            {
+                ShowGhost(MeshCache.Building(existing.TypeId), new Vec2(existing.X, existing.Z), TownTerrain.BaseHeight(_town, existing), existing.RotationDeg, 1.03f, true);
+                _hint = "Click to edit the inside of this cottage";
+                if (PointerGesture.Clicked) InteriorRequested?.Invoke(existing);
+                return;
+            }
+
             if (!Catalog.TryGetBuilding(_buildingTypeId, out var type)) return;
 
             var position = _snapToGrid ? TownGrid.Snap(cursor) : cursor;
@@ -402,14 +415,17 @@ namespace Porchlight.Builder
             }
         }
 
-        private bool Apply(TownCommand command)
+        private bool Apply(TownCommand command) => ApplyEdit(command).Ok;
+
+        /// <summary>Makes a change to the town, redraws it, and saves it shortly. The interior editor's edits come through here too.</summary>
+        public EditResult ApplyEdit(TownCommand command)
         {
             var terrain = _town.Terrain;
             var result = TownEditor.Apply(_town, command);
             if (!result.Ok)
             {
                 _hint = result.Error;
-                return false;
+                return result;
             }
 
             // Shaping the ground, or placing a building on a slope, changes the terrain.
@@ -428,7 +444,7 @@ namespace Porchlight.Builder
             _saveStatus = null;
             _confirmLeave = false;
             if (!_conflicted) _saveAt = Time.unscaledTime + AutoSaveDelay;
-            return true;
+            return result;
         }
 
         /// <summary>Saves now. Normally this happens by itself shortly after each edit.</summary>

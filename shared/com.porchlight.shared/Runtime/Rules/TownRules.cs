@@ -392,6 +392,7 @@ namespace Porchlight.Shared.Rules
                 if (!IsFinite(building.X) || !IsFinite(building.Z) || !IsFinite(building.RotationDeg)) { result.Add($"Building {building.Id} has an invalid position"); continue; }
                 if (!TryFootprint(building, out var footprint)) { result.Add($"Building {building.Id} has unknown type '{building.TypeId}'"); continue; }
                 if (!footprint.FitsInSquare(half, ServerTolerance)) result.Add($"Building {building.Id} is outside the town");
+                InteriorRules.Validate(building, result);
                 footprints.Add((building, footprint));
             }
 

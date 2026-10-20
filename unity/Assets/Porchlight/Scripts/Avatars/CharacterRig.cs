@@ -12,6 +12,17 @@ namespace Porchlight.Avatars
     /// </summary>
     public sealed class CharacterRig : MonoBehaviour
     {
+        public enum Pose
+        {
+            Standing,
+
+            /// <summary>Hips at the character's origin, legs out in front.</summary>
+            Sitting,
+
+            /// <summary>On their back with their feet at the origin and their head towards -Z.</summary>
+            Lying,
+        }
+
         private const float HopDuration = 0.4f;
 
         private Transform _visual;
@@ -29,6 +40,8 @@ namespace Porchlight.Avatars
 
         /// <summary>Raises the right arm and waves. The character select screen uses it for the chosen one.</summary>
         public bool Waving { get; set; }
+
+        public Pose CurrentPose { get; set; }
 
         public static CharacterRig Create(CharacterType type, Material material, Transform parent = null)
         {
@@ -75,6 +88,13 @@ namespace Porchlight.Avatars
         /// <param name="grounded">False while jumping or falling.</param>
         public void Tick(float groundSpeed, bool grounded, float dt)
         {
+            if (CurrentPose != Pose.Standing)
+            {
+                Rest(dt);
+                return;
+            }
+
+            _visual.localRotation = Quaternion.identity;
             // Shorter legs take quicker steps.
             var strideTarget = grounded ? Mathf.Clamp01(groundSpeed / 3f) : 0f;
             _stride = Mathf.MoveTowards(_stride, strideTarget, dt * 6f);
@@ -97,6 +117,31 @@ namespace Porchlight.Avatars
             var hop = _hopTime < HopDuration ? Mathf.Sin(Mathf.PI * _hopTime / HopDuration) * 0.18f : 0f;
             var bob = Mathf.Abs(Mathf.Sin(_phase)) * 0.035f * _stride + Mathf.Sin(Time.time * 2.2f) * 0.004f * (1f - _stride);
             _visual.localPosition = Vector3.up * ((bob + hop) * _scale);
+        }
+
+        /// <summary>Sitting or lying still, breathing a little.</summary>
+        private void Rest(float dt)
+        {
+            _stride = 0f;
+            _air = 0f;
+            var breath = Mathf.Sin(Time.time * 2.2f) * 0.004f * _scale;
+            if (CurrentPose == Pose.Sitting)
+            {
+                _leftLeg.localRotation = Quaternion.Euler(-82f, 0f, -3f);
+                _rightLeg.localRotation = Quaternion.Euler(-82f, 0f, 3f);
+                _leftArm.localRotation = Quaternion.Euler(-28f, 0f, -10f);
+                _rightArm.localRotation = Quaternion.Euler(-28f, 0f, 10f);
+                _visual.localRotation = Quaternion.identity;
+                _visual.localPosition = Vector3.up * (-CharacterMeshes.HipHeight * _scale + 0.03f + breath);
+                return;
+            }
+
+            _leftLeg.localRotation = Quaternion.Euler(0f, 0f, -4f);
+            _rightLeg.localRotation = Quaternion.Euler(0f, 0f, 4f);
+            _leftArm.localRotation = Quaternion.Euler(0f, 0f, -12f);
+            _rightArm.localRotation = Quaternion.Euler(0f, 0f, 12f);
+            _visual.localRotation = Quaternion.Euler(-90f, 0f, 0f);
+            _visual.localPosition = Vector3.up * (0.12f * _scale + breath);
         }
     }
 }

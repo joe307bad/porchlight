@@ -88,7 +88,8 @@ namespace Porchlight.Shared.Content
     {
         public static readonly IReadOnlyList<BuildingType> Buildings = new[]
         {
-            new BuildingType("house_small", "Cottage", 7f, 6f, 3.5f, population: 4, jobs: 0,
+            // Two storeys, to match its inside (see Rules.CottageInterior).
+            new BuildingType("house_small", "Cottage", 7f, 6f, 5.45f, population: 4, jobs: 0,
                 "#F2E3C6", "#C0583F", RoofStyle.Gabled),
             new BuildingType("house_large", "Townhouse", 10f, 8f, 6f, population: 10, jobs: 0,
                 "#E9D8B4", "#5F6F82", RoofStyle.Gabled, Decoration.Chimney),

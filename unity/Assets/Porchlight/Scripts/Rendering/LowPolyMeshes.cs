@@ -26,6 +26,9 @@ namespace Porchlight.Rendering
 
         public static Mesh Building(BuildingType type)
         {
+            // Cottages are built from their insides; this is a new one's.
+            if (CottageInterior.HasInterior(type.Id)) return InteriorMeshes.Cottage(type, CottageInterior.Default());
+
             var mb = new MeshBuilder();
             var wall = Hex(type.WallColor);
             var roof = Hex(type.RoofColor);
@@ -93,7 +96,7 @@ namespace Porchlight.Rendering
             return mb.ToMesh(name: "unknown");
         }
 
-        private static void GabledRoof(MeshBuilder mb, float hw, float hd, float wallTop, Color wall, Color roof)
+        public static void GabledRoof(MeshBuilder mb, float hw, float hd, float wallTop, Color wall, Color roof)
         {
             // Ridge runs along local X, which is why gabled types are wider than deep.
             const float overhang = 0.35f;

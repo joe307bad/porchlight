@@ -10,6 +10,8 @@ namespace Porchlight.Cameras
     /// Follows the player's character from behind and orbits around them. Looking uses the same
     /// inputs as <see cref="FlyCamera"/> (WASD, right mouse, right stick, Invert Y); the scroll wheel
     /// zooms. The camera pulls in rather than ending up inside a building or a hill.
+    /// Inside a cottage (<see cref="OpenBuildingId"/>), whose roof and nearest walls are cut away, it
+    /// looks down from higher up instead.
     /// </summary>
     public sealed class ThirdPersonCamera : MonoBehaviour
     {
@@ -29,8 +31,14 @@ namespace Porchlight.Cameras
         private float _distance;
         private Vector3 _focus;
 
+        /// <summary>The lowest the camera tilts while inside a cottage, so it looks over the walls.</summary>
+        public float InsidePitch = 42f;
+
         /// <summary>Which way the camera faces, in degrees. The player moves relative to this.</summary>
         public float Yaw => _yaw;
+
+        /// <summary>The cottage the player is inside, cut away so the camera can see in, or null.</summary>
+        public string OpenBuildingId { get; set; }
 
         public void Follow(Transform target, float targetHeight, TownDto town, float yaw)
         {
@@ -58,6 +66,9 @@ namespace Porchlight.Cameras
             _yaw += pointerLook.x + keys.x * KeyTurnSpeed * dt;
             _pitch = Mathf.Clamp(_pitch - pointerLook.y - keys.y * KeyTiltSpeed * dt, -10f, 75f);
 
+            // Indoors, ease up to looking down into the room.
+            if (OpenBuildingId != null && _pitch < InsidePitch) _pitch = Mathf.Lerp(_pitch, InsidePitch, 1f - Mathf.Exp(-6f * dt));
+
             var scroll = PInput.Scroll();
             if (scroll > 0f) Distance *= 0.9f;
             if (scroll < 0f) Distance *= 1.1f;
@@ -77,7 +88,7 @@ namespace Porchlight.Cameras
             for (var d = 0.4f; d <= Distance; d += 0.25f)
             {
                 var p = _focus + back * d;
-                if (p.y < TownTerrain.HeightAt(_town, new Vec2(p.x, p.z)) + 0.2f || TownWalking.IsInsideBuilding(_town, new Vec2(p.x, p.z), p.y))
+                if (p.y < TownTerrain.HeightAt(_town, new Vec2(p.x, p.z)) + 0.2f || TownWalking.IsInsideBuilding(_town, new Vec2(p.x, p.z), p.y, OpenBuildingId))
                 {
                     clear = Mathf.Max(MinDistance * 0.5f, d - 0.4f);
                     break;

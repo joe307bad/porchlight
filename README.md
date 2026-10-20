@@ -33,7 +33,16 @@ the pointer with a red cross. The Switch has no builder, so it starts at Play.
 turn the camera, scroll zooms, Esc / + leaves the town.
 
 **Building (browser):** arrow keys move, WASD looks around, Space/C go up and down, Shift is faster.
-Tab switches between building and walking around as your character.
+Tab switches between building and walking around as your character: a ghost of them follows the
+pointer, and a click drops them there (Esc goes back).
+
+**Cottage insides (browser):** with the Build tool, click a cottage to edit its inside. The camera locks
+onto the cottage: drag or WASD to turn, scroll to zoom. F switches between the ground floor and upstairs;
+1 Walls (click-click to draw, everything snaps), 2 Place (doors, windows and furniture), 3 Stairs (move
+them, Q/E turns), 4 Remove. Esc goes back to the town, Tab drops your character in on the floor you're editing.
+
+**Inside, on foot:** doors open as you walk up to them. Walk into a couch, dining chair or toilet to sit,
+or into a bed to lie down; move again to get up.
 
 ## Tests
 

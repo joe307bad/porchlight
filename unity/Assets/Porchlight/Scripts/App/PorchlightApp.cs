@@ -55,12 +55,17 @@ namespace Porchlight.App
         private PlayerController _player;
         private TownView _view;
         private BuilderTool _builder;
+        private InteriorEditor _interior;
+        private WalkDrop _drop;
+        private OrbitCamera _orbit;
         private Material _material;
 
         private Mode _mode;
         private int _choice;
         private CharacterType _character;
         private bool _walking;
+        private bool _editingInside;
+        private bool _dropping;
         private Vector3 _flyPosition;
         private Pose _menuCamera;
         private bool _menuCameraMoving;
@@ -114,6 +119,8 @@ namespace Porchlight.App
             _fly.enabled = false;
             _thirdPerson = _camera.gameObject.AddComponent<ThirdPersonCamera>();
             _thirdPerson.enabled = false;
+            _orbit = _camera.gameObject.AddComponent<OrbitCamera>();
+            _orbit.enabled = false;
             _camera.cullingMask &= ~(1 << HudBar.Layer);
 
             if (FindAnyObjectByType<Light>() == null)
@@ -147,6 +154,12 @@ namespace Porchlight.App
             {
                 _builder = gameObject.AddComponent<BuilderTool>();
                 _builder.enabled = false;
+                _builder.InteriorRequested += EditInside;
+                _interior = gameObject.AddComponent<InteriorEditor>();
+                _interior.enabled = false;
+                _drop = new GameObject("Drop").AddComponent<WalkDrop>();
+                _drop.transform.SetParent(transform, false);
+                _drop.enabled = false;
 
                 _title = CreateScreen<TitleScreen>("Title");
                 _title.Init(_material);
@@ -232,6 +245,7 @@ namespace Porchlight.App
             _mode = mode;
             _fly.enabled = false;
             _thirdPerson.enabled = false;
+            _orbit.enabled = false;
             _camera.rect = new Rect(0f, 0f, 1f, 1f);
             _hud.Hide();
             if (_title != null) _title.Hide();
@@ -373,14 +387,15 @@ namespace Porchlight.App
             }
         }
 
-        private void StartWalking(Vec2 spot, float heading)
+        private void StartWalking(Vec2 spot, float heading, float floorY = float.NaN)
         {
             _walking = true;
             _fly.enabled = false;
             _grid.Hide();
             if (_builder != null) _builder.Paused = true;
-            _player.Begin(_town, _thirdPerson, spot, heading);
+            _player.Begin(_town, _thirdPerson, spot, heading, floorY);
             _thirdPerson.Follow(_player.transform, _character.Height, _town, heading);
+            _view.Walker = _player.transform;
             _hud.Show(new WalkHud(_town, _character, _material, _building, _building ? ToggleWalking : ExitTown));
         }
 
@@ -389,6 +404,9 @@ namespace Porchlight.App
             _walking = false;
             _player.End();
             _thirdPerson.enabled = false;
+            _thirdPerson.OpenBuildingId = null;
+            _view.Walker = null;
+            _view.SetCutaway(null, 0, 0);
             if (_builder != null) _builder.Paused = false;
         }
 
@@ -405,22 +423,98 @@ namespace Porchlight.App
                 return;
             }
 
-            // Drop the character wherever the build camera is looking.
-            _flyPosition = _camera.transform.position;
-            _flyRotation = _camera.transform.rotation;
-            var look = _camera.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
-            var target = Vec2.Zero;
-            if (look.direction.y < -0.05f && TerrainMeshes.Raycast(_town, look, out var hit))
+            // First choose where to drop the character in.
+            BeginDrop(null, 0);
+        }
+
+        /// <summary>
+        /// Builder only: a ghost of the character follows the pointer until a click drops them in. With a
+        /// building, they go on that floor of the cottage being edited.
+        /// </summary>
+        private void BeginDrop(BuildingDto building, int floor)
+        {
+            if (_dropping || _walking) return;
+            _dropping = true;
+            if (building == null) _builder.Paused = true;
+            else _interior.Paused = true;
+            _drop.Begin(_town, _camera, _character, _material, building, floor, Drop, CancelDrop);
+            _hud.Show(new DropHud(_drop, CancelDrop));
+        }
+
+        private void CancelDrop()
+        {
+            if (!_dropping) return;
+            _dropping = false;
+            _drop.End();
+            if (_editingInside)
             {
-                var half = _town.Size * 0.5f - 1f;
-                target = new Vec2(Mathf.Clamp(hit.x, -half, half), Mathf.Clamp(hit.z, -half, half));
+                _interior.Paused = false;
+                _hud.Show(new InteriorHud(_interior, _builder, _material, WalkInside));
+                return;
             }
 
-            StartWalking(TownWalking.FindSpawn(_town, target), _flyRotation.eulerAngles.y);
+            _builder.Paused = false;
+            _hud.Show(new BuilderHud(_builder, _material, ToggleWalking));
+        }
+
+        private void Drop(Vec2 spot, float heading, float floorY)
+        {
+            _dropping = false;
+            _drop.End();
+
+            // Tab or the Walk button brings the camera back to where it was.
+            if (_editingInside) LeaveInside();
+            else
+            {
+                _flyPosition = _camera.transform.position;
+                _flyRotation = _camera.transform.rotation;
+            }
+
+            StartWalking(spot, heading, floorY);
+        }
+
+        /// <summary>Builder only: edit the inside of a cottage, with the camera locked on it.</summary>
+        private void EditInside(BuildingDto building)
+        {
+            if (_editingInside || _walking) return;
+            _editingInside = true;
+            _flyPosition = _camera.transform.position;
+            _flyRotation = _camera.transform.rotation;
+            _fly.enabled = false;
+            _builder.Paused = true;
+            _grid.Hide();
+            _interior.Begin(_town, building, _view, _camera, _orbit, _material, _builder.ApplyEdit, LeaveInside);
+            _hud.Show(new InteriorHud(_interior, _builder, _material, WalkInside));
+        }
+
+        /// <summary>Back to building the town, where the camera was before.</summary>
+        private void LeaveInside()
+        {
+            if (!_editingInside) return;
+            _editingInside = false;
+            _interior.End();
+            _camera.transform.SetPositionAndRotation(_flyPosition, _flyRotation);
+            _fly.enabled = true;
+            _builder.Paused = false;
+            _grid.Show(_town);
+            _hud.Show(new BuilderHud(_builder, _material, ToggleWalking));
+        }
+
+        /// <summary>From editing a cottage, walk around, dropped in on the floor being edited.</summary>
+        private void WalkInside()
+        {
+            if (_interior.Building != null) BeginDrop(_interior.Building, _interior.Floor);
         }
 
         private void ExitTown()
         {
+            if (_dropping)
+            {
+                _dropping = false;
+                _drop.End();
+            }
+
+            if (_editingInside) LeaveInside();
             if (_walking) StopWalking();
             if (_builder != null) _builder.End();
             _hud.Hide();
@@ -436,8 +530,34 @@ namespace Porchlight.App
 
             // The menus handle their own input; this is only for inside a town.
             if (_mode != Mode.Town) return;
-            if (_building && (PInput.KeyDown(PKey.Tab) || (_walking && PInput.Pause()))) ToggleWalking();
+            if (_dropping)
+            {
+                if (PInput.KeyDown(PKey.Tab)) CancelDrop();
+            }
+            else if (_editingInside)
+            {
+                if (PInput.KeyDown(PKey.Tab)) WalkInside();
+            }
+            else if (_building && (PInput.KeyDown(PKey.Tab) || (_walking && PInput.Pause()))) ToggleWalking();
             else if (!_building && PInput.Pause()) ExitTown();
+        }
+
+        private void LateUpdate()
+        {
+            if (!_walking || _player == null || _town == null) return;
+
+            // Inside a cottage, cut it away to see in: the floors above, the roof, and the walls on the camera's side.
+            if (_player.TryGetInterior(out var buildingId, out var floor))
+            {
+                var building = _town.Buildings.Find(b => b.Id == buildingId);
+                _view.SetCutaway(buildingId, floor, InteriorEditor.SidesFacing(_camera.transform.forward, building.RotationDeg));
+                _thirdPerson.OpenBuildingId = buildingId;
+            }
+            else
+            {
+                _view.SetCutaway(null, 0, 0);
+                _thirdPerson.OpenBuildingId = null;
+            }
         }
 
         private void MoveMenuCamera()
