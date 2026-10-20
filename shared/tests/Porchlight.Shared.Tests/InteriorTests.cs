@@ -1,3 +1,4 @@
+using System;
 using System.Text.Json;
 using Porchlight.Shared.Content;
 using Porchlight.Shared.Editing;
@@ -10,14 +11,20 @@ namespace Porchlight.Shared.Tests;
 
 public class InteriorTests
 {
-    // The cottage is 7 x 6 m, so inside its 0.25 m walls the floor runs x -3.25..3.25, z -2.75..2.75.
-    // The default stairs run along the back wall: x -0.5..2.5, z -2.75..-1.75, climbing towards -X.
-    private static readonly BuildingType Cottage = Catalog.Buildings[0];
+    // The small cottage is 7 x 6 m, so inside its 0.25 m walls the floor runs x -3.25..3.25, z -2.75..2.75.
+    // Its default stairs run along the back wall: x -0.5..2.5, z -2.75..-1.75, climbing towards -X.
+    private static readonly BuildingType Cottage = Small();
+
+    private static BuildingType Small()
+    {
+        Assert.True(Catalog.TryGetBuilding(CottageInterior.SmallTypeId, out var type));
+        return type;
+    }
 
     private static (TownDto Town, BuildingDto Cottage) TownWithCottage(float rotation = 0f)
     {
         var town = TownFactory.CreateEmpty(Ids.New(), "Inside Town");
-        var placed = TownEditor.Apply(town, new PlaceBuildingCommand { BuildingId = "c", TypeId = CottageInterior.TypeId, X = 10, Z = 10, RotationDeg = rotation });
+        var placed = TownEditor.Apply(town, new PlaceBuildingCommand { BuildingId = "c", TypeId = CottageInterior.SmallTypeId, X = 10, Z = 10, RotationDeg = rotation });
         Assert.True(placed.Ok, placed.Error);
         return (town, town.Buildings[0]);
     }
@@ -242,11 +249,11 @@ public class InteriorTests
 
 public class InteriorWalkingTests
 {
-    // A cottage at the origin, facing +Z: the front door spans x -0.6..0.6 in the wall at z = 2.75..3.
+    // A small cottage at the origin, facing +Z: the front door spans x -0.6..0.6 in the wall at z = 2.75..3.
     private static TownDto TownWithCottage()
     {
         var town = TownFactory.CreateEmpty(Ids.New(), "Walk In");
-        Assert.True(TownEditor.Apply(town, new PlaceBuildingCommand { BuildingId = "c", TypeId = CottageInterior.TypeId }).Ok);
+        Assert.True(TownEditor.Apply(town, new PlaceBuildingCommand { BuildingId = "c", TypeId = CottageInterior.SmallTypeId }).Ok);
         return town;
     }
 
@@ -322,5 +329,34 @@ public class InteriorWalkingTests
 
         // Walking away from it does nothing.
         Assert.False(TownWalking.TryFindFurnitureSpot(town, new Vec2(-1.3f, 0.2f), new Vec2(0.1f, 0f), y, out _));
+    }
+
+    [Fact]
+    public void GettingUpGoesOffTheSidePushedTowardsIfThereIsRoom()
+    {
+        // A bed along the left wall, head to the back, with a wall close beside it on the right.
+        var town = TownWithCottage();
+        Assert.True(TownEditor.Apply(town, new PlaceFurnitureCommand { BuildingId = "c", Floor = 0, ItemId = "bed", TypeId = "bed", X = -2.55f, Z = -0.3f, RotationDeg = 0f }).Ok);
+        Assert.True(TownEditor.Apply(town, new AddInteriorWallCommand { BuildingId = "c", Floor = 0, WallId = "w", X0 = -1.65f, Z0 = -1.5f, X1 = -1.65f, Z1 = 2f }).Ok);
+
+        var y = CottageInterior.Plinth;
+        Assert.True(TownWalking.TryFindFurnitureSpot(town, new Vec2(-2.55f, 1.1f), new Vec2(0f, -0.1f), y, out var spot));
+        Assert.Equal(FurnitureAction.LieDown, spot.Action);
+
+        // Off the foot, when pushing that way.
+        var front = TownWalking.ExitToward(town, spot, new Vec2(0f, 1f));
+        Assert.True(front.Z > 0.7f && Math.Abs(front.X + 2.55f) < 0.1f, front.ToString());
+
+        // Pushing right runs into the wall, and pushing left into the outside wall, so off the foot instead.
+        var right = TownWalking.ExitToward(town, spot, new Vec2(1f, 0f));
+        Assert.True(right.X < -1.7f && right.Z > 0.7f, right.ToString());
+        var left = TownWalking.ExitToward(town, spot, new Vec2(-1f, 0f));
+        Assert.True(left.Z > 0.7f, left.ToString());
+
+        // Never through the wall into the next room.
+        foreach (var direction in new[] { new Vec2(1f, 0f), new Vec2(1f, -1f), new Vec2(0f, -1f), new Vec2(-1f, 0f) })
+        {
+            Assert.True(TownWalking.ExitToward(town, spot, direction).X < -1.7f);
+        }
     }
 }

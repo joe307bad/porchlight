@@ -61,7 +61,7 @@ namespace Porchlight.App
 
         private void DrawFloors(HudCanvas c, float x)
         {
-            c.Header("Cottage", x, HeaderZ);
+            c.Header(_editor.Building != null && _editor.Building.HouseNumber > 0 ? $"Cottage {_editor.Building.HouseNumber}" : "Cottage", x, HeaderZ);
             const float height = 3.2f, gap = 0.5f;
             var floors = new[] { "Upstairs", "Ground floor" };
             for (var i = 0; i < floors.Length; i++)

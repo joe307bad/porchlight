@@ -40,11 +40,14 @@ namespace Porchlight.Rendering
             public string Key;
             public Transform DoorRoot;
             public readonly List<Door> Doors = new List<Door>();
+            public GameObject Plate;
+            public int Number;
         }
 
         private readonly Dictionary<string, Building> _buildings = new Dictionary<string, Building>();
         private readonly Dictionary<string, Mesh> _cottageMeshes = new Dictionary<string, Mesh>();
         private readonly Dictionary<string, Mesh> _cutawayMeshes = new Dictionary<string, Mesh>();
+        private readonly Dictionary<string, Mesh> _plateMeshes = new Dictionary<string, Mesh>();
         private Material _material;
         private Transform _buildingsRoot;
         private Transform _doorsRoot;
@@ -130,6 +133,8 @@ namespace Porchlight.Rendering
                     if (dto.Id == _cutawayId) _cutawayKey = null;
                 }
 
+                if (dto.HouseNumber != building.Number) BuildPlate(building, dto);
+
                 var pose = (new Vector3(dto.X, TownTerrain.BaseHeight(town, dto), dto.Z), Quaternion.Euler(0f, dto.RotationDeg, 0f));
                 building.Go.transform.SetPositionAndRotation(pose.Item1, pose.Item2);
                 building.DoorRoot.SetPositionAndRotation(pose.Item1, pose.Item2);
@@ -214,11 +219,15 @@ namespace Porchlight.Rendering
 
         private static void ShowDoors(Building building, int topFloor, int lowered)
         {
+            var frontDown = topFloor == 0 && (lowered & InteriorMeshes.Front) != 0;
             foreach (var door in building.Doors)
             {
-                var hidden = door.Floor > topFloor || (door.Front && topFloor == 0 && (lowered & InteriorMeshes.Front) != 0);
+                var hidden = door.Floor > topFloor || (door.Front && frontDown);
                 door.Leaf.gameObject.SetActive(!hidden);
             }
+
+            // The house number goes with the front wall.
+            if (building.Plate != null) building.Plate.SetActive(!frontDown);
         }
 
         private void Update()
@@ -269,6 +278,8 @@ namespace Porchlight.Rendering
             _buildings.Clear();
             foreach (var mesh in _cottageMeshes.Values) Destroy(mesh);
             _cottageMeshes.Clear();
+            foreach (var mesh in _plateMeshes.Values) Destroy(mesh);
+            _plateMeshes.Clear();
             _town = null;
 
             // Static batching can't be undone, so start the next town with fresh roots.
@@ -338,6 +349,31 @@ namespace Porchlight.Rendering
                     });
                 }
             }
+        }
+
+        /// <summary>The house number beside the front door. It rides with the doors, which aren't batched, so it can hide.</summary>
+        private void BuildPlate(Building building, BuildingDto dto)
+        {
+            if (building.Plate != null) Destroy(building.Plate);
+            building.Plate = null;
+            building.Number = dto.HouseNumber;
+            if (dto.HouseNumber <= 0 || !Catalog.TryGetBuilding(dto.TypeId, out var type)) return;
+
+            var key = dto.TypeId + "#" + dto.HouseNumber;
+            if (!_plateMeshes.TryGetValue(key, out var mesh) || mesh == null)
+            {
+                mesh = InteriorMeshes.NumberPlate(type, dto.HouseNumber);
+                _plateMeshes[key] = mesh;
+            }
+
+            var go = new GameObject("House number");
+            go.transform.SetParent(building.DoorRoot, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = _material;
+            renderer.shadowCastingMode = ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            building.Plate = go;
         }
 
         private Building CreateBuilding(string id)

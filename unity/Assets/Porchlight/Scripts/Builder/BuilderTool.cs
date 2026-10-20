@@ -53,7 +53,7 @@ namespace Porchlight.Builder
         private Action _onExit;
 
         private Tool _tool;
-        private string _buildingTypeId = Catalog.Buildings[0].Id;
+        private string _buildingTypeId = Catalog.Buildable[0].Id;
         private string _roadTypeId = Catalog.Roads[0].Id;
         private float _rotation;
         private bool _snapToGrid;

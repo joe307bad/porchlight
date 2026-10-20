@@ -29,7 +29,7 @@ namespace Porchlight.App
         private static readonly (string Action, string Keys)[] Controls =
         {
             ("Move", "Arrows  ·  Left stick"),
-            ("Run", "Shift  ·  Stick click"),
+            ("Run", "Shift  ·  RT"),
             ("Jump", "Space  ·  A"),
             ("Camera", "WASD  ·  Right mouse / stick"),
             ("Zoom", "Scroll wheel"),

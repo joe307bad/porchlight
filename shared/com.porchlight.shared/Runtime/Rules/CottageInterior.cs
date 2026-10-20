@@ -18,7 +18,11 @@ namespace Porchlight.Shared.Rules
     /// </summary>
     public static class CottageInterior
     {
-        public const string TypeId = "house_small";
+        /// <summary>The cottage the builder places. New ones are laid out by <see cref="CottageGenerator"/>.</summary>
+        public const string TypeId = "cottage";
+
+        /// <summary>The first, smaller cottage. It's no longer offered, but old towns still have them.</summary>
+        public const string SmallTypeId = "house_small";
 
         public const string FrontWall = "front";
         public const string BackWall = "back";
@@ -60,6 +64,7 @@ namespace Porchlight.Shared.Rules
         public const int MaxItemsPerFloor = 60;
 
         private static InteriorDto _default;
+        private static InteriorDto _generatedDefault;
 
         public static float FloorHeight(int floor) => Plinth + floor * StoryHeight;
         public static float WallTop => Plinth + FloorCount * StoryHeight;
@@ -67,7 +72,7 @@ namespace Porchlight.Shared.Rules
         /// <summary>Which floor someone this far above the building's base is on. Halfway up the stairs is the switch.</summary>
         public static int LevelAt(float heightAboveBase) => heightAboveBase > Plinth + StoryHeight * 0.5f ? 1 : 0;
 
-        public static bool HasInterior(string typeId) => typeId == TypeId;
+        public static bool HasInterior(string typeId) => typeId == TypeId || typeId == SmallTypeId;
         public static bool HasInterior(BuildingDto building) => building != null && HasInterior(building.TypeId);
 
         /// <summary>The floor space inside the outside walls.</summary>
@@ -78,9 +83,14 @@ namespace Porchlight.Shared.Rules
         /// A building's inside, or the default layout for one that's never been edited. The default is
         /// shared, so don't change what this returns: edit a <see cref="InteriorDto.Clone"/>.
         /// </summary>
-        public static InteriorDto Of(BuildingDto building) => building.Interior ?? (_default ??= Default());
+        public static InteriorDto Of(BuildingDto building) =>
+            building.Interior ?? (building.TypeId == TypeId && Catalog.TryGetBuilding(TypeId, out var type) ? DefaultFor(type) : (_default ??= Default()));
 
-        /// <summary>A new cottage: stairs along the back wall, empty rooms, and windows either side of the front door.</summary>
+        /// <summary>The shared layout for a cottage of this type with no inside of its own. Don't change it.</summary>
+        public static InteriorDto DefaultFor(BuildingType type) =>
+            type.Id == TypeId ? (_generatedDefault ??= CottageGenerator.Generate(type, "")) : (_default ??= Default());
+
+        /// <summary>A new small cottage: stairs along the back wall, empty rooms, and windows either side of the front door.</summary>
         public static InteriorDto Default()
         {
             var interior = new InteriorDto { Stairs = new StairsDto { X = 1f, Z = -2.25f, RotationDeg = 270f } };

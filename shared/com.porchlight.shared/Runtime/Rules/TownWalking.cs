@@ -259,6 +259,77 @@ namespace Porchlight.Shared.Rules
             return false;
         }
 
+        /// <summary>
+        /// Where to stand up to from a seat or bed: off the side that faces most nearly along
+        /// <paramref name="direction"/> (in the town) and has room to stand, with no wall between.
+        /// A zero direction means the spot's usual side. Falls back to <see cref="FurnitureSpot.Exit"/>
+        /// when no side has room.
+        /// </summary>
+        public static Vec2 ExitToward(TownDto town, FurnitureSpot spot, Vec2 direction, float radius = CharacterRadius)
+        {
+            if (direction.LengthSquared < 1e-6f) direction = spot.Exit - spot.Position;
+            var building = town.Buildings.Find(b => b.Id == spot.BuildingId);
+            if (building == null || direction.LengthSquared < 1e-6f || !Catalog.TryGetBuilding(building.TypeId, out var type)) return spot.Exit;
+
+            var footprint = TownRules.Footprint(type, building.X, building.Z, building.RotationDeg);
+            var interior = CottageInterior.Of(building);
+
+            // The seat or mattress is a little way above the floor it stands on.
+            var level = CottageInterior.LevelAt(spot.Height - TownTerrain.BaseHeight(town, footprint) - 0.3f);
+            var item = interior.Floors[level].Items.Find(i => i.Id == spot.ItemId);
+            if (item == null || !CottageInterior.TryItemBox(item, out var kind, out var box)) return spot.Exit;
+
+            var colliders = new List<Aabb>();
+            CottageInterior.Colliders(type, interior, level, colliders);
+            var inside = CottageInterior.Inside(type);
+
+            // Everything from here on is in the item's own frame (front is +Z), then the building's.
+            var center = new Vec2(item.X, item.Z);
+            Vec2 ToBuilding(Vec2 itemLocal) => Frames.ToWorld(center, item.RotationDeg, itemLocal);
+            var wanted = Frames.ToLocal(Vec2.Zero, item.RotationDeg, Frames.ToLocal(Vec2.Zero, building.RotationDeg, direction)).Normalized;
+
+            // Get off level with where they are: beside the middle of a bed, or the chair or stretch of couch they're on.
+            var seat = kind.Action == FurnitureAction.LieDown
+                ? Vec2.Zero
+                : Frames.ToLocal(center, item.RotationDeg, Frames.ToLocal(footprint.Center, building.RotationDeg, spot.Position));
+            float halfX = kind.Width * 0.5f, halfZ = kind.Depth * 0.5f, margin = radius + 0.15f;
+
+            var sides = new[] { new Vec2(0f, 1f), new Vec2(0f, -1f), new Vec2(1f, 0f), new Vec2(-1f, 0f) };
+            Array.Sort(sides, (a, b) => Vec2.Dot(b, wanted).CompareTo(Vec2.Dot(a, wanted)));
+            foreach (var side in sides)
+            {
+                var edge = side.X != 0f ? new Vec2(side.X * halfX, seat.Z) : new Vec2(seat.X, side.Z * halfZ);
+                var stand = ToBuilding(edge + side * margin);
+                if (!inside.Contains(stand) || !Clear(stand, radius)) continue;
+                if (interior.Stairs != null && CottageInterior.StairsBox(interior.Stairs).Expanded(radius).Contains(stand)) continue;
+
+                // Nothing (a wall, most likely) between the edge and where they'd stand.
+                var from = ToBuilding(edge);
+                var blocked = false;
+                for (var t = 0.1f; t < 1f && !blocked; t += 0.1f)
+                {
+                    blocked = !Clear(from + (stand - from) * t, 0.02f);
+                }
+
+                if (!blocked) return Frames.ToWorld(footprint.Center, building.RotationDeg, stand);
+            }
+
+            return spot.Exit;
+
+            bool Clear(Vec2 point, float r)
+            {
+                foreach (var c in colliders)
+                {
+                    if (c.MinX == box.MinX && c.MinZ == box.MinZ && c.MaxX == box.MaxX && c.MaxZ == box.MaxZ) continue;
+                    var dx = Math.Max(Math.Max(c.MinX - point.X, point.X - c.MaxX), 0f);
+                    var dz = Math.Max(Math.Max(c.MinZ - point.Z, point.Z - c.MaxZ), 0f);
+                    if (dx * dx + dz * dz < r * r) return false;
+                }
+
+                return true;
+            }
+        }
+
         /// <summary>A cottage's walls, stairs and furniture on the floor at height <paramref name="y"/>, pushing a circle out of them.</summary>
         private static bool PushOutOfInterior(TownDto town, BuildingDto building, ref Vec2 p, float y, float radius)
         {

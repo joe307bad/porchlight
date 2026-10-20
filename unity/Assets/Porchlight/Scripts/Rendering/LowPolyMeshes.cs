@@ -26,8 +26,8 @@ namespace Porchlight.Rendering
 
         public static Mesh Building(BuildingType type)
         {
-            // Cottages are built from their insides; this is a new one's.
-            if (CottageInterior.HasInterior(type.Id)) return InteriorMeshes.Cottage(type, CottageInterior.Default());
+            // Cottages are built from their insides; this is a stand-in one's.
+            if (CottageInterior.HasInterior(type.Id)) return InteriorMeshes.Cottage(type, CottageInterior.DefaultFor(type));
 
             var mb = new MeshBuilder();
             var wall = Hex(type.WallColor);

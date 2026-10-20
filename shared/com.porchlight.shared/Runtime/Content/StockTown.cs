@@ -83,8 +83,8 @@ namespace Porchlight.Shared.Content
             string id;
             var far = Math.Max(Math.Abs(near.X), Math.Abs(near.Z)) > 70f;
             if (near.Z > 50f && far) id = index % 3 == 0 ? "office" : "apartment";
-            else if (far) id = new[] { "house_large", "factory", "park", "house_small" }[index % 4];
-            else id = new[] { "house_small", "shop", "house_large", "house_small", "park" }[index % 5];
+            else if (far) id = new[] { "house_large", "factory", "park", "cottage" }[index % 4];
+            else id = new[] { "cottage", "shop", "house_large", "cottage", "park" }[index % 5];
 
             Catalog.TryGetBuilding(id, out var type);
             return type;

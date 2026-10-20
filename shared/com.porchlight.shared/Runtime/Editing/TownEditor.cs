@@ -145,8 +145,25 @@ namespace Porchlight.Shared.Editing
             // On a slope, the ground under the building is levelled first.
             if (ground != null) town.Terrain = ground;
 
-            town.Buildings.Add(new BuildingDto { Id = c.BuildingId, TypeId = c.TypeId, X = x, Z = z, RotationDeg = rotation });
+            var building = new BuildingDto { Id = c.BuildingId, TypeId = c.TypeId, X = x, Z = z, RotationDeg = rotation };
+            if (CottageInterior.HasInterior(building))
+            {
+                // Cottages are numbered in the order they're built, and new ones come furnished.
+                building.HouseNumber = NextHouseNumber(town);
+                if (c.TypeId == CottageInterior.TypeId && Content.Catalog.TryGetBuilding(c.TypeId, out var type))
+                    building.Interior = CottageGenerator.Generate(type, c.BuildingId);
+            }
+
+            town.Buildings.Add(building);
             return EditResult.Success;
+        }
+
+        /// <summary>One more than the highest house number in the town, so numbers aren't reused while it stands.</summary>
+        public static int NextHouseNumber(TownDto town)
+        {
+            var highest = 0;
+            foreach (var building in town.Buildings) highest = Math.Max(highest, building.HouseNumber);
+            return Math.Min(highest + 1, TownLimits.MaxHouseNumber);
         }
 
         private static EditResult RemoveBuilding(TownDto town, RemoveBuildingCommand c)

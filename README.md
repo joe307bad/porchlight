@@ -36,6 +36,10 @@ turn the camera, scroll zooms, Esc / + leaves the town.
 Tab switches between building and walking around as your character: a ghost of them follows the
 pointer, and a click drops them there (Esc goes back).
 
+**New cottages** come furnished: a hall with the stairs, a living room, kitchen and dining room
+downstairs, and two bedrooms and a bathroom upstairs, laid out a little differently each time (the
+layout is seeded from the building's id). Each gets the next house number, shown beside the front door.
+
 **Cottage insides (browser):** with the Build tool, click a cottage to edit its inside. The camera locks
 onto the cottage: drag or WASD to turn, scroll to zoom. F switches between the ground floor and upstairs;
 1 Walls (click-click to draw, everything snaps), 2 Place (doors, windows and furniture), 3 Stairs (move

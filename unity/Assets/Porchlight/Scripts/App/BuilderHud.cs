@@ -127,7 +127,7 @@ namespace Porchlight.App
         /// <summary>A card per building type: a picture, the name, and what it adds to the town.</summary>
         private void DrawBuildingCards(HudCanvas c, float left, float right)
         {
-            var types = Catalog.Buildings;
+            var types = Catalog.Buildable;
             const float gap = 0.5f;
             var width = Mathf.Min(8f, (right - left - gap * (types.Count - 1)) / types.Count);
             var height = ContentTop - ContentBottom;

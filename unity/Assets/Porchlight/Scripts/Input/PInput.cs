@@ -120,6 +120,7 @@ namespace Porchlight.Input
 #endif
         }
 
+        /// <summary>Flying faster: Shift, or a left stick click (the triggers fly up and down).</summary>
         public static bool Fast()
         {
 #if ENABLE_INPUT_SYSTEM
@@ -129,6 +130,17 @@ namespace Porchlight.Input
                 || (g != null && g.leftStickButton.isPressed);
 #else
             return UnityEngine.Input.GetKey(KeyCode.LeftShift) || UnityEngine.Input.GetKey(KeyCode.RightShift);
+#endif
+        }
+
+        /// <summary>Running on foot: Shift, the right trigger, or a left stick click.</summary>
+        public static bool Run()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var g = Gamepad.current;
+            return Fast() || (g != null && g.rightTrigger.ReadValue() > 0.3f);
+#else
+            return Fast();
 #endif
         }
 
@@ -358,12 +370,17 @@ namespace Porchlight.Input
 #endif
         }
 
-        /// <summary>Jump: Space, or A on a Switch / the bottom face button elsewhere.</summary>
+        /// <summary>
+        /// Jump: Space, or any face button. On foot they do nothing else, and browsers don't all agree
+        /// on which button is which, so A always works whatever the browser calls it.
+        /// </summary>
         public static bool Jump()
         {
 #if ENABLE_INPUT_SYSTEM
+            var g = Gamepad.current;
             return (Keyboard.current?.spaceKey.wasPressedThisFrame ?? false)
-                || (Gamepad.current != null && ConfirmButton(Gamepad.current).wasPressedThisFrame);
+                || (g != null && (g.buttonSouth.wasPressedThisFrame || g.buttonEast.wasPressedThisFrame
+                    || g.buttonWest.wasPressedThisFrame || g.buttonNorth.wasPressedThisFrame));
 #else
             return UnityEngine.Input.GetKeyDown(KeyCode.Space);
 #endif

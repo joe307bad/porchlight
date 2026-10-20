@@ -41,6 +41,7 @@ namespace Porchlight.Rendering
         private static readonly Color Metal = LowPolyMeshes.Hex("#B8C2C8");
         public static readonly Color FrontDoorColor = LowPolyMeshes.Hex("#5A4636");
         public static readonly Color InsideDoorColor = LowPolyMeshes.Hex("#C49466");
+        private static readonly Color PlateColor = LowPolyMeshes.Hex("#2F4A66");
 
         /// <summary>A whole cottage, roof on. Interiors that are the same share a mesh.</summary>
         public static Mesh Cottage(BuildingType type, InteriorDto interior) => Cottage(type, interior, CottageInterior.FloorCount - 1, true, 0);
@@ -95,6 +96,26 @@ namespace Porchlight.Rendering
 
             if (roof && topFloor == CottageInterior.FloorCount - 1) LowPolyMeshes.GabledRoof(mb, hw, hd, CottageInterior.WallTop, wallColor, LowPolyMeshes.Hex(type.RoofColor));
             return mb.ToMesh(name: type.Id + " inside");
+        }
+
+        /// <summary>
+        /// The house number on a plate on the front wall, beside the front door (on the right as you
+        /// face it), in the building's frame.
+        /// </summary>
+        public static Mesh NumberPlate(BuildingType type, int number)
+        {
+            const float unit = 0.035f, pad = 0.07f, board = 0.03f, digits = 0.015f;
+            var text = number.ToString(CultureInfo.InvariantCulture);
+            var width = BlockText.Width(text, unit) + pad * 2f;
+            var height = BlockText.Height(unit) + pad * 2f;
+
+            // Facing the front of the house, right is -X.
+            var face = type.Depth * 0.5f;
+            var center = new Vector3(-(CottageInterior.FrontDoorWidth * 0.5f + 0.2f + width * 0.5f), CottageInterior.Plinth + 1.75f, face + board);
+            var mb = new MeshBuilder();
+            mb.Box(new Vector3(center.x, center.y - height * 0.5f, face + board * 0.5f), width, height, board, PlateColor, PlateColor);
+            BlockText.AddStanding(mb, text, center, Vector3.left, unit, digits, Trim);
+            return mb.ToMesh(name: "house number " + text);
         }
 
         /// <summary>A swinging door: hinged at the origin, running along +X, standing on y = 0.</summary>

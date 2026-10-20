@@ -67,9 +67,16 @@ namespace Porchlight.Shared.Model
 
         /// <summary>
         /// The inside of a building that has one (only cottages so far). Null until it's first edited,
-        /// which means the default layout from <see cref="Rules.CottageInterior.Default"/>.
+        /// which means the default layout from <see cref="Rules.CottageInterior.DefaultFor"/>. New
+        /// cottages get a generated one (<see cref="Rules.CottageGenerator"/>) as they're placed.
         /// </summary>
         public InteriorDto Interior { get; set; }
+
+        /// <summary>
+        /// The number on the front of a cottage, handed out in order as they're placed (one more than
+        /// the highest in the town). 0 for buildings without one.
+        /// </summary>
+        public int HouseNumber { get; set; }
 
         public BuildingDto Clone()
         {
@@ -238,6 +245,7 @@ namespace Porchlight.Shared.Model
         public const int MaxBuildings = 5000;
         public const int MaxRoadSegments = 5000;
         public const int MaxRoadNodes = 10000;
+        public const int MaxHouseNumber = 99999;
 
         /// <summary>One half-grid step, the shortest stretch the builder can draw.</summary>
         public const float MinRoadLength = 2f;

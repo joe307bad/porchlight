@@ -30,7 +30,7 @@ namespace Porchlight.Shared.Content
             float width, float depth, float height,
             int population, int jobs,
             string wallColor, string roofColor,
-            RoofStyle roof, Decoration decoration = Decoration.None, bool windowBands = false)
+            RoofStyle roof, Decoration decoration = Decoration.None, bool windowBands = false, bool listed = true)
         {
             Id = id;
             DisplayName = displayName;
@@ -44,6 +44,7 @@ namespace Porchlight.Shared.Content
             Roof = roof;
             Decoration = decoration;
             WindowBands = windowBands;
+            Listed = listed;
         }
 
         public string Id { get; }
@@ -66,6 +67,9 @@ namespace Porchlight.Shared.Content
         public RoofStyle Roof { get; }
         public Decoration Decoration { get; }
         public bool WindowBands { get; }
+
+        /// <summary>Offered in the builder. Retired types stay in the catalog so saved towns still load.</summary>
+        public bool Listed { get; }
     }
 
     public sealed class RoadType
@@ -88,8 +92,9 @@ namespace Porchlight.Shared.Content
     {
         public static readonly IReadOnlyList<BuildingType> Buildings = new[]
         {
-            // Two storeys, to match its inside (see Rules.CottageInterior).
-            new BuildingType("house_small", "Cottage", 7f, 6f, 5.45f, population: 4, jobs: 0,
+            // Two storeys, to match its inside (see Rules.CottageInterior). Each new one gets a
+            // furnished layout (Rules.CottageGenerator) and a house number.
+            new BuildingType("cottage", "Cottage", 10f, 8f, 5.45f, population: 4, jobs: 0,
                 "#F2E3C6", "#C0583F", RoofStyle.Gabled),
             new BuildingType("house_large", "Townhouse", 10f, 8f, 6f, population: 10, jobs: 0,
                 "#E9D8B4", "#5F6F82", RoofStyle.Gabled, Decoration.Chimney),
@@ -103,7 +108,14 @@ namespace Porchlight.Shared.Content
                 "#B8B0A2", "#7D746A", RoofStyle.Gabled, Decoration.Chimney),
             new BuildingType("park", "Park", 14f, 14f, 0.3f, population: 0, jobs: 0,
                 "#7FB069", "#8BC173", RoofStyle.Flat, Decoration.Trees),
+
+            // The first cottage, too small for a generated layout. Replaced by "cottage".
+            new BuildingType("house_small", "Small cottage", 7f, 6f, 5.45f, population: 4, jobs: 0,
+                "#F2E3C6", "#C0583F", RoofStyle.Gabled, listed: false),
         };
+
+        /// <summary>The types the builder offers, in order.</summary>
+        public static readonly IReadOnlyList<BuildingType> Buildable = new List<BuildingType>(Buildings).FindAll(b => b.Listed);
 
         public static readonly IReadOnlyList<RoadType> Roads = new[]
         {

@@ -15,7 +15,8 @@ namespace Porchlight.Rendering
     /// grid (chamfered corners, real diagonals), and the strokes are filled in with blocks on a finer
     /// grid, so diagonals become small even steps rather than big pixels. Text lies flat on the XZ
     /// plane, reading along +X with the top of each letter towards +Z, so it can sit on the ground in
-    /// perspective. Only the characters the menus use are defined.
+    /// perspective (or, with <see cref="AddStanding"/>, stand up on a wall). Only the characters the
+    /// menus and house numbers use are defined.
     /// </summary>
     public static class BlockText
     {
@@ -54,6 +55,16 @@ namespace Porchlight.Rendering
             ['X'] = S(P(0, 6, 4, 0), P(4, 6, 0, 0)),
             ['Y'] = S(P(0, 6, 2, 3, 4, 6), P(2, 3, 2, 0)),
             ['Z'] = S(P(0, 6, 4, 6, 0, 0, 4, 0)),
+            ['0'] = S(P(1, 0, 3, 0, 4, 1, 4, 5, 3, 6, 1, 6, 0, 5, 0, 1, 1, 0), P(1, 1.5f, 3, 4.5f)),
+            ['1'] = S(P(0.5f, 4.5f, 2, 6, 2, 0), P(0.5f, 0, 3.5f, 0)),
+            ['2'] = S(P(0, 5, 1, 6, 3, 6, 4, 5, 4, 4, 0, 0, 4, 0)),
+            ['3'] = S(P(0, 5, 1, 6, 3, 6, 4, 5, 4, 4, 3, 3, 1.5f, 3), P(3, 3, 4, 2, 4, 1, 3, 0, 1, 0, 0, 1)),
+            ['4'] = S(P(3, 0, 3, 6, 0, 2, 4, 2)),
+            ['5'] = S(P(4, 6, 0, 6, 0, 3.5f, 3, 3.5f, 4, 2.5f, 4, 1, 3, 0, 1, 0, 0, 1)),
+            ['6'] = S(P(4, 5, 3, 6, 1, 6, 0, 5, 0, 1, 1, 0, 3, 0, 4, 1, 4, 2.5f, 3, 3.5f, 0, 3.5f)),
+            ['7'] = S(P(0, 6, 4, 6, 1.5f, 0)),
+            ['8'] = S(P(1, 3, 0, 4, 0, 5, 1, 6, 3, 6, 4, 5, 4, 4, 3, 3, 1, 3, 0, 2, 0, 1, 1, 0, 3, 0, 4, 1, 4, 2, 3, 3)),
+            ['9'] = S(P(0, 1, 1, 0, 3, 0, 4, 1, 4, 5, 3, 6, 1, 6, 0, 5, 0, 3.5f, 1, 2.5f, 4, 2.5f)),
             ['>'] = S(P(0.5f, 5.5f, 3.5f, 3, 0.5f, 0.5f)),
             ['+'] = S(P(0, 3, 4, 3), P(2, 5, 2, 1)),
             ['/'] = S(P(0, 0, 4, 6)),
@@ -108,6 +119,46 @@ namespace Porchlight.Rendering
                         while (col < cells.GetLength(0) && cells[col, row]) col++;
                         var x = glyphLeft + (start + col) * 0.5f * cell;
                         mb.Box(new Vector3(x, anchor.y, z), (col - start) * cell, depth, cell, sides, top);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Adds <paramref name="text"/> standing upright, centred on <paramref name="center"/>, as if
+        /// painted on a wall. It reads along <paramref name="right"/> (an X or Z axis, either way) and
+        /// sticks out <paramref name="depth"/> towards whoever is reading it. One colour throughout.
+        /// </summary>
+        public static void AddStanding(MeshBuilder mb, string text, Vector3 center, Vector3 right, float unit, float depth, Color color, int detail = 3)
+        {
+            text = text.ToUpperInvariant();
+            var outward = Vector3.Cross(Vector3.up, right);
+            var alongX = Mathf.Abs(right.x) > 0.5f;
+            var left = -Width(text, unit) * 0.5f;
+            var top = Height(unit) * 0.5f;
+            var cell = unit / detail;
+
+            for (var i = 0; i < text.Length; i++)
+            {
+                var cells = Glyph(text[i], detail);
+                var glyphLeft = left + i * Advance * unit;
+                for (var row = 0; row < cells.GetLength(1); row++)
+                {
+                    var y = top - (row + 1) * cell;
+                    for (var col = 0; col < cells.GetLength(0);)
+                    {
+                        if (!cells[col, row])
+                        {
+                            col++;
+                            continue;
+                        }
+
+                        var start = col;
+                        while (col < cells.GetLength(0) && cells[col, row]) col++;
+                        var u = glyphLeft + (start + col) * 0.5f * cell;
+                        var run = (col - start) * cell;
+                        var bottom = center + right * u + Vector3.up * y + outward * (depth * 0.5f);
+                        mb.Box(bottom, alongX ? run : depth, cell, alongX ? depth : run, color, color);
                     }
                 }
             }

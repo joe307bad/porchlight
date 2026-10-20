@@ -10,12 +10,13 @@ namespace Porchlight.Avatars
 {
     /// <summary>
     /// Walks the player's character around a town: arrows or the left stick move relative to the
-    /// camera, Shift or a stick click runs, Space or A jumps. Collisions come from the shared
+    /// camera, Shift or the right trigger runs, Space or A jumps. Collisions come from the shared
     /// <see cref="TownWalking"/> rules, so there are no colliders or physics to set up.
     ///
     /// There are no buttons for doing things: walking into a couch, chair or toilet sits down on it,
-    /// and walking into a bed lies down on it. Any move after that gets up again. (Doors open by
-    /// themselves; see <see cref="Rendering.TownView"/>.)
+    /// and walking into a bed lies down on it. Any move after that gets up again, off the side you
+    /// pushed towards (or the nearest side with room). (Doors open by themselves; see
+    /// <see cref="Rendering.TownView"/>.)
     /// </summary>
     [RequireComponent(typeof(CharacterRig))]
     public sealed class PlayerController : MonoBehaviour
@@ -93,12 +94,14 @@ namespace Porchlight.Avatars
 
             // Stick and arrows are relative to where the camera looks.
             var input = PInput.Move();
+            var forward = Quaternion.Euler(0f, _camera.Yaw, 0f);
+            var direction = forward * new Vector3(input.x, 0f, input.y);
             if (_resting.HasValue)
             {
                 _restTime += dt;
                 var moving = input.sqrMagnitude > 0.04f;
                 if (!moving) _awaitRelease = false;
-                if (!_awaitRelease && _restTime >= MinRestTime && (moving || PInput.Jump())) GetUp();
+                if (!_awaitRelease && _restTime >= MinRestTime && (moving || PInput.Jump())) GetUp(moving ? new Vec2(direction.x, direction.z) : Vec2.Zero);
                 else
                 {
                     Settle();
@@ -106,10 +109,7 @@ namespace Porchlight.Avatars
                     return;
                 }
             }
-
-            var forward = Quaternion.Euler(0f, _camera.Yaw, 0f);
-            var direction = forward * new Vector3(input.x, 0f, input.y);
-            var speed = PInput.Fast() ? RunSpeed : WalkSpeed;
+            var speed = PInput.Run() ? RunSpeed : WalkSpeed;
 
             var position = transform.position;
             var from = new Vec2(position.x, position.z);
@@ -184,17 +184,21 @@ namespace Porchlight.Avatars
             transform.SetPositionAndRotation(position, Quaternion.Slerp(_settleFromRotation, Quaternion.Euler(0f, spot.Heading, 0f), eased));
         }
 
-        /// <summary>Back on their feet beside whatever they were on, ready to walk.</summary>
-        private void GetUp()
+        /// <summary>
+        /// Back on their feet beside whatever they were on, ready to walk: off the side towards
+        /// <paramref name="toward"/> (in the town), facing that way. Zero means the usual side.
+        /// </summary>
+        private void GetUp(Vec2 toward)
         {
             var spot = _resting.Value;
             _resting = null;
             _cooldown = SitCooldown;
             _rig.CurrentPose = CharacterRig.Pose.Standing;
+            if (toward.LengthSquared > 1e-4f) _heading = Vec2.HeadingOf(toward);
 
             // Stand at the exit, nudged clear of anything there.
             var floorY = spot.Height - 0.3f;
-            var exit = TownWalking.MoveAt(_town, spot.Exit, Vec2.Zero, floorY);
+            var exit = TownWalking.MoveAt(_town, TownWalking.ExitToward(_town, spot, toward), Vec2.Zero, floorY);
             var ground = TownWalking.GroundHeightAt(_town, exit, floorY);
             _grounded = true;
             transform.SetPositionAndRotation(new Vector3(exit.X, ground, exit.Z), Quaternion.Euler(0f, _heading, 0f));
