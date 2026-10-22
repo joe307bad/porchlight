@@ -84,8 +84,10 @@ namespace Porchlight.App
         private TownDto _town;
 
         /// <summary>
-        /// While walking: the town as it was when walking started (nothing changes while walking). In
-        /// the builder that's what it shows, which may be a preview of the terrain overlay.
+        /// While walking: the town as it was when walking started (nothing changes while walking), readied
+        /// for play (<see cref="TownLandscape.ForPlay"/>: terraces softened, steps and ladders wherever a
+        /// wall would cut somewhere off). In the builder it starts from what the builder shows, which may
+        /// be a preview of the terrain overlay.
         /// </summary>
         private TownDto _walkTown;
 
@@ -387,7 +389,10 @@ namespace Porchlight.App
             _inMenus = false;
             _menuCameraMoving = false;
             _showingStock = false;
-            _view.Show(town);
+
+            // Visiting, the town is only ever walked, so it's shown readied for play from the start.
+            var play = _building ? null : TownLandscape.ForPlay(town);
+            _view.Show(play ?? town);
             if (_building) _grid.Show(town);
             else _grid.Hide();
             _status = null;
@@ -414,13 +419,15 @@ namespace Porchlight.App
             else
             {
                 _view.BakeStatic();
-                StartWalking(TownWalking.FindSpawn(town, Vec2.Zero), 0f);
+                StartWalking(TownWalking.FindSpawn(play, Vec2.Zero), 0f, play: play);
             }
         }
 
-        private void StartWalking(Vec2 spot, float heading, float floorY = float.NaN)
+        /// <param name="play">The town already readied for play, if it has been.</param>
+        private void StartWalking(Vec2 spot, float heading, float floorY = float.NaN, TownDto play = null)
         {
-            _walkTown = _building && _builder != null && _builder.Town != null ? _builder.ShownTown : _town;
+            _walkTown = play ?? TownLandscape.ForPlay(_building && _builder != null && _builder.Town != null ? _builder.ShownTown : _town);
+            _view.Sync(_walkTown);
             _walking = true;
             _fly.enabled = false;
             _grid.Hide();
@@ -435,6 +442,9 @@ namespace Porchlight.App
         {
             _walking = false;
             _walkTown = null;
+
+            // Back in the builder, the ground is shown as built again.
+            if (_building && _builder != null && _builder.Town != null) _view.Sync(_builder.ShownTown);
             _player.SetHidden(false);
             _player.End();
             _thirdPerson.enabled = false;
@@ -608,6 +618,13 @@ namespace Porchlight.App
                     if (TownTiles.TryCell(ground, at, out var ti, out var tj))
                         yield return $"Standing on tile ({ti}, {tj}): {TownTiles.Surface(ground, ti, tj)}, level {TownTiles.Level(ground, ti, tj)}{(TownTiles.TryClimb(ground, ti, tj, out var side) ? $", climbing {side}" : "")}{(TownTiles.IsHill(ground, ti, tj) ? $", hillside at {TownTiles.HeightAt(ground, at):0.00} m" : "")}";
                 }
+            }
+
+            if (_walking && _walkTown?.Tiles != null)
+            {
+                var flights = _walkTown.Tiles.Flights?.FindAll(f => f != 0).Count ?? 0;
+                var ladders = _walkTown.Tiles.Ladders?.FindAll(l => l != 0).Count ?? 0;
+                yield return $"Readied for play: {flights} flights of steps  ·  {ladders} ladders";
             }
 
             yield return $"Foliage: {(_foliage.Showing ? _foliage.PlantCount.ToString() + " plants" : "hidden")}";

@@ -221,7 +221,14 @@ namespace Porchlight.Rendering
             for (var k = 0; k < levels.Count; k++) _shownHills[k] = Hill(town, k);
         }
 
-        private static int Hill(TownDto town, int k) => TownTiles.HillMark(town, k) ? 1 : 0;
+        /// <summary>What else decides how a tile looks: its hillside mark, and any steps or ladders made for play.</summary>
+        private static int Hill(TownDto town, int k)
+        {
+            var tiles = town.Tiles;
+            var flight = tiles.Flights != null && tiles.Flights.Count == tiles.Levels.Count ? tiles.Flights[k] : 0;
+            var ladders = tiles.Ladders != null && tiles.Ladders.Count == tiles.Levels.Count ? tiles.Ladders[k] : 0;
+            return (TownTiles.HillMark(town, k) ? 1 : 0) | flight << 1 | ladders << 8;
+        }
 
         private void ClearChunks()
         {

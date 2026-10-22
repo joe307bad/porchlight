@@ -112,7 +112,7 @@ namespace Porchlight.Rendering
             var tiles = 17;
             if (town.Tiles != null)
             {
-                for (var k = 0; k < town.Tiles.Levels.Count; k++) tiles = unchecked(tiles * 31 + town.Tiles.Levels[k] * 7 + town.Tiles.Surfaces[k] + (TownTiles.HillMark(town, k) ? 5 : 0));
+                for (var k = 0; k < town.Tiles.Levels.Count; k++) tiles = unchecked(tiles * 31 + town.Tiles.Levels[k] * 7 + town.Tiles.Surfaces[k] + (TownTiles.HillMark(town, k) ? 5 : 0) + (town.Tiles.Flights?[k] ?? 0) * 11 + (town.Tiles.Ladders?[k] ?? 0) * 13);
             }
 
             var areas = town.FoliageAreas?.Count ?? 0;

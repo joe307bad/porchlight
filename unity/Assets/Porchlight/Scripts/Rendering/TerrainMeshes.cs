@@ -78,7 +78,7 @@ namespace Porchlight.Rendering
                 for (var i = i0; i <= i1; i++)
                 {
                     // Outside the town, and on flat tiles, one piece a tile; on climbing tiles and hillsides, 0.4 m pieces.
-                    var parts = TownTiles.Inside(town, i, j) && (TownTiles.TryClimb(town, i, j, out _) || TownTiles.IsHill(town, i, j)) ? Mathf.Max(1, Mathf.RoundToInt(spacing / 0.4f)) : 1;
+                    var parts = TownTiles.Inside(town, i, j) && (TownTiles.TryClimb(town, i, j, out _) || TownTiles.TryFlight(town, i, j, out _, out _) || TownTiles.IsHill(town, i, j)) ? Mathf.Max(1, Mathf.RoundToInt(spacing / 0.4f)) : 1;
                     var step = spacing / parts;
                     for (var b = 0; b < parts; b++)
                     {

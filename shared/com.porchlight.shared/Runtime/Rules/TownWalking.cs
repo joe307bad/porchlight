@@ -48,6 +48,14 @@ namespace Porchlight.Shared.Rules
     public static class TownWalking
     {
         public const float StepHeight = 0.5f;
+
+        /// <summary>How near the wall, and how near a ladder's middle, a character can be to take hold of it.</summary>
+        public const float LadderReach = 0.8f;
+        public const float LadderHalfWidth = 0.55f;
+
+        /// <summary>How far out from the wall a character climbs a ladder, and how far onto the top they step off it.</summary>
+        public const float LadderStandOff = 0.35f;
+        public const float LadderLanding = 0.6f;
         public const float CharacterRadius = 0.3f;
 
         /// <summary>The longest stretch moved before checking for walls again; less than an inside wall plus a character's width.</summary>
@@ -101,6 +109,69 @@ namespace Porchlight.Shared.Rules
 
             var half = town.Size * 0.5f - radius;
             return new Vec2(Math.Clamp(p.X, -half, half), Math.Clamp(p.Z, -half, half));
+        }
+
+        /// <summary>
+        /// A ladder (made for play, see <see cref="TownLandscape"/>) that someone at <paramref name="at"/>
+        /// heading <paramref name="toward"/> can take hold of: near the foot of it and heading for the
+        /// wall. Gives where they climb (<paramref name="foot"/>, facing <paramref name="heading"/>), the
+        /// height of the top, and where they step off onto it.
+        /// </summary>
+        public static bool TryLadder(TownDto town, Vec2 at, Vec2 toward, out Vec2 foot, out float heading, out float top, out Vec2 landing)
+        {
+            foot = landing = Vec2.Zero;
+            heading = top = 0f;
+            if (!TownTiles.Has(town) || town.Tiles.Ladders == null || !TownTiles.TryCell(town, at, out var i, out var j)) return false;
+            var size = TownTiles.Spacing(town);
+            for (var s = 0; s < 4; s++)
+            {
+                var side = (TileSide)s;
+                if (!TownTiles.HasLadder(town, i, j, side)) continue;
+                var (along, across) = TownTiles.Local(town, i, j, side, at);
+                var (di, dj) = TownTiles.Neighbours[s];
+                var outward = new Vec2(di, dj);
+                if (size - along > LadderReach || MathF.Abs(across) > LadderHalfWidth) continue;
+                if (toward.LengthSquared > 1e-6f && Vec2.Dot(toward.Normalized, outward) < 0.4f) continue;
+
+                var edge = TownTiles.Center(town, i, j) + outward * (size * 0.5f);
+                foot = edge - outward * LadderStandOff;
+                landing = edge + outward * LadderLanding;
+                top = TownTerrain.HeightAt(town, landing);
+                heading = Vec2.HeadingOf(outward);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// A ladder someone standing at the top of a wall, at <paramref name="at"/> and heading
+        /// <paramref name="toward"/> over the edge, can climb down: the same places as
+        /// <see cref="TryLadder"/> gives from the foot.
+        /// </summary>
+        public static bool TryLadderDown(TownDto town, Vec2 at, Vec2 toward, out Vec2 foot, out float heading, out float top, out Vec2 landing)
+        {
+            foot = landing = Vec2.Zero;
+            heading = top = 0f;
+            if (!TownTiles.Has(town) || town.Tiles.Ladders == null || toward.LengthSquared < 1e-6f || !TownTiles.TryCell(town, at, out var i, out var j)) return false;
+            var size = TownTiles.Spacing(town);
+            for (var s = 0; s < 4; s++)
+            {
+                var (di, dj) = TownTiles.Neighbours[s];
+                if (!TownTiles.HasLadder(town, i + di, j + dj, (TileSide)((s + 2) % 4))) continue;
+                var (along, across) = TownTiles.Local(town, i, j, (TileSide)s, at);
+                var outward = new Vec2(di, dj);
+                if (size - along > LadderLanding || MathF.Abs(across) > LadderHalfWidth || Vec2.Dot(toward.Normalized, outward) < 0.6f) continue;
+
+                var edge = TownTiles.Center(town, i, j) + outward * (size * 0.5f);
+                foot = edge + outward * LadderStandOff;
+                landing = edge - outward * LadderLanding;
+                top = TownTerrain.HeightAt(town, landing);
+                heading = Vec2.HeadingOf(-outward);
+                return true;
+            }
+
+            return false;
         }
 
         /// <summary>Height of the ground at a point for someone at ground level: the top of a park, a cottage floor, or the terrain.</summary>

@@ -21,6 +21,8 @@ namespace Porchlight.Rendering
     /// middle, an arm to each joined side). Climbing a level, a flight of stone steps with cheek walls.</item>
     /// <item>Walls: wherever a tile stands above its neighbour, a dry-stone retaining wall in coursed,
     /// varied stones under a capping stone, with a white picket fence along tall drops by paving.</item>
+    /// <item>In play (<see cref="TownLandscape"/>): flights of stone steps carved up walls a level or two
+    /// high, and timber ladders up taller ones, with the fence above left open where they arrive.</item>
     /// </list>
     /// Tiles are drawn in chunks of <see cref="Chunk"/> a side so an edit rebuilds only its corner.
     /// </summary>
@@ -46,6 +48,8 @@ namespace Porchlight.Rendering
         private static readonly Color Mortar = Hex("#8E8471");
         private static readonly Color Coping = Hex("#DCD4C4");
         private static readonly Color Picket = Hex("#F1EBDD");
+        private static readonly Color LadderRail = Hex("#8F6440");
+        private static readonly Color LadderRung = Hex("#B5835A");
 
         private const float Course = 0.3f;
         private const float KerbWidth = 0.3f;
@@ -87,6 +91,8 @@ namespace Porchlight.Rendering
                 default: piece.Lawn(mb); break;
             }
 
+            if (TownTiles.TryFlight(town, i, j, out var side, out var rise)) piece.Flight(mb, (int)side, TownTiles.Level(town, i, j), rise);
+            piece.Ladders(mb);
             piece.Walls(mb);
         }
 
@@ -339,7 +345,7 @@ namespace Porchlight.Rendering
                     }
                 }
 
-                if (climbs) Flight(mb, (int)climb, level);
+                if (climbs) Flight(mb, (int)climb, level, 1);
             }
 
             /// <summary>Cobbles over a rectangle: a joint bed, then stones in staggered rows.</summary>
@@ -365,14 +371,14 @@ namespace Porchlight.Rendering
                 }
             }
 
-            /// <summary>Stone steps up to the side the path climbs to, with a cheek wall either side.</summary>
-            private void Flight(MeshBuilder mb, int side, int level)
+            /// <summary>Stone steps up <paramref name="levels"/> levels to a side, with a cheek wall either side.</summary>
+            public void Flight(MeshBuilder mb, int side, int level, int levels)
             {
                 var half = TownTiles.PathWidth * 0.5f;
-                var run = TownTiles.StairRun;
-                var steps = TownTiles.StairSteps;
+                var run = TownTiles.StairRun * levels;
+                var steps = TownTiles.StairSteps * levels;
                 var tread = run / steps;
-                var rise = 1f / steps;
+                var rise = 1f / TownTiles.StairSteps;
                 var outward = Outward(side);
                 var across = new Vector3(-outward.z, 0f, outward.x);
                 var center = new Vector3(_x0 + _size * 0.5f, 0f, _z0 + _size * 0.5f);
@@ -398,6 +404,41 @@ namespace Porchlight.Rendering
                         var b = a + outward * tread;
                         var top = level + (k + 1) * rise + proud;
                         Block(mb, a, b, across, cheek * 0.5f, level - 0.02f, top, Vary(WallStones[k % WallStones.Length], 300 + k + sign * 11, 0.04f), outward);
+                    }
+                }
+            }
+
+            /// <summary>
+            /// Timber ladders up the walls on this tile's sides that have one: two rails standing a little
+            /// off the stone, rising past the top so there's something to hold stepping off, and rungs a
+            /// hand apart.
+            /// </summary>
+            public void Ladders(MeshBuilder mb)
+            {
+                for (var s = 0; s < 4; s++)
+                {
+                    if (!TownTiles.HasLadder(_town, _i, _j, (TileSide)s)) continue;
+                    var (a, b) = EdgeLine(s);
+                    var outward = Outward(s);
+                    var across = (b - a).normalized;
+                    var middle = (a + b) * 0.5f - outward * 0.14f;
+                    var foot = H(middle.x, middle.z);
+                    var top = TownTiles.HeightAt(_town, new Vec2(middle.x + outward.x * 0.3f, middle.z + outward.z * 0.3f));
+                    var alongX = Mathf.Abs(across.x) > 0.5f;
+                    const float halfWidth = 0.3f, rail = 0.07f;
+
+                    foreach (var sign in new[] { -1f, 1f })
+                    {
+                        var p = middle + across * (sign * halfWidth);
+                        mb.Box(new Vector3(p.x, foot - 0.02f, p.z), rail, top + 0.75f - foot, rail, LadderRail, LadderRail);
+                    }
+
+                    var rungs = Mathf.FloorToInt((top + 0.5f - (foot + 0.25f)) / 0.3f);
+                    for (var k = 0; k <= rungs; k++)
+                    {
+                        var y = foot + 0.25f + k * 0.3f;
+                        var width = halfWidth * 2f;
+                        mb.Box(new Vector3(middle.x, y, middle.z), alongX ? width : 0.05f, 0.05f, alongX ? 0.05f : width, Vary(LadderRung, 900 + k, 0.06f), LadderRung);
                     }
                 }
             }
@@ -454,7 +495,7 @@ namespace Porchlight.Rendering
                         }
                     }
 
-                    if (tall && paved) Fence(mb, a, b, s);
+                    if (tall && paved) Fence(mb, a, b, s, Opening(s));
                 }
             }
 
@@ -555,12 +596,42 @@ namespace Porchlight.Rendering
                 mb.Quad(At(p0 + front, top0 - 0.02f), At(p0 + front, t0), At(p1 + front, t1), At(p1 + front, top1 - 0.02f), Color.Lerp(Coping, Color.black, 0.1f), outward);
             }
 
-            /// <summary>A white picket fence along a tall drop beside paving, set back on the capping.</summary>
-            private void Fence(MeshBuilder mb, Vector3 a, Vector3 b, int side)
+            /// <summary>
+            /// How wide a gap (either side of the middle) to leave in a fence along a side, where steps
+            /// or a ladder from the tile below arrive. 0 for none.
+            /// </summary>
+            private float Opening(int side)
+            {
+                var (di, dj) = TownTiles.Neighbours[side];
+                var facing = (TileSide)((side + 2) % 4);
+                if (TownTiles.TryFlight(_town, _i + di, _j + dj, out var flight, out _) && flight == facing) return TownTiles.PathWidth * 0.5f + 0.3f;
+                return TownTiles.HasLadder(_town, _i + di, _j + dj, facing) ? 0.6f : 0f;
+            }
+
+            /// <summary>
+            /// A white picket fence along a tall drop beside paving, set back on the capping, with a gap
+            /// <paramref name="opening"/> either side of the middle where a way up arrives.
+            /// </summary>
+            private void Fence(MeshBuilder mb, Vector3 a, Vector3 b, int side, float opening)
+            {
+                var length = Vector3.Distance(a, b);
+                if (opening <= 0f)
+                {
+                    FenceRun(mb, a, b, side);
+                    return;
+                }
+
+                var dir = (b - a) / length;
+                FenceRun(mb, a, a + dir * (length * 0.5f - opening), side);
+                FenceRun(mb, a + dir * (length * 0.5f + opening), b, side);
+            }
+
+            private void FenceRun(MeshBuilder mb, Vector3 a, Vector3 b, int side)
             {
                 var outward = Outward(side);
                 var inset = -outward * 0.16f;
                 var length = Vector3.Distance(a, b);
+                if (length < 0.1f) return;
                 var dir = (b - a) / length;
                 var posts = Mathf.Max(2, Mathf.RoundToInt(length / 0.5f) + 1);
                 for (var k = 0; k < posts; k++)

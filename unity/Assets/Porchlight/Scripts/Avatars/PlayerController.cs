@@ -17,6 +17,10 @@ namespace Porchlight.Avatars
     /// and walking into a bed lies down on it. Any move after that gets up again, off the side you
     /// pushed towards (or the nearest side with room). (Doors open by themselves; see
     /// <see cref="Rendering.TownView"/>.) Indoors, everyone walks a little slower.
+    ///
+    /// Walking into a ladder (see <see cref="TownWalking.TryLadder"/>) takes hold of it: pushing towards
+    /// the wall climbs, away climbs down, and at the top they step off onto it. Walking off the top of
+    /// a wall where a ladder stands climbs down it instead of dropping. Jump lets go.
     /// </summary>
     [RequireComponent(typeof(CharacterRig))]
     public sealed class PlayerController : MonoBehaviour
@@ -33,6 +37,9 @@ namespace Porchlight.Avatars
         /// </summary>
         public float MaxClimb = 0.45f;
         public float ClimbProbe = 0.35f;
+
+        /// <summary>Metres a second up or down a ladder.</summary>
+        public float ClimbSpeed = 2.2f;
 
         /// <summary>Walking and running speed inside a cottage, as a share of outside.</summary>
         public float IndoorSpeedScale = 0.55f;
@@ -55,6 +62,12 @@ namespace Porchlight.Avatars
         private FurnitureSpot? _resting;
         private float _cooldown;
 
+        // On a ladder: where they hang on, facing the wall, and the top and where to step off onto it.
+        private bool _climbing;
+        private Vec2 _ladderFoot;
+        private Vec2 _ladderLanding;
+        private float _ladderTop;
+
         // Settling in: from where they were, over SettleTime. Getting up waits until the move that sat
         // them down has been let go.
         private float _restTime;
@@ -64,6 +77,9 @@ namespace Porchlight.Avatars
 
         /// <summary>Sitting or lying on something.</summary>
         public bool Resting => _resting.HasValue;
+
+        /// <summary>On a ladder.</summary>
+        public bool Climbing => _climbing;
 
         /// <param name="floorY">Roughly where their feet are, to pick a cottage floor; NaN for ground level.</param>
         public void Begin(TownDto town, ThirdPersonCamera camera, Vec2 position, float heading, float floorY = float.NaN)
@@ -75,6 +91,7 @@ namespace Porchlight.Avatars
             _verticalSpeed = 0f;
             _grounded = true;
             _resting = null;
+            _climbing = false;
             _rig.CurrentPose = CharacterRig.Pose.Standing;
             transform.SetPositionAndRotation(
                 new Vector3(position.X, TownWalking.GroundHeightAt(town, position, floorY), position.Z),
@@ -128,6 +145,12 @@ namespace Porchlight.Avatars
                     return;
                 }
             }
+            if (_climbing)
+            {
+                Climb(new Vec2(direction.x, direction.z), dt);
+                return;
+            }
+
             var speed = PInput.Run() ? RunSpeed : WalkSpeed;
             if (TryGetInterior(out _, out _)) speed *= IndoorSpeedScale;
 
@@ -143,10 +166,25 @@ namespace Porchlight.Avatars
             }
 
             var to = TownWalking.MoveAt(_town, from, step, position.y);
+            var heading2 = new Vec2(direction.x, direction.z);
 
-            // A wall too high to step up stops you; slide along it if you're going partly sideways.
+            // Over the top of a wall with a ladder down it, climb down rather than drop.
+            if (_grounded && heading2.LengthSquared > 0.01f && TownWalking.TryLadderDown(_town, from, heading2, out var downFoot, out var downFacing, out var downTop, out var downLanding))
+            {
+                TakeHold(downFoot, downFacing, downTop, downLanding, downTop - 0.05f);
+                return;
+            }
+
+            // A wall too high to step up stops you; slide along it if you're going partly sideways,
+            // or climb it if there's a ladder.
             if (_grounded && TooSteep(from, to - from, position.y))
             {
+                if (TownWalking.TryLadder(_town, from, heading2, out var foot, out var facing, out var top, out var landing))
+                {
+                    TakeHold(foot, facing, top, landing, position.y);
+                    return;
+                }
+
                 var alongX = TownWalking.MoveAt(_town, from, new Vec2(step.X, 0f), position.y);
                 var alongZ = TownWalking.MoveAt(_town, from, new Vec2(0f, step.Z), position.y);
                 to = !TooSteep(from, alongX - from, position.y) ? alongX : !TooSteep(from, alongZ - from, position.y) ? alongZ : from;
@@ -185,6 +223,58 @@ namespace Porchlight.Avatars
 
             transform.SetPositionAndRotation(new Vector3(to.X, y, to.Z), Quaternion.Euler(0f, _heading, 0f));
             _rig.Tick(groundSpeed, _grounded, dt);
+        }
+
+        private void TakeHold(Vec2 foot, float facing, float top, Vec2 landing, float y)
+        {
+            _climbing = true;
+            _ladderFoot = foot;
+            _ladderLanding = landing;
+            _ladderTop = top;
+            _heading = facing;
+            _verticalSpeed = 0f;
+            _grounded = true;
+            transform.SetPositionAndRotation(new Vector3(foot.X, y, foot.Z), Quaternion.Euler(0f, facing, 0f));
+        }
+
+        /// <summary>Up the ladder pushing towards the wall, down pushing away; off the top or the bottom at the ends.</summary>
+        private void Climb(Vec2 input, float dt)
+        {
+            var y = transform.position.y;
+            if (PInput.Jump())
+            {
+                // Let go, dropping back from the wall.
+                _climbing = false;
+                _grounded = false;
+                var back = _ladderFoot - Vec2.FromHeading(_heading) * 0.3f;
+                transform.position = new Vector3(back.X, y, back.Z);
+                _rig.Tick(0f, false, dt);
+                return;
+            }
+
+            var push = input.LengthSquared > 0.04f ? Vec2.Dot(input.Normalized, Vec2.FromHeading(_heading)) : 0f;
+            if (Mathf.Abs(push) < 0.3f) push = 0f;
+            y += Mathf.Sign(push) * ClimbSpeed * dt;
+
+            var bottom = TownWalking.GroundHeightAt(_town, _ladderFoot, y);
+            if (push > 0f && y >= _ladderTop)
+            {
+                _climbing = false;
+                transform.SetPositionAndRotation(new Vector3(_ladderLanding.X, _ladderTop, _ladderLanding.Z), Quaternion.Euler(0f, _heading, 0f));
+                _rig.Tick(0f, true, dt);
+                return;
+            }
+
+            if (push < 0f && y <= bottom)
+            {
+                _climbing = false;
+                y = bottom;
+            }
+
+            transform.SetPositionAndRotation(new Vector3(_ladderFoot.X, y, _ladderFoot.Z), Quaternion.Euler(0f, _heading, 0f));
+
+            // Legs and arms going as if walking, slowly, while moving.
+            _rig.Tick(push != 0f ? ClimbSpeed * 0.6f : 0f, true, dt);
         }
 
         private bool TooSteep(Vec2 from, Vec2 move, float y)
@@ -254,6 +344,7 @@ namespace Porchlight.Avatars
         {
             _town = null;
             _resting = null;
+            _climbing = false;
             enabled = false;
             gameObject.SetActive(false);
         }

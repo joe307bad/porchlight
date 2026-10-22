@@ -275,10 +275,42 @@ namespace Porchlight.Shared.Rules
             return step;
         }
 
+        /// <summary>
+        /// A flight of steps made for play (<see cref="TownLandscape"/>): up against <paramref name="side"/>,
+        /// <paramref name="rise"/> levels, <see cref="PathWidth"/> wide and <see cref="StairRun"/> a level long.
+        /// </summary>
+        public static bool TryFlight(TownDto town, int i, int j, out TileSide side, out int rise)
+        {
+            side = TileSide.North;
+            rise = 0;
+            var flights = town.Tiles.Flights;
+            if (flights == null || flights.Count != town.Tiles.Levels.Count || !Inside(town, i, j)) return false;
+            var value = flights[Index(town, i, j)];
+            if (value <= 0) return false;
+            side = (TileSide)((value - 1) % 4);
+            rise = (value - 1) / 4 + 1;
+            return true;
+        }
+
+        /// <summary>Whether a ladder made for play goes up the wall on this side of the tile.</summary>
+        public static bool HasLadder(TownDto town, int i, int j, TileSide side)
+        {
+            var ladders = town.Tiles.Ladders;
+            return ladders != null && ladders.Count == town.Tiles.Levels.Count && Inside(town, i, j) && (ladders[Index(town, i, j)] & (1 << (int)side)) != 0;
+        }
+
         /// <summary>The height on a tile that isn't hillside: its level, or up its ramp or steps.</summary>
         private static float FlatHeightAt(TownDto town, int i, int j, Vec2 p)
         {
             float level = Level(town, i, j);
+            if (TryFlight(town, i, j, out var flightSide, out var rise))
+            {
+                var (up, off) = Local(town, i, j, flightSide, p);
+                if (MathF.Abs(off) > PathWidth * 0.5f + 0.05f) return level;
+                var run = StairRun * rise;
+                return level + rise * Math.Clamp((up - (Spacing(town) - run)) / run, 0f, 1f);
+            }
+
             if (!TryClimb(town, i, j, out var side)) return level;
 
             var size = Spacing(town);
@@ -713,6 +745,7 @@ namespace Porchlight.Shared.Rules
                 }
             }
 
+            if (tiles.Flights != null || tiles.Ladders != null) result.Add("Steps and ladders are made for play, not saved");
             if (tiles.Hills != null && (tiles.Hills.Count != cells * cells || tiles.Hills.Exists(h => h != 0 && h != 1)))
                 result.Add("Hillside marks must be 0 or 1, one a tile");
 

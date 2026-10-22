@@ -141,7 +141,7 @@ namespace Porchlight.Shared.Rules
         {
             kind = FoliageKind.Grass;
             var surface = TownTiles.Surface(town, ti, tj);
-            if (TownTiles.IsPaved(surface)) return false;
+            if (TownTiles.IsPaved(surface) || TownLandscape.KeepClear(town, ti, tj, p)) return false;
 
             var toHouse = float.MaxValue;
             foreach (var footprint in footprints) toHouse = Math.Min(toHouse, Distance(footprint, p));

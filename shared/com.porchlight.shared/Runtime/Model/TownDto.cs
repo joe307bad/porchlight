@@ -150,6 +150,11 @@ namespace Porchlight.Shared.Model
     /// are <see cref="TileSurface"/> values. <see cref="Hills"/>, when there is one, marks (with 1) the
     /// grass tiles that slope smoothly to their neighbours instead of standing flat behind walls; it's
     /// null until the first hill goes in. See <see cref="Rules.TownTiles"/>.
+    ///
+    /// <see cref="Flights"/> and <see cref="Ladders"/> are made for play by
+    /// <see cref="Rules.TownLandscape.ForPlay"/>, never saved: null in a saved town. A flight is
+    /// 1 + side + 4 × (rise − 1) (0 for none): steps up against that side, rising that many levels.
+    /// Ladders are a bit per side (1 &lt;&lt; side) with a ladder up the wall there.
     /// </summary>
     public sealed class TileMapDto
     {
@@ -157,10 +162,13 @@ namespace Porchlight.Shared.Model
         public List<int> Levels { get; set; } = new List<int>();
         public List<int> Surfaces { get; set; } = new List<int>();
         public List<int> Hills { get; set; }
+        public List<int> Flights { get; set; }
+        public List<int> Ladders { get; set; }
 
         public TileMapDto Clone() => new TileMapDto
         {
             Cells = Cells, Levels = new List<int>(Levels), Surfaces = new List<int>(Surfaces), Hills = Hills == null ? null : new List<int>(Hills),
+            Flights = Flights == null ? null : new List<int>(Flights), Ladders = Ladders == null ? null : new List<int>(Ladders),
         };
     }
 
