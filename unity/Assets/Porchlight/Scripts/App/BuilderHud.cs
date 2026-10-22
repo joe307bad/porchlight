@@ -50,7 +50,7 @@ namespace Porchlight.App
                 var m = b.Metrics;
                 return $"{b.Town?.Name}|{b.CurrentTool}|{b.BuildingTypeId}|{b.SurfaceId}|{b.Rotation}|{b.SnapToGrid}|{b.SnapToRoads}|{b.RaiseTerrain}|{b.PadSize}|{b.Hint}|" +
                        $"{m.Population}|{m.Jobs}|{m.BuildingCount}|{m.ConnectedBuildingCount}|{m.RoadLengthMeters:0}|{b.IsDirty}|{b.Saving}|{b.SaveStatus}|{b.ConfirmingLeave}|" +
-                       $"{b.NatureErase}|{b.FoliageAreaCount}|{b.Foliage.Overall}|{b.Foliage.Trees}|{b.Foliage.Flowers}|{b.Foliage.Grass}|{b.CurrentTerrainMode}|{b.PlacingKind}|{b.SelectedShapeId}|{b.OverlayOn}|{b.FreeResize}|{b.Shapes.Count}|{ShapeSummary(b.SelectedShape)}";
+                       $"{b.NatureErase}|{b.FoliageAreaCount}|{b.Foliage.Overall}|{b.Foliage.Trees}|{b.Foliage.Flowers}|{b.Foliage.Grass}|{b.CurrentTerrainMode}|{b.PlacingKind}|{b.SelectedShapeId}|{b.OverlayOn}|{b.FreeResize}|{b.Shapes.Count}|{ShapeSummary(b.SelectedShape)}|{b.UndoCount}";
             }
         }
 
@@ -114,7 +114,7 @@ namespace Porchlight.App
                     var line = Catalog.TryGetSurface(_builder.SurfaceId, out var chosen) && (chosen.Surface == TileSurface.Street || chosen.Surface == TileSurface.Path);
                     c.Label(line ? "Drag from tile to tile to lay a line;" : "Drag out a rectangle of tiles", cardRight + 1.5f, 1.4f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: textWidth);
                     c.Label(line ? "it ramps or steps up a level at a time." : "to pave, plant or put back to grass.", cardRight + 1.5f, -0.2f, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: textWidth);
-                    c.Label("Esc stops the drag you're making.", cardRight + 1.5f, -1.8f, HudCanvas.LabelSize, MenuStyle.OnPrimaryMuted, maxWidth: textWidth);
+                    c.Label($"Esc stops the drag you're making. Ctrl+Z undoes a paint ({_builder.UndoCount} of the last {BuilderTool.UndoDepth}).", cardRight + 1.5f, -1.8f, HudCanvas.LabelSize, MenuStyle.OnPrimaryMuted, maxWidth: textWidth);
                     c.Label("Streets ramp up to streets a level higher; paths climb to any paving by steps.", left, CaptionZ, HudCanvas.LabelSize, MenuStyle.OnBackground, maxWidth: right - left);
                     break;
 

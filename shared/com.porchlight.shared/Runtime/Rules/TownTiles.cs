@@ -427,6 +427,38 @@ namespace Porchlight.Shared.Rules
             return changes.Count > 0 ? EditResult.Success : EditResult.Fail("It's already like that");
         }
 
+        /// <summary>
+        /// Putting tiles back as they were: each listed tile to the level, surface and hillside mark
+        /// given for it. Fails if a building now stands on one and the change would move its ground,
+        /// put a street or path under it, or make it hillside.
+        /// </summary>
+        public static EditResult CanRestore(TownDto town, IList<int> cells, IList<int> levels, IList<int> surfaces, IList<bool> hills, out List<TileChange> changes)
+        {
+            changes = new List<TileChange>();
+            if (cells == null || levels == null || surfaces == null || hills == null || cells.Count == 0) return EditResult.Fail("Nothing to put back");
+            if (levels.Count != cells.Count || surfaces.Count != cells.Count || hills.Count != cells.Count) return EditResult.Fail("Invalid tiles");
+
+            var count = town.Tiles.Cells * town.Tiles.Cells;
+            var underBuildings = HeldByBuildings(town, null);
+            var seen = new HashSet<int>();
+            for (var n = 0; n < cells.Count; n++)
+            {
+                var k = cells[n];
+                if (k < 0 || k >= count) return EditResult.Fail("Outside the town boundary");
+                if (!seen.Add(k)) return EditResult.Fail("Invalid tiles");
+                if (levels[n] < MinLevel || levels[n] > MaxLevel || !Enum.IsDefined(typeof(TileSurface), surfaces[n])) return EditResult.Fail("Invalid tiles");
+
+                var surface = (TileSurface)surfaces[n];
+                var hill = hills[n] && surface == TileSurface.Grass;
+                if (underBuildings.Contains(k) && (levels[n] != town.Tiles.Levels[k] || hill || surface == TileSurface.Street || surface == TileSurface.Path))
+                    return EditResult.Fail("There's a building on it now");
+
+                if (levels[n] != town.Tiles.Levels[k] || surfaces[n] != town.Tiles.Surfaces[k] || hill != HillMark(town, k)) changes.Add(new TileChange(k, levels[n], surface, hill));
+            }
+
+            return changes.Count > 0 ? EditResult.Success : EditResult.Fail("It's already like that");
+        }
+
         public static void Apply(TownDto town, List<TileChange> changes)
         {
             var tiles = town.Tiles;

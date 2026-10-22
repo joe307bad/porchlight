@@ -24,6 +24,7 @@ namespace Porchlight.Input
         F3,
         T,
         G,
+        Z,
     }
 
     /// <summary>
@@ -123,6 +124,18 @@ namespace Porchlight.Input
             return g != null ? g.rightStick.ReadValue() : Vector2.zero;
 #else
             return Vector2.zero;
+#endif
+        }
+
+        /// <summary>The shortcut modifier: Ctrl, or Cmd on a Mac.</summary>
+        public static bool Command()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current;
+            return k != null && (k.leftCtrlKey.isPressed || k.rightCtrlKey.isPressed || k.leftMetaKey.isPressed || k.rightMetaKey.isPressed);
+#else
+            return UnityEngine.Input.GetKey(KeyCode.LeftControl) || UnityEngine.Input.GetKey(KeyCode.RightControl)
+                || UnityEngine.Input.GetKey(KeyCode.LeftCommand) || UnityEngine.Input.GetKey(KeyCode.RightCommand);
 #endif
         }
 
@@ -292,6 +305,7 @@ namespace Porchlight.Input
                 case PKey.F3: return k.f3Key.wasPressedThisFrame;
                 case PKey.T: return k.tKey.wasPressedThisFrame;
                 case PKey.G: return k.gKey.wasPressedThisFrame;
+                case PKey.Z: return k.zKey.wasPressedThisFrame;
                 default: return false;
             }
 #else
@@ -314,6 +328,7 @@ namespace Porchlight.Input
                 case PKey.F3: return UnityEngine.Input.GetKeyDown(KeyCode.F3);
                 case PKey.T: return UnityEngine.Input.GetKeyDown(KeyCode.T);
                 case PKey.G: return UnityEngine.Input.GetKeyDown(KeyCode.G);
+                case PKey.Z: return UnityEngine.Input.GetKeyDown(KeyCode.Z);
                 default: return false;
             }
 #endif

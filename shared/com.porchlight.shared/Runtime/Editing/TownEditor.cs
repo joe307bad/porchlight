@@ -41,6 +41,19 @@ namespace Porchlight.Shared.Editing
     }
 
     /// <summary>
+    /// Puts tiles back as they were (the builder's undo): <see cref="Cells"/> are tile indices, and the
+    /// other lists give each one's level, surface and hillside mark, in the same order. See
+    /// <see cref="TownTiles.CanRestore"/>.
+    /// </summary>
+    public sealed class RestoreTilesCommand : TownCommand
+    {
+        public System.Collections.Generic.List<int> Cells { get; set; } = new System.Collections.Generic.List<int>();
+        public System.Collections.Generic.List<int> Levels { get; set; } = new System.Collections.Generic.List<int>();
+        public System.Collections.Generic.List<int> Surfaces { get; set; } = new System.Collections.Generic.List<int>();
+        public System.Collections.Generic.List<bool> Hills { get; set; } = new System.Collections.Generic.List<bool>();
+    }
+
+    /// <summary>
     /// The terrain tool: raises or lowers the tiles in a square around a point by <see cref="Delta"/>
     /// levels (rounded to whole metres). See <see cref="TownTiles.CanRaise"/>.
     /// </summary>
@@ -158,6 +171,14 @@ namespace Porchlight.Shared.Editing
                 case PlaceBuildingCommand c: return PlaceBuilding(town, c);
                 case RemoveBuildingCommand c: return RemoveBuilding(town, c);
                 case PaintTilesCommand c: return PaintTiles(town, c);
+                case RestoreTilesCommand c:
+                {
+                    var check = TownTiles.CanRestore(town, c.Cells, c.Levels, c.Surfaces, c.Hills, out var changes);
+                    if (!check.Ok) return check;
+                    TownTiles.Apply(town, changes);
+                    return EditResult.Success;
+                }
+
                 case ShapeTerrainCommand c: return ShapeTerrain(town, c);
                 case AddTerrainShapeCommand c: return AddTerrainShape(town, c);
                 case UpdateTerrainShapeCommand c: return UpdateTerrainShape(town, c);

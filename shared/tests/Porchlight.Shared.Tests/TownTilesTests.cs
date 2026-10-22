@@ -239,6 +239,39 @@ public class TownTilesTests
                 Assert.Equal(0, TownTiles.Level(town, i, j));
             }
         }
+
         Assert.True(Porchlight.Shared.Metrics.TownMetrics.Compute(town).ConnectedBuildingCount > 20);
+    }
+
+    [Fact]
+    public void RestoringTilesPutsThemBackUnlessABuildingStandsThere()
+    {
+        var town = NewTown();
+        var cells = TownTiles.Line(town, new Vec2(-20f, 2f), new Vec2(20f, 2f));
+        var before = new RestoreTilesCommand
+        {
+            Cells = cells,
+            Levels = cells.ConvertAll(k => town.Tiles.Levels[k]),
+            Surfaces = cells.ConvertAll(k => town.Tiles.Surfaces[k]),
+            Hills = cells.ConvertAll(_ => false),
+        };
+        Assert.True(TownEditor.Apply(town, new PaintTilesCommand { Cells = cells, SurfaceId = "street", Line = true }).Ok);
+        Assert.True(TownEditor.Apply(town, before).Ok);
+        Assert.All(cells, k => Assert.Equal((int)TileSurface.Grass, town.Tiles.Surfaces[k]));
+        Assert.False(TownEditor.Apply(town, before).Ok);
+
+        // A street painted, then a building put up where it ran: putting the street back isn't allowed.
+        Assert.True(TownEditor.Apply(town, new PaintTilesCommand { Cells = cells, SurfaceId = "street", Line = true }).Ok);
+        var street = new RestoreTilesCommand
+        {
+            Cells = cells,
+            Levels = cells.ConvertAll(k => town.Tiles.Levels[k]),
+            Surfaces = cells.ConvertAll(k => town.Tiles.Surfaces[k]),
+            Hills = cells.ConvertAll(_ => false),
+        };
+        Assert.True(TownEditor.Apply(town, before).Ok);
+        Assert.True(TownEditor.Apply(town, new PlaceBuildingCommand { BuildingId = Ids.New(), TypeId = "house_small", X = 0f, Z = 2f }).Ok);
+        Assert.False(TownEditor.Apply(town, street).Ok);
+        Assert.True(TownRules.ValidateTown(town).IsValid);
     }
 }

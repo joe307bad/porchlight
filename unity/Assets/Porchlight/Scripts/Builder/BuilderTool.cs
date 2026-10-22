@@ -39,6 +39,12 @@ namespace Porchlight.Builder
         /// <summary>Seconds after the last edit before the town saves itself, so a burst of clicks is one save.</summary>
         public const float AutoSaveDelay = 1f;
 
+        /// <summary>How many paints (and tiles turned back to grass) Ctrl+Z can take back, newest first.</summary>
+        public const int UndoDepth = 5;
+
+        /// <summary>How long a message like "Undid painting" stays up.</summary>
+        private const float NoticeSeconds = 2.5f;
+
         /// <summary>Seconds to wait before trying again after a save fails.</summary>
         private const float RetryDelay = 5f;
 
@@ -60,6 +66,11 @@ namespace Porchlight.Builder
         private ITownSource _source;
         private Camera _camera;
         private Action _onExit;
+
+        /// <summary>The tiles as they were before each recent paint, oldest first, at most <see cref="UndoDepth"/>.</summary>
+        private readonly System.Collections.Generic.LinkedList<RestoreTilesCommand> _paintUndo = new System.Collections.Generic.LinkedList<RestoreTilesCommand>();
+        private string _notice;
+        private float _noticeUntil;
 
         private Tool _tool;
         private string _buildingTypeId = Catalog.Buildable[0].Id;
@@ -133,7 +144,10 @@ namespace Porchlight.Builder
         public bool ConfirmingLeave => _confirmLeave;
 
         /// <summary>Why the thing under the pointer can't be placed or removed, if it can't.</summary>
-        public string Hint => _hint;
+        public string Hint => Time.unscaledTime < _noticeUntil ? _notice : _hint;
+
+        /// <summary>How many paints Ctrl+Z can still take back.</summary>
+        public int UndoCount => _paintUndo.Count;
 
         public string BuildingTypeId
         {
@@ -212,6 +226,8 @@ namespace Porchlight.Builder
             _saveAt = float.PositiveInfinity;
             _paintStart = null;
             _paintKey = (-1, -1, null, -1);
+            _paintUndo.Clear();
+            _noticeUntil = 0f;
             _terrainCheckKey = default;
             _placeCheckKey = default;
 
@@ -328,6 +344,7 @@ namespace Porchlight.Builder
             if (PInput.KeyDown(PKey.Alpha3)) SetTool(Tool.Remove);
             if (PInput.KeyDown(PKey.Alpha4)) SetTool(Tool.Terrain);
             if (PInput.KeyDown(PKey.Alpha5)) SetTool(Tool.Nature);
+            if (PInput.KeyDown(PKey.Z) && PInput.Command()) UndoPaint();
             if (InShapeBuilder) return;
             if (PInput.KeyDown(PKey.Q)) Rotate(-RotationStep);
             if (PInput.KeyDown(PKey.E)) Rotate(RotationStep);
@@ -467,7 +484,55 @@ namespace Porchlight.Builder
             CancelPaintDrag();
             if (!_paintCheck.Ok || _paintCells.Count == 0 || !Catalog.TryGetSurface(_surfaceId, out var surface)) return;
             var line = surface.Surface == TileSurface.Street || surface.Surface == TileSurface.Path;
-            Apply(new PaintTilesCommand { Cells = new System.Collections.Generic.List<int>(_paintCells), SurfaceId = surface.Id, Line = line });
+            Paint(new PaintTilesCommand { Cells = new System.Collections.Generic.List<int>(_paintCells), SurfaceId = surface.Id, Line = line });
+        }
+
+        /// <summary>Paints, remembering how the tiles were so Ctrl+Z can put them back.</summary>
+        private void Paint(PaintTilesCommand command)
+        {
+            var before = new RestoreTilesCommand();
+            var seen = new System.Collections.Generic.HashSet<int>();
+            var count = _town.Tiles.Levels.Count;
+            foreach (var k in command.Cells)
+            {
+                if (k < 0 || k >= count || !seen.Add(k)) continue;
+                before.Cells.Add(k);
+                before.Levels.Add(_town.Tiles.Levels[k]);
+                before.Surfaces.Add(_town.Tiles.Surfaces[k]);
+                before.Hills.Add(TownTiles.HillMark(_town, k));
+            }
+
+            if (!Apply(command)) return;
+            _paintUndo.AddLast(before);
+            while (_paintUndo.Count > UndoDepth) _paintUndo.RemoveFirst();
+        }
+
+        /// <summary>Ctrl+Z: puts the tiles of the latest paint back as they were.</summary>
+        public void UndoPaint()
+        {
+            CancelPaintDrag();
+            if (_paintUndo.Count == 0)
+            {
+                Notice("Nothing to undo. Ctrl+Z takes back your last few paints.");
+                return;
+            }
+
+            var last = _paintUndo.Last.Value;
+            _paintUndo.RemoveLast();
+            var result = ApplyEdit(last);
+            if (!result.Ok)
+            {
+                Notice($"Can't undo that: {result.Error.ToLowerInvariant()}");
+                return;
+            }
+
+            Notice(_paintUndo.Count == 0 ? "Undid painting. That's as far back as it goes." : $"Undid painting. {_paintUndo.Count} more to undo.");
+        }
+
+        private void Notice(string message)
+        {
+            _notice = message;
+            _noticeUntil = Time.unscaledTime + NoticeSeconds;
         }
 
         private void CancelPaintDrag()
@@ -519,7 +584,7 @@ namespace Porchlight.Builder
                 TileOutline(mb, k, Color.white);
                 ShowFlatGhost(mb, false);
                 _hint = $"Click to turn this {surface.DisplayName.ToLowerInvariant()} back to grass";
-                if (PointerGesture.Clicked) Apply(new PaintTilesCommand { Cells = new System.Collections.Generic.List<int> { k }, SurfaceId = Catalog.Surface(TileSurface.Grass).Id });
+                if (PointerGesture.Clicked) Paint(new PaintTilesCommand { Cells = new System.Collections.Generic.List<int> { k }, SurfaceId = Catalog.Surface(TileSurface.Grass).Id });
                 return;
             }
 
@@ -657,7 +722,11 @@ namespace Porchlight.Builder
 
             // Painting, raising and lowering, levelling for a building and the overlay change the tiles:
             // any overlay preview is out of date, and the grid lies on the tiles.
-            var tiles = command is PaintTilesCommand || command is ShapeTerrainCommand || command is PlaceBuildingCommand || command is ApplyTerrainOverlayCommand;
+            var tiles = command is PaintTilesCommand || command is RestoreTilesCommand || command is ShapeTerrainCommand || command is PlaceBuildingCommand || command is ApplyTerrainOverlayCommand;
+
+            // Undo only puts back paints. Once the ground changes some other way, putting old tiles back
+            // could undo that too, so the paints before it can't be undone any more.
+            if (tiles && !(command is PaintTilesCommand) && !(command is RestoreTilesCommand)) _paintUndo.Clear();
             if (tiles)
             {
                 DropOverlayPreview();
