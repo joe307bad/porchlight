@@ -417,7 +417,7 @@ namespace Porchlight.App
                 : $"{shape.Name}: {shape.ScaleX:0.#} × {shape.ScaleY:0.#} × {shape.ScaleZ:0.#} m, {shape.Y:0.#} m up. Drag it to move, corners to resize.";
             else line = "Click a shape to select it, or drag it to move it.";
             c.Label(line, x, -0.9f, HudCanvas.LabelSize, MenuStyle.OnBackground, maxWidth: textWidth);
-            c.Label("Arrows move  ·  Scroll up / down  ·  Q / E turn  ·  R / F tilt  ·  Del removes  ·  Esc lets go", x, -2.4f, HudCanvas.LabelSize, MenuStyle.OnPrimaryMuted, maxWidth: textWidth);
+            c.Label("Arrows move  ·  Scroll up / down  ·  Q / E turn  ·  R / F tilt  ·  T / G roll  ·  Del removes  ·  Esc lets go", x, -2.4f, HudCanvas.LabelSize, MenuStyle.OnPrimaryMuted, maxWidth: textWidth);
         }
 
         private static string ShapeSummary(TerrainShapeDto shape) =>

@@ -14,7 +14,7 @@ namespace Porchlight.Builder
     /// <summary>
     /// The terrain tool's Builder mode. Pick a triangle, sphere or cube and place it like a building,
     /// except it can go anywhere in the air: the pointer puts it over a spot, the scroll wheel lifts
-    /// it, the arrow keys slide it, Q/E turn it and R/F tilt it. A placed shape can be clicked (or
+    /// it, the arrow keys slide it, Q/E turn it, R/F tilt it and T/G roll it. A placed shape can be clicked (or
     /// picked in the layers panel) to select it, dragged to move it across at its height, moved with
     /// the same keys, or resized by dragging the corners of the box around it, evenly or (with
     /// free-form on) one way at a time.
@@ -448,7 +448,10 @@ namespace Porchlight.Builder
             _hoverCorner = _dragCorner = -1;
         }
 
-        /// <summary>Arrow keys slide a shape across the view, Q/E turn it and R/F tilt it. Returns whether it moved.</summary>
+        /// <summary>
+        /// Arrow keys slide a shape across the view. Q/E turn it (about Y), R/F tilt it (about X) and
+        /// T/G roll it (about Z), so any way up can be reached. Returns whether it moved.
+        /// </summary>
         private bool SteerWithKeys(TerrainShapeDto shape)
         {
             var changed = false;
@@ -467,17 +470,20 @@ namespace Porchlight.Builder
                 changed = true;
             }
 
-            if (PInput.KeyDown(PKey.Q)) changed |= Turn(shape, 0f, -ShapeTurnStep);
-            if (PInput.KeyDown(PKey.E)) changed |= Turn(shape, 0f, ShapeTurnStep);
-            if (PInput.KeyDown(PKey.R)) changed |= Turn(shape, ShapeTurnStep, 0f);
-            if (PInput.KeyDown(PKey.F)) changed |= Turn(shape, -ShapeTurnStep, 0f);
+            if (PInput.KeyDown(PKey.Q)) changed |= Turn(shape, 0f, -ShapeTurnStep, 0f);
+            if (PInput.KeyDown(PKey.E)) changed |= Turn(shape, 0f, ShapeTurnStep, 0f);
+            if (PInput.KeyDown(PKey.R)) changed |= Turn(shape, ShapeTurnStep, 0f, 0f);
+            if (PInput.KeyDown(PKey.F)) changed |= Turn(shape, -ShapeTurnStep, 0f, 0f);
+            if (PInput.KeyDown(PKey.T)) changed |= Turn(shape, 0f, 0f, ShapeTurnStep);
+            if (PInput.KeyDown(PKey.G)) changed |= Turn(shape, 0f, 0f, -ShapeTurnStep);
             return changed;
         }
 
-        private static bool Turn(TerrainShapeDto shape, float tilt, float turn)
+        private static bool Turn(TerrainShapeDto shape, float tilt, float turn, float roll)
         {
             shape.RotationX = TownMath.NormalizeAngle(shape.RotationX + tilt);
             shape.RotationY = TownMath.NormalizeAngle(shape.RotationY + turn);
+            shape.RotationZ = TownMath.NormalizeAngle(shape.RotationZ + roll);
             return true;
         }
 

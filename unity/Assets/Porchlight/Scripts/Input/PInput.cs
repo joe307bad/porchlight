@@ -22,6 +22,8 @@ namespace Porchlight.Input
         V,
         Alpha5,
         F3,
+        T,
+        G,
     }
 
     /// <summary>
@@ -288,6 +290,8 @@ namespace Porchlight.Input
                 case PKey.V: return k.vKey.wasPressedThisFrame;
                 case PKey.Alpha5: return k.digit5Key.wasPressedThisFrame;
                 case PKey.F3: return k.f3Key.wasPressedThisFrame;
+                case PKey.T: return k.tKey.wasPressedThisFrame;
+                case PKey.G: return k.gKey.wasPressedThisFrame;
                 default: return false;
             }
 #else
@@ -308,6 +312,8 @@ namespace Porchlight.Input
                 case PKey.V: return UnityEngine.Input.GetKeyDown(KeyCode.V);
                 case PKey.Alpha5: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha5);
                 case PKey.F3: return UnityEngine.Input.GetKeyDown(KeyCode.F3);
+                case PKey.T: return UnityEngine.Input.GetKeyDown(KeyCode.T);
+                case PKey.G: return UnityEngine.Input.GetKeyDown(KeyCode.G);
                 default: return false;
             }
 #endif
