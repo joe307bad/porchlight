@@ -126,6 +126,30 @@ namespace Porchlight.App
             OnClick(hit, toggle);
         }
 
+        /// <summary>
+        /// A stepped slider: its label, then a row of bars rising left to right, lit up to the current
+        /// value. Clicking a bar sets that value; the first bar is 0.
+        /// </summary>
+        public void Slider(float x, float z, float width, string label, float value, float max, Action<float> set, int steps = 11)
+        {
+            const float labelWidth = 6.5f, valueWidth = 3f, gap = 0.12f, height = 1.1f;
+            Label(label, x, z, LabelSize, MenuStyle.OnBackground, weight: FontWeight.SemiBold);
+            var trackX = x + labelWidth;
+            var bar = (width - labelWidth - valueWidth - gap * (steps - 1)) / steps;
+            for (var i = 0; i < steps; i++)
+            {
+                var amount = max * i / (steps - 1);
+                var rect = new Rect(trackX + i * (bar + gap), z - height * 0.5f, bar, height);
+                var lit = i == 0 ? value <= 0.001f : amount <= value + 0.001f;
+                var fill = lit ? MenuStyle.OnPrimary : IsHovered(rect) ? MenuStyle.PrimaryHover : MenuStyle.PrimaryShadow;
+                var depth = height * (0.35f + 0.65f * i / (steps - 1));
+                Shapes.Box(new Vector3(rect.center.x, 0.02f, rect.yMin + depth * 0.5f), bar, 0.06f, depth, MenuStyle.PrimaryShadow, fill);
+                OnClick(rect, () => set(amount));
+            }
+
+            Label(value <= 0.001f ? "None" : $"{value:0.0}×", trackX + steps * (bar + gap) + 0.3f, z, LabelSize, MenuStyle.OnBackground);
+        }
+
         /// <summary>A picture lying in <paramref name="rect"/>, showing the <paramref name="uv"/> part of the texture.</summary>
         public void Image(Texture texture, Rect rect, Rect uv, float y) => Images.Add((texture, rect, uv, y + 0.01f));
     }

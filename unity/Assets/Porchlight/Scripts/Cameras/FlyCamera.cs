@@ -29,10 +29,19 @@ namespace Porchlight.Cameras
         public float MaxHeight = 400f;
 
         /// <summary>How much closer one notch of the scroll wheel brings you.</summary>
-        public float ZoomStep = 0.15f;
+        public float ZoomStep = 0.07f;
 
         /// <summary>Degrees of orbit per pixel of Ctrl-drag.</summary>
         public float OrbitSensitivity = 0.25f;
+
+        /// <summary>
+        /// While the terrain builder is holding a shape, the arrow keys and the scroll wheel move the
+        /// shape instead of the camera. WASD still looks around and dragging the empty ground still pans.
+        /// </summary>
+        public static bool KeysCaptured { get; set; }
+
+        /// <summary>While something in the town is being dragged (a resize handle), dragging doesn't pan or orbit.</summary>
+        public static bool PointerCaptured { get; set; }
 
         private const string InvertYPref = "Porchlight.InvertY";
         private static int _invertY = -1;
@@ -88,7 +97,7 @@ namespace Porchlight.Cameras
         private void Update()
         {
             var dt = Time.unscaledDeltaTime;
-            if (Orbit()) return;
+            if (!PointerCaptured && Orbit()) return;
 
             var pointerLook = PInput.MouseLookDelta() * MouseSensitivity + PInput.StickLook() * (StickLookSpeed * dt);
             if (InvertY) pointerLook.y = -pointerLook.y;
@@ -100,14 +109,15 @@ namespace Porchlight.Cameras
             transform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);
 
             var position = transform.position;
-            Pan(ref position);
-            Zoom(ref position);
+            if (PointerCaptured) _panning = false;
+            else Pan(ref position);
+            if (!KeysCaptured) Zoom(ref position);
             var heightBoost = Mathf.Lerp(0.6f, 3f, Mathf.InverseLerp(MinHeight, 200f, position.y));
             var speed = Speed * heightBoost * (PInput.Fast() ? FastMultiplier : 1f);
 
             // Move on the ground plane so looking down doesn't send you into the ground.
             var yaw = Quaternion.Euler(0f, _yaw, 0f);
-            var move = PInput.Move();
+            var move = KeysCaptured ? Vector2.zero : PInput.Move();
             position += yaw * new Vector3(move.x, 0f, move.y) * (speed * dt);
             position.y += PInput.Vertical() * VerticalSpeed * heightBoost * dt;
 
@@ -115,6 +125,20 @@ namespace Porchlight.Cameras
             position.z = Mathf.Clamp(position.z, -_bounds, _bounds);
             position.y = Mathf.Clamp(position.y, Floor(position), MaxHeight);
             transform.position = position;
+        }
+
+        /// <summary>Swings the camera round to look at <paramref name="target"/> from <paramref name="distance"/> away, keeping its heading.</summary>
+        public void FocusOn(Vector3 target, float distance)
+        {
+            _pitch = Mathf.Clamp(_pitch, 20f, 70f);
+            var rotation = Quaternion.Euler(_pitch, _yaw, 0f);
+            var position = target - rotation * Vector3.forward * distance;
+            position.y = Mathf.Clamp(position.y, Floor(position), MaxHeight);
+            transform.SetPositionAndRotation(position, Quaternion.LookRotation(target - position));
+            var euler = transform.eulerAngles;
+            _yaw = euler.y;
+            _pitch = Mathf.Clamp(euler.x > 180f ? euler.x - 360f : euler.x, -20f, 89f);
+            transform.rotation = Quaternion.Euler(_pitch, _yaw, 0f);
         }
 
         /// <summary>The lowest the camera may go here: <see cref="MinHeight"/> above the ground.</summary>

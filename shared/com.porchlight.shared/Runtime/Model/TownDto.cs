@@ -12,8 +12,11 @@ namespace Porchlight.Shared.Model
 
     public sealed class TownDto
     {
-        /// <summary>Bump this when the layout format changes, and add a migration on the server.</summary>
-        public const int CurrentSchemaVersion = 1;
+        /// <summary>
+        /// Bump this when the layout format changes, and add a migration (see Rules.TownTiles.Upgrade,
+        /// which the server and clients run on every town they load). 2: the ground is tiles.
+        /// </summary>
+        public const int CurrentSchemaVersion = 2;
 
         public string Id { get; set; } = "";
         public string Name { get; set; } = "";
@@ -27,23 +30,146 @@ namespace Porchlight.Shared.Model
         public float Size { get; set; } = TownLimits.DefaultSize;
 
         public List<BuildingDto> Buildings { get; set; } = new List<BuildingDto>();
+
+        /// <summary>
+        /// The ground: a square of 4 m tiles, each with a level and a surface (grass, street, path, plaza
+        /// or garden). See <see cref="Rules.TownTiles"/>. Null only in towns saved before tiles, which are
+        /// converted as they load.
+        /// </summary>
+        public TileMapDto Tiles { get; set; }
+
+        /// <summary>Before tiles: roads as a graph. Only read to convert old towns (Rules.TownTiles.Upgrade), then emptied.</summary>
         public RoadNetworkDto Roads { get; set; } = new RoadNetworkDto();
 
-        /// <summary>The shape of the ground. Null for a town that's still flat, which is every town until it's first edited.</summary>
+        /// <summary>Before tiles: a heightmap. Only read to convert old towns, then dropped.</summary>
         public TerrainDto Terrain { get; set; }
+
+        /// <summary>
+        /// The terrain builder's shapes, floating anywhere in the air or half buried. They don't touch
+        /// the ground until the overlay is applied (<see cref="Rules.TerrainShapes.Overlay"/>), which
+        /// raises the tiles under them to their tops. Empty for towns that never used the builder.
+        /// </summary>
+        public List<TerrainShapeDto> TerrainShapes { get; set; } = new List<TerrainShapeDto>();
+
+        /// <summary>How much grass, flowers and trees grow on their own (see <see cref="Rules.Foliage"/>).</summary>
+        public FoliageDto Foliage { get; set; } = new FoliageDto();
+
+        /// <summary>
+        /// Where foliage grows: rectangles painted in the builder, in order. A point grows plants if the
+        /// last area covering it was painted rather than erased. Empty: nothing grows.
+        /// </summary>
+        public List<FoliageAreaDto> FoliageAreas { get; set; } = new List<FoliageAreaDto>();
+
+        /// <summary>A copy sharing everything with this town but its tiles (a preview of an edit, say). Not for editing: its lists are this town's.</summary>
+        public TownDto WithTiles(TileMapDto tiles)
+        {
+            var copy = (TownDto)MemberwiseClone();
+            copy.Tiles = tiles;
+            return copy;
+        }
 
         public TownDto Clone()
         {
             var copy = (TownDto)MemberwiseClone();
             copy.Buildings = Buildings.ConvertAll(b => b.Clone());
-            copy.Roads = Roads.Clone();
+            copy.Tiles = Tiles?.Clone();
+            copy.Roads = Roads?.Clone();
             copy.Terrain = Terrain?.Clone();
+            copy.TerrainShapes = TerrainShapes?.ConvertAll(s => s?.Clone());
+            copy.Foliage = Foliage?.Clone();
+            copy.FoliageAreas = FoliageAreas?.ConvertAll(a => a?.Clone());
             return copy;
         }
     }
 
+    /// <summary>A rectangle of ground, X0..X1 by Z0..Z1, where foliage grows, or (with <see cref="Erase"/>) doesn't.</summary>
+    public sealed class FoliageAreaDto
+    {
+        public float X0 { get; set; }
+        public float Z0 { get; set; }
+        public float X1 { get; set; }
+        public float Z1 { get; set; }
+        public bool Erase { get; set; }
+
+        public bool Contains(float x, float z) => x >= X0 && x <= X1 && z >= Z0 && z <= Z1;
+
+        public FoliageAreaDto Clone() => (FoliageAreaDto)MemberwiseClone();
+    }
+
     /// <summary>
-    /// A heightmap over the town: <see cref="Cells"/> squares a side, so (Cells + 1)² corner heights,
+    /// How heavy the town's foliage is: an overall amount and one each for trees (and bushes), flowers,
+    /// and grass and weeds. 1 is the usual amount, 0 none, up to <see cref="Max"/>.
+    /// </summary>
+    public sealed class FoliageDto
+    {
+        public const float Max = 2f;
+
+        public float Overall { get; set; } = 1f;
+        public float Trees { get; set; } = 1f;
+        public float Flowers { get; set; } = 1f;
+        public float Grass { get; set; } = 1f;
+
+        public FoliageDto Clone() => (FoliageDto)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// A shape placed with the terrain builder: a unit <see cref="Kind"/> (see <see cref="Rules.TerrainShapes"/>)
+    /// stretched by the scales, turned by the rotations, and centred on (X, Y, Z). Rotations are Unity's
+    /// Euler angles in degrees (applied Z, then X, then Y), and Y is metres above sea level, like the terrain.
+    /// </summary>
+    public sealed class TerrainShapeDto
+    {
+        public string Id { get; set; } = "";
+        public string Kind { get; set; } = "";
+
+        /// <summary>What the layers panel calls it, like "Cube 3".</summary>
+        public string Name { get; set; } = "";
+
+        public float X { get; set; }
+        public float Y { get; set; }
+        public float Z { get; set; }
+        public float RotationX { get; set; }
+        public float RotationY { get; set; }
+        public float RotationZ { get; set; }
+        public float ScaleX { get; set; } = 1f;
+        public float ScaleY { get; set; } = 1f;
+        public float ScaleZ { get; set; } = 1f;
+
+        /// <summary>
+        /// The ground is to take this shape's form. The builder previews it, and makes it the ground
+        /// (<see cref="Editing.ApplyTerrainOverlayCommand"/>, which turns this back off) on the way out.
+        /// </summary>
+        public bool Overlay { get; set; }
+
+        public TerrainShapeDto Clone() => (TerrainShapeDto)MemberwiseClone();
+    }
+
+    /// <summary>
+    /// The town's ground as tiles, <see cref="Cells"/> a side, row by row from -Z, each row from -X.
+    /// <see cref="Levels"/> are whole metres above (or below) the countryside; <see cref="Surfaces"/>
+    /// are <see cref="TileSurface"/> values. See <see cref="Rules.TownTiles"/>.
+    /// </summary>
+    public sealed class TileMapDto
+    {
+        public int Cells { get; set; }
+        public List<int> Levels { get; set; } = new List<int>();
+        public List<int> Surfaces { get; set; } = new List<int>();
+
+        public TileMapDto Clone() => new TileMapDto { Cells = Cells, Levels = new List<int>(Levels), Surfaces = new List<int>(Surfaces) };
+    }
+
+    /// <summary>What a tile's top is.</summary>
+    public enum TileSurface
+    {
+        Grass = 0,
+        Street = 1,
+        Path = 2,
+        Plaza = 3,
+        Garden = 4,
+    }
+
+    /// <summary>
+    /// Before tiles: a heightmap over the town: <see cref="Cells"/> squares a side, so (Cells + 1)² corner heights,
     /// row by row from -Z, each row from -X. Heights are whole centimetres, so saved data stays small
     /// and every client agrees exactly. See <see cref="Rules.TownTerrain"/> for how it's read and shaped.
     /// </summary>
@@ -243,23 +369,15 @@ namespace Porchlight.Shared.Model
 
         public const int MaxNameLength = 64;
         public const int MaxBuildings = 5000;
-        public const int MaxRoadSegments = 5000;
-        public const int MaxRoadNodes = 10000;
         public const int MaxHouseNumber = 99999;
-
-        /// <summary>One half-grid step, the shortest stretch the builder can draw.</summary>
-        public const float MinRoadLength = 2f;
-
-        /// <summary>
-        /// A road endpoint within this many metres of an existing node joins that node. Less than half
-        /// a half-grid step, so ends can go on any half-grid point next to a junction.
-        /// </summary>
-        public const float NodeSnapRadius = 0.9f;
+        public const int MaxTerrainShapes = 200;
+        public const int MaxFoliageAreas = 500;
+        public const int MaxShapeNameLength = 32;
 
         /// <summary>Positions are rounded to this grid so saved data stays small and deterministic.</summary>
         public const float PositionQuantum = 0.05f;
 
-        /// <summary>A building counts as connected when its edge is within this distance of a road.</summary>
+        /// <summary>A building counts as connected when a street, path or plaza tile is within this distance of its walls.</summary>
         public const float RoadConnectionSlack = 2.5f;
     }
 
@@ -271,6 +389,7 @@ namespace Porchlight.Shared.Model
             Name = name,
             Version = 1,
             Size = size,
+            Tiles = Rules.TownTiles.Flat(size),
         };
     }
 

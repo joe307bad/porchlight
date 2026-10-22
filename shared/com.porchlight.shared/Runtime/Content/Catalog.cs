@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Porchlight.Shared.Model;
 
 namespace Porchlight.Shared.Content
 {
@@ -72,20 +73,31 @@ namespace Porchlight.Shared.Content
         public bool Listed { get; }
     }
 
-    public sealed class RoadType
+    /// <summary>A kind of tile surface the builder can paint (see Rules.TownTiles).</summary>
+    public sealed class SurfaceType
     {
-        public RoadType(string id, string displayName, float width, string color)
+        public SurfaceType(TileSurface surface, string id, string displayName, string blurb, string color, bool paved)
         {
+            Surface = surface;
             Id = id;
             DisplayName = displayName;
-            Width = width;
+            Blurb = blurb;
             Color = color;
+            Paved = paved;
         }
 
+        public TileSurface Surface { get; }
         public string Id { get; }
         public string DisplayName { get; }
-        public float Width { get; }
+
+        /// <summary>A few words for the builder's card.</summary>
+        public string Blurb { get; }
+
+        /// <summary>Its main colour, for cards and maps.</summary>
         public string Color { get; }
+
+        /// <summary>Walked or driven on: buildings can't stand on it (plazas excepted), and buildings next to it count as connected.</summary>
+        public bool Paved { get; }
     }
 
     public static class Catalog
@@ -117,14 +129,18 @@ namespace Porchlight.Shared.Content
         /// <summary>The types the builder offers, in order.</summary>
         public static readonly IReadOnlyList<BuildingType> Buildable = new List<BuildingType>(Buildings).FindAll(b => b.Listed);
 
-        public static readonly IReadOnlyList<RoadType> Roads = new[]
+        /// <summary>The tile surfaces the builder paints, in the order it offers them.</summary>
+        public static readonly IReadOnlyList<SurfaceType> Surfaces = new[]
         {
-            new RoadType("street", "Street", 6f, "#4B4E57"),
-            new RoadType("avenue", "Avenue", 10f, "#43464E"),
+            new SurfaceType(TileSurface.Street, "street", "Street", "Lanes for cars, with kerbs", "#8A847C", paved: true),
+            new SurfaceType(TileSurface.Path, "path", "Path", "Cobbles, with steps up hills", "#C9B79C", paved: true),
+            new SurfaceType(TileSurface.Plaza, "plaza", "Plaza", "Paved squares to gather in", "#DCCDB0", paved: true),
+            new SurfaceType(TileSurface.Garden, "garden", "Garden", "Flower beds and hedges", "#8E6A48", paved: false),
+            new SurfaceType(TileSurface.Grass, "grass", "Grass", "Back to lawn", "#9DC183", paved: false),
         };
 
         private static readonly Dictionary<string, BuildingType> BuildingsById = Index(Buildings, b => b.Id);
-        private static readonly Dictionary<string, RoadType> RoadsById = Index(Roads, r => r.Id);
+        private static readonly Dictionary<string, SurfaceType> SurfacesById = Index(Surfaces, s => s.Id);
 
         public static bool TryGetBuilding(string id, out BuildingType type)
         {
@@ -132,10 +148,20 @@ namespace Porchlight.Shared.Content
             return id != null && BuildingsById.TryGetValue(id, out type);
         }
 
-        public static bool TryGetRoad(string id, out RoadType type)
+        public static bool TryGetSurface(string id, out SurfaceType type)
         {
             type = null;
-            return id != null && RoadsById.TryGetValue(id, out type);
+            return id != null && SurfacesById.TryGetValue(id, out type);
+        }
+
+        public static SurfaceType Surface(TileSurface surface)
+        {
+            foreach (var type in Surfaces)
+            {
+                if (type.Surface == surface) return type;
+            }
+
+            return Surfaces[Surfaces.Count - 1];
         }
 
         private static Dictionary<string, T> Index<T>(IEnumerable<T> items, Func<T, string> key)

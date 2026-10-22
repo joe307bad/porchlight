@@ -34,6 +34,7 @@ namespace Porchlight.App
             ("Camera", "WASD  ·  Right mouse / stick"),
             ("Zoom", "Scroll wheel"),
             ("Sit / lie", "Walk into a couch, chair or bed"),
+            ("View", "V  ·  first person or over the shoulder"),
         };
 
         private readonly TownDto _town;
@@ -41,11 +42,13 @@ namespace Porchlight.App
         private readonly CharacterType _character;
         private readonly Material _material;
         private readonly bool _building;
+        private readonly ThirdPersonCamera _camera;
         private readonly Action _leave;
 
         /// <param name="building">Walking around from the builder: the way out goes back to building.</param>
-        public WalkHud(TownDto town, CharacterType character, Material material, bool building, Action leave)
+        public WalkHud(TownDto town, CharacterType character, Material material, bool building, ThirdPersonCamera camera, Action leave)
         {
+            _camera = camera;
             _town = town;
             _metrics = TownMetrics.Compute(town);
             _character = character;
@@ -54,7 +57,7 @@ namespace Porchlight.App
             _leave = leave;
         }
 
-        public string StateKey => $"{_town.Name}|{_character.Id}|{FlyCamera.InvertY}";
+        public string StateKey => $"{_town.Name}|{_character.Id}|{FlyCamera.InvertY}|{_camera.FirstPerson}";
 
         public void Draw(HudCanvas c)
         {
@@ -77,6 +80,7 @@ namespace Porchlight.App
             var label = _building ? "Back to building" : "Leave town";
             var keys = _building ? "Tab" : "Esc  ·  +";
             c.Button(new Rect(actionsLeft, ContentTop - 2.1f, ActionWidth, 2.1f), label, keys, false, _leave);
+            c.Button(new Rect(actionsLeft, ContentTop - 4.6f, ActionWidth, 2.1f), "First person", "V", _camera.FirstPerson, () => _camera.FirstPerson = !_camera.FirstPerson);
         }
 
         /// <summary>A card with the character's portrait, name and tagline.</summary>
@@ -107,7 +111,7 @@ namespace Porchlight.App
             {
                 var (action, keys) = Controls[i];
                 var x = left + (i % 2) * columnWidth;
-                var z = 2.6f - (i / 2) * 2.2f;
+                var z = 2.6f - (i / 2) * 2f;
                 c.Label(action, x, z, HudCanvas.BodySize, MenuStyle.OnBackground, weight: FontWeight.SemiBold);
                 c.Label(keys, x + 5f, z, HudCanvas.BodySize, MenuStyle.OnBackground, maxWidth: columnWidth - 5.5f);
             }

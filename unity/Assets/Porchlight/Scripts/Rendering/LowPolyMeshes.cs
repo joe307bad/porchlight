@@ -19,10 +19,6 @@ namespace Porchlight.Rendering
         private static readonly Color Trunk = Hex("#6B4F3A");
         private static readonly Color Leaves = Hex("#4F8A3E");
         private static readonly Color Chimney = Hex("#7A5248");
-        private static readonly Color GrassA = Hex("#9DC183");
-        private static readonly Color GrassB = Hex("#93B97A");
-        private static readonly Color Outskirts = Hex("#7FA06A");
-        private static readonly Color Bank = Hex("#9C8462");
 
         public static Mesh Building(BuildingType type)
         {
@@ -130,111 +126,6 @@ namespace Porchlight.Rendering
                 var outward = (p0 + p1) * 0.5f - new Vector3(basePosition.x, ringY, basePosition.z) + Vector3.up * 0.5f;
                 mb.Triangle(p0, p1, apex, Leaves * (0.9f + 0.1f * (i % 2)), outward);
             }
-        }
-
-        /// <summary>Patchwork grass for the buildable area, following the terrain, plus darker countryside around it so the edge isn't a cliff.</summary>
-        public static Mesh Ground(TownDto town)
-        {
-            var mb = new MeshBuilder();
-            var half = town.Size * 0.5f;
-
-            // A frame around the town, not a sheet under it, so ground dug below 0 isn't covered up.
-            const float outskirtScale = 3f;
-            var o = half * outskirtScale;
-            Quad(-o, -o, o, -half);
-            Quad(-o, half, o, o);
-            Quad(-o, -half, -half, half);
-            Quad(half, -half, o, half);
-            void Quad(float x0, float z0, float x1, float z1) =>
-                mb.Quad(new Vector3(x0, -0.05f, z0), new Vector3(x0, -0.05f, z1), new Vector3(x1, -0.05f, z1), new Vector3(x1, -0.05f, z0), Outskirts, Vector3.up);
-
-            // Patches of a lighter and darker green, about 16 m across.
-            const float tile = 16f;
-            var tiles = Mathf.Max(1, Mathf.RoundToInt(town.Size / tile));
-            var step = town.Size / tiles;
-            Color Patch(float x, float z)
-            {
-                var i = Mathf.FloorToInt((x + half) / step + 0.001f);
-                var j = Mathf.FloorToInt((z + half) / step + 0.001f);
-                return ((i * 7 + j * 13) % 5 == 0) ? GrassB : GrassA;
-            }
-
-            if (TownTerrain.IsShaped(town))
-            {
-                TerrainMeshes.Surface(mb, town, 0f, Patch, Bank);
-                return mb.ToMesh(name: "ground");
-            }
-
-            // Flat: one quad per patch is enough.
-            for (var i = 0; i < tiles; i++)
-            {
-                for (var j = 0; j < tiles; j++)
-                {
-                    float x0 = -half + i * step, z0 = -half + j * step;
-                    mb.Quad(new Vector3(x0, 0f, z0), new Vector3(x0, 0f, z0 + step), new Vector3(x0 + step, 0f, z0 + step), new Vector3(x0 + step, 0f, z0), Patch(x0, z0), Vector3.up);
-                }
-            }
-
-            return mb.ToMesh(name: "ground");
-        }
-
-        /// <summary>
-        /// All roads as one mesh, lying on the ground: a strip per segment, plus a disc to fill each
-        /// junction or bend. Dead ends stay square, and anywhere a road meets a building it's cut off at
-        /// the building's wall.
-        /// </summary>
-        public static void Roads(TownDto town, Mesh target)
-        {
-            var mb = new MeshBuilder();
-            var footprints = new List<OrientedRect>();
-            foreach (var building in town.Buildings)
-            {
-                if (TownRules.TryFootprint(building, out var footprint)) footprints.Add(footprint);
-            }
-
-            var nodes = new Dictionary<string, (Vec2 Position, float Width, Color Color, int Roads)>();
-            foreach (var road in TownRules.Roads(town))
-            {
-                var color = Hex(road.Type.Color);
-                TerrainMeshes.Strip(mb, town, road.A, road.B, road.Type.Width, color, 0.04f, Near(footprints, road.A, road.B, road.Type.Width));
-
-                Remember(nodes, road.Segment.StartNodeId, road.A, road.Type.Width, color);
-                Remember(nodes, road.Segment.EndNodeId, road.B, road.Type.Width, color);
-            }
-
-            foreach (var node in nodes.Values)
-            {
-                if (node.Roads < 2) continue;
-                TerrainMeshes.Disc(mb, town, node.Position, node.Width * 0.5f, node.Color, 0.045f, Near(footprints, node.Position, node.Position, node.Width));
-            }
-
-            mb.ToMesh(target, "roads");
-        }
-
-        /// <summary>The footprints close enough to a stretch of road to touch it.</summary>
-        private static List<OrientedRect> Near(List<OrientedRect> footprints, Vec2 a, Vec2 b, float width)
-        {
-            List<OrientedRect> near = null;
-            foreach (var footprint in footprints)
-            {
-                if (Segments.Distance(footprint.Center, a, b) > footprint.BoundingRadius + width * 0.5f) continue;
-                near ??= new List<OrientedRect>();
-                near.Add(footprint);
-            }
-
-            return near;
-        }
-
-        /// <summary>Counts the roads meeting at a node, keeping the widest one's size and colour for its disc.</summary>
-        private static void Remember(Dictionary<string, (Vec2 Position, float Width, Color Color, int Roads)> nodes, string id, Vec2 position, float width, Color color)
-        {
-            if (!nodes.TryGetValue(id, out var node))
-            {
-                nodes[id] = (position, width, color, 1);
-                return;
-            }
-
-            nodes[id] = node.Width < width ? (position, width, color, node.Roads + 1) : (node.Position, node.Width, node.Color, node.Roads + 1);
         }
 
         /// <summary>Parses #RRGGBB. Vertex colours aren't converted by Unity, so convert to linear here when the project is linear.</summary>

@@ -51,8 +51,12 @@ namespace Porchlight.Rendering
         private Material _material;
         private Transform _buildingsRoot;
         private Transform _doorsRoot;
-        private MeshFilter _ground;
-        private MeshFilter _roads;
+        private Transform _tilesRoot;
+        private MeshFilter _countryside;
+        private float _countrysideSize;
+        private readonly Dictionary<(int, int), MeshFilter> _chunks = new Dictionary<(int, int), MeshFilter>();
+        private int[] _shownLevels;
+        private int[] _shownSurfaces;
         private MeshFilter _cutaway;
         private Mesh _frontDoorLeaf;
         private Mesh _insideDoorLeaf;
@@ -82,9 +86,9 @@ namespace Porchlight.Rendering
         public void Init(Material material)
         {
             _material = material;
-            _ground = CreateChild("Ground");
-            _roads = CreateChild("Roads");
-            _roads.sharedMesh = new Mesh { name = "roads" };
+            _tilesRoot = new GameObject("Tiles").transform;
+            _tilesRoot.SetParent(transform, false);
+            _countryside = CreateChild("Countryside");
             _cutaway = CreateChild("Cut away");
             _cutaway.gameObject.SetActive(false);
             _frontDoorLeaf = InteriorMeshes.DoorLeaf(CottageInterior.FrontDoorWidth, InteriorMeshes.FrontDoorColor);
@@ -97,21 +101,17 @@ namespace Porchlight.Rendering
         {
             Clear();
             gameObject.SetActive(true);
-            SyncTerrain(town);
-        }
-
-        /// <summary>Rebuilds the ground after the terrain changes, and moves everything on it.</summary>
-        public void SyncTerrain(TownDto town)
-        {
-            if (_ground.sharedMesh != null) Destroy(_ground.sharedMesh);
-            _ground.sharedMesh = LowPolyMeshes.Ground(town);
             Sync(town);
         }
 
-        /// <summary>Adds, moves and removes buildings to match the town, and redraws the roads. Buildings stand on the ground.</summary>
+        /// <summary>
+        /// Matches the town: redraws the tiles that changed (and those beside them, whose walls, kerbs and
+        /// steps follow their neighbours), and adds, moves and removes buildings, which stand on the tiles.
+        /// </summary>
         public void Sync(TownDto town)
         {
             _town = town;
+            SyncTiles(town);
             var seen = new HashSet<string>();
             foreach (var dto in town.Buildings)
             {
@@ -154,9 +154,81 @@ namespace Porchlight.Rendering
                 _buildings.Remove(id);
             }
 
-            // Rebuilding every road is cheap at this scale. Chunk it when towns get big.
-            LowPolyMeshes.Roads(town, _roads.sharedMesh);
             RefreshCutaway();
+        }
+
+        /// <summary>
+        /// Rebuilds the chunks of tiles that need it. A tile's look depends on its neighbours (walls,
+        /// kerbs), and theirs on their neighbours (whether they climb to it), so a change reaches two
+        /// tiles out.
+        /// </summary>
+        private void SyncTiles(TownDto town)
+        {
+            if (!Mathf.Approximately(_countrysideSize, town.Size) || _countryside.sharedMesh == null)
+            {
+                if (_countryside.sharedMesh != null) Destroy(_countryside.sharedMesh);
+                _countryside.sharedMesh = TileMeshes.Countryside(town.Size);
+                _countrysideSize = town.Size;
+            }
+
+            if (!TownTiles.Has(town)) return;
+            var n = TownTiles.Cells(town);
+            var chunks = TileMeshes.Chunks(town);
+            var levels = town.Tiles.Levels;
+            var surfaces = town.Tiles.Surfaces;
+            var dirty = new HashSet<(int, int)>();
+            if (_shownLevels == null || _shownLevels.Length != levels.Count)
+            {
+                ClearChunks();
+                for (var cj = 0; cj < chunks; cj++)
+                {
+                    for (var ci = 0; ci < chunks; ci++) dirty.Add((ci, cj));
+                }
+            }
+            else
+            {
+                for (var k = 0; k < levels.Count; k++)
+                {
+                    if (levels[k] == _shownLevels[k] && surfaces[k] == _shownSurfaces[k]) continue;
+                    int i = k % n, j = k / n;
+                    for (var dj = -2; dj <= 2; dj++)
+                    {
+                        for (var di = -2; di <= 2; di++)
+                        {
+                            if (TownTiles.Inside(town, i + di, j + dj)) dirty.Add(TileMeshes.ChunkOf(i + di, j + dj));
+                        }
+                    }
+                }
+            }
+
+            foreach (var (ci, cj) in dirty)
+            {
+                if (!_chunks.TryGetValue((ci, cj), out var chunk))
+                {
+                    chunk = CreateChild($"Tiles {ci},{cj}");
+                    chunk.transform.SetParent(_tilesRoot, false);
+                    chunk.sharedMesh = new Mesh();
+                    _chunks[(ci, cj)] = chunk;
+                }
+
+                TileMeshes.BuildChunk(town, ci, cj, chunk.sharedMesh);
+            }
+
+            _shownLevels = levels.ToArray();
+            _shownSurfaces = surfaces.ToArray();
+        }
+
+        private void ClearChunks()
+        {
+            foreach (var chunk in _chunks.Values)
+            {
+                Destroy(chunk.sharedMesh);
+                Destroy(chunk.gameObject);
+            }
+
+            _chunks.Clear();
+            _shownLevels = null;
+            _shownSurfaces = null;
         }
 
         /// <summary>
@@ -281,6 +353,7 @@ namespace Porchlight.Rendering
             foreach (var mesh in _plateMeshes.Values) Destroy(mesh);
             _plateMeshes.Clear();
             _town = null;
+            ClearChunks();
 
             // Static batching can't be undone, so start the next town with fresh roots.
             NewRoots();

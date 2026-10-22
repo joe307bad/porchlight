@@ -29,28 +29,20 @@ namespace Porchlight.Shared.Editing
     }
 
     /// <summary>
-    /// Adds a straight road. Each end snaps to an existing node when close enough. Otherwise it creates
-    /// a node whose id comes from the segment id (SegmentId + "-a" or "-b").
+    /// Paints tiles a surface (street, path, plaza, garden or grass): <see cref="Cells"/> are tile indices
+    /// (row by row from -Z). As a <see cref="Line"/>, in order, a street or path keeps each tile within one
+    /// level of the last so it can ramp or step. See <see cref="TownTiles.CanPaint"/>.
     /// </summary>
-    public sealed class AddRoadCommand : TownCommand
+    public sealed class PaintTilesCommand : TownCommand
     {
-        public string SegmentId { get; set; } = "";
-        public string TypeId { get; set; } = "";
-        public float StartX { get; set; }
-        public float StartZ { get; set; }
-        public float EndX { get; set; }
-        public float EndZ { get; set; }
-    }
-
-    /// <summary>Removes a segment, plus any of its end nodes that no longer join anything.</summary>
-    public sealed class RemoveRoadCommand : TownCommand
-    {
-        public string SegmentId { get; set; } = "";
+        public System.Collections.Generic.List<int> Cells { get; set; } = new System.Collections.Generic.List<int>();
+        public string SurfaceId { get; set; } = "";
+        public bool Line { get; set; }
     }
 
     /// <summary>
-    /// The terrain tool: levels a square pad around a point at the height there plus <see cref="Delta"/>,
-    /// sloping the ground around it. See <see cref="TownTerrain.Shape"/>.
+    /// The terrain tool: raises or lowers the tiles in a square around a point by <see cref="Delta"/>
+    /// levels (rounded to whole metres). See <see cref="TownTiles.CanRaise"/>.
     /// </summary>
     public sealed class ShapeTerrainCommand : TownCommand
     {
@@ -58,6 +50,49 @@ namespace Porchlight.Shared.Editing
         public float Z { get; set; }
         public float PadHalfSize { get; set; }
         public float Delta { get; set; }
+    }
+
+    /// <summary>Adds a terrain builder shape. Its id must be new; it's rounded to what gets stored (<see cref="TerrainShapes.Normalize"/>).</summary>
+    public sealed class AddTerrainShapeCommand : TownCommand
+    {
+        public TerrainShapeDto Shape { get; set; }
+    }
+
+    /// <summary>Moves, turns or resizes a terrain builder shape: replaces the one with the same id.</summary>
+    public sealed class UpdateTerrainShapeCommand : TownCommand
+    {
+        public TerrainShapeDto Shape { get; set; }
+    }
+
+    public sealed class RemoveTerrainShapeCommand : TownCommand
+    {
+        public string ShapeId { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Makes the terrain builder's overlay the ground: raises the tiles under the shapes with their
+    /// overlay on to their tops (see <see cref="TerrainShapes.Overlay"/>), then turns their overlay off,
+    /// since it's done. The shapes stay, so they can be changed and overlaid again.
+    /// </summary>
+    public sealed class ApplyTerrainOverlayCommand : TownCommand
+    {
+    }
+
+    /// <summary>Sets how heavy the town's foliage is. Each amount is clamped to 0..<see cref="FoliageDto.Max"/>.</summary>
+    public sealed class SetFoliageCommand : TownCommand
+    {
+        public FoliageDto Foliage { get; set; }
+    }
+
+    /// <summary>Paints (or erases) an area where foliage grows. Corners can come in any order; it's kept inside the town.</summary>
+    public sealed class AddFoliageAreaCommand : TownCommand
+    {
+        public FoliageAreaDto Area { get; set; }
+    }
+
+    /// <summary>Removes every foliage area, so nothing grows.</summary>
+    public sealed class ClearFoliageAreasCommand : TownCommand
+    {
     }
 
     /// <summary>Changes the inside of a building. <see cref="Floor"/> is 0 for the ground floor.</summary>
@@ -122,9 +157,50 @@ namespace Porchlight.Shared.Editing
             {
                 case PlaceBuildingCommand c: return PlaceBuilding(town, c);
                 case RemoveBuildingCommand c: return RemoveBuilding(town, c);
-                case AddRoadCommand c: return AddRoad(town, c);
-                case RemoveRoadCommand c: return RemoveRoad(town, c);
+                case PaintTilesCommand c: return PaintTiles(town, c);
                 case ShapeTerrainCommand c: return ShapeTerrain(town, c);
+                case AddTerrainShapeCommand c: return AddTerrainShape(town, c);
+                case UpdateTerrainShapeCommand c: return UpdateTerrainShape(town, c);
+                case RemoveTerrainShapeCommand c: return RemoveTerrainShape(town, c);
+                case ApplyTerrainOverlayCommand _: return ApplyTerrainOverlay(town);
+                case SetFoliageCommand c:
+                {
+                    if (c.Foliage == null) return EditResult.Fail("Missing foliage");
+                    float Amount(float v) => float.IsNaN(v) ? 1f : Math.Clamp(v, 0f, FoliageDto.Max);
+
+                    // Changed in place: views of the town that share its settings (with smoothed roads, say) see it too.
+                    var foliage = town.Foliage ??= new FoliageDto();
+                    foliage.Overall = Amount(c.Foliage.Overall);
+                    foliage.Trees = Amount(c.Foliage.Trees);
+                    foliage.Flowers = Amount(c.Foliage.Flowers);
+                    foliage.Grass = Amount(c.Foliage.Grass);
+                    return EditResult.Success;
+                }
+
+                case AddFoliageAreaCommand c:
+                {
+                    var area = c.Area;
+                    if (area == null || float.IsNaN(area.X0 + area.X1 + area.Z0 + area.Z1) || float.IsInfinity(area.X0 + area.X1 + area.Z0 + area.Z1)) return EditResult.Fail("Invalid area");
+                    if (town.FoliageAreas == null) town.FoliageAreas = new System.Collections.Generic.List<FoliageAreaDto>();
+                    if (town.FoliageAreas.Count >= TownLimits.MaxFoliageAreas) return EditResult.Fail("That's as many areas as a town can have. Clear some first.");
+                    var half = town.Size * 0.5f;
+                    float Fit(float v) => TownMath.Quantize(Math.Clamp(v, -half, half));
+                    var fitted = new FoliageAreaDto
+                    {
+                        X0 = Fit(Math.Min(area.X0, area.X1)), X1 = Fit(Math.Max(area.X0, area.X1)),
+                        Z0 = Fit(Math.Min(area.Z0, area.Z1)), Z1 = Fit(Math.Max(area.Z0, area.Z1)),
+                        Erase = area.Erase,
+                    };
+                    if (fitted.X1 - fitted.X0 < 1f || fitted.Z1 - fitted.Z0 < 1f) return EditResult.Fail("Drag out a bigger area");
+                    town.FoliageAreas.Add(fitted);
+                    return EditResult.Success;
+                }
+
+                case ClearFoliageAreasCommand _:
+                    if (town.FoliageAreas == null || town.FoliageAreas.Count == 0) return EditResult.Fail("There are no areas to clear");
+                    town.FoliageAreas.Clear();
+                    return EditResult.Success;
+
                 case InteriorCommand c: return EditInterior(town, c);
                 default: return EditResult.Fail($"Unknown command {command?.GetType().Name ?? "null"}");
             }
@@ -139,11 +215,11 @@ namespace Porchlight.Shared.Editing
             var z = TownMath.Quantize(c.Z);
             var rotation = TownMath.NormalizeAngle(c.RotationDeg);
 
-            var check = TownRules.CanPlaceBuilding(town, c.TypeId, x, z, rotation, out var ground);
+            var check = TownRules.CanPlaceBuilding(town, c.TypeId, x, z, rotation, out var levelling);
             if (!check.Ok) return check;
 
-            // On a slope, the ground under the building is levelled first.
-            if (ground != null) town.Terrain = ground;
+            // The tiles under the building are levelled first.
+            TownTiles.Apply(town, levelling);
 
             var building = new BuildingDto { Id = c.BuildingId, TypeId = c.TypeId, X = x, Z = z, RotationDeg = rotation };
             if (CottageInterior.HasInterior(building))
@@ -175,50 +251,67 @@ namespace Porchlight.Shared.Editing
             return EditResult.Success;
         }
 
-        private static EditResult AddRoad(TownDto town, AddRoadCommand c)
+        private static EditResult PaintTiles(TownDto town, PaintTilesCommand c)
         {
-            if (string.IsNullOrEmpty(c.SegmentId)) return EditResult.Fail("Missing segment id");
-            if (town.Roads.Segments.Exists(s => s.Id == c.SegmentId)) return EditResult.Fail("Segment id already used");
-
-            var start = TownMath.Quantize(new Vec2(c.StartX, c.StartZ));
-            var end = TownMath.Quantize(new Vec2(c.EndX, c.EndZ));
-
-            var check = TownRules.CanAddRoad(town, c.TypeId, start, end);
+            if (!Content.Catalog.TryGetSurface(c.SurfaceId, out var type)) return EditResult.Fail($"Unknown surface '{c.SurfaceId}'");
+            var check = TownTiles.CanPaint(town, c.Cells, type.Surface, c.Line, out var changes);
             if (!check.Ok) return check;
-
-            var a = TownRules.SnapToNode(town, start);
-            var b = TownRules.SnapToNode(town, end);
-            var startNodeId = a.NodeId ?? AddNode(town, c.SegmentId + "-a", a.Position);
-            var endNodeId = b.NodeId ?? AddNode(town, c.SegmentId + "-b", b.Position);
-
-            town.Roads.Segments.Add(new RoadSegmentDto
-            {
-                Id = c.SegmentId,
-                TypeId = c.TypeId,
-                StartNodeId = startNodeId,
-                EndNodeId = endNodeId,
-            });
-            return EditResult.Success;
-        }
-
-        private static EditResult RemoveRoad(TownDto town, RemoveRoadCommand c)
-        {
-            var index = town.Roads.Segments.FindIndex(s => s.Id == c.SegmentId);
-            if (index < 0) return EditResult.Fail("No such road");
-
-            var segment = town.Roads.Segments[index];
-            town.Roads.Segments.RemoveAt(index);
-            RemoveNodeIfOrphaned(town, segment.StartNodeId);
-            RemoveNodeIfOrphaned(town, segment.EndNodeId);
+            TownTiles.Apply(town, changes);
             return EditResult.Success;
         }
 
         private static EditResult ShapeTerrain(TownDto town, ShapeTerrainCommand c)
         {
-            var check = TownRules.CanShapeTerrain(town, TownMath.Quantize(new Vec2(c.X, c.Z)), c.PadHalfSize, c.Delta, out var heights);
+            var check = TownRules.CanShapeTerrain(town, TownMath.Quantize(new Vec2(c.X, c.Z)), c.PadHalfSize, c.Delta, out var changes);
             if (!check.Ok) return check;
 
-            town.Terrain = new TerrainDto { Cells = TownTerrain.CellsFor(town.Size), Heights = heights };
+            TownTiles.Apply(town, changes);
+            return EditResult.Success;
+        }
+
+        private static EditResult AddTerrainShape(TownDto town, AddTerrainShapeCommand c)
+        {
+            if (c.Shape == null) return EditResult.Fail("Missing shape");
+            if (town.TerrainShapes == null) town.TerrainShapes = new System.Collections.Generic.List<TerrainShapeDto>();
+            if (town.TerrainShapes.Count >= TownLimits.MaxTerrainShapes) return EditResult.Fail("That's as many shapes as a town can have");
+            if (town.TerrainShapes.Exists(s => s?.Id == c.Shape.Id)) return EditResult.Fail("Shape id already used");
+
+            var shape = TerrainShapes.Normalize(c.Shape);
+            var check = TerrainShapes.Check(town, shape);
+            if (!check.Ok) return check;
+
+            town.TerrainShapes.Add(shape);
+            return EditResult.Success;
+        }
+
+        private static EditResult UpdateTerrainShape(TownDto town, UpdateTerrainShapeCommand c)
+        {
+            if (c.Shape == null) return EditResult.Fail("Missing shape");
+            var index = town.TerrainShapes?.FindIndex(s => s?.Id == c.Shape.Id) ?? -1;
+            if (index < 0) return EditResult.Fail("No such shape");
+
+            var shape = TerrainShapes.Normalize(c.Shape);
+            var check = TerrainShapes.Check(town, shape);
+            if (!check.Ok) return check;
+
+            town.TerrainShapes[index] = shape;
+            return EditResult.Success;
+        }
+
+        private static EditResult RemoveTerrainShape(TownDto town, RemoveTerrainShapeCommand c)
+        {
+            if ((town.TerrainShapes?.RemoveAll(s => s?.Id == c.ShapeId) ?? 0) == 0) return EditResult.Fail("No such shape");
+            return EditResult.Success;
+        }
+
+        private static EditResult ApplyTerrainOverlay(TownDto town)
+        {
+            var changes = TerrainShapes.Overlay(town);
+            if (changes.Count == 0)
+                return EditResult.Fail(town.TerrainShapes == null || !town.TerrainShapes.Exists(t => t != null && t.Overlay) ? "Turn on the overlay for a shape first" : "The ground already covers these shapes");
+
+            TownTiles.Apply(town, changes);
+            foreach (var shape in town.TerrainShapes) shape.Overlay = false;
             return EditResult.Success;
         }
 
@@ -329,18 +422,6 @@ namespace Porchlight.Shared.Editing
             }
 
             return false;
-        }
-
-        private static string AddNode(TownDto town, string id, Vec2 position)
-        {
-            town.Roads.Nodes.Add(new RoadNodeDto { Id = id, X = position.X, Z = position.Z });
-            return id;
-        }
-
-        private static void RemoveNodeIfOrphaned(TownDto town, string nodeId)
-        {
-            var used = town.Roads.Segments.Exists(s => s.StartNodeId == nodeId || s.EndNodeId == nodeId);
-            if (!used) town.Roads.Nodes.RemoveAll(n => n.Id == nodeId);
         }
     }
 

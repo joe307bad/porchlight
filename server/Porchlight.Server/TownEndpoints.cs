@@ -37,11 +37,15 @@ public static class TownEndpoints
             town.Id = id.ToString();
             town.Name = town.Name?.Trim() ?? "";
 
+            // A client that loaded the town before tiles sends it the old way.
+            TownTiles.Upgrade(town);
+
             // The same rules the client ran. Never trust a client's snapshot.
             var validation = TownRules.ValidateTown(town);
             if (!validation.IsValid) return Error("Town is invalid", validation.Errors);
 
             var (status, saved) = await repo.UpdateAsync(id, town, TownMetrics.Compute(town), ct);
+
             return status switch
             {
                 SaveStatus.NotFound => Results.NotFound(),

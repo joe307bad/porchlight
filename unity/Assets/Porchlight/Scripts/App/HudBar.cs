@@ -13,6 +13,9 @@ namespace Porchlight.App
     /// straight down at a strip of grass far from the town, where an <see cref="IHudContent"/>
     /// lays out its panels. It redraws only when the content's state, the hovered item or the window
     /// width changes.
+    ///
+    /// A second one can stand down the right-hand side of the town instead (<see cref="Init"/> with
+    /// side set), drawn over the town at the same scale as the bar, for vertical lists like layers.
     /// </summary>
     public sealed class HudBar : MonoBehaviour
     {
@@ -25,9 +28,19 @@ namespace Porchlight.App
         private const string Grass = "#4E6E40";
         private const float BaseHeight = 12f;
         private const float MinWidth = 102f;
+
+        /// <summary>How wide the side panel is, in bar units, and the most of the screen it may take.</summary>
+        private const float SideWidth = 22f;
+        private const float MaxSideFraction = 0.35f;
+
         private static readonly Vector3 Origin = new Vector3(0f, -3000f, 0f);
 
-        private static bool _visible;
+        /// <summary>The side panel's strip of grass, far enough along that the bar's camera never sees it.</summary>
+        private static readonly Vector3 SideOrigin = new Vector3(5000f, -3000f, 0f);
+
+        private static readonly List<HudBar> Shown = new List<HudBar>();
+
+        private bool _side;
 
         private Camera _camera;
         private MeshFilter _shapes;
@@ -38,13 +51,23 @@ namespace Porchlight.App
         private IHudContent _content;
         private string _drawnKey;
 
-        /// <summary>True when the pointer is over the bar, so the town shouldn't react to it.</summary>
-        public static bool PointerInBar() => _visible && PInput.PointerPosition().y < Screen.height * Fraction;
+        /// <summary>True when the pointer is over the bar (or a side panel), so the town shouldn't react to it.</summary>
+        public static bool PointerInBar()
+        {
+            var pointer = PInput.PointerPosition();
+            foreach (var bar in Shown)
+            {
+                if (bar.PixelRect().Contains(pointer)) return true;
+            }
 
-        public void Init(Material flatMaterial, int mainCameraDepth)
+            return false;
+        }
+
+        public void Init(Material flatMaterial, int mainCameraDepth, bool side = false)
         {
             MenuStyle.Init();
-            transform.position = Origin;
+            _side = side;
+            transform.position = side ? SideOrigin : Origin;
 
             _camera = new GameObject("Bar camera").AddComponent<Camera>();
             _camera.transform.SetParent(transform, false);
@@ -78,15 +101,39 @@ namespace Porchlight.App
         {
             _content = content;
             _drawnKey = null;
-            _visible = true;
+            if (!Shown.Contains(this)) Shown.Add(this);
+            Place();
             gameObject.SetActive(true);
         }
 
         public void Hide()
         {
             _content = null;
-            _visible = false;
+            Shown.Remove(this);
             gameObject.SetActive(false);
+        }
+
+        private void OnDisable() => Shown.Remove(this);
+
+        /// <summary>Bar units per screen pixel: the bar is <see cref="BaseHeight"/> units tall.</summary>
+        private static float UnitsPerPixel() => BaseHeight / Mathf.Max(1f, Screen.height * Fraction);
+
+        /// <summary>The side panel's share of the screen: from the top of the bar up, at the right.</summary>
+        private static Rect SideRect()
+        {
+            var width = Mathf.Min(MaxSideFraction, SideWidth / UnitsPerPixel() / Mathf.Max(1f, Screen.width));
+            return new Rect(1f - width, Fraction, width, 1f - Fraction);
+        }
+
+        private Rect PixelRect()
+        {
+            var r = _side ? SideRect() : new Rect(0f, 0f, 1f, Fraction);
+            return new Rect(r.x * Screen.width, r.y * Screen.height, r.width * Screen.width, r.height * Screen.height);
+        }
+
+        private void Place()
+        {
+            if (_camera != null) _camera.rect = _side ? SideRect() : new Rect(0f, 0f, 1f, Fraction);
         }
 
         private void Invalidate() => _drawnKey = null;
@@ -96,16 +143,29 @@ namespace Porchlight.App
             if (_content == null) return;
 
             // Keep the bar a fixed height in units, unless the window is too narrow for the content.
-            var aspect = Screen.width / Mathf.Max(1f, Screen.height * Fraction);
-            var height = Mathf.Max(BaseHeight, MinWidth / aspect);
-            var width = height * aspect;
+            // The side panel uses the same scale, so its text matches the bar's.
+            Place();
+            var pixels = PixelRect();
+            float width, height;
+            if (_side)
+            {
+                width = pixels.width * UnitsPerPixel();
+                height = pixels.height * UnitsPerPixel();
+            }
+            else
+            {
+                var aspect = Screen.width / Mathf.Max(1f, Screen.height * Fraction);
+                height = Mathf.Max(BaseHeight, MinWidth / aspect);
+                width = height * aspect;
+            }
+
             _camera.orthographicSize = height * 0.5f;
 
             Vector2? pointer = null;
-            if (PointerInBar())
+            var p = PInput.PointerPosition();
+            if (pixels.Contains(p))
             {
-                var p = PInput.PointerPosition();
-                pointer = new Vector2((p.x / Screen.width - 0.5f) * width, (p.y / (Screen.height * Fraction) - 0.5f) * height);
+                pointer = new Vector2(((p.x - pixels.x) / Mathf.Max(1f, pixels.width) - 0.5f) * width, ((p.y - pixels.y) / Mathf.Max(1f, pixels.height) - 0.5f) * height);
             }
 
             // Clicks go to what's on screen now, before anything is redrawn.
@@ -118,7 +178,7 @@ namespace Porchlight.App
             if (hovered >= 0 && PInput.PrimaryPressedThisFrame()) _hits[hovered].Action();
             if (_content == null) return;
 
-            var key = $"{_content.StateKey}|{hovered}|{width:0.0}";
+            var key = $"{_content.StateKey}|{hovered}|{width:0.0}|{height:0.0}";
             if (key != _drawnKey) Draw(width, height, pointer, key);
         }
 

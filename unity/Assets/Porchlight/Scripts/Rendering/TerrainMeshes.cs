@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using Porchlight.Shared.Geometry;
 using Porchlight.Shared.Model;
@@ -8,83 +7,31 @@ using UnityEngine;
 namespace Porchlight.Rendering
 {
     /// <summary>
-    /// The ground's shape (<see cref="TownTerrain"/>) as meshes, plus finding the ground under a ray.
-    /// The grass, the grid, roads and the builder's ghosts all lie on the ground through here, so
-    /// they follow the same triangles.
+    /// Laying things on the ground (<see cref="TownTerrain"/>: the tiles), and finding the ground under
+    /// a ray. The builder's ghosts and outlines lie on the tiles through here.
     /// </summary>
     public static class TerrainMeshes
     {
         /// <summary>How far a ray steps between ground checks before narrowing in on the hit.</summary>
         private const float RayStep = 0.5f;
 
-        /// <summary>
-        /// The town's ground as faceted triangles, two per cell, lifted by <paramref name="lift"/>.
-        /// <paramref name="colorOf"/> colours each cell by the position of its -X -Z corner. Triangles
-        /// steeper than the terrain tool makes (the banks beside levelled buildings) get <paramref name="bank"/>, if given.
-        /// </summary>
-        public static void Surface(MeshBuilder mb, TownDto town, float lift, Func<float, float, Color> colorOf, Color? bank = null)
-        {
-            // A face's normal points less upwards the steeper it is; this is MaxSlope with a little slack.
-            var steepY = 1f / Mathf.Sqrt(1f + TownTerrain.MaxSlope * TownTerrain.MaxSlope * 1.5f);
-            Color Shade(Vector3 p, Vector3 q, Vector3 r, Color color)
-            {
-                if (!bank.HasValue) return color;
-                var upness = Mathf.Abs(Vector3.Cross(q - p, r - p).normalized.y);
-                return upness < steepY ? bank.Value : color;
-            }
-
-            var cells = TownTerrain.CellsFor(town.Size);
-            var spacing = town.Size / cells;
-            var half = town.Size * 0.5f;
-            for (var j = 0; j < cells; j++)
-            {
-                for (var i = 0; i < cells; i++)
-                {
-                    float x0 = -half + i * spacing, z0 = -half + j * spacing, x1 = x0 + spacing, z1 = z0 + spacing;
-                    var h00 = TownTerrain.HeightAt(town, i, j) + lift;
-                    var h10 = TownTerrain.HeightAt(town, i + 1, j) + lift;
-                    var h01 = TownTerrain.HeightAt(town, i, j + 1) + lift;
-                    var h11 = TownTerrain.HeightAt(town, i + 1, j + 1) + lift;
-                    var a = new Vector3(x0, h00, z0);
-                    var b = new Vector3(x1, h10, z0);
-                    var c = new Vector3(x1, h11, z1);
-                    var d = new Vector3(x0, h01, z1);
-                    var color = colorOf(x0, z0);
-
-                    // Same split as TownTerrain.HeightAt: corner a to corner c. A flat cell is one quad.
-                    if (Mathf.Abs(h00 + h11 - h10 - h01) < 0.001f)
-                    {
-                        mb.Quad(a, b, c, d, Shade(a, b, c, color), Vector3.up);
-                    }
-                    else
-                    {
-                        mb.Triangle(a, b, c, Shade(a, b, c, color), Vector3.up);
-                        mb.Triangle(a, c, d, Shade(a, c, d, color), Vector3.up);
-                    }
-                }
-            }
-        }
-
         /// <summary>A point on the ground, lifted by <paramref name="lift"/>.</summary>
         public static Vector3 OnGround(TownDto town, Vec2 point, float lift = 0f) =>
             new Vector3(point.X, TownTerrain.HeightAt(town, point) + lift, point.Z);
 
-        /// <summary>
-        /// A flat strip from <paramref name="a"/> to <paramref name="b"/> lying on the ground, with
-        /// <paramref name="cutouts"/> (building footprints) cut out of it.
-        /// </summary>
-        public static void Strip(MeshBuilder mb, TownDto town, Vec2 a, Vec2 b, float width, Color color, float lift, List<OrientedRect> cutouts = null)
+        /// <summary>A flat strip from <paramref name="a"/> to <paramref name="b"/> lying on the ground.</summary>
+        public static void Strip(MeshBuilder mb, TownDto town, Vec2 a, Vec2 b, float width, Color color, float lift)
         {
             var length = Vec2.Distance(a, b);
             if (length < 1e-3f) return;
 
             var direction = (b - a) * (1f / length);
             var side = new Vec2(direction.Z, -direction.X) * (width * 0.5f);
-            DrapeAround(mb, town, new List<Vec2> { a - side, b - side, b + side, a + side }, cutouts, color, lift);
+            Drape(mb, town, new List<Vec2> { a - side, b - side, b + side, a + side }, color, lift);
         }
 
-        /// <summary>A flat disc lying on the ground, to fill road joints, with <paramref name="cutouts"/> cut out of it.</summary>
-        public static void Disc(MeshBuilder mb, TownDto town, Vec2 center, float radius, Color color, float lift, List<OrientedRect> cutouts = null)
+        /// <summary>A flat disc lying on the ground.</summary>
+        public static void Disc(MeshBuilder mb, TownDto town, Vec2 center, float radius, Color color, float lift)
         {
             const int sides = 10;
             var outline = new List<Vec2>(sides);
@@ -94,83 +41,18 @@ namespace Porchlight.Rendering
                 outline.Add(center + new Vec2(Mathf.Cos(angle), Mathf.Sin(angle)) * radius);
             }
 
-            DrapeAround(mb, town, outline, cutouts, color, lift);
-        }
-
-        /// <summary>Drapes a convex polygon with rectangles cut out of it, so roads meet buildings at their walls.</summary>
-        private static void DrapeAround(MeshBuilder mb, TownDto town, List<Vec2> polygon, List<OrientedRect> cutouts, Color color, float lift)
-        {
-            var pieces = new List<List<Vec2>> { polygon };
-            if (cutouts != null)
-            {
-                foreach (var rect in cutouts) pieces = Subtract(pieces, rect);
-            }
-
-            foreach (var piece in pieces) Drape(mb, town, piece, color, lift);
+            Drape(mb, town, outline, color, lift);
         }
 
         /// <summary>
-        /// Convex pieces minus a rectangle, still as convex pieces: for each side of the rectangle in turn,
-        /// the part beyond that side but within the sides before it.
-        /// </summary>
-        private static List<List<Vec2>> Subtract(List<List<Vec2>> pieces, in OrientedRect rect)
-        {
-            var ax = rect.AxisX * rect.HalfWidth;
-            var az = rect.AxisZ * rect.HalfDepth;
-            var corners = new[] { rect.Center - ax - az, rect.Center + ax - az, rect.Center + ax + az, rect.Center - ax + az };
-
-            // Wind the corners anticlockwise seen from above, so "inside" is on the left of each side.
-            var turn = (corners[1].X - corners[0].X) * (corners[2].Z - corners[0].Z) - (corners[1].Z - corners[0].Z) * (corners[2].X - corners[0].X);
-            if (turn < 0f) Array.Reverse(corners);
-
-            var result = new List<List<Vec2>>();
-            foreach (var piece in pieces)
-            {
-                if (!Touches(piece, rect))
-                {
-                    result.Add(piece);
-                    continue;
-                }
-
-                var inside = piece;
-                for (var k = 0; k < 4 && inside.Count >= 3; k++)
-                {
-                    Vec2 a = corners[k], b = corners[(k + 1) % 4];
-                    var outside = ClipEdge(inside, b, a);
-                    if (outside.Count >= 3) result.Add(outside);
-                    inside = ClipEdge(inside, a, b);
-                }
-            }
-
-            return result;
-        }
-
-        private static bool Touches(List<Vec2> polygon, in OrientedRect rect)
-        {
-            var reach = rect.BoundingRadius;
-            foreach (var p in polygon)
-            {
-                if (Vec2.Distance(p, rect.Center) <= reach) return true;
-            }
-
-            // A polygon can cross a rectangle without a corner near it, so also check the edges.
-            for (var k = 0; k < polygon.Count; k++)
-            {
-                if (Segments.Distance(rect.Center, polygon[k], polygon[(k + 1) % polygon.Count]) <= reach) return true;
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Lays a convex polygon on the ground. It's cut along the edges of the ground's triangles, so
-        /// every piece lies flat on one triangle and the ground never pokes through. Beyond the edge of
-        /// the town the same lattice carries on at height 0.
+        /// Lays a convex polygon on the ground. It's cut along the tiles' edges, so each piece lies on one
+        /// tile and steps down its walls with it, and finer on tiles that climb, so pieces follow ramps
+        /// and keep to one side of a flight of steps' edges. Beyond the edge of town it lies at 0.
         /// </summary>
         public static void Drape(MeshBuilder mb, TownDto town, List<Vec2> polygon, Color color, float lift)
         {
             if (polygon.Count < 3) return;
-            if (!TownTerrain.IsShaped(town))
+            if (!TownTiles.Has(town))
             {
                 Fan(mb, town, polygon, color, lift);
                 return;
@@ -185,7 +67,7 @@ namespace Porchlight.Rendering
                 maxZ = Mathf.Max(maxZ, p.Z);
             }
 
-            var spacing = town.Size / TownTerrain.CellsFor(town.Size);
+            var spacing = TownTiles.Spacing(town);
             var half = town.Size * 0.5f;
             var i0 = Mathf.FloorToInt((minX + half) / spacing);
             var i1 = Mathf.FloorToInt((maxX + half) / spacing);
@@ -195,27 +77,29 @@ namespace Porchlight.Rendering
             {
                 for (var i = i0; i <= i1; i++)
                 {
-                    var c00 = new Vec2(-half + i * spacing, -half + j * spacing);
-                    var c10 = c00 + new Vec2(spacing, 0f);
-                    var c11 = c00 + new Vec2(spacing, spacing);
-                    var c01 = c00 + new Vec2(0f, spacing);
-
-                    // The same two triangles as Surface, both wound anticlockwise seen from above.
-                    var lower = Clip(polygon, c00, c10, c11);
-                    if (lower != null) Fan(mb, town, lower, color, lift);
-                    var upper = Clip(polygon, c00, c11, c01);
-                    if (upper != null) Fan(mb, town, upper, color, lift);
+                    // Outside the town, and on flat tiles, one piece a tile; on climbing tiles, 0.4 m pieces.
+                    var parts = TownTiles.Inside(town, i, j) && TownTiles.TryClimb(town, i, j, out _) ? Mathf.Max(1, Mathf.RoundToInt(spacing / 0.4f)) : 1;
+                    var step = spacing / parts;
+                    for (var b = 0; b < parts; b++)
+                    {
+                        for (var a = 0; a < parts; a++)
+                        {
+                            var c00 = new Vec2(-half + i * spacing + a * step, -half + j * spacing + b * step);
+                            var piece = Clip(polygon, c00, c00 + new Vec2(step, 0f), c00 + new Vec2(step, step), c00 + new Vec2(0f, step));
+                            if (piece != null) Fan(mb, town, piece, color, lift, c00 + new Vec2(step * 0.5f, step * 0.5f));
+                        }
+                    }
                 }
             }
         }
 
-        /// <summary>The part of a convex polygon inside the triangle abc (anticlockwise from above), or null.</summary>
-        private static List<Vec2> Clip(List<Vec2> polygon, Vec2 a, Vec2 b, Vec2 c)
+        /// <summary>The part of a convex polygon inside the square abcd (anticlockwise from above), or null.</summary>
+        private static List<Vec2> Clip(List<Vec2> polygon, Vec2 a, Vec2 b, Vec2 c, Vec2 d)
         {
-            var result = polygon;
-            result = ClipEdge(result, a, b);
+            var result = ClipEdge(polygon, a, b);
             if (result.Count >= 3) result = ClipEdge(result, b, c);
-            if (result.Count >= 3) result = ClipEdge(result, c, a);
+            if (result.Count >= 3) result = ClipEdge(result, c, d);
+            if (result.Count >= 3) result = ClipEdge(result, d, a);
             return result.Count >= 3 ? result : null;
         }
 
@@ -239,12 +123,23 @@ namespace Porchlight.Rendering
             return kept;
         }
 
-        private static void Fan(MeshBuilder mb, TownDto town, List<Vec2> polygon, Color color, float lift)
+        /// <summary>
+        /// A convex piece as a fan of triangles on the ground. Heights are read a hair towards
+        /// <paramref name="inside"/> (the middle of the cell it was cut to), so corners on a wall take
+        /// this piece's tile's height, not the one below or above.
+        /// </summary>
+        private static void Fan(MeshBuilder mb, TownDto town, List<Vec2> polygon, Color color, float lift, Vec2? inside = null)
         {
-            var first = OnGround(town, polygon[0], lift);
+            Vector3 At(Vec2 p)
+            {
+                var probe = inside.HasValue ? p + (inside.Value - p) * 0.002f : p;
+                return new Vector3(p.X, TownTerrain.HeightAt(town, probe) + lift, p.Z);
+            }
+
+            var first = At(polygon[0]);
             for (var k = 1; k + 1 < polygon.Count; k++)
             {
-                mb.Triangle(first, OnGround(town, polygon[k], lift), OnGround(town, polygon[k + 1], lift), color, Vector3.up);
+                mb.Triangle(first, At(polygon[k]), At(polygon[k + 1]), color, Vector3.up);
             }
         }
 

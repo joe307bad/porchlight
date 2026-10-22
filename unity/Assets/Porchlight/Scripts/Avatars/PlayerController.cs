@@ -16,7 +16,7 @@ namespace Porchlight.Avatars
     /// There are no buttons for doing things: walking into a couch, chair or toilet sits down on it,
     /// and walking into a bed lies down on it. Any move after that gets up again, off the side you
     /// pushed towards (or the nearest side with room). (Doors open by themselves; see
-    /// <see cref="Rendering.TownView"/>.)
+    /// <see cref="Rendering.TownView"/>.) Indoors, everyone walks a little slower.
     /// </summary>
     [RequireComponent(typeof(CharacterRig))]
     public sealed class PlayerController : MonoBehaviour
@@ -26,6 +26,16 @@ namespace Porchlight.Avatars
         public float JumpSpeed = 5f;
         public float Gravity = 16f;
         public float TurnSpeed = 720f;
+
+        /// <summary>
+        /// The steepest rise that can be walked up, over <see cref="ClimbProbe"/> metres ahead: banks and
+        /// stairs go, terrace walls don't (jump down them, or take the steps).
+        /// </summary>
+        public float MaxClimb = 0.45f;
+        public float ClimbProbe = 0.35f;
+
+        /// <summary>Walking and running speed inside a cottage, as a share of outside.</summary>
+        public float IndoorSpeedScale = 0.55f;
 
         /// <summary>Seconds after getting up before walking into something sits down again.</summary>
         public float SitCooldown = 0.6f;
@@ -73,6 +83,15 @@ namespace Porchlight.Avatars
             enabled = true;
         }
 
+        /// <summary>Carries on walking on a new version of the same town (its baked ground, say), standing on it.</summary>
+        public void SetTown(TownDto town)
+        {
+            if (_town == null || town == null) return;
+            _town = town;
+            var p = transform.position;
+            transform.position = new Vector3(p.x, TownWalking.GroundHeightAt(town, new Vec2(p.x, p.z), p.y), p.z);
+        }
+
         /// <summary>The cottage the character is inside, and which floor, if any.</summary>
         public bool TryGetInterior(out string buildingId, out int floor)
         {
@@ -110,6 +129,7 @@ namespace Porchlight.Avatars
                 }
             }
             var speed = PInput.Run() ? RunSpeed : WalkSpeed;
+            if (TryGetInterior(out _, out _)) speed *= IndoorSpeedScale;
 
             var position = transform.position;
             var from = new Vec2(position.x, position.z);
@@ -123,6 +143,14 @@ namespace Porchlight.Avatars
             }
 
             var to = TownWalking.MoveAt(_town, from, step, position.y);
+
+            // A wall too high to step up stops you; slide along it if you're going partly sideways.
+            if (_grounded && TooSteep(from, to - from, position.y))
+            {
+                var alongX = TownWalking.MoveAt(_town, from, new Vec2(step.X, 0f), position.y);
+                var alongZ = TownWalking.MoveAt(_town, from, new Vec2(0f, step.Z), position.y);
+                to = !TooSteep(from, alongX - from, position.y) ? alongX : !TooSteep(from, alongZ - from, position.y) ? alongZ : from;
+            }
             var groundSpeed = Vec2.Distance(from, to) / dt;
 
             if (direction.sqrMagnitude > 0.01f)
@@ -157,6 +185,14 @@ namespace Porchlight.Avatars
 
             transform.SetPositionAndRotation(new Vector3(to.X, y, to.Z), Quaternion.Euler(0f, _heading, 0f));
             _rig.Tick(groundSpeed, _grounded, dt);
+        }
+
+        private bool TooSteep(Vec2 from, Vec2 move, float y)
+        {
+            var length = move.Length;
+            if (length < 1e-5f) return false;
+            var ahead = from + move * (ClimbProbe / length);
+            return TownWalking.GroundHeightAt(_town, ahead, y) - y > MaxClimb;
         }
 
         private void Rest(FurnitureSpot spot)
@@ -203,6 +239,16 @@ namespace Porchlight.Avatars
             _grounded = true;
             transform.SetPositionAndRotation(new Vector3(exit.X, ground, exit.Z), Quaternion.Euler(0f, _heading, 0f));
         }
+
+        /// <summary>Hides the character (for first-person view) or shows them again.</summary>
+        public void SetHidden(bool hidden)
+        {
+            if (hidden == _hidden) return;
+            _hidden = hidden;
+            foreach (var renderer in GetComponentsInChildren<Renderer>(true)) renderer.enabled = !hidden;
+        }
+
+        private bool _hidden;
 
         public void End()
         {

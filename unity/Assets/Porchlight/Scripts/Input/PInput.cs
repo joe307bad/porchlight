@@ -18,6 +18,10 @@ namespace Porchlight.Input
         R,
         Backspace,
         F,
+        Delete,
+        V,
+        Alpha5,
+        F3,
     }
 
     /// <summary>
@@ -239,17 +243,27 @@ namespace Porchlight.Input
         }
 
         /// <summary>
+        /// How much of a trackpad's scrolling counts. A trackpad sends a stream of small fractional
+        /// amounts that add up to far more than a wheel's notches for the same gesture.
+        /// </summary>
+        public const float TrackpadScrollScale = 0.25f;
+
+        /// <summary>
         /// Scroll wheel in notches: positive is up, about 1 per notch (the Input System's default
-        /// uniform range), fractions from a trackpad.
+        /// uniform range). A trackpad's fractions are scaled down by <see cref="TrackpadScrollScale"/>,
+        /// so a swipe zooms about as gently as turning the wheel.
         /// </summary>
         public static float Scroll()
         {
 #if ENABLE_INPUT_SYSTEM
             var m = Mouse.current;
-            return m != null ? m.scroll.ReadValue().y : 0f;
+            var raw = m != null ? m.scroll.ReadValue().y : 0f;
 #else
-            return UnityEngine.Input.mouseScrollDelta.y;
+            var raw = UnityEngine.Input.mouseScrollDelta.y;
 #endif
+            // Wheels click in whole notches; anything else is a trackpad (or a smooth-scrolling wheel).
+            var whole = Mathf.Abs(raw - Mathf.Round(raw)) < 0.01f;
+            return whole ? raw : raw * TrackpadScrollScale;
         }
 
         public static bool KeyDown(PKey key)
@@ -270,6 +284,10 @@ namespace Porchlight.Input
                 case PKey.R: return k.rKey.wasPressedThisFrame;
                 case PKey.Backspace: return k.backspaceKey.wasPressedThisFrame;
                 case PKey.F: return k.fKey.wasPressedThisFrame;
+                case PKey.Delete: return k.deleteKey.wasPressedThisFrame;
+                case PKey.V: return k.vKey.wasPressedThisFrame;
+                case PKey.Alpha5: return k.digit5Key.wasPressedThisFrame;
+                case PKey.F3: return k.f3Key.wasPressedThisFrame;
                 default: return false;
             }
 #else
@@ -286,6 +304,10 @@ namespace Porchlight.Input
                 case PKey.R: return UnityEngine.Input.GetKeyDown(KeyCode.R);
                 case PKey.Backspace: return UnityEngine.Input.GetKeyDown(KeyCode.Backspace);
                 case PKey.F: return UnityEngine.Input.GetKeyDown(KeyCode.F);
+                case PKey.Delete: return UnityEngine.Input.GetKeyDown(KeyCode.Delete);
+                case PKey.V: return UnityEngine.Input.GetKeyDown(KeyCode.V);
+                case PKey.Alpha5: return UnityEngine.Input.GetKeyDown(KeyCode.Alpha5);
+                case PKey.F3: return UnityEngine.Input.GetKeyDown(KeyCode.F3);
                 default: return false;
             }
 #endif

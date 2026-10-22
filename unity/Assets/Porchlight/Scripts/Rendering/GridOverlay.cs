@@ -35,12 +35,16 @@ namespace Porchlight.Rendering
         /// <summary>Lays the grid over the town's ground. Call again after the terrain changes.</summary>
         public void Show(TownDto town)
         {
-            var half = town.Size * 0.5f;
-            var mb = new MeshBuilder();
-            if (TownTerrain.IsShaped(town)) TerrainMeshes.Surface(mb, town, Lift, (x, z) => Color.white);
-            else mb.Quad(new Vector3(-half, Lift, -half), new Vector3(-half, Lift, half), new Vector3(half, Lift, half), new Vector3(half, Lift, -half), Color.white, Vector3.up);
+            // The grid's lines are the tiles' edges, lying on each tile's top.
             if (_floor.sharedMesh != null) Destroy(_floor.sharedMesh);
-            _floor.sharedMesh = mb.ToMesh(name: "grid");
+            if (TownTiles.Has(town)) _floor.sharedMesh = TileMeshes.GridSurface(town, Lift);
+            else
+            {
+                var half = town.Size * 0.5f;
+                var mb = new MeshBuilder();
+                mb.Quad(new Vector3(-half, Lift, -half), new Vector3(-half, Lift, half), new Vector3(half, Lift, half), new Vector3(half, Lift, -half), Color.white, Vector3.up);
+                _floor.sharedMesh = mb.ToMesh(name: "grid");
+            }
             HideCross();
             gameObject.SetActive(true);
         }
@@ -49,7 +53,7 @@ namespace Porchlight.Rendering
 
         /// <summary>
         /// Puts the red cross on the grid point nearest to <paramref name="point"/>, <paramref name="step"/>
-        /// metres apart (the grid, or half of it for roads), lying flat on the ground there.
+        /// metres apart (the grid, or half of it), lying flat on the ground there.
         /// </summary>
         public void ShowCross(TownDto town, Vec2 point, float step = TownGrid.Spacing)
         {

@@ -51,9 +51,15 @@ namespace Porchlight.App
         private CharacterSelectScreen _characters;
         private TownListScreen _townList;
         private HudBar _hud;
+
+        /// <summary>The terrain builder's layers, down the right-hand side. Builder only.</summary>
+        private HudBar _layers;
+        private bool _layersShown;
         private GridOverlay _grid;
         private PlayerController _player;
         private TownView _view;
+        private FoliageView _foliage;
+        private DebugOverlay _debug;
         private BuilderTool _builder;
         private InteriorEditor _interior;
         private WalkDrop _drop;
@@ -76,6 +82,16 @@ namespace Porchlight.App
         private bool _busy;
 
         private TownDto _town;
+
+        /// <summary>
+        /// While walking: the town as it was when walking started (nothing changes while walking). In
+        /// the builder that's what it shows, which may be a preview of the terrain overlay.
+        /// </summary>
+        private TownDto _walkTown;
+
+        /// <summary>The ground to walk on: <see cref="_walkTown"/> while walking, otherwise the builder's view of the town (it changes) or the town.</summary>
+        private TownDto WalkTown => _walking && _walkTown != null ? _walkTown
+            : _building && _builder != null && _builder.Town != null ? _builder.ShownTown : _town;
         private TownMetrics _metrics;
 
         private void Awake()
@@ -145,6 +161,13 @@ namespace Porchlight.App
             _view.Init(_material);
             _view.gameObject.SetActive(false);
 
+            _foliage = new GameObject("Foliage").AddComponent<FoliageView>();
+            _foliage.transform.SetParent(transform, false);
+            _foliage.Init(_material);
+
+            _debug = gameObject.AddComponent<DebugOverlay>();
+            _debug.Describe = DescribeForDebug;
+
             _grid = new GameObject("Grid").AddComponent<GridOverlay>();
             _grid.transform.SetParent(transform, false);
             _grid.Init(_material);
@@ -188,6 +211,12 @@ namespace Porchlight.App
 
             _hud = CreateScreen<HudBar>("Bottom bar");
             _hud.Init(_material, (int)_camera.depth);
+
+            if (_canEdit)
+            {
+                _layers = CreateScreen<HudBar>("Layers panel");
+                _layers.Init(_material, (int)_camera.depth, side: true);
+            }
         }
 
         private T CreateScreen<T>(string name) where T : Component
@@ -350,6 +379,8 @@ namespace Porchlight.App
 
         private void EnterTown(TownDto town)
         {
+            // Towns saved before the ground was tiles are converted to them.
+            TownTiles.Upgrade(town);
             _town = town;
             _metrics = TownMetrics.Compute(town);
             _townList.Hide();
@@ -389,19 +420,22 @@ namespace Porchlight.App
 
         private void StartWalking(Vec2 spot, float heading, float floorY = float.NaN)
         {
+            _walkTown = _building && _builder != null && _builder.Town != null ? _builder.ShownTown : _town;
             _walking = true;
             _fly.enabled = false;
             _grid.Hide();
             if (_builder != null) _builder.Paused = true;
-            _player.Begin(_town, _thirdPerson, spot, heading, floorY);
-            _thirdPerson.Follow(_player.transform, _character.Height, _town, heading);
+            _player.Begin(WalkTown, _thirdPerson, spot, heading, floorY);
+            _thirdPerson.Follow(_player.transform, _character.Height, WalkTown, heading);
             _view.Walker = _player.transform;
-            _hud.Show(new WalkHud(_town, _character, _material, _building, _building ? ToggleWalking : ExitTown));
+            _hud.Show(new WalkHud(_town, _character, _material, _building, _thirdPerson, _building ? ToggleWalking : ExitTown));
         }
 
         private void StopWalking()
         {
             _walking = false;
+            _walkTown = null;
+            _player.SetHidden(false);
             _player.End();
             _thirdPerson.enabled = false;
             _thirdPerson.OpenBuildingId = null;
@@ -416,7 +450,7 @@ namespace Porchlight.App
             if (_walking)
             {
                 StopWalking();
-                _grid.Show(_town);
+                _grid.Show(WalkTown);
                 _hud.Show(new BuilderHud(_builder, _material, ToggleWalking));
                 _camera.transform.SetPositionAndRotation(_flyPosition, _flyRotation);
                 _fly.enabled = true;
@@ -437,7 +471,7 @@ namespace Porchlight.App
             _dropping = true;
             if (building == null) _builder.Paused = true;
             else _interior.Paused = true;
-            _drop.Begin(_town, _camera, _character, _material, building, floor, Drop, CancelDrop);
+            _drop.Begin(WalkTown, _camera, _character, _material, building, floor, Drop, CancelDrop);
             _hud.Show(new DropHud(_drop, CancelDrop));
         }
 
@@ -496,7 +530,7 @@ namespace Porchlight.App
             _camera.transform.SetPositionAndRotation(_flyPosition, _flyRotation);
             _fly.enabled = true;
             _builder.Paused = false;
-            _grid.Show(_town);
+            _grid.Show(WalkTown);
             _hud.Show(new BuilderHud(_builder, _material, ToggleWalking));
         }
 
@@ -517,6 +551,7 @@ namespace Porchlight.App
             if (_editingInside) LeaveInside();
             if (_walking) StopWalking();
             if (_builder != null) _builder.End();
+            _foliage.Clear();
             _hud.Hide();
             _view.Clear();
             _grid.Hide();
@@ -527,6 +562,8 @@ namespace Porchlight.App
         private void Update()
         {
             if (_menuCameraMoving && _mode != Mode.Town) MoveMenuCamera();
+            UpdateLayersPanel();
+            UpdateFoliage();
 
             // The menus handle their own input; this is only for inside a town.
             if (_mode != Mode.Town) return;
@@ -542,15 +579,63 @@ namespace Porchlight.App
             else if (!_building && PInput.Pause()) ExitTown();
         }
 
+        /// <summary>Foliage grows while walking around, and in the builder's Nature tool so its sliders show their effect.</summary>
+        private void UpdateFoliage()
+        {
+            var town = _mode == Mode.Town ? WalkTown : null;
+            var nature = _building && _builder != null && _builder.enabled && !_builder.Paused && _builder.CurrentTool == BuilderTool.Tool.Nature;
+            if (town != null && (_walking || nature)) _foliage.Show(town);
+            else _foliage.Hide();
+        }
+
+        /// <summary>What the debug overlay says about the app, beyond frame timings.</summary>
+        private IEnumerable<string> DescribeForDebug()
+        {
+            yield return $"Mode: {_mode}{(_building ? " (build)" : "")}{(_walking ? ", walking" : "")}{(_editingInside ? ", inside a cottage" : "")}";
+            if (_town == null) yield break;
+            yield return $"Town: {_town.Name}  ·  {_town.Size:0} m  ·  {_town.Buildings.Count} buildings";
+            if (TownTiles.Has(_town))
+            {
+                var ground = WalkTown ?? _town;
+                var counts = new int[5];
+                foreach (var surface in ground.Tiles.Surfaces) counts[Mathf.Clamp(surface, 0, 4)]++;
+                yield return $"Tiles: {TownTiles.Cells(ground)}² of {TownTiles.Spacing(ground):0} m  ·  street {counts[1]}  ·  path {counts[2]}  ·  plaza {counts[3]}  ·  garden {counts[4]}  ·  shapes {_town.TerrainShapes?.Count ?? 0}";
+                if (_walking && _player != null)
+                {
+                    var at = new Vec2(_player.transform.position.x, _player.transform.position.z);
+                    if (TownTiles.TryCell(ground, at, out var ti, out var tj))
+                        yield return $"Standing on tile ({ti}, {tj}): {TownTiles.Surface(ground, ti, tj)}, level {TownTiles.Level(ground, ti, tj)}{(TownTiles.TryClimb(ground, ti, tj, out var side) ? $", climbing {side}" : "")}";
+                }
+            }
+
+            yield return $"Foliage: {(_foliage.Showing ? _foliage.PlantCount.ToString() + " plants" : "hidden")}";
+            if (_builder != null && _builder.enabled) yield return $"Builder: {_builder.CurrentTool}  ·  unsaved {_builder.IsDirty}  ·  {_builder.SaveStatus}";
+            var p = _camera.transform.position;
+            yield return $"Camera: ({p.x:0}, {p.y:0}, {p.z:0})";
+        }
+
+        /// <summary>The layers panel is up while the builder's terrain tool is in Builder mode, and nothing else is going on.</summary>
+        private void UpdateLayersPanel()
+        {
+            if (_layers == null) return;
+            var wanted = _mode == Mode.Town && _builder.ShowingLayers && !_walking && !_dropping && !_editingInside;
+            if (wanted == _layersShown) return;
+            _layersShown = wanted;
+            if (wanted) _layers.Show(new TerrainLayersHud(_builder));
+            else _layers.Hide();
+        }
+
         private void LateUpdate()
         {
             if (!_walking || _player == null || _town == null) return;
+            _player.SetHidden(_thirdPerson.FirstPerson || _thirdPerson.CloseUp);
 
             // Inside a cottage, cut it away to see in: the floors above, the roof, and the walls on the camera's side.
             if (_player.TryGetInterior(out var buildingId, out var floor))
             {
-                var building = _town.Buildings.Find(b => b.Id == buildingId);
-                _view.SetCutaway(buildingId, floor, InteriorEditor.SidesFacing(_camera.transform.forward, building.RotationDeg));
+                // Inside, the cottage is whole, walls and ceiling and all: the camera stays within the
+                // walls rather than looking through them (see ThirdPersonCamera).
+                _view.SetCutaway(null, 0, 0);
                 _thirdPerson.OpenBuildingId = buildingId;
             }
             else

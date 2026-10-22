@@ -3,6 +3,7 @@ using Npgsql;
 using NpgsqlTypes;
 using Porchlight.Shared.Metrics;
 using Porchlight.Shared.Model;
+using Porchlight.Shared.Rules;
 
 namespace Porchlight.Server;
 
@@ -37,6 +38,7 @@ public sealed class TownRepository(NpgsqlDataSource db, ILogger<TownRepository> 
             updated_at      timestamptz NOT NULL DEFAULT now()
         );
         CREATE INDEX IF NOT EXISTS towns_updated_at_idx ON towns (updated_at DESC);
+        DROP TABLE IF EXISTS town_ground;
         """;
 
     public async Task EnsureSchemaAsync(CancellationToken ct)
@@ -93,6 +95,8 @@ public sealed class TownRepository(NpgsqlDataSource db, ILogger<TownRepository> 
         if (!await reader.ReadAsync(ct)) return null;
 
         var town = JsonSerializer.Deserialize<TownDto>(reader.GetString(2), Json)!;
+        // Towns saved before the ground was tiles are converted as they load.
+        TownTiles.Upgrade(town);
         town.Id = id.ToString();
         town.Name = reader.GetString(0);
         town.Version = reader.GetInt32(1);
