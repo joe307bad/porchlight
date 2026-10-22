@@ -16,9 +16,13 @@ namespace Porchlight.Shared.Content
     /// </summary>
     public static class StockTown
     {
-        /// <summary>The paved square in the middle: -X..X by -Z..Z.</summary>
-        public const float PlazaHalfWidth = 20f;
-        public const float PlazaHalfDepth = 14f;
+        /// <summary>
+        /// The paved square in the middle, -X..X by -Z..Z, on tile edges. It reaches past everything the
+        /// menus lay on it (<c>MenuStyle</c>'s content area, ±28 by -19..21), so no flower bed or hedge
+        /// pokes up through them.
+        /// </summary>
+        public const float PlazaHalfWidth = 32f;
+        public const float PlazaHalfDepth = 24f;
 
         /// <summary>The green round it, kept free of buildings: flower beds and lawn out to here.</summary>
         private const float GreenHalfWidth = 36f;

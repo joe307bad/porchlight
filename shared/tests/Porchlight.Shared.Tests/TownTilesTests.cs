@@ -228,6 +228,17 @@ public class TownTilesTests
         Assert.True(TownTiles.TryCell(town, Vec2.Zero, out var i, out var j));
         Assert.Equal(TileSurface.Plaza, TownTiles.Surface(town, i, j));
         Assert.True(TownTerrain.HeightAt(town, new Vec2(100f, 170f)) >= 1f);
+
+        // The menus lie on the plaza (±28 by -19..21, plus a margin), so it's flat paving all under them.
+        for (var z = -21f; z <= 23f; z += 1f)
+        {
+            for (var x = -30f; x <= 30f; x += 1f)
+            {
+                Assert.True(TownTiles.TryCell(town, new Vec2(x, z), out i, out j));
+                Assert.Equal(TileSurface.Plaza, TownTiles.Surface(town, i, j));
+                Assert.Equal(0, TownTiles.Level(town, i, j));
+            }
+        }
         Assert.True(Porchlight.Shared.Metrics.TownMetrics.Compute(town).ConnectedBuildingCount > 20);
     }
 }
