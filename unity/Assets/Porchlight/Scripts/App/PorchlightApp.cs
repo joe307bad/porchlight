@@ -599,12 +599,14 @@ namespace Porchlight.App
                 var ground = WalkTown ?? _town;
                 var counts = new int[5];
                 foreach (var surface in ground.Tiles.Surfaces) counts[Mathf.Clamp(surface, 0, 4)]++;
-                yield return $"Tiles: {TownTiles.Cells(ground)}² of {TownTiles.Spacing(ground):0} m  ·  street {counts[1]}  ·  path {counts[2]}  ·  plaza {counts[3]}  ·  garden {counts[4]}  ·  shapes {_town.TerrainShapes?.Count ?? 0}";
+                var hills = 0;
+                for (var k = 0; k < ground.Tiles.Levels.Count; k++) hills += TownTiles.HillMark(ground, k) ? 1 : 0;
+                yield return $"Tiles: {TownTiles.Cells(ground)}² of {TownTiles.Spacing(ground):0} m  ·  street {counts[1]}  ·  path {counts[2]}  ·  plaza {counts[3]}  ·  garden {counts[4]}  ·  hillside {hills}  ·  shapes {_town.TerrainShapes?.Count ?? 0}";
                 if (_walking && _player != null)
                 {
                     var at = new Vec2(_player.transform.position.x, _player.transform.position.z);
                     if (TownTiles.TryCell(ground, at, out var ti, out var tj))
-                        yield return $"Standing on tile ({ti}, {tj}): {TownTiles.Surface(ground, ti, tj)}, level {TownTiles.Level(ground, ti, tj)}{(TownTiles.TryClimb(ground, ti, tj, out var side) ? $", climbing {side}" : "")}";
+                        yield return $"Standing on tile ({ti}, {tj}): {TownTiles.Surface(ground, ti, tj)}, level {TownTiles.Level(ground, ti, tj)}{(TownTiles.TryClimb(ground, ti, tj, out var side) ? $", climbing {side}" : "")}{(TownTiles.IsHill(ground, ti, tj) ? $", hillside at {TownTiles.HeightAt(ground, at):0.00} m" : "")}";
                 }
             }
 

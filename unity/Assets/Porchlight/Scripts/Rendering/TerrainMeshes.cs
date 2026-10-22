@@ -46,7 +46,7 @@ namespace Porchlight.Rendering
 
         /// <summary>
         /// Lays a convex polygon on the ground. It's cut along the tiles' edges, so each piece lies on one
-        /// tile and steps down its walls with it, and finer on tiles that climb, so pieces follow ramps
+        /// tile and steps down its walls with it, and finer on tiles that climb or slope, so pieces follow ramps and hills
         /// and keep to one side of a flight of steps' edges. Beyond the edge of town it lies at 0.
         /// </summary>
         public static void Drape(MeshBuilder mb, TownDto town, List<Vec2> polygon, Color color, float lift)
@@ -77,8 +77,8 @@ namespace Porchlight.Rendering
             {
                 for (var i = i0; i <= i1; i++)
                 {
-                    // Outside the town, and on flat tiles, one piece a tile; on climbing tiles, 0.4 m pieces.
-                    var parts = TownTiles.Inside(town, i, j) && TownTiles.TryClimb(town, i, j, out _) ? Mathf.Max(1, Mathf.RoundToInt(spacing / 0.4f)) : 1;
+                    // Outside the town, and on flat tiles, one piece a tile; on climbing tiles and hillsides, 0.4 m pieces.
+                    var parts = TownTiles.Inside(town, i, j) && (TownTiles.TryClimb(town, i, j, out _) || TownTiles.IsHill(town, i, j)) ? Mathf.Max(1, Mathf.RoundToInt(spacing / 0.4f)) : 1;
                     var step = spacing / parts;
                     for (var b = 0; b < parts; b++)
                     {

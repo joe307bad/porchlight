@@ -148,10 +148,9 @@ namespace Porchlight.Shared.Rules
             if (toHouse < 0.5f) return false;
 
             // How close the paving and the retaining walls are: the edges this tile shares with a paved
-            // tile, or with a tile at another level.
+            // tile, or where the ground jumps to the next tile (not where a hillside runs on).
             var size = TownTiles.Spacing(town);
             var center = TownTiles.Center(town, ti, tj);
-            var level = TownTiles.Level(town, ti, tj);
             float toPaving = float.MaxValue, toWall = float.MaxValue;
             for (var side = 0; side < 4; side++)
             {
@@ -159,7 +158,7 @@ namespace Porchlight.Shared.Rules
                 var edge = size * 0.5f - Math.Abs(Vec2.Dot(p - center, new Vec2(di, dj)) );
                 if (Vec2.Dot(p - center, new Vec2(di, dj)) < 0f) edge = size;
                 if (TownTiles.IsPaved(TownTiles.Surface(town, ti + di, tj + dj))) toPaving = Math.Min(toPaving, edge);
-                if (TownTiles.Level(town, ti + di, tj + dj) != level) toWall = Math.Min(toWall, edge);
+                if (edge < toWall && TownTiles.Step(town, ti, tj, (TileSide)side) > 0.05f) toWall = edge;
             }
 
             if (toPaving < 0.3f) return false;

@@ -11,7 +11,8 @@ namespace Porchlight.Rendering
     /// play. Every tile is built from a small kit of cozy pieces chosen by its surface and its
     /// neighbours, nothing guessed:
     /// <list type="bullet">
-    /// <item>Grass: soft lawn in gently varied greens.</item>
+    /// <item>Grass: soft lawn in gently varied greens. On a hillside, a metre-square mesh that follows
+    /// its slope, so the light picks out the hill's shape.</item>
     /// <item>Garden: a raised soil bed with timber edging (the foliage system plants the flowers).</item>
     /// <item>Plaza: flagstones a metre square on a mortar bed.</item>
     /// <item>Street: warm tarmac with a gutter and a raised stone kerb wherever it meets something
@@ -139,7 +140,37 @@ namespace Porchlight.Rendering
                 var green = patch < 0.5f
                     ? Color.Lerp(TileMeshes.Lawn[1], TileMeshes.Lawn[0], patch * 2f)
                     : Color.Lerp(TileMeshes.Lawn[0], TileMeshes.Lawn[2], (patch - 0.5f) * 2f);
-                Patch(mb, _x0, _z0, _x0 + _size, _z0 + _size, 0f, Vary(green, 1, 0.015f));
+                green = Vary(green, 1, 0.015f);
+                if (!TownTiles.IsHill(_town, _i, _j))
+                {
+                    Patch(mb, _x0, _z0, _x0 + _size, _z0 + _size, 0f, green);
+                    return;
+                }
+
+                // A hillside: small squares, each split along whichever diagonal follows the slope better.
+                var cells = Mathf.Max(1, Mathf.RoundToInt(_size));
+                var step = _size / cells;
+                for (var b = 0; b < cells; b++)
+                {
+                    for (var a = 0; a < cells; a++)
+                    {
+                        float x0 = _x0 + a * step, z0 = _z0 + b * step, x1 = x0 + step, z1 = z0 + step;
+                        var p00 = P(x0, z0, 0f);
+                        var p10 = P(x1, z0, 0f);
+                        var p01 = P(x0, z1, 0f);
+                        var p11 = P(x1, z1, 0f);
+                        if (Mathf.Abs(p00.y - p11.y) <= Mathf.Abs(p10.y - p01.y))
+                        {
+                            mb.Triangle(p00, p11, p10, green, Vector3.up);
+                            mb.Triangle(p00, p01, p11, green, Vector3.up);
+                        }
+                        else
+                        {
+                            mb.Triangle(p00, p01, p10, green, Vector3.up);
+                            mb.Triangle(p10, p01, p11, green, Vector3.up);
+                        }
+                    }
+                }
             }
 
             /// <summary>
@@ -645,8 +676,8 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>
-        /// The tops of the tiles as one surface (ramps and steps as slopes), lifted a little, for the
-        /// builder's grid to lie on.
+        /// The tops of the tiles as one surface (ramps and steps as slopes, hillsides in metre squares),
+        /// lifted a little, for the builder's grid to lie on.
         /// </summary>
         public static Mesh GridSurface(TownDto town, float lift)
         {
@@ -660,7 +691,16 @@ namespace Porchlight.Rendering
                     var c = TownTiles.Center(town, i, j);
                     float x0 = c.X - size * 0.5f + 0.002f, z0 = c.Z - size * 0.5f + 0.002f, x1 = c.X + size * 0.5f - 0.002f, z1 = c.Z + size * 0.5f - 0.002f;
                     Vector3 P(float x, float z) => new Vector3(x, TownTiles.HeightAt(town, new Vec2(x, z)) + lift, z);
-                    mb.Quad(P(x0, z0), P(x0, z1), P(x1, z1), P(x1, z0), Color.white, Vector3.up);
+                    var parts = TownTiles.IsHill(town, i, j) ? Mathf.Max(1, Mathf.RoundToInt(size)) : 1;
+                    var step = (x1 - x0) / parts;
+                    for (var b = 0; b < parts; b++)
+                    {
+                        for (var a = 0; a < parts; a++)
+                        {
+                            float xa = x0 + a * step, za = z0 + b * step;
+                            mb.Quad(P(xa, za), P(xa, za + step), P(xa + step, za + step), P(xa + step, za), Color.white, Vector3.up);
+                        }
+                    }
                 }
             }
 

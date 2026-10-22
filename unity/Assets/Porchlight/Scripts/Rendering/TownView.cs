@@ -57,6 +57,7 @@ namespace Porchlight.Rendering
         private readonly Dictionary<(int, int), MeshFilter> _chunks = new Dictionary<(int, int), MeshFilter>();
         private int[] _shownLevels;
         private int[] _shownSurfaces;
+        private int[] _shownHills;
         private MeshFilter _cutaway;
         private Mesh _frontDoorLeaf;
         private Mesh _insideDoorLeaf;
@@ -189,7 +190,7 @@ namespace Porchlight.Rendering
             {
                 for (var k = 0; k < levels.Count; k++)
                 {
-                    if (levels[k] == _shownLevels[k] && surfaces[k] == _shownSurfaces[k]) continue;
+                    if (levels[k] == _shownLevels[k] && surfaces[k] == _shownSurfaces[k] && Hill(town, k) == _shownHills[k]) continue;
                     int i = k % n, j = k / n;
                     for (var dj = -2; dj <= 2; dj++)
                     {
@@ -216,7 +217,11 @@ namespace Porchlight.Rendering
 
             _shownLevels = levels.ToArray();
             _shownSurfaces = surfaces.ToArray();
+            _shownHills = new int[levels.Count];
+            for (var k = 0; k < levels.Count; k++) _shownHills[k] = Hill(town, k);
         }
+
+        private static int Hill(TownDto town, int k) => TownTiles.HillMark(town, k) ? 1 : 0;
 
         private void ClearChunks()
         {
@@ -229,6 +234,7 @@ namespace Porchlight.Rendering
             _chunks.Clear();
             _shownLevels = null;
             _shownSurfaces = null;
+            _shownHills = null;
         }
 
         /// <summary>

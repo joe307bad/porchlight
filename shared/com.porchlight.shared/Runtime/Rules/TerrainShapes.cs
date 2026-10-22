@@ -14,8 +14,9 @@ namespace Porchlight.Shared.Rules
     /// ridge at its default scale) and three rectangles, the floor and two slopes meeting in a ridge along Z. The renderer draws
     /// exactly these.
     ///
-    /// <see cref="Overlay"/> looks down on the shapes with their overlay switched on and raises the tiles
-    /// under each to its top, so the ground takes their form in terraces, keeping clear of buildings.
+    /// <see cref="Overlay"/> looks down on the shapes with their overlay switched on and raises the grass
+    /// under each to its top, falling away gently all round, so the ground takes their form as grassy
+    /// hills, keeping clear of buildings.
     /// </summary>
     public static class TerrainShapes
     {
@@ -191,9 +192,20 @@ namespace Porchlight.Shared.Rules
         }
 
         /// <summary>
-        /// The tiles the overlay raises: each tile under a shape with <see cref="TerrainShapeDto.Overlay"/>
-        /// on goes up to the shape's top over it (to the nearest metre), so the ground takes the shape's
-        /// form in terraces. Tiles under buildings stay put. The town is unchanged.
+        /// How much a hill made by the overlay falls a tile (4 m) further out: a gentle 1 in 4, inside
+        /// what counts as gentle underfoot (<see cref="TownTerrain.MaxSlope"/>).
+        /// </summary>
+        public const float HillFall = 1f;
+
+        /// <summary>
+        /// The tiles the overlay raises into a grassy hill. Each tile under a shape with
+        /// <see cref="TerrainShapeDto.Overlay"/> on reaches up to the shape's top over it, and from there
+        /// the ground falls away by <see cref="HillFall"/> a tile in every direction until it meets
+        /// ground at least as high, so a shape becomes a hill sloping gradually down to the nearest
+        /// level ground, never a column with walls. Raised grass becomes hillside
+        /// (<see cref="TownTiles.IsHill"/>), so it slopes smoothly between its corners. Paving, gardens
+        /// and the tiles under buildings stay as they are, with the hill running up to them. The town
+        /// is unchanged.
         /// </summary>
         public static List<TileChange> Overlay(TownDto town)
         {
@@ -202,33 +214,68 @@ namespace Porchlight.Shared.Rules
             var shapes = (town.TerrainShapes ?? new List<TerrainShapeDto>()).FindAll(s => s != null && s.Overlay && IsKind(s.Kind));
             if (shapes.Count == 0) return changes;
 
-            var held = TownTiles.HeldByBuildings(town, null);
             var n = TownTiles.Cells(town);
             var quarter = TownTiles.Spacing(town) * 0.25f;
             var probes = new[] { Vec2.Zero, new Vec2(-quarter, -quarter), new Vec2(quarter, -quarter), new Vec2(-quarter, quarter), new Vec2(quarter, quarter) };
+
+            // The highest shape top over each tile's middle, or failing that over the rest of it.
+            var top = new float[n * n];
+            var any = false;
             for (var j = 0; j < n; j++)
             {
                 for (var i = 0; i < n; i++)
                 {
                     var k = TownTiles.Index(town, i, j);
-                    if (held.Contains(k)) continue;
                     var center = TownTiles.Center(town, i, j);
-
-                    // The highest top over the tile's middle, or failing that over the rest of it.
-                    var top = float.MinValue;
+                    top[k] = float.MinValue;
                     foreach (var shape in shapes)
                     {
                         if (Vec2.Distance(center, new Vec2(shape.X, shape.Z)) > BoundingRadius(shape) + TownTiles.Size) continue;
                         foreach (var probe in probes)
                         {
-                            if (TopAt(shape, center + probe, out var height)) top = Math.Max(top, height);
+                            if (TopAt(shape, center + probe, out var height)) top[k] = Math.Max(top[k], height);
                         }
                     }
 
-                    if (top == float.MinValue) continue;
-                    var level = Math.Clamp((int)MathF.Round(top), TownTiles.MinLevel, TownTiles.MaxLevel);
-                    if (level > town.Tiles.Levels[k]) changes.Add(new TileChange(k, level, (TileSurface)town.Tiles.Surfaces[k]));
+                    any |= top[k] > float.MinValue;
                 }
+            }
+
+            if (!any) return changes;
+
+            // Let the tops fall away outwards: two sweeps over the tiles, each tile taking the most of
+            // its own height and its already-swept neighbours' less the fall over the distance between
+            // them (sideways one tile, diagonally √2), which leaves each tile at the highest of every
+            // top less the fall from there.
+            var diagonal = HillFall * 1.41421356f;
+            var reach = new[] { (-1, 0, HillFall), (0, -1, HillFall), (-1, -1, diagonal), (1, -1, diagonal) };
+            for (var sweep = 0; sweep < 2; sweep++)
+            {
+                var forward = sweep == 0;
+                for (var jj = 0; jj < n; jj++)
+                {
+                    var j = forward ? jj : n - 1 - jj;
+                    for (var ii = 0; ii < n; ii++)
+                    {
+                        var i = forward ? ii : n - 1 - ii;
+                        var k = TownTiles.Index(town, i, j);
+                        foreach (var (di, dj, fall) in reach)
+                        {
+                            int si = forward ? i + di : i - di, sj = forward ? j + dj : j - dj;
+                            if (!TownTiles.Inside(town, si, sj)) continue;
+                            var from = top[TownTiles.Index(town, si, sj)];
+                            if (from > float.MinValue) top[k] = Math.Max(top[k], from - fall);
+                        }
+                    }
+                }
+            }
+
+            var held = TownTiles.HeldByBuildings(town, null);
+            for (var k = 0; k < n * n; k++)
+            {
+                if (top[k] == float.MinValue || held.Contains(k) || town.Tiles.Surfaces[k] != (int)TileSurface.Grass) continue;
+                var level = Math.Clamp((int)MathF.Round(top[k]), TownTiles.MinLevel, TownTiles.MaxLevel);
+                if (level > town.Tiles.Levels[k]) changes.Add(new TileChange(k, level, TileSurface.Grass, true));
             }
 
             return changes;

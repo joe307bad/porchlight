@@ -147,15 +147,21 @@ namespace Porchlight.Shared.Model
     /// <summary>
     /// The town's ground as tiles, <see cref="Cells"/> a side, row by row from -Z, each row from -X.
     /// <see cref="Levels"/> are whole metres above (or below) the countryside; <see cref="Surfaces"/>
-    /// are <see cref="TileSurface"/> values. See <see cref="Rules.TownTiles"/>.
+    /// are <see cref="TileSurface"/> values. <see cref="Hills"/>, when there is one, marks (with 1) the
+    /// grass tiles that slope smoothly to their neighbours instead of standing flat behind walls; it's
+    /// null until the first hill goes in. See <see cref="Rules.TownTiles"/>.
     /// </summary>
     public sealed class TileMapDto
     {
         public int Cells { get; set; }
         public List<int> Levels { get; set; } = new List<int>();
         public List<int> Surfaces { get; set; } = new List<int>();
+        public List<int> Hills { get; set; }
 
-        public TileMapDto Clone() => new TileMapDto { Cells = Cells, Levels = new List<int>(Levels), Surfaces = new List<int>(Surfaces) };
+        public TileMapDto Clone() => new TileMapDto
+        {
+            Cells = Cells, Levels = new List<int>(Levels), Surfaces = new List<int>(Surfaces), Hills = Hills == null ? null : new List<int>(Hills),
+        };
     }
 
     /// <summary>What a tile's top is.</summary>

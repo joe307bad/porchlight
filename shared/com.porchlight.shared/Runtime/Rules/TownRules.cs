@@ -166,7 +166,7 @@ namespace Porchlight.Shared.Rules
                 foreach (var (i, j) in TownTiles.Under(town, footprint))
                 {
                     var surface = TownTiles.Surface(town, i, j);
-                    if (TownTiles.Level(town, i, j) != level) { result.Add($"Building {building.Id} isn't on level ground"); break; }
+                    if (TownTiles.Level(town, i, j) != level || TownTiles.IsHill(town, i, j)) { result.Add($"Building {building.Id} isn't on level ground"); break; }
                     if (surface == TileSurface.Street || surface == TileSurface.Path) { result.Add($"Building {building.Id} stands on a street or path"); break; }
                 }
             }

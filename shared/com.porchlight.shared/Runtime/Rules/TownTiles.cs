@@ -5,19 +5,21 @@ using Porchlight.Shared.Model;
 
 namespace Porchlight.Shared.Rules
 {
-    /// <summary>A change to one tile: its index in the map, and the level and surface it ends up with.</summary>
+    /// <summary>A change to one tile: its index in the map, and the level, surface and hillside mark it ends up with.</summary>
     public readonly struct TileChange
     {
-        public TileChange(int index, int level, TileSurface surface)
+        public TileChange(int index, int level, TileSurface surface, bool hill)
         {
             Index = index;
             Level = level;
             Surface = surface;
+            Hill = hill;
         }
 
         public int Index { get; }
         public int Level { get; }
         public TileSurface Surface { get; }
+        public bool Hill { get; }
     }
 
     /// <summary>A side of a tile: north is +Z, east +X.</summary>
@@ -39,7 +41,13 @@ namespace Porchlight.Shared.Rules
     /// <item>A street tile next to a street one level up is a ramp the whole way across; a path tile
     /// next to a path, street or plaza one level up climbs to it by a flight of steps
     /// (<see cref="StairRun"/> long, <see cref="PathWidth"/> wide) against that side, with grass either side.</item>
-    /// <item>Buildings stand on whole tiles at one level; placing one levels the tiles under it.</item>
+    /// <item>A hillside tile (grass marked in <see cref="TileMapDto.Hills"/>) isn't flat: its ground
+    /// slopes between its corners, each the average of the hillside tiles round it, so hillsides run
+    /// smoothly into each other. A corner also touching ground that isn't hillside, within
+    /// <see cref="HillBlend"/> of that average, takes that ground's height instead, so a hill runs
+    /// out onto flat ground with no wall. Further apart, a wall makes up the difference as usual.</item>
+    /// <item>Buildings stand on whole tiles at one level; placing one levels the tiles under it
+    /// (and flattens any hillside there).</item>
     /// <item>Outside the town, the countryside is at level 0.</item>
     /// </list>
     /// </summary>
@@ -55,6 +63,9 @@ namespace Porchlight.Shared.Rules
         public const float StairRun = 1.6f;
         public const int StairSteps = 5;
         public const float PathWidth = 2.4f;
+
+        /// <summary>How far a hillside corner reaches up or down to meet the flat ground beside it.</summary>
+        public const float HillBlend = 1.5f;
 
         /// <summary>The neighbour across each side, in <see cref="TileSide"/> order.</summary>
         public static readonly (int DI, int DJ)[] Neighbours = { (0, 1), (1, 0), (0, -1), (-1, 0) };
@@ -162,13 +173,111 @@ namespace Porchlight.Shared.Rules
             }
         }
 
+        /// <summary>Whether the tile is marked hillside, whatever its surface.</summary>
+        public static bool HillMark(TownDto town, int k)
+        {
+            var hills = town.Tiles.Hills;
+            return hills != null && hills.Count == town.Tiles.Levels.Count && hills[k] != 0;
+        }
+
+        /// <summary>Whether a tile is hillside: grass marked as such. Anything paved or planted on it stands flat.</summary>
+        public static bool IsHill(TownDto town, int i, int j) =>
+            Inside(town, i, j) && Surface(town, i, j) == TileSurface.Grass && HillMark(town, Index(town, i, j));
+
         /// <summary>
         /// The height to stand at: the tile's level, up a street's ramp or a path's steps where it
-        /// climbs, and 0 in the countryside. Walls are where it jumps from one tile to the next.
+        /// climbs, across the slope of a hillside, and 0 in the countryside. Walls are where it jumps
+        /// from one tile to the next.
         /// </summary>
         public static float HeightAt(TownDto town, Vec2 p)
         {
             if (!TryCell(town, p, out var i, out var j)) return 0f;
+            if (!IsHill(town, i, j)) return FlatHeightAt(town, i, j, p);
+
+            // Across the tile between its four corners.
+            var size = Spacing(town);
+            var half = town.Size * 0.5f;
+            var u = Math.Clamp((p.X + half) / size - i, 0f, 1f);
+            var v = Math.Clamp((p.Z + half) / size - j, 0f, 1f);
+            var h00 = Corner(town, i, j);
+            var h10 = Corner(town, i + 1, j);
+            var h01 = Corner(town, i, j + 1);
+            var h11 = Corner(town, i + 1, j + 1);
+            return (h00 * (1f - u) + h10 * u) * (1f - v) + (h01 * (1f - u) + h11 * u) * v;
+        }
+
+        /// <summary>
+        /// The height of a hillside corner, numbered on the lattice of tile corners (0 to Cells a side):
+        /// the average of the hillside tiles round it, or the height of the flat ground round it closest
+        /// to that average, if it's within <see cref="HillBlend"/>.
+        /// </summary>
+        public static float Corner(TownDto town, int ci, int cj)
+        {
+            var size = Spacing(town);
+            var half = town.Size * 0.5f;
+            var point = new Vec2(-half + ci * size, -half + cj * size);
+            float sum = 0f;
+            var count = 0;
+            Span<float> flat = stackalloc float[4];
+            var flats = 0;
+            for (var dj = -1; dj <= 0; dj++)
+            {
+                for (var di = -1; di <= 0; di++)
+                {
+                    int i = ci + di, j = cj + dj;
+                    if (IsHill(town, i, j))
+                    {
+                        sum += Level(town, i, j);
+                        count++;
+                    }
+                    else
+                    {
+                        // Read just inside the tile, towards its middle.
+                        var inside = point + new Vec2(di < 0 ? -0.01f : 0.01f, dj < 0 ? -0.01f : 0.01f);
+                        flat[flats++] = Inside(town, i, j) ? FlatHeightAt(town, i, j, inside) : 0f;
+                    }
+                }
+            }
+
+            if (count == 0) return flats > 0 ? flat[0] : 0f;
+            var average = sum / count;
+            var best = average;
+            var closest = HillBlend + 1e-4f;
+            for (var k = 0; k < flats; k++)
+            {
+                var gap = MathF.Abs(flat[k] - average);
+                if (gap > closest) continue;
+                closest = gap;
+                best = flat[k];
+            }
+
+            return best;
+        }
+
+        /// <summary>
+        /// How far the ground jumps across one side of a tile (to its neighbour, or the countryside):
+        /// the biggest difference between the two sides' heights along it. Near 0 where they run on.
+        /// </summary>
+        public static float Step(TownDto town, int i, int j, TileSide side)
+        {
+            var c = Center(town, i, j);
+            var (di, dj) = Neighbours[(int)side];
+            var outward = new Vec2(di, dj);
+            var along = new Vec2(-dj, di);
+            var half = Spacing(town) * 0.5f;
+            var step = 0f;
+            foreach (var t in new[] { -0.95f, 0f, 0.95f })
+            {
+                var edge = c + outward * half + along * (half * t);
+                step = Math.Max(step, MathF.Abs(HeightAt(town, edge - outward * 0.01f) - HeightAt(town, edge + outward * 0.01f)));
+            }
+
+            return step;
+        }
+
+        /// <summary>The height on a tile that isn't hillside: its level, or up its ramp or steps.</summary>
+        private static float FlatHeightAt(TownDto town, int i, int j, Vec2 p)
+        {
             float level = Level(town, i, j);
             if (!TryClimb(town, i, j, out var side)) return level;
 
@@ -228,9 +337,9 @@ namespace Porchlight.Shared.Rules
             {
                 var k = Index(town, i, j);
                 var current = town.Tiles.Levels[k];
-                if (current == level) continue;
-                if (held.Contains(k)) return EditResult.Fail("Can't level this beside a building on different ground");
-                changes.Add(new TileChange(k, level, Surface(town, i, j)));
+                if (current == level && !HillMark(town, k)) continue;
+                if (held.Contains(k) && current != level) return EditResult.Fail("Can't level this beside a building on different ground");
+                changes.Add(new TileChange(k, level, Surface(town, i, j), false));
             }
 
             return EditResult.Success;
@@ -270,14 +379,15 @@ namespace Porchlight.Shared.Rules
             {
                 if (held.Contains(k)) continue;
                 var level = Math.Clamp(town.Tiles.Levels[k] + delta, MinLevel, MaxLevel);
-                if (level != town.Tiles.Levels[k]) changes.Add(new TileChange(k, level, (TileSurface)town.Tiles.Surfaces[k]));
+                if (level != town.Tiles.Levels[k]) changes.Add(new TileChange(k, level, (TileSurface)town.Tiles.Surfaces[k], HillMark(town, k)));
             }
 
             return changes.Count > 0 ? EditResult.Success : EditResult.Fail(delta > 0 ? "The ground can't go any higher here" : "The ground can't go any lower here");
         }
 
         /// <summary>
-        /// Painting tiles a surface. Streets and paths can't go under buildings. Painted as a
+        /// Painting tiles a surface. Streets and paths can't go under buildings. Painting anything but
+        /// grass flattens a hillside tile (at its level); grass keeps it hillside. Painted as a
         /// <paramref name="line"/> (in order), a street or path keeps each tile within one level of the
         /// last, so it can always ramp or step from one to the next.
         /// </summary>
@@ -310,7 +420,8 @@ namespace Porchlight.Shared.Rules
                 var level = town.Tiles.Levels[k];
                 if (chain && previous != int.MinValue) level = Math.Clamp(level, previous - 1, previous + 1);
                 previous = level;
-                if (level != town.Tiles.Levels[k] || (int)surface != town.Tiles.Surfaces[k]) changes.Add(new TileChange(k, level, surface));
+                var hill = surface == TileSurface.Grass && HillMark(town, k);
+                if (level != town.Tiles.Levels[k] || (int)surface != town.Tiles.Surfaces[k] || hill != HillMark(town, k)) changes.Add(new TileChange(k, level, surface, hill));
             }
 
             return changes.Count > 0 ? EditResult.Success : EditResult.Fail("It's already like that");
@@ -318,10 +429,18 @@ namespace Porchlight.Shared.Rules
 
         public static void Apply(TownDto town, List<TileChange> changes)
         {
+            var tiles = town.Tiles;
             foreach (var change in changes)
             {
-                town.Tiles.Levels[change.Index] = change.Level;
-                town.Tiles.Surfaces[change.Index] = (int)change.Surface;
+                tiles.Levels[change.Index] = change.Level;
+                tiles.Surfaces[change.Index] = (int)change.Surface;
+                if (tiles.Hills == null || tiles.Hills.Count != tiles.Levels.Count)
+                {
+                    if (!change.Hill) continue;
+                    tiles.Hills = new List<int>(new int[tiles.Levels.Count]);
+                }
+
+                tiles.Hills[change.Index] = change.Hill ? 1 : 0;
             }
         }
 
@@ -561,6 +680,9 @@ namespace Porchlight.Shared.Rules
                     break;
                 }
             }
+
+            if (tiles.Hills != null && (tiles.Hills.Count != cells * cells || tiles.Hills.Exists(h => h != 0 && h != 1)))
+                result.Add("Hillside marks must be 0 or 1, one a tile");
 
             if ((town.Roads?.Segments?.Count ?? 0) > 0 || (town.Roads?.Nodes?.Count ?? 0) > 0) result.Add("Roads must be tiles now");
             if (town.Terrain != null) result.Add("The ground must be tiles now");

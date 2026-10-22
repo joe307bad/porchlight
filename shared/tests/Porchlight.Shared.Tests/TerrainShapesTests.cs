@@ -89,9 +89,11 @@ public class TerrainShapesTests
         Assert.True(Add(town, Shape(TerrainShapes.Cube, 2f, 6f, 2f)).Ok);
         Assert.True(TownEditor.Apply(town, new ApplyTerrainOverlayCommand()).Ok);
 
-        // Over the cube the ground is at its lid, in whole tiles; far away it's untouched.
+        // Over the middle of the cube the ground is at its lid, rounding off towards its edges, then
+        // falling away a level a tile; far away it's untouched.
         Assert.Equal(11f, TownTerrain.HeightAt(town, new Vec2(2f, 2f)), 2);
-        Assert.Equal(11f, TownTerrain.HeightAt(town, new Vec2(-2f, 6f)), 2);
+        Assert.InRange(TownTerrain.HeightAt(town, new Vec2(-2f, 6f)), 10f, 11f);
+        Assert.Equal(6f, TownTerrain.HeightAt(town, new Vec2(26f, 2f)), 2);
         Assert.Equal(0f, TownTerrain.HeightAt(town, new Vec2(100f, 100f)));
         Assert.True(TownRules.ValidateTown(town).IsValid);
     }
@@ -112,9 +114,9 @@ public class TerrainShapesTests
     }
 
     [Fact]
-    public void GroundTakesThePrismsFormInTerraces()
+    public void ShapesBecomeHillsThatSlopeGentlyDownToTheGround()
     {
-        // A 16 x 8 ridge running north-south: the tiles step down its 45° sides.
+        // A 16 x 8 ridge running north-south: grass rises over it and slopes gently away all round.
         var town = NewTown();
         var prism = Shape(TerrainShapes.Prism, 0f, 4f, 0f);
         prism.ScaleX = 16f;
@@ -124,9 +126,55 @@ public class TerrainShapesTests
         Assert.True(TownEditor.Apply(town, new ApplyTerrainOverlayCommand()).Ok);
 
         var middle = TownTerrain.HeightAt(town, new Vec2(2f, 2f));
-        var side = TownTerrain.HeightAt(town, new Vec2(6f, 2f));
-        Assert.True(middle > side && side > 0f, $"{middle} then {side}");
-        Assert.Equal(0f, TownTerrain.HeightAt(town, new Vec2(14f, 2f)));
+        var side = TownTerrain.HeightAt(town, new Vec2(10f, 2f));
+        var further = TownTerrain.HeightAt(town, new Vec2(18f, 2f));
+        Assert.True(middle > side && side > further && further > 0f, $"{middle}, {side}, {further}");
+        Assert.Equal(0f, TownTerrain.HeightAt(town, new Vec2(60f, 2f)));
+
+        // No walls anywhere on it: every step from tile to tile is smooth, and never steeper than 1 in 4 or so.
+        TownTiles.TryCell(town, Vec2.Zero, out var ci, out var cj);
+        for (var j = cj - 12; j <= cj + 12; j++)
+        {
+            for (var i = ci - 12; i <= ci + 12; i++)
+            {
+                for (var side2 = 0; side2 < 4; side2++) Assert.True(TownTiles.Step(town, i, j, (TileSide)side2) < 0.05f, $"wall at {i},{j} side {side2}");
+            }
+        }
+
+        for (var x = -40f; x < 40f; x += 0.5f)
+        {
+            var rise = MathF.Abs(TownTerrain.HeightAt(town, new Vec2(x + 0.5f, 3f)) - TownTerrain.HeightAt(town, new Vec2(x, 3f)));
+            Assert.True(rise <= 0.5f * 0.4f, $"{rise} at {x}");
+        }
+
+        Assert.True(TownRules.ValidateTown(town).IsValid);
+    }
+
+    [Fact]
+    public void HillsMeetFlatGroundWithoutAWallAndBuildingsFlattenThem()
+    {
+        var town = NewTown();
+        Assert.True(Add(town, Shape(TerrainShapes.Sphere, 0f, 0f, 0f, 16f)).Ok);
+        Assert.True(TownEditor.Apply(town, new ApplyTerrainOverlayCommand()).Ok);
+        Assert.True(TownTiles.TryCell(town, new Vec2(10f, 2f), out var i, out var j));
+        Assert.True(TownTiles.IsHill(town, i, j));
+
+        // Paving a hillside tile flattens it; painting it grass again doesn't bring the slope back.
+        var k = TownTiles.Index(town, i, j);
+        Assert.True(TownEditor.Apply(town, new PaintTilesCommand { Cells = new() { k }, SurfaceId = "plaza" }).Ok);
+        Assert.False(TownTiles.IsHill(town, i, j));
+        Assert.Equal(TownTiles.Level(town, i, j), TownTerrain.HeightAt(town, TownTiles.Center(town, i, j)), 2);
+
+        // A building on the hill stands on flat tiles.
+        var placed = TownEditor.Apply(town, new PlaceBuildingCommand { BuildingId = Ids.New(), TypeId = "cottage", X = -2f, Z = 14f });
+        Assert.True(placed.Ok, placed.Error);
+        Assert.True(TownRules.ValidateTown(town).IsValid, string.Join("; ", TownRules.ValidateTown(town).Errors));
+        Assert.True(TownRules.TryFootprint(town.Buildings[0], out var footprint));
+        foreach (var (ti, tj) in TownTiles.Under(town, footprint)) Assert.False(TownTiles.IsHill(town, ti, tj));
+
+        // Hillside marks survive a save.
+        var back = System.Text.Json.JsonSerializer.Deserialize<TownDto>(System.Text.Json.JsonSerializer.Serialize(town));
+        Assert.Equal(town.Tiles.Hills, back!.Tiles.Hills);
     }
 
     [Fact]
