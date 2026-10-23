@@ -1,4 +1,4 @@
-// Turns the blueprint into a street scene for the iso view. Pure (no Pixi, no
+// Turns the blueprint into a street scene for the 3D explore view. Pure (no Three, no
 // DOM), so it's unit-tested in Node.
 //
 // - Roads: each road edge's centreline, smoothed with Chaikin so bends curve,

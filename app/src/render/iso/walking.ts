@@ -1,6 +1,6 @@
 // Walking the sidewalk network: follow a sidewalk, take a turning at its end,
 // turn around, or cross the road to the sidewalk opposite. Used by the
-// townsfolk and by the player's auto-walk. Pure (no Pixi), so it's unit-tested.
+// townsfolk and by the player's auto-walk. Pure (no Three), so it's unit-tested.
 
 import { arcPosition } from '../../core/geometry';
 import { MinHeap } from '../../core/heap';

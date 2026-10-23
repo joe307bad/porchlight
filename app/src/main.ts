@@ -26,6 +26,9 @@ const backButton = document.querySelector<HTMLButtonElement>('#back')!;
 const walkModeButton = document.querySelector<HTMLButtonElement>('#walkmode')!;
 const autoWalkButton = document.querySelector<HTMLButtonElement>('#autowalk')!;
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
+const turnLeftButton = document.querySelector<HTMLButtonElement>('#turnleft')!;
+const turnRightButton = document.querySelector<HTMLButtonElement>('#turnright')!;
+const lookAheadButton = document.querySelector<HTMLButtonElement>('#lookahead')!;
 
 const renderer = new BlueprintRenderer(canvas);
 const initial = readUrlState();
@@ -82,7 +85,7 @@ function regenerate(nextSeed: string, nextParams: GenParams): void {
   }
 }
 
-// Explore mode: the isometric town, loaded on first use so PixiJS stays out of the blueprint page.
+// Explore mode: the 3D town, loaded on first use so Three.js stays out of the blueprint page.
 
 async function spawnCharacter(): Promise<void> {
   const { lookFrom } = await import('./render/iso/view');
@@ -197,6 +200,9 @@ autoWalkButton.addEventListener('click', toggleAutoWalk);
 backButton.addEventListener('click', leaveExplore);
 dayNightButton.addEventListener('click', toggleNight);
 newCharButton.addEventListener('click', () => void spawnCharacter());
+turnLeftButton.addEventListener('click', () => iso?.rotate(-1));
+turnRightButton.addEventListener('click', () => iso?.rotate(1));
+lookAheadButton.addEventListener('click', () => iso?.lookAlongWalk());
 window.addEventListener('keydown', (e) => {
   if (!exploring || e.target instanceof HTMLInputElement) return;
   if (e.code === 'KeyN') toggleNight();

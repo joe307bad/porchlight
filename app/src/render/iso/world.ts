@@ -1,70 +1,96 @@
-// Builds the Pixi scene for a TownModel from its iso layout (layout.ts):
-// ground blocks in diagonal chunks (culled per chunk), smooth vector roads with
-// sidewalks, houses stacked from Kenney floor pieces along the street fronts,
-// yards and trees, street lamps, the plaza fountain, and the animated bits:
-// water tiles, river streaks, lamp and window glows.
+// Builds the 3D town for a TownModel from its iso layout (layout.ts): tiled
+// ground with sunken rivers, flat vector roads with sidewalks and kerbs, stone
+// bridges, Kenney houses, shops and towers fitted to every blueprint footprint
+// (long street fronts split into rows), fenced yards with sheds and vegetable
+// beds, trees, street lamps, parked cars and the plaza fountain.
+//
+// Every copy of a Kenney model is drawn through one InstancedMesh per model
+// part, so the whole town is a few hundred draw calls.
+//
+// Map (x, y) is Three's (x, z); 1 unit = 1 tile; Three's y is up.
 
-import { Container, Graphics, Matrix, Rectangle, Sprite, type Texture } from 'pixi.js';
+import {
+  AdditiveBlending,
+  BufferAttribute,
+  BufferGeometry,
+  Color,
+  CylinderGeometry,
+  DynamicDrawUsage,
+  Float32BufferAttribute,
+  Group,
+  InstancedMesh,
+  Matrix4,
+  Mesh,
+  MeshBasicMaterial,
+  MeshLambertMaterial,
+  PlaneGeometry,
+  Points,
+  PointsMaterial,
+  Quaternion,
+  ShaderMaterial,
+  SphereGeometry,
+  Vector3,
+  BoxGeometry,
+  type Material,
+} from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { DIRS4, index, inBounds } from '../../core/grid';
 import { dist, polylineLength, samplePolyline } from '../../core/geometry';
 import { createRng, type Rng } from '../../core/rng';
 import { Overlay, Terrain, type Facing, type TownModel, type Vec2 } from '../../model/types';
-import {
-  ARCHED_ROOFS,
-  ENTRANCE,
-  FAMILIES,
-  FARM_SCALE,
-  FARM_TOP,
-  FLAT_ROOFS,
-  GABLE_ROOFS,
-  GREY_ROOFS,
-  KIND_FAMILIES,
-  PLAIN_GROUND,
-  ROOF_RIDGE,
-  type IsoAssets,
-} from './assets';
-import { HALF_H, HALF_W, STEP, depthOf, toScreen } from './coords';
+import { BUSHES, CARS, CROPS, FLOWERS, KIND_MODELS, TOWERS, TREES, type Prefab, type TownAssets } from './assets';
 import { SIDEWALK, Use, buildLayout, type House, type IsoLayout, type SidewalkNetwork } from './layout';
-import { CAR_COLOURS, CAR_TEX, carTexture, dropTexture, glowTexture, plazaTexture, shedTexture, streakTexture } from './textures';
+import { MeshBuilder, v } from './mesh';
+import type { Box } from './orbit';
+import { glowTexture } from './textures';
 
-const CHUNK = 16;
-/** Water sits this far below the land around it. */
-const WATER_DROP = 16;
-/** Ground floor box top, relative to the tile's centre on screen. */
-const GROUND_TOP = -60;
-const FLOOR_H = 33;
-/** Roof sprites sit with their bottom this far below the top floor's top. */
-const ROOF_BOTTOM = 52;
+/** Height of the water surface and the river bed below the land. */
+export const WATER_Y = -0.14;
+const BED_Y = -0.45;
+/** How deep the map's slab runs below the ground at its edges. */
+const SLAB = 1.6;
 /** Distance between street lamps along a sidewalk (tiles). */
 const LAMP_SPACING = 7;
+/** Height of one storey (tiles). */
+const FLOOR_H = 0.95;
+/** Parked and moving cars are this long (tiles). */
+export const CAR_LENGTH = 1.05;
 
 const COLORS = {
-  asphalt: 0x696969,
+  grass: 0x86bd5b,
+  lawn: 0x95c964,
+  sand: 0xe6d49a,
+  rock: 0x9c968c,
+  soil: 0x7a5638,
+  paving: 0xbdb6a4,
+  plazaA: 0xddd2b6,
+  plazaB: 0xcdc1a2,
+  bed: 0x6f8a86,
+  bank: 0x8f7656,
+  slab: 0x6b5238,
+  asphalt: 0x6b6b6b,
   sidewalk: 0xd8d3bf,
   curb: 0xb3ad98,
   lane: 0xece7d2,
   path: 0xc9a46e,
-  parapet: 0xa39d8a,
-  parapetShade: 0x6f6a5c,
+  stone: 0xa39d8a,
+  stoneShade: 0x7d7768,
+  shedWall: 0xb07a4a,
+  shedRoof: 0x5b4636,
+  lampPost: 0x3b3f47,
 };
 
 export interface Lamp {
-  glow: Sprite;
-  pool: Sprite;
+  /** Where the bulb hangs (map x, y and height). */
+  x: number;
+  y: number;
+  h: number;
   phase: number;
   /** Some lamps are faulty and flicker hard. */
   faulty: boolean;
 }
 
-export interface WaterTile {
-  sprite: Sprite;
-  x: number;
-  y: number;
-  deep: boolean;
-}
-
 export interface Streak {
-  sprite: Sprite;
   path: Vec2[];
   /** Cumulative length at each path point. */
   at: number[];
@@ -73,443 +99,481 @@ export interface Streak {
 }
 
 export interface Droplet {
-  sprite: Sprite;
   t: number;
   vx: number;
   vy: number;
 }
 
-export interface IsoWorld {
-  root: Container;
-  /** Ground blocks, in chunks. */
-  ground: Container;
-  /** Roads and sidewalks, drawn in world units through the iso matrix. */
-  roads: Container;
-  /** River streaks; above the water, below roads and bridges. */
-  waterFx: Container;
-  /** Buildings, trees, lamps and people, depth-sorted. */
-  objects: Container;
-  /** Spare layer above everything (lamp glows are depth-sorted in `objects`). */
-  lights: Container;
-  /** Per tile, how far a building rises above the tile centre on screen (0 = no building). */
-  roofTops: Float32Array;
-  /** Lamp glows inside `objects`: they skip the night tint so they stay warm. */
-  glows: Set<Sprite>;
-  water: WaterTile[];
-  streaks: Streak[];
-  lamps: Lamp[];
-  droplets: Droplet[];
-  fountainAt: Vec2 | null;
-  sidewalks: SidewalkNetwork;
-  layout: IsoLayout;
+export interface TownWorld {
+  root: Group;
   model: TownModel;
+  layout: IsoLayout;
+  sidewalks: SidewalkNetwork;
+  /** Every building's box, for working out what hides the player from the camera. */
+  boxes: Box[];
+  lamps: Lamp[];
+  /** Bulbs, halos and light pools, one entry per lamp, recoloured each frame. */
+  lampFx: { bulbs: InstancedMesh; halos: Points<BufferGeometry, PointsMaterial>; pools: InstancedMesh };
+  water: ShaderMaterial;
+  streaks: { mesh: InstancedMesh; items: Streak[] };
+  fountain: { at: Vec2; drops: InstancedMesh; items: Droplet[] } | null;
+  dispose(): void;
 }
 
-export function buildWorld(model: TownModel, assets: IsoAssets): IsoWorld {
+export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   const layout = buildLayout(model);
   const rng = createRng(`${model.seed}::iso`);
-  const root = new Container();
-  const ground = new Container();
-  const roads = new Container();
-  const waterFx = new Container();
-  const objects = new Container({ sortableChildren: true });
-  const lights = new Container();
-  root.addChild(ground, waterFx, roads, objects, lights);
+  const root = new Group();
+  const owned: { dispose(): void }[] = [];
+  const instancer = new Instancer();
 
-  const world: IsoWorld = {
+  const world: TownWorld = {
     root,
-    ground,
-    roads,
-    waterFx,
-    objects,
-    lights,
-    glows: new Set(),
-    roofTops: new Float32Array(model.width * model.height),
-    water: [],
-    streaks: [],
-    lamps: [],
-    droplets: [],
-    fountainAt: null,
-    sidewalks: layout.sidewalks,
-    layout,
     model,
+    layout,
+    sidewalks: layout.sidewalks,
+    boxes: [],
+    lamps: [],
+    lampFx: null!,
+    water: null!,
+    streaks: null!,
+    fountain: null,
+    dispose: () => {
+      root.removeFromParent();
+      root.traverse((o) => {
+        if ((o as InstancedMesh).isInstancedMesh) (o as InstancedMesh).dispose();
+      });
+      for (const d of owned) d.dispose();
+    },
   };
 
-  buildGround(world, assets, rng, layout);
-  drawRoads(world, layout);
-  addHouses(world, assets, layout, rng);
-  addYards(world, assets, layout, rng);
-  addTrees(world, assets, rng, layout);
-  addLamps(world, assets, rng, layout);
-  addCars(world, layout);
-  addStreaks(world);
+  const lambert = new MeshLambertMaterial({ vertexColors: true });
+  owned.push(lambert);
+  const addStatic = (geometry: BufferGeometry, material: Material, shadows: { cast: boolean; receive: boolean }) => {
+    const mesh = new Mesh(geometry, material);
+    mesh.castShadow = shadows.cast;
+    mesh.receiveShadow = shadows.receive;
+    root.add(mesh);
+    owned.push(geometry);
+    return mesh;
+  };
+
+  addStatic(buildGround(model, layout, rng), lambert, { cast: false, receive: true });
+  world.water = addWater(world, owned);
+  addStatic(buildRoads(model, layout), lambert, { cast: true, receive: true });
+
+  const sheds = new MeshBuilder();
+  addHouses(world, assets, instancer, rng);
+  addYards(world, assets, instancer, sheds, rng);
+  addTrees(world, assets, instancer, rng);
+  addPlazaDecor(world, assets, instancer, rng);
+  addParkedCars(world, assets, instancer);
+  if (!sheds.empty) addStatic(sheds.build(), lambert, { cast: true, receive: true });
+  addLamps(world, rng, owned);
+  addStreaks(world, owned);
+  addFountain(world, owned);
+  instancer.build(root);
   return world;
 }
 
 const isWaterTerrain = (t: number) => t === Terrain.WATER_SHALLOW || t === Terrain.WATER_DEEP;
 
-/** A sprite placed so its block's top vertex sits on the tile's top corner. */
-function blockSprite(tex: Texture, x: number, y: number, z: number, dy = 0): Sprite {
-  const s = new Sprite(tex);
-  const p = toScreen(x, y, z);
-  s.position.set(p.x - 66, p.y - 1 + dy);
-  return s;
-}
-
-function buildGround(world: IsoWorld, assets: IsoAssets, rng: Rng, layout: IsoLayout): void {
-  const { model } = world;
+/** Ground tiles as flat coloured squares; water tiles sink to a river bed with earth banks. */
+function buildGround(model: TownModel, layout: IsoLayout, rng: Rng): BufferGeometry {
   const { tiles, width: w, height: h } = model;
-  const chunks = new Map<string, Container>();
-  const chunkFor = (x: number, y: number) => {
-    const key = `${Math.floor(x / CHUNK)},${Math.floor(y / CHUNK)}`;
-    let c = chunks.get(key);
-    if (!c) {
-      c = new Container({ cullable: true, cullableChildren: false });
-      chunks.set(key, c);
-    }
-    return c;
+  const b = new MeshBuilder();
+  const wet = (x: number, y: number) => inBounds(x, y, w, h) && isWaterTerrain(tiles.terrain[index(x, y, w)]);
+  const jitter = (c: number, amount: number) => {
+    const k = 1 - rng.next() * amount;
+    const r = Math.round(((c >> 16) & 255) * k);
+    const g = Math.round(((c >> 8) & 255) * (1 - (1 - k) * 0.5));
+    const bl = Math.round((c & 255) * k);
+    return (r << 16) | (g << 8) | bl;
   };
-  const well = model.landmarks.find((l) => l.kind === 'well');
-  const wellTile = well ? Math.floor(well.at.y) * w + Math.floor(well.at.x) : -1;
-
-  for (let s = 0; s <= w + h - 2; s++) {
-    for (let x = Math.max(0, s - h + 1); x <= Math.min(w - 1, s); x++) {
-      const y = s - x;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
       const i = index(x, y, w);
-      const chunk = chunkFor(x, y);
       const terrain = tiles.terrain[i];
       const overlay = tiles.overlay[i];
-      const z = tiles.elevation[i];
-
+      const use = layout.use[i];
       if (isWaterTerrain(terrain)) {
-        // Bridges are drawn over the water with the roads.
-        const sprite = blockSprite(assets.water, x, y, 0, WATER_DROP);
-        chunk.addChild(sprite);
-        world.water.push({ sprite, x, y, deep: terrain === Terrain.WATER_DEEP });
-      } else if (layout.use[i] === Use.HOUSE || overlay === Overlay.ROAD_MAIN || overlay === Overlay.ROAD_STREET) {
-        // Paving under buildings and across each road's full width, so the
-        // sidewalk runs right up to every building front.
-        chunk.addChild(blockSprite(assets.paving, x, y, z));
-      } else if (overlay === Overlay.PLAZA) {
-        if (i === wellTile) {
-          chunk.addChild(blockSprite(assets.fountain, x, y, z, -2));
-          world.fountainAt = { x: x + 0.5, y: y + 0.5 };
-          addFountainSpray(world, x + 0.5, y + 0.5, z);
-        } else {
-          chunk.addChild(blockSprite(plazaTexture(), x, y, z));
-          addPlazaDecor(world, assets, rng, x, y, z);
-        }
-      } else {
-        const tex = terrain === Terrain.SAND ? assets.sand : terrain === Terrain.ROCK ? assets.dirt : assets.grass;
-        const b = blockSprite(tex, x, y, z);
-        const use = layout.use[i];
-        if (terrain === Terrain.ROCK) b.tint = 0x9c968c;
-        else if (use === Use.YARD || use === Use.SHED || use === Use.GARDEN) b.tint = 0xe6ffd9; // lawns a touch lusher than the fields
-        else b.tint = grassTint(rng);
-        chunk.addChild(b);
-        if (use === Use.GARDEN || use === Use.COMMUNITY_GARDEN) chunk.addChild(farmSprite(assets.farmland, x, y, z));
+        b.rect(x, y, x + 1, y + 1, BED_Y, COLORS.bed);
+        continue;
       }
+      let color: number;
+      if (use === Use.HOUSE || overlay === Overlay.ROAD_MAIN || overlay === Overlay.ROAD_STREET || overlay === Overlay.BRIDGE) color = COLORS.paving;
+      else if (overlay === Overlay.PLAZA) color = (x + y) % 2 ? COLORS.plazaA : COLORS.plazaB;
+      else if (use === Use.GARDEN || use === Use.COMMUNITY_GARDEN) color = jitter(COLORS.soil, 0.08);
+      else if (terrain === Terrain.SAND) color = jitter(COLORS.sand, 0.05);
+      else if (terrain === Terrain.ROCK) color = jitter(COLORS.rock, 0.08);
+      else if (use === Use.YARD || use === Use.SHED) color = jitter(COLORS.lawn, 0.05);
+      else color = jitter(COLORS.grass, 0.08);
+      b.rect(x, y, x + 1, y + 1, 0, color);
+      // Banks down to the river bed on every side that meets water.
+      const bank = terrain === Terrain.SAND ? COLORS.sand : COLORS.bank;
+      if (wet(x, y - 1)) b.quad(v(x, 0, y), v(x + 1, 0, y), v(x + 1, BED_Y, y), v(x, BED_Y, y), bank, new Vector3(0, 0, -1));
+      if (wet(x, y + 1)) b.quad(v(x, 0, y + 1), v(x + 1, 0, y + 1), v(x + 1, BED_Y, y + 1), v(x, BED_Y, y + 1), bank, new Vector3(0, 0, 1));
+      if (wet(x - 1, y)) b.quad(v(x, 0, y), v(x, 0, y + 1), v(x, BED_Y, y + 1), v(x, BED_Y, y), bank, new Vector3(-1, 0, 0));
+      if (wet(x + 1, y)) b.quad(v(x + 1, 0, y), v(x + 1, 0, y + 1), v(x + 1, BED_Y, y + 1), v(x + 1, BED_Y, y), bank, new Vector3(1, 0, 0));
     }
   }
-  const keys = [...chunks.keys()].sort((a, b) => {
-    const [ax, ay] = a.split(',').map(Number);
-    const [bx, by] = b.split(',').map(Number);
-    return ax + ay - (bx + by) || ax - bx;
-  });
-  for (const key of keys) {
-    const [cx, cy] = key.split(',').map(Number);
-    const c = chunks.get(key)!;
-    const left = toScreen(cx * CHUNK, (cy + 1) * CHUNK).x - 70;
-    const right = toScreen((cx + 1) * CHUNK, cy * CHUNK).x + 70;
-    const top = toScreen(cx * CHUNK, cy * CHUNK).y - STEP * 8;
-    const bottom = toScreen((cx + 1) * CHUNK, (cy + 1) * CHUNK).y + 120;
-    c.cullArea = new Rectangle(left, top, right - left, bottom - top);
-    world.ground.addChild(c);
-  }
+  // The town sits on a slab of earth, so its edges read as a diorama.
+  b.quad(v(0, 0, 0), v(w, 0, 0), v(w, -SLAB, 0), v(0, -SLAB, 0), COLORS.slab, new Vector3(0, 0, -1));
+  b.quad(v(0, 0, h), v(w, 0, h), v(w, -SLAB, h), v(0, -SLAB, h), COLORS.slab, new Vector3(0, 0, 1));
+  b.quad(v(0, 0, 0), v(0, 0, h), v(0, -SLAB, h), v(0, -SLAB, 0), COLORS.slab, new Vector3(-1, 0, 0));
+  b.quad(v(w, 0, 0), v(w, 0, h), v(w, -SLAB, h), v(w, -SLAB, 0), COLORS.slab, new Vector3(1, 0, 0));
+  return b.build();
 }
 
-/** Slight per-tile variation so big fields don't look like wallpaper. */
-function grassTint(rng: Rng): number {
-  const c = Math.round(255 * (0.93 + rng.next() * 0.07));
-  return (c << 16) | (255 << 8) | c;
+/** The water surface over every water tile, shimmering in a small shader. */
+function addWater(world: TownWorld, owned: { dispose(): void }[]): ShaderMaterial {
+  const { tiles, width: w, height: h } = world.model;
+  const pos: number[] = [];
+  const deep: number[] = [];
+  const idx: number[] = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const t = tiles.terrain[index(x, y, w)];
+      if (!isWaterTerrain(t)) continue;
+      const base = pos.length / 3;
+      pos.push(x, WATER_Y, y, x, WATER_Y, y + 1, x + 1, WATER_Y, y + 1, x + 1, WATER_Y, y);
+      const d = t === Terrain.WATER_DEEP ? 1 : 0;
+      deep.push(d, d, d, d);
+      idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+    }
+  }
+  const material = new ShaderMaterial({
+    uniforms: { time: { value: 0 }, night: { value: 0 } },
+    vertexShader: /* glsl */ `
+      attribute float deep;
+      varying float vDeep;
+      varying vec2 vXZ;
+      void main() {
+        vDeep = deep;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vXZ = wp.xz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform float time;
+      uniform float night;
+      varying float vDeep;
+      varying vec2 vXZ;
+      void main() {
+        float wave = 0.5 + 0.5 * sin(time * 1.6 + vXZ.x * 0.55 + vXZ.y * 0.35);
+        float ripple = 0.5 + 0.5 * sin(time * 2.3 - vXZ.x * 1.7 + vXZ.y * 1.1);
+        vec3 c = mix(vec3(0.42, 0.70, 0.88), vec3(0.25, 0.50, 0.76), vDeep);
+        c += 0.05 * wave + 0.03 * ripple;
+        c = mix(c, c * vec3(0.28, 0.34, 0.55), night);
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  });
+  owned.push(material);
+  if (!idx.length) return material;
+  const g = new BufferGeometry();
+  g.setAttribute('position', new Float32BufferAttribute(pos, 3));
+  g.setAttribute('deep', new Float32BufferAttribute(deep, 1));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  owned.push(g);
+  world.root.add(new Mesh(g, material));
+  return material;
 }
 
 /**
- * Roads as vectors in world units: the container's matrix is the iso
- * projection, so widths and round joins foreshorten correctly. Bridge decks go
- * down first, then sidewalks, then asphalt (so junctions blend), then centre lines.
+ * Roads as flat strips along each smoothed centreline, stacked a hair apart
+ * so the layers read in order: bridge decks, outer kerbs, sidewalks, inner
+ * kerbs, asphalt (so junctions blend), then dashed centre lines.
  */
-function drawRoads(world: IsoWorld, layout: IsoLayout): void {
-  const container = world.roads;
-  container.setFromMatrix(new Matrix(HALF_W, HALF_H, -HALF_W, HALF_H, 0, 0));
-  const { model } = world;
-  const g = new Graphics();
-  const trace = (pts: readonly Vec2[]) => {
-    g.moveTo(pts[0].x, pts[0].y);
-    for (let k = 1; k < pts.length; k++) g.lineTo(pts[k].x, pts[k].y);
-  };
+function buildRoads(model: TownModel, layout: IsoLayout): BufferGeometry {
+  const b = new MeshBuilder();
   const streets = layout.roads.filter((r) => r.kind !== 'path');
   const inMap = (p: Vec2) => p.x > 0.01 && p.y > 0.01 && p.x < model.width - 0.01 && p.y < model.height - 0.01;
-
-  // Round caps fill junctions, but would spill past the map edge at the gates.
-  const stroke = (width: number, color: number, pass: (r: (typeof streets)[number]) => number) => {
+  const layer = (y: number, extra: number, color: number) => {
     for (const r of streets) {
-      trace(r.points);
-      g.stroke({ width: pass(r) + width, color, cap: 'butt', join: 'round' });
-      for (const p of [r.points[0], r.points[r.points.length - 1]]) {
-        if (inMap(p)) g.circle(p.x, p.y, (pass(r) + width) / 2).fill(color);
-      }
+      b.ribbon(r.points, r.width + extra, y, color);
+      // Round caps fill junctions, but would spill past the map edge at the gates.
+      for (const p of [r.points[0], r.points[r.points.length - 1]]) if (inMap(p)) b.disc(p, (r.width + extra) / 2, y, color);
     }
   };
-  // Bridges first: a stone deck a little wider than the road, with parapets;
-  // the road and its sidewalks then carry straight on across it.
-  for (const b of layout.bridges) {
-    trace(b.points);
-    g.stroke({ width: b.width + SIDEWALK * 2 + 0.7, color: COLORS.parapetShade, cap: 'butt', join: 'round' });
-    trace(b.points);
-    g.stroke({ width: b.width + SIDEWALK * 2 + 0.5, color: COLORS.parapet, cap: 'butt', join: 'round' });
+
+  // Bridges: a stone deck a little wider than the road, sides dropping to the
+  // river bed, and a parapet along each edge; the road carries on across it.
+  for (const br of layout.bridges) {
+    const half = br.width / 2 + SIDEWALK + 0.25;
+    b.ribbon(br.points, half * 2, 0.01, COLORS.stone);
+    b.wall(br.points, half, BED_Y, 0.01, COLORS.stoneShade);
+    b.wall(br.points, -half, BED_Y, 0.01, COLORS.stoneShade);
+    for (const side of [1, -1]) b.parapet(br.points, side * (half - 0.07), 0.12, 0.01, 0.24, COLORS.stone, COLORS.stoneShade);
   }
-  stroke(SIDEWALK * 2 + 0.1, COLORS.curb, (r) => r.width);
-  stroke(SIDEWALK * 2, COLORS.sidewalk, (r) => r.width);
-  stroke(0.08, COLORS.curb, (r) => r.width);
-  stroke(0, COLORS.asphalt, (r) => r.width);
+  layer(0.014, SIDEWALK * 2 + 0.1, COLORS.curb);
+  layer(0.018, SIDEWALK * 2, COLORS.sidewalk);
+  layer(0.022, 0.08, COLORS.curb);
+  layer(0.026, 0, COLORS.asphalt);
 
   for (const r of layout.roads.filter((rd) => rd.kind === 'path')) {
-    trace(r.points);
-    g.stroke({ width: r.width, color: COLORS.path, cap: 'round', join: 'round' });
+    b.ribbon(r.points, r.width, 0.012, COLORS.path);
+    for (const p of [r.points[0], r.points[r.points.length - 1]]) b.disc(p, r.width / 2, 0.012, COLORS.path);
   }
 
-  // Dashed centre lines.
+  // Dashed centre lines, skipping a little near each end so they don't run into junctions.
   for (const r of streets) {
     const len = polylineLength(r.points);
     const samples = samplePolyline(r.points, 0.1);
     let travelled = 0;
+    let run: Vec2[] = [];
+    const flush = () => {
+      if (run.length > 1) b.ribbon(run, 0.07, 0.03, COLORS.lane);
+      run = [];
+    };
     for (let k = 1; k < samples.length; k++) {
       const seg = dist(samples[k - 1], samples[k]);
       const mid = travelled + seg / 2;
       travelled += seg;
-      // Skip a little near each end so the dashes don't run into junctions.
-      if (mid < 1.2 || mid > len - 1.2 || mid % 0.9 > 0.45) continue;
-      g.moveTo(samples[k - 1].x, samples[k - 1].y).lineTo(samples[k].x, samples[k].y);
-    }
-    g.stroke({ width: 0.07, color: COLORS.lane, cap: 'butt' });
-  }
-
-  container.addChild(g);
-}
-
-function addFountainSpray(world: IsoWorld, x: number, y: number, z: number): void {
-  const tex = dropTexture();
-  for (let k = 0; k < 18; k++) {
-    const d = new Sprite(tex);
-    d.anchor.set(0.5);
-    d.zIndex = depthOf(x, y, 15);
-    world.objects.addChild(d);
-    world.droplets.push({ sprite: d, t: k / 18, vx: Math.cos(k * 2.4) * 14, vy: Math.sin(k * 2.4) * 7 });
-  }
-  const p = toScreen(x, y, z);
-  world.droplets.forEach((d) => d.sprite.position.set(p.x, p.y - 30));
-}
-
-/** Benches and the odd tree around the edge of the plaza. */
-function addPlazaDecor(world: IsoWorld, assets: IsoAssets, rng: Rng, x: number, y: number, z: number): void {
-  const { tiles, width: w, height: h } = world.model;
-  const edges = DIRS4.filter(([dx, dy]) => !inBounds(x + dx, y + dy, w, h) || tiles.overlay[index(x + dx, y + dy, w)] !== Overlay.PLAZA);
-  const roll = rng.next();
-  if (!edges.length || roll > 0.3) return;
-  const [dx, dy] = edges[0];
-  const px = x + 0.5 + dx * 0.3;
-  const py = y + 0.5 + dy * 0.3;
-  const p = toScreen(px, py, z);
-  const s = new Sprite(roll < 0.2 ? assets.benches[(x + y) % 2] : assets.tree);
-  s.anchor.set(0.5, 0.9);
-  if (roll >= 0.2) s.scale.set(1.8);
-  s.position.set(p.x, p.y);
-  s.zIndex = depthOf(px, py, 2);
-  s.cullable = true;
-  world.objects.addChild(s);
-}
-
-interface Palette {
-  grounds: readonly number[];
-  uppers: readonly number[];
-  roofs: readonly number[];
-  vary: boolean;
-}
-
-/**
- * One look per blueprint building: a facade family, a roof style and a usual
- * height, so related houses read as a matching set.
- */
-function paletteFor(house: House, rng: Rng): Palette {
-  const family = FAMILIES[rng.pick(KIND_FAMILIES[house.kind])];
-  switch (house.style) {
-    case 'office':
-      return { grounds: FAMILIES.glass.shops, uppers: FAMILIES.glass.uppers, roofs: rng.chance(0.4) ? FLAT_ROOFS : [], vary: true };
-    case 'shop':
-      return { grounds: family.shops, uppers: family.uppers, roofs: rng.chance(0.5) ? FLAT_ROOFS : [], vary: true };
-    case 'workshop':
-      return { grounds: [...PLAIN_GROUND, ...family.homes], uppers: family.uppers, roofs: rng.chance(0.5) ? GREY_ROOFS : ARCHED_ROOFS, vary: false };
-    case 'church':
-      return { grounds: FAMILIES.beige.homes, uppers: [rng.pick(FAMILIES.beige.uppers)], roofs: [rng.pick([74, 82, 88])], vary: false };
-    case 'hall':
-      return { grounds: [...PLAIN_GROUND, ...FAMILIES.beige.shops], uppers: [rng.pick(FAMILIES.beige.uppers)], roofs: [rng.pick(FLAT_ROOFS)], vary: false };
-    default:
-      return { grounds: family.homes, uppers: family.uppers, roofs: rng.chance(0.85) ? [rng.pick(GABLE_ROOFS)] : [], vary: true };
-  }
-}
-
-const MIRRORED: Record<Facing, Facing> = { S: 'E', E: 'S', N: 'W', W: 'N' };
-
-/**
- * A ground floor whose entrance faces the street. Pieces with the entrance on
- * that side are used as they are; ones with it on the mirror side are flipped.
- * When nothing fits (homes whose street is behind them, to the north or west),
- * the house shows its back: an upper-floor piece (windows, no door) stands in
- * for the ground floor, since the real door faces away from the camera.
- */
-function groundFloorFor(palette: Palette, facing: Facing, rng: Rng): { piece: number; mirror: boolean; back: boolean } {
-  const options = [
-    ...palette.grounds.filter((p) => ENTRANCE[p] === facing).map((piece) => ({ piece, mirror: false })),
-    ...palette.grounds.filter((p) => ENTRANCE[p] === MIRRORED[facing]).map((piece) => ({ piece, mirror: true })),
-  ];
-  if (options.length) return { ...rng.pick(options), back: false };
-  const plain = palette.grounds.filter((p) => ENTRANCE[p] === undefined);
-  if (plain.length) return { piece: rng.pick(plain), mirror: false, back: false };
-  return { piece: rng.pick(palette.uppers), mirror: rng.chance(0.5), back: true };
-}
-
-/**
- * Building pieces are drawn 4/3 size: Kenney's boxes cover three quarters of a
- * tile, so at this scale each fills its tile and a multi-tile footprint reads
- * as one continuous building instead of a cluster of separate towers.
- */
-const PIECE_SCALE = 4 / 3;
-
-function addHouses(world: IsoWorld, assets: IsoAssets, layout: IsoLayout, rng: Rng): void {
-  const { model } = world;
-  const k = PIECE_SCALE;
-  for (const house of layout.houses) {
-    const palette = paletteFor(house, rng);
-    // One look for the whole building: same front, same upper floor, same roof, same height.
-    const front = groundFloorFor(palette, house.facing, rng);
-    const plain = palette.grounds.filter((p) => ENTRANCE[p] === undefined);
-    const upper = rng.pick(palette.uppers);
-    const roof = palette.roofs.length ? rng.pick(palette.roofs) : null;
-    const floors = palette.vary ? Math.max(1, Math.min(6, house.floors + rng.pick([-1, 0, 0, 1]))) : house.floors;
-    const roofMirror = roof !== null ? roofMirrorFor(roof, house.facing) : false;
-    const own = new Set(house.tiles.map((t) => `${t.x},${t.y}`));
-    const [fx, fy] = DIRS4[['N', 'E', 'S', 'W'].indexOf(house.facing)];
-
-    for (const t of house.tiles) {
-      // Only the street-side row gets entrances; the rest show plain walls.
-      const onFront = !own.has(`${t.x + fx},${t.y + fy}`);
-      const ground = onFront
-        ? front
-        : plain.length
-          ? { piece: plain[(t.x + t.y) % plain.length], mirror: front.mirror, back: false }
-          : { piece: upper, mirror: front.mirror, back: true };
-      const z = model.tiles.elevation[index(t.x, t.y, model.width)];
-      const cx = t.x + 0.5;
-      const cy = t.y + 0.5;
-      const c = toScreen(cx, cy, z);
-      const depth = depthOf(cx, cy);
-      const piece = (tex: Texture, y: number, order: number, bottomAnchored: boolean, flip: boolean) => {
-        const s = new Sprite(tex);
-        s.anchor.set(0.5, bottomAnchored ? 1 : 0);
-        s.position.set(c.x, y);
-        s.scale.set(flip ? -k : k, k);
-        s.zIndex = depth + order;
-        s.cullable = true;
-        s.cullArea = new Rectangle(-tex.width / 2, bottomAnchored ? -tex.height : 0, tex.width, tex.height);
-        world.objects.addChild(s);
-      };
-      let top = c.y + GROUND_TOP * k;
-      if (ground.back) piece(assets.building(ground.piece), top - k, 1, false, ground.mirror);
-      else piece(assets.groundFloor(ground.piece), c.y + 65 * k, 1, true, ground.mirror);
-      for (let f = 1; f < floors; f++) {
-        top -= FLOOR_H * k;
-        piece(assets.building(upper), top - k, 1 + f, false, ground.mirror);
+      if (mid < 1.2 || mid > len - 1.2 || mid % 0.9 > 0.45) {
+        flush();
+        continue;
       }
-      if (roof !== null) piece(assets.building(roof), top + ROOF_BOTTOM * k, 8, true, roofMirror);
-      world.roofTops[index(t.x, t.y, model.width)] = c.y - top + (roof !== null ? 20 * k : 0);
+      if (!run.length) run.push(samples[k - 1]);
+      run.push(samples[k]);
+    }
+    flush();
+  }
+  return b.build();
+}
+
+/** Collects every placement of each prefab, then draws them as InstancedMeshes. */
+class Instancer {
+  private readonly items = new Map<Prefab, Matrix4[]>();
+  private readonly noShadow = new Set<Prefab>();
+
+  add(p: Prefab, m: Matrix4, castShadow = true): void {
+    const list = this.items.get(p);
+    if (list) list.push(m);
+    else this.items.set(p, [m]);
+    if (!castShadow) this.noShadow.add(p);
+  }
+
+  build(root: Group): void {
+    for (const [prefab, matrices] of this.items) {
+      for (const part of prefab.parts) {
+        const mesh = new InstancedMesh(part.geometry, part.material, matrices.length);
+        matrices.forEach((m, i) => mesh.setMatrixAt(i, m));
+        mesh.castShadow = !this.noShadow.has(prefab);
+        mesh.receiveShadow = true;
+        mesh.computeBoundingSphere();
+        root.add(mesh);
+      }
     }
   }
 }
 
-/** A farm-pack sprite (256px tile) scaled and placed on tile (x, y). */
-function farmSprite(tex: Texture, x: number, y: number, z: number): Sprite {
-  const s = new Sprite(tex);
-  const p = toScreen(x, y, z);
-  s.scale.set(FARM_SCALE);
-  s.position.set(p.x - FARM_TOP.x * FARM_SCALE, p.y - FARM_TOP.y * FARM_SCALE);
-  return s;
+const q = new Quaternion();
+const Y_AXIS = new Vector3(0, 1, 0);
+
+/**
+ * Where to draw a prefab: its footprint centred on map point `at`, turned by
+ * `rot` about the vertical (its front, +Z, then faces (sin rot, cos rot) on
+ * the map) and scaled by (sx, sy, sz) in its own axes.
+ */
+export function placement(p: Prefab, at: Vec2, rot: number, sx: number, sy: number, sz: number, lift = 0): Matrix4 {
+  const centre = new Matrix4().makeTranslation(-(p.min.x + p.size.x / 2), -p.min.y, -(p.min.z + p.size.z / 2));
+  const m = new Matrix4().compose(new Vector3(at.x, lift, at.y), q.setFromAxisAngle(Y_AXIS, rot), new Vector3(sx, sy, sz));
+  return m.multiply(centre);
 }
 
-/** Midpoint of one side of a tile, for depth-sorting things that stand on it. */
-function edgeMid(x: number, y: number, side: Facing): Vec2 {
-  return {
-    N: { x: x + 0.5, y },
-    E: { x: x + 1, y: y + 0.5 },
-    S: { x: x + 0.5, y: y + 1 },
-    W: { x, y: y + 0.5 },
-  }[side];
+/**
+ * Kenney's city-kit buildings have their fronts (doors, shopfronts, porches) on
+ * -Z, unlike the cars and characters, which face +Z: turn them half round.
+ * (tests/models.test.ts checks this from where each model's detail is.)
+ */
+const BUILDING_TURN = Math.PI;
+
+const FRONT: Record<Facing, Vec2> = { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: { x: 0, y: 1 }, W: { x: -1, y: 0 } };
+
+/**
+ * Every blueprint building at its exact footprint, front to the street. A long
+ * street front is split into a row of narrower buildings whose proportions
+ * suit the models; each piece's model is stretched to fill its share.
+ */
+function addHouses(world: TownWorld, assets: TownAssets, instancer: Instancer, rng: Rng): void {
+  for (const house of world.layout.houses) {
+    const xs = house.tiles.map((t) => t.x);
+    const ys = house.tiles.map((t) => t.y);
+    const x0 = Math.min(...xs);
+    const y0 = Math.min(...ys);
+    const x1 = Math.max(...xs) + 1;
+    const y1 = Math.max(...ys) + 1;
+    const front = FRONT[house.facing];
+    const rot = Math.atan2(front.x, front.y) + BUILDING_TURN;
+    const alongX = house.facing === 'N' || house.facing === 'S';
+    const frontage = alongX ? x1 - x0 : y1 - y0;
+    const depth = alongX ? y1 - y0 : x1 - x0;
+    const candidates = modelsFor(house);
+    const splittable = house.style === 'house' || house.style === 'shop' || house.style === 'workshop' || house.style === 'office';
+    const pieces = splittable ? bestSplit(assets, candidates, frontage, depth) : 1;
+    const len = frontage / pieces;
+    const colours = assets.variationCount(candidates[0]);
+    // One colour scheme per building, so a row reads as one terrace.
+    const variation = rng.int(0, colours - 1);
+    for (let k = 0; k < pieces; k++) {
+      const name = pickModel(assets, candidates, len / depth, house, rng);
+      const prefab = assets.variant(name, variation);
+      const gap = 0.04;
+      const sx = (len - gap * 2) / prefab.size.x;
+      const sz = (depth - gap * 2) / prefab.size.z;
+      const sy = Math.sqrt(sx * sz) * heightFactor(prefab, Math.sqrt(sx * sz), house);
+      // Piece k's centre: along the frontage from the low end, mid-depth.
+      const along = (alongX ? x0 : y0) + (k + 0.5) * len;
+      const at = alongX ? { x: along, y: (y0 + y1) / 2 } : { x: (x0 + x1) / 2, y: along };
+      instancer.add(prefab, placement(prefab, at, rot, sx, sy, sz));
+      const halfX = alongX ? len / 2 : depth / 2;
+      const halfY = alongX ? depth / 2 : len / 2;
+      world.boxes.push({ x0: at.x - halfX, y0: at.y - halfY, x1: at.x + halfX, y1: at.y + halfY, top: prefab.size.y * sy });
+    }
+  }
 }
 
-/** Crops, sheds, hay and fences: everything that stands in the yards and gardens. */
-function addYards(world: IsoWorld, assets: IsoAssets, layout: IsoLayout, rng: Rng): void {
-  const { model } = world;
+function modelsFor(house: House): readonly string[] {
+  if (house.style === 'office' && house.floors >= 4) return TOWERS;
+  return KIND_MODELS[house.style];
+}
+
+/** How many pieces to split a street front into so each suits a model's proportions. */
+function bestSplit(assets: TownAssets, candidates: readonly string[], frontage: number, depth: number): number {
+  let best = 1;
+  let bestCost = Infinity;
+  for (let n = 1; n <= 4; n++) {
+    const len = frontage / n;
+    if (n > 1 && len < 1.8) break;
+    const fit = Math.min(...candidates.map((c) => aspectMiss(assets.prefab(c), len / depth)));
+    const cost = fit + (n - 1) * 0.12;
+    if (cost < bestCost) {
+      bestCost = cost;
+      best = n;
+    }
+  }
+  return best;
+}
+
+/** How far a model's width:depth is from the wanted one (0 = exact), on a log scale. */
+function aspectMiss(p: Prefab, wanted: number): number {
+  return Math.abs(Math.log(p.size.x / p.size.z / wanted));
+}
+
+/** A model whose proportions suit the piece: one of the few that fit best (taller ones for more floors). */
+function pickModel(assets: TownAssets, candidates: readonly string[], aspect: number, house: House, rng: Rng): string {
+  const scored = candidates.map((c) => {
+    const p = assets.prefab(c);
+    const tall = p.size.y / Math.sqrt(p.size.x * p.size.z);
+    return { c, cost: aspectMiss(p, aspect) + Math.abs(tall - storeyRatio(house)) * 0.3 };
+  });
+  scored.sort((a, b) => a.cost - b.cost);
+  return rng.pick(scored.slice(0, Math.min(4, scored.length))).c;
+}
+
+/** Roughly how tall for its size a building with this many floors should be. */
+function storeyRatio(house: House): number {
+  return 0.45 + house.floors * 0.22;
+}
+
+/** Nudge a model's height toward its floor count, within limits so it keeps its look. */
+function heightFactor(p: Prefab, scale: number, house: House): number {
+  const natural = p.size.y * scale;
+  const wanted = house.floors * FLOOR_H + (house.style === 'house' ? 0.9 : 0.4);
+  return Math.min(1.35, Math.max(0.75, wanted / natural));
+}
+
+/** Crops, sheds and fences: everything that stands in the yards and gardens. */
+function addYards(world: TownWorld, assets: TownAssets, instancer: Instancer, sheds: MeshBuilder, rng: Rng): void {
+  const { model, layout } = world;
   const { width: w, height: h } = model;
-  const shed = shedTexture();
-  const add = (s: Sprite, at: Vec2, order: number) => {
-    s.zIndex = depthOf(at.x, at.y, order);
-    s.cullable = true;
-    world.objects.addChild(s);
-  };
+  const crops = CROPS.map((c) => assets.prefab(c));
+  const props = [assets.prefab('nature/log_stack'), assets.prefab('nature/pot_large')];
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const i = index(x, y, w);
-      const use = layout.use[i];
-      const z = model.tiles.elevation[i];
+      const use = layout.use[index(x, y, w)];
       if (use === Use.GARDEN || use === Use.COMMUNITY_GARDEN) {
         const roll = rng.next();
-        if (use === Use.COMMUNITY_GARDEN && roll < 0.12) add(farmSprite(assets.hay, x, y, z), { x: x + 0.5, y: y + 0.5 }, 4);
-        else if (use === Use.COMMUNITY_GARDEN && roll < 0.2) add(farmSprite(assets.crates, x, y, z), { x: x + 0.5, y: y + 0.5 }, 4);
-        else add(farmSprite(assets.crops[roll < 0.6 ? 0 : 1], x, y, z), { x: x + 0.5, y: y + 0.5 }, 4);
+        if (use === Use.COMMUNITY_GARDEN && roll < 0.15) {
+          const p = props[Math.floor(rng.next() * props.length)];
+          const s = 0.7 / Math.max(p.size.x, p.size.z);
+          instancer.add(p, placement(p, { x: x + 0.5, y: y + 0.5 }, rng.range(0, Math.PI * 2), s, s, s));
+          continue;
+        }
+        // A bed of one crop: four plants in a square.
+        const crop = crops[Math.floor(rng.next() * crops.length)];
+        const s = 0.42 / Math.max(crop.size.x, crop.size.z);
+        for (const [ox, oy] of [[0.27, 0.27], [0.73, 0.27], [0.27, 0.73], [0.73, 0.73]]) {
+          instancer.add(crop, placement(crop, { x: x + ox, y: y + oy }, rng.range(0, Math.PI * 2), s, s * rng.range(0.85, 1.15), s), false);
+        }
       } else if (use === Use.SHED) {
-        const s = new Sprite(shed);
-        const p = toScreen(x + 0.5, y + 0.5, z);
-        s.anchor.set(0.5, 0.78);
-        s.position.set(p.x, p.y);
-        if (rng.chance(0.5)) s.scale.x = -1;
-        add(s, { x: x + 0.5, y: y + 0.5 }, 4);
+        addShed(sheds, x + 0.5, y + 0.5, rng.chance(0.5));
       }
     }
   }
+  const fence = assets.prefab('suburban/fence');
+  const sx = 1 / fence.size.x;
   for (const f of layout.fences) {
-    const z = model.tiles.elevation[index(f.x, f.y, w)];
-    add(farmSprite(assets.fence(f.side), f.x, f.y, z), edgeMid(f.x, f.y, f.side), 3);
+    const inset = 0.05;
+    const at = {
+      N: { x: f.x + 0.5, y: f.y + inset },
+      S: { x: f.x + 0.5, y: f.y + 1 - inset },
+      W: { x: f.x + inset, y: f.y + 0.5 },
+      E: { x: f.x + 1 - inset, y: f.y + 0.5 },
+    }[f.side];
+    const rot = f.side === 'N' || f.side === 'S' ? 0 : Math.PI / 2;
+    instancer.add(fence, placement(fence, at, rot, sx, 1.3, 1.3));
   }
 }
 
-/** Mirror a pitched roof so its ridge runs along the street (parallel to the house front). */
-function roofMirrorFor(roof: number, facing: Facing): boolean {
-  const ridge = ROOF_RIDGE[roof];
-  if (!ridge) return facing === 'E' || facing === 'N';
-  // A south or north front runs along x, so the ridge should too.
-  const want = facing === 'S' || facing === 'N' ? 'x' : 'y';
-  return ridge !== want;
+/** A little garden shed: plank walls under a dark pitched roof. */
+function addShed(b: MeshBuilder, cx: number, cy: number, turned: boolean): void {
+  const hw = turned ? 0.3 : 0.36;
+  const hd = turned ? 0.36 : 0.3;
+  const wall = 0.42;
+  const ridge = 0.64;
+  b.box(cx - hw, cy - hd, cx + hw, cy + hd, 0, wall, COLORS.shedWall);
+  const o = 0.05;
+  if (turned) {
+    // Ridge along y.
+    b.quad(v(cx - hw - o, wall - 0.03, cy - hd - o), v(cx, ridge, cy - hd - o), v(cx, ridge, cy + hd + o), v(cx - hw - o, wall - 0.03, cy + hd + o), COLORS.shedRoof, new Vector3(-1, 1, 0));
+    b.quad(v(cx + hw + o, wall - 0.03, cy - hd - o), v(cx, ridge, cy - hd - o), v(cx, ridge, cy + hd + o), v(cx + hw + o, wall - 0.03, cy + hd + o), COLORS.shedRoof, new Vector3(1, 1, 0));
+    for (const y of [cy - hd, cy + hd]) b.quad(v(cx - hw, wall, y), v(cx, ridge - 0.02, y), v(cx, ridge - 0.02, y), v(cx + hw, wall, y), COLORS.shedWall, new Vector3(0, 0, y < cy ? -1 : 1));
+  } else {
+    b.quad(v(cx - hw - o, wall - 0.03, cy - hd - o), v(cx - hw - o, ridge, cy), v(cx + hw + o, ridge, cy), v(cx + hw + o, wall - 0.03, cy - hd - o), COLORS.shedRoof, new Vector3(0, 1, -1));
+    b.quad(v(cx - hw - o, wall - 0.03, cy + hd + o), v(cx - hw - o, ridge, cy), v(cx + hw + o, ridge, cy), v(cx + hw + o, wall - 0.03, cy + hd + o), COLORS.shedRoof, new Vector3(0, 1, 1));
+    for (const x of [cx - hw, cx + hw]) b.quad(v(x, wall, cy - hd), v(x, ridge - 0.02, cy), v(x, ridge - 0.02, cy), v(x, wall, cy + hd), COLORS.shedWall, new Vector3(x < cx ? -1 : 1, 0, 0));
+  }
+  // A door on the long side.
+  const door = 0x4a3426;
+  if (turned) b.quad(v(cx + hw + 0.005, 0, cy - 0.1), v(cx + hw + 0.005, 0, cy + 0.1), v(cx + hw + 0.005, 0.32, cy + 0.1), v(cx + hw + 0.005, 0.32, cy - 0.1), door, new Vector3(1, 0, 0));
+  else b.quad(v(cx - 0.1, 0, cy + hd + 0.005), v(cx + 0.1, 0, cy + hd + 0.005), v(cx + 0.1, 0.32, cy + hd + 0.005), v(cx - 0.1, 0.32, cy + hd + 0.005), door, new Vector3(0, 0, 1));
 }
 
-function addTrees(world: IsoWorld, assets: IsoAssets, rng: Rng, layout: IsoLayout): void {
-  const { model } = world;
+/** Trees on open ground (thicker out of town and in the greens), bushes and flowers among them, rocks on rocky ground. */
+function addTrees(world: TownWorld, assets: TownAssets, instancer: Instancer, rng: Rng): void {
+  const { model, layout } = world;
   const { tiles, width: w, height: h, center, townRadius } = model;
+  const trees = TREES.map((t) => assets.prefab(t));
+  const bushes = BUSHES.map((t) => assets.prefab(t));
+  const flowers = FLOWERS.map((t) => assets.prefab(t));
+  const rock = assets.prefab('nature/rock_smallA');
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = index(x, y, w);
       const use = layout.use[i];
-      if (tiles.terrain[i] !== Terrain.GRASS || tiles.overlay[i] !== Overlay.NONE) continue;
+      const terrain = tiles.terrain[i];
+      if (tiles.overlay[i] !== Overlay.NONE) continue;
       if (use === Use.HOUSE || use === Use.SHED || use === Use.GARDEN || use === Use.COMMUNITY_GARDEN) continue;
+      if (terrain === Terrain.ROCK) {
+        if (rng.chance(0.22)) {
+          const s = rng.range(1.2, 2.4);
+          instancer.add(rock, placement(rock, { x: x + rng.range(0.25, 0.75), y: y + rng.range(0.25, 0.75) }, rng.range(0, 6.3), s, s, s));
+        }
+        continue;
+      }
+      if (terrain !== Terrain.GRASS) continue;
       let nearStreet = false;
       for (const [dx, dy] of DIRS4) {
         const nx = x + dx;
@@ -519,35 +583,81 @@ function addTrees(world: IsoWorld, assets: IsoAssets, rng: Rng, layout: IsoLayou
         if (tiles.overlay[j] !== Overlay.NONE || isWaterTerrain(tiles.terrain[j]) || layout.use[j] === Use.HOUSE) nearStreet = true;
       }
       const inTown = Math.hypot(x + 0.5 - center.x, y + 0.5 - center.y) < townRadius;
-      const chance = use === Use.YARD ? (nearStreet ? 0.04 : 0.16) : use === Use.GREEN ? 0.3 : nearStreet ? 0.03 : inTown ? 0.1 : 0.28;
+      const chance = use === Use.YARD ? (nearStreet ? 0.04 : 0.14) : use === Use.GREEN ? 0.28 : nearStreet ? 0.03 : inTown ? 0.1 : 0.22;
       const roll = rng.next();
-      const jx = rng.range(-0.25, 0.25);
-      const jy = rng.range(-0.25, 0.25);
-      const size = rng.range(1.6, 2.3);
-      if (roll > chance) continue;
-      const px = x + 0.5 + jx;
-      const py = y + 0.5 + jy;
-      const p = toScreen(px, py, tiles.elevation[i]);
-      // Mix the round city tree with conifers and slimmer trees.
-      const kind = rng.next();
-      const tex = kind < 0.5 ? assets.tree : assets.foliage[Math.floor(kind * 1000) % assets.foliage.length];
-      const t = new Sprite(tex);
-      t.anchor.set(0.5, 0.97);
-      t.scale.set(tex === assets.tree ? size : size * 1.45);
-      t.position.set(p.x, p.y);
-      t.zIndex = depthOf(px, py, 2);
-      t.cullable = true;
-      t.cullArea = new Rectangle(-tex.width / 2, -tex.height, tex.width, tex.height + 2);
-      world.objects.addChild(t);
+      const at = { x: x + 0.5 + rng.range(-0.25, 0.25), y: y + 0.5 + rng.range(-0.25, 0.25) };
+      const spin = rng.range(0, Math.PI * 2);
+      if (roll < chance) {
+        // Leafy trees in town, more conifers out in the country.
+        const pool = inTown ? trees.filter((_, k) => k < 4 || k > 6) : trees;
+        const t = pool[Math.floor(rng.next() * pool.length)];
+        const s = rng.range(1.3, 2.1) / t.size.y;
+        instancer.add(t, placement(t, at, spin, s, s * rng.range(0.9, 1.1), s));
+      } else if (roll < chance + (use === Use.YARD || use === Use.GREEN ? 0.08 : 0.03)) {
+        const b = bushes[Math.floor(rng.next() * bushes.length)];
+        const s = rng.range(0.4, 0.65) / Math.max(b.size.x, b.size.z);
+        instancer.add(b, placement(b, at, spin, s, s, s), false);
+      } else if (roll < chance + 0.14 && (use === Use.YARD || use === Use.GREEN)) {
+        const f = flowers[Math.floor(rng.next() * flowers.length)];
+        for (let k = 0; k < 3; k++) {
+          const s = 1.2;
+          instancer.add(f, placement(f, { x: at.x + rng.range(-0.25, 0.25), y: at.y + rng.range(-0.25, 0.25) }, rng.range(0, 6.3), s, s, s), false);
+        }
+      }
     }
   }
 }
 
-/** Lamps along the outer edge of the sidewalks, arms reaching over the road. */
-function addLamps(world: IsoWorld, assets: IsoAssets, rng: Rng, layout: IsoLayout): void {
-  const { model } = world;
-  const glow = glowTexture();
+/** Planters and potted trees round the edge of the plaza. */
+function addPlazaDecor(world: TownWorld, assets: TownAssets, instancer: Instancer, rng: Rng): void {
+  const { tiles, width: w, height: h } = world.model;
+  const planter = assets.prefab('suburban/planter');
+  const tree = assets.prefab('nature/tree_small');
+  const well = world.model.landmarks.find((l) => l.kind === 'well');
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (tiles.overlay[index(x, y, w)] !== Overlay.PLAZA) continue;
+      if (well && Math.floor(well.at.x) === x && Math.floor(well.at.y) === y) continue;
+      const edges = DIRS4.filter(([dx, dy]) => !inBounds(x + dx, y + dy, w, h) || tiles.overlay[index(x + dx, y + dy, w)] !== Overlay.PLAZA);
+      const roll = rng.next();
+      if (!edges.length || roll > 0.3) continue;
+      const [dx, dy] = edges[0];
+      const at = { x: x + 0.5 + dx * 0.3, y: y + 0.5 + dy * 0.3 };
+      if (roll < 0.2) {
+        const s = 0.8 / Math.max(planter.size.x, planter.size.z);
+        instancer.add(planter, placement(planter, at, Math.atan2(dx, dy), s, s, s));
+      } else {
+        const s = 1.4 / tree.size.y;
+        instancer.add(tree, placement(tree, at, rng.range(0, 6.3), s, s, s));
+      }
+    }
+  }
+}
+
+/** The scale that makes a car model CAR_LENGTH long. */
+export function carScale(p: Prefab): number {
+  return CAR_LENGTH / p.size.z;
+}
+
+/** Parked cars along the side-street kerbs, lined up with the road. */
+function addParkedCars(world: TownWorld, assets: TownAssets, instancer: Instancer): void {
+  for (const car of world.layout.cars) {
+    // Parked either way round.
+    const heading = car.angle + (car.variant % 2 ? Math.PI : 0);
+    const p = assets.prefab(CARS[car.variant % 6]);
+    const s = carScale(p);
+    instancer.add(p, placement(p, car, Math.atan2(Math.cos(heading), Math.sin(heading)), s, s, s));
+  }
+}
+
+/**
+ * Lamps along the outer edge of the sidewalks, arms reaching over the road.
+ * At night each bulb glows, with a soft halo and a pool of light below.
+ */
+function addLamps(world: TownWorld, rng: Rng, owned: { dispose(): void }[]): void {
+  const { model, layout } = world;
   const placed: Vec2[] = [];
+  const posts: Matrix4[] = [];
   layout.sidewalks.paths.forEach((path, n) => {
     const total = path.at[path.at.length - 1];
     // Stagger the two sides of a road so lamps alternate.
@@ -558,7 +668,7 @@ function addLamps(world: IsoWorld, assets: IsoAssets, rng: Rng, layout: IsoLayou
       const b = path.points[k];
       const f = (s - path.at[k - 1]) / Math.max(1e-6, path.at[k] - path.at[k - 1]);
       const on = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
-      if (placed.some((q) => dist(q, on) < 2.5)) continue;
+      if (placed.some((p) => dist(p, on) < 2.5)) continue;
       const tx = Math.floor(on.x);
       const ty = Math.floor(on.y);
       if (!inBounds(tx, ty, model.width, model.height) || isWaterTerrain(model.tiles.terrain[index(tx, ty, model.width)])) continue;
@@ -568,67 +678,79 @@ function addLamps(world: IsoWorld, assets: IsoAssets, rng: Rng, layout: IsoLayou
       const tangent = { x: b.x - a.x, y: b.y - a.y };
       const tl = Math.hypot(tangent.x, tangent.y) || 1;
       const normal = { x: (tangent.y / tl) * path.side, y: (-tangent.x / tl) * path.side };
-      const edge = { x: on.x + normal.x * (SIDEWALK / 2 - 0.08), y: on.y + normal.y * (SIDEWALK / 2 - 0.08) };
-      const z = model.tiles.elevation[index(tx, ty, model.width)];
-      const base = toScreen(edge.x, edge.y, z);
-      const inward = toScreen(-normal.x, -normal.y);
-      const armRight = inward.x >= 0;
-      const lamp = new Sprite(assets.lamp);
-      lamp.anchor.set(3 / 22, 44 / 46);
-      lamp.scale.set(armRight ? 1.25 : -1.25, 1.25);
-      lamp.position.set(base.x, base.y);
-      lamp.zIndex = depthOf(edge.x, edge.y, 3);
-      lamp.cullable = true;
-      world.objects.addChild(lamp);
-
-      const tip = { x: base.x + (armRight ? 20 : -20), y: base.y - 52 };
-      const bulb = new Sprite(glow);
-      bulb.anchor.set(0.5);
-      bulb.scale.set(0.42);
-      bulb.position.set(tip.x, tip.y);
-      bulb.tint = 0xffd890;
-      bulb.blendMode = 'add';
-      bulb.alpha = 0;
-      const pool = new Sprite(glow);
-      pool.anchor.set(0.5);
-      pool.scale.set(1.3, 0.62);
-      pool.position.set(tip.x, base.y + 4);
-      pool.tint = 0xffc870;
-      pool.blendMode = 'add';
-      pool.alpha = 0;
-      // Sorted with everything else, so a building in front hides a lamp's glow.
-      bulb.zIndex = lamp.zIndex + 1;
-      pool.zIndex = lamp.zIndex - 1;
-      bulb.cullable = true;
-      pool.cullable = true;
-      world.objects.addChild(pool, bulb);
-      world.glows.add(bulb);
-      world.glows.add(pool);
-      world.lamps.push({ glow: bulb, pool, phase: rng.range(0, 100), faulty: rng.chance(0.12) });
+      const base = { x: on.x + normal.x * (SIDEWALK / 2 - 0.08), y: on.y + normal.y * (SIDEWALK / 2 - 0.08) };
+      const rot = Math.atan2(-normal.x, -normal.y); // the arm (local +Z) reaches toward the road
+      posts.push(new Matrix4().compose(new Vector3(base.x, 0, base.y), new Quaternion().setFromAxisAngle(Y_AXIS, rot), new Vector3(1, 1, 1)));
+      world.lamps.push({ x: base.x - normal.x * LAMP_REACH, y: base.y - normal.y * LAMP_REACH, h: LAMP_HEIGHT - 0.05, phase: rng.range(0, 100), faulty: rng.chance(0.12) });
     }
   });
+
+  const postGeo = lampGeometry();
+  const postMat = new MeshLambertMaterial({ color: COLORS.lampPost });
+  const postMesh = new InstancedMesh(postGeo, postMat, Math.max(1, posts.length));
+  postMesh.count = posts.length;
+  posts.forEach((m, i) => postMesh.setMatrixAt(i, m));
+  postMesh.castShadow = true;
+  postMesh.computeBoundingSphere();
+  world.root.add(postMesh);
+
+  const count = Math.max(1, world.lamps.length);
+  const bulbGeo = new SphereGeometry(0.05, 10, 6);
+  const bulbMat = new MeshBasicMaterial({ color: 0xffffff });
+  const bulbs = new InstancedMesh(bulbGeo, bulbMat, count);
+  const poolGeo = new PlaneGeometry(2.2, 2.2).rotateX(-Math.PI / 2);
+  const poolMat = new MeshBasicMaterial({ map: glowTexture(), transparent: true, depthWrite: false, blending: AdditiveBlending });
+  const pools = new InstancedMesh(poolGeo, poolMat, count);
+  const haloGeo = new BufferGeometry();
+  const haloPos = new Float32Array(count * 3);
+  world.lamps.forEach((l, i) => {
+    bulbs.setMatrixAt(i, new Matrix4().makeTranslation(l.x, l.h, l.y));
+    pools.setMatrixAt(i, new Matrix4().makeTranslation(l.x, 0.04, l.y));
+    haloPos.set([l.x, l.h, l.y], i * 3);
+  });
+  bulbs.count = pools.count = world.lamps.length;
+  const off = new Color(0x8a8a80);
+  for (let i = 0; i < world.lamps.length; i++) {
+    bulbs.setColorAt(i, off);
+    pools.setColorAt(i, new Color(0, 0, 0));
+  }
+  haloGeo.setAttribute('position', new BufferAttribute(haloPos, 3));
+  const haloCol = new BufferAttribute(new Float32Array(count * 3), 3);
+  haloCol.setUsage(DynamicDrawUsage);
+  haloGeo.setAttribute('color', haloCol);
+  haloGeo.setDrawRange(0, world.lamps.length);
+  const haloMat = new PointsMaterial({ size: 40, map: glowTexture(), vertexColors: true, transparent: true, depthWrite: false, blending: AdditiveBlending, sizeAttenuation: false });
+  const halos = new Points(haloGeo, haloMat);
+  pools.renderOrder = 6;
+  halos.renderOrder = 7;
+  for (const m of [bulbs, pools]) {
+    m.computeBoundingSphere();
+    m.frustumCulled = false;
+  }
+  halos.frustumCulled = false;
+  world.root.add(bulbs, pools, halos);
+  world.lampFx = { bulbs, halos, pools };
+  owned.push(postGeo, postMat, bulbGeo, bulbMat, poolGeo, poolMat, haloGeo, haloMat);
 }
 
-/** Parked cars along the side-street kerbs, lined up with the road. */
-function addCars(world: IsoWorld, layout: IsoLayout): void {
-  for (const car of layout.cars) {
-    // Parked either way round.
-    const heading = car.angle + (car.variant % 2 ? Math.PI : 0);
-    const s = new Sprite(carTexture(CAR_COLOURS[car.variant % CAR_COLOURS.length], heading));
-    const p = toScreen(car.x, car.y);
-    s.anchor.set(CAR_TEX.cx / CAR_TEX.w, CAR_TEX.cy / CAR_TEX.h);
-    s.position.set(p.x, p.y);
-    s.zIndex = depthOf(car.x, car.y, 5);
-    s.cullable = true;
-    world.objects.addChild(s);
-  }
+const LAMP_HEIGHT = 0.95;
+const LAMP_REACH = 0.3;
+
+/** A street lamp: a post, an arm reaching out along +Z, and a lamp head. */
+function lampGeometry(): BufferGeometry {
+  const post = new CylinderGeometry(0.022, 0.03, LAMP_HEIGHT, 6).translate(0, LAMP_HEIGHT / 2, 0);
+  const arm = new BoxGeometry(0.03, 0.03, LAMP_REACH).translate(0, LAMP_HEIGHT - 0.01, LAMP_REACH / 2);
+  const head = new BoxGeometry(0.09, 0.04, 0.12).translate(0, LAMP_HEIGHT - 0.02, LAMP_REACH);
+  const merged = mergeGeometries([post.toNonIndexed(), arm.toNonIndexed(), head.toNonIndexed()])!;
+  for (const g of [post, arm, head]) g.dispose();
+  return merged;
 }
 
 /** Pale streaks drifting down each river, so the water visibly runs. */
-function addStreaks(world: IsoWorld): void {
+function addStreaks(world: TownWorld, owned: { dispose(): void }[]): void {
   const { model } = world;
-  const tex = streakTexture();
   const wet = (p: Vec2) => isWaterTerrain(model.tiles.terrain[Math.floor(p.y) * model.width + Math.floor(p.x)]);
+  const items: Streak[] = [];
   for (const river of model.rivers) {
     const path = river.points.filter(wet);
     if (path.length < 2) continue;
@@ -636,16 +758,45 @@ function addStreaks(world: IsoWorld): void {
     for (let k = 1; k < path.length; k++) at.push(at[k - 1] + Math.hypot(path[k].x - path[k - 1].x, path[k].y - path[k - 1].y));
     const total = at[at.length - 1];
     const count = Math.floor(total / 1.6);
-    for (let k = 0; k < count; k++) {
-      const sprite = new Sprite(tex);
-      sprite.anchor.set(0.5);
-      sprite.blendMode = 'add';
-      sprite.alpha = 0.55;
-      sprite.cullable = true;
-      world.waterFx.addChild(sprite);
-      world.streaks.push({ sprite, path, at, s: (k / count) * total + (k % 3) * 0.37, speed: 1.1 + (k % 5) * 0.15 });
-    }
+    for (let k = 0; k < count; k++) items.push({ path, at, s: (k / count) * total + (k % 3) * 0.37, speed: 1.1 + (k % 5) * 0.15 });
   }
+  const geo = new PlaneGeometry(0.55, 0.05).rotateX(-Math.PI / 2);
+  const mat = new MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false, blending: AdditiveBlending });
+  const mesh = new InstancedMesh(geo, mat, Math.max(1, items.length));
+  mesh.count = items.length;
+  mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+  for (let i = 0; i < items.length; i++) mesh.setColorAt(i, new Color(0, 0, 0));
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 5;
+  world.root.add(mesh);
+  world.streaks = { mesh, items };
+  owned.push(geo, mat);
 }
 
-export { WATER_DROP };
+/** The plaza fountain on the well tile: a stone basin, a column and a bowl, with spray. */
+function addFountain(world: TownWorld, owned: { dispose(): void }[]): void {
+  const well = world.model.landmarks.find((l) => l.kind === 'well');
+  if (!well) return;
+  const at = { x: Math.floor(well.at.x) + 0.5, y: Math.floor(well.at.y) + 0.5 };
+  const stone = mergeGeometries([
+    new CylinderGeometry(0.44, 0.47, 0.2, 20).translate(0, 0.1, 0),
+    new CylinderGeometry(0.06, 0.08, 0.5, 8).translate(0, 0.25, 0),
+    new CylinderGeometry(0.17, 0.1, 0.06, 12).translate(0, 0.5, 0),
+  ])!.translate(at.x, 0, at.y);
+  const water = new CylinderGeometry(0.39, 0.39, 0.02, 20).translate(at.x, 0.19, at.y);
+  const stoneMat = new MeshLambertMaterial({ color: COLORS.stone });
+  const waterMat = new MeshLambertMaterial({ color: 0x7fbde3, emissive: 0x1d3f5c });
+  const basin = new Mesh(stone, stoneMat);
+  basin.castShadow = basin.receiveShadow = true;
+  world.root.add(basin, new Mesh(water, waterMat));
+
+  const dropGeo = new SphereGeometry(0.025, 6, 4);
+  const dropMat = new MeshBasicMaterial({ color: 0xd8f0ff, transparent: true, opacity: 0.85 });
+  const items: Droplet[] = Array.from({ length: 24 }, (_, k) => ({ t: k / 24, vx: Math.cos(k * 2.4) * 0.3, vy: Math.sin(k * 2.4) * 0.3 }));
+  const drops = new InstancedMesh(dropGeo, dropMat, items.length);
+  drops.instanceMatrix.setUsage(DynamicDrawUsage);
+  drops.frustumCulled = false;
+  world.root.add(drops);
+  world.fountain = { at, drops, items };
+  owned.push(stone, water, stoneMat, waterMat, dropGeo, dropMat);
+}

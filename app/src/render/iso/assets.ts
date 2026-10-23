@@ -1,199 +1,197 @@
-// Kenney isometric sprites (CC0, www.kenney.nl) served from public/kenney:
-// "Isometric Buildings" for the buildings (the free pack with the most building
-// types: ~50 ground floors, 24 upper floors, 50+ roofs that stack into houses,
-// shops and offices), terrain blocks from "Isometric Landscape", the fountain,
-// lamp posts, benches and round trees from "Isometric City", fences, tilled
-// soil, corn, hay and crates from "Isometric Miniature Farm", and conifers and
-// more trees from "Isometric Roads". Cars are drawn in textures.ts.
+// Kenney's CC0 3D kits (www.kenney.nl), served from public/models: City Kit
+// Suburban (houses, fences), City Kit Commercial (shops, offices, towers), Car
+// Kit, Mini Characters (rigged, with walk and idle clips) and Nature Kit (trees,
+// bushes, crops). Static models are flattened into one geometry per material so
+// the world can draw every copy of a model as a single InstancedMesh.
 
-import { Assets, Texture } from 'pixi.js';
-import type { BuildingKind, Facing } from '../../model/types';
+import { Box3, Material, Mesh, MeshStandardMaterial, SRGBColorSpace, Texture, TextureLoader, Vector3, type BufferGeometry, type Object3D } from 'three';
+import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import type { BuildingKind } from '../../model/types';
 
-const BASE = `${import.meta.env.BASE_URL}kenney/`;
-const pad = (n: number) => String(n).padStart(3, '0');
-const building = (n: number) => `${BASE}buildings/buildingTiles_${pad(n)}.png`;
+const BASE = `${import.meta.env.BASE_URL}models`;
 
-/**
- * Which side each ground floor's entrance (door, shopfront or awning) is on,
- * read off the sprites: S = lower-left face, E = lower-right face, W and N =
- * the two back faces (only the awning edge shows). Mirroring a sprite swaps
- * S with E and N with W.
- */
-export const ENTRANCE: Record<number, Facing> = {
-  2: 'S', 4: 'S', 10: 'S', 14: 'S', 18: 'S', 20: 'S', 22: 'S', 30: 'S', 34: 'S', 37: 'S', 101: 'S', 108: 'S', 109: 'S',
-  113: 'S', 115: 'S', 117: 'S', 123: 'S', 125: 'S',
-  1: 'E', 3: 'E', 9: 'E', 12: 'E', 17: 'E', 21: 'E', 26: 'E', 28: 'E', 29: 'E', 36: 'E', 41: 'E', 42: 'E', 93: 'E',
-  99: 'E', 100: 'E', 107: 'E', 116: 'E', 124: 'E',
-  11: 'W', 25: 'W', 27: 'W', 40: 'W',
-  19: 'N', 33: 'N', 35: 'N', 46: 'N',
-};
-
-/** Ground floors (with their paved base), upper floors and roofs, grouped by facade colour. */
-export const FAMILIES = {
-  red: { homes: [30, 36], shops: [18, 26, 34, 41, 99, 113, 25, 33, 40, 46], uppers: [45, 49, 52, 54] },
-  brown: { homes: [14, 21], shops: [14, 21], uppers: [32, 38, 43, 47] },
-  yellow: { homes: [22, 29], shops: [22, 29], uppers: [39, 44, 48, 51] },
-  beige: { homes: [37, 42, 117, 109], shops: [4, 12, 20, 28, 100, 108, 115, 101, 107, 11, 19, 27, 35], uppers: [50, 53, 55, 56] },
-  glass: { homes: [3, 116, 2, 10], shops: [1, 2, 9, 10, 17, 93, 123, 124, 125], uppers: [0, 7, 8, 15, 16, 23, 24, 31] },
-} as const;
-export type Family = keyof typeof FAMILIES;
-/** Ground floors with no entrance on any side (halls, workshops). */
-export const PLAIN_GROUND = [85, 92, 106, 114, 122];
-/**
- * Pitched roofs by ridge direction (measured from the sprites): 'y' roofs show
- * their gable end on the south (lower-left) face, so the ridge runs along the
- * world y axis; 'x' roofs show it on the east face. Mirroring swaps the two.
- */
-export const ROOF_RIDGE: Record<number, 'x' | 'y'> = {
-  58: 'y', 63: 'y', 70: 'y', 71: 'y', 72: 'y', 82: 'y', 83: 'y', 84: 'y', 96: 'y', 97: 'y', 98: 'y', 112: 'y',
-  61: 'x', 65: 'x', 68: 'x', 74: 'x', 76: 'x', 77: 'x', 80: 'x', 88: 'x', 90: 'x', 91: 'x', 104: 'x', 105: 'x',
-};
-export const GABLE_ROOFS = [58, 61, 63, 65, 68, 70, 72, 74, 80, 82];
-export const GREY_ROOFS = [88, 96, 97, 104, 105, 112];
-export const ARCHED_ROOFS = [71, 76, 77, 83, 84, 90, 91, 98];
-export const FLAT_ROOFS = [5, 6, 13, 79, 86, 87, 94, 95, 102, 103, 110, 111, 118, 119, 120, 121, 126, 127, 128];
-
-/** Which families suit each kind of building. */
-export const KIND_FAMILIES: Record<BuildingKind, Family[]> = {
-  house: ['red', 'brown', 'yellow', 'beige', 'red', 'beige'],
-  shop: ['red', 'beige', 'glass', 'red', 'beige'],
-  workshop: ['brown', 'beige'],
-  church: ['beige'],
-  hall: ['red', 'beige'],
-};
-
-/**
- * Low fence sprites by the tile edge they stand on (the farm pack names them
- * by viewing direction, so its _N fence is on our south edge, and so on).
- */
-const FENCE_FILE: Record<Facing, string> = { S: 'fenceLow_N', W: 'fenceLow_E', N: 'fenceLow_S', E: 'fenceLow_W' };
-/** Farm sprites are 256px tiles; this brings them to our 130px tiles. */
-export const FARM_SCALE = 130 / 256;
-/** Their tile diamond's top vertex sits here in the 256x512 sprite. */
-export const FARM_TOP = { x: 128, y: 374 };
-
-export interface IsoAssets {
-  building(n: number): Texture;
-  /**
-   * A ground-floor piece cut down to just its building box. Its paved base is
-   * left to the paving block drawn in the ground layer, so buildings sit flush
-   * with the tiles in front of them.
-   */
-  groundFloor(n: number): Texture;
-  paving: Texture;
-  grass: Texture;
-  sand: Texture;
-  dirt: Texture;
-  water: Texture;
-  fountain: Texture;
-  lamp: Texture;
-  tree: Texture;
-  benches: Texture[];
-  fence(side: Facing): Texture;
-  farmland: Texture;
-  crops: Texture[];
-  hay: Texture;
-  crates: Texture;
-  /** Conifers and other trees from the roads pack (small sprites; scale them up). */
-  foliage: Texture[];
+/** A static model baked down to world-space geometry, one part per material. */
+export interface Prefab {
+  name: string;
+  parts: { geometry: BufferGeometry; material: Material }[];
+  /** Bounding box of the whole model (model units; every kit stands on y = 0 and faces +Z). */
+  min: Vector3;
+  size: Vector3;
 }
 
-let loaded: Promise<IsoAssets> | null = null;
+const range = (letters: string, f: (c: string) => string) => [...letters].map(f);
 
-export function loadIsoAssets(): Promise<IsoAssets> {
-  loaded ??= (async () => {
-    const ids = new Set<number>([
-      ...Object.values(FAMILIES).flatMap((f) => [...f.homes, ...f.shops, ...f.uppers]),
-      ...PLAIN_GROUND,
-      ...GABLE_ROOFS,
-      ...GREY_ROOFS,
-      ...ARCHED_ROOFS,
-      ...FLAT_ROOFS,
-    ]);
-    const other = {
-      grass: `${BASE}landscape/landscapeTiles_067.png`,
-      sand: `${BASE}landscape/landscapeTiles_059.png`,
-      dirt: `${BASE}landscape/landscapeTiles_073.png`,
-      water: `${BASE}landscape/landscapeTiles_066.png`,
-      fountain: `${BASE}city/cityTiles_043.png`,
-      paving: `${BASE}city/cityTiles_072.png`,
-      lamp: `${BASE}details/cityDetails_005.png`,
-      tree: `${BASE}details/cityDetails_010.png`,
-      bench1: `${BASE}details/cityDetails_001.png`,
-      bench2: `${BASE}details/cityDetails_002.png`,
-      farmland: `${BASE}farm/dirtFarmland_N.png`,
-      cornYoung: `${BASE}farm/cornYoung_N.png`,
-      corn: `${BASE}farm/corn_N.png`,
-      hay: `${BASE}farm/hayBales_N.png`,
-      crates: `${BASE}farm/sacksCrate_N.png`,
-    };
-    const fenceUrl = (side: Facing) => `${BASE}farm/${FENCE_FILE[side]}.png`;
-    const foliageUrls = ['coniferTall', 'coniferShort', 'treeAltTall', 'treeTall', 'treeShort', 'treeAltShort'].map((n) => `${BASE}foliage/${n}.png`);
-    const urls = [
-      ...[...ids].map(building),
-      ...Object.values(other),
-      ...(['N', 'E', 'S', 'W'] as Facing[]).map(fenceUrl),
-      ...foliageUrls,
-    ];
-    const tex = (await Assets.load(urls)) as Record<string, Texture>;
-    for (const t of Object.values(tex)) t.source.scaleMode = 'linear';
-    const grounds = new Map<number, Texture>();
-    const groundFloor = (n: number) => {
-      let t = grounds.get(n);
-      if (!t) {
-        t = cutBase(tex[building(n)] ?? Texture.EMPTY);
-        grounds.set(n, t);
+export const HOUSES = range('abcdefghijklmnopqrstu', (c) => `suburban/building-type-${c}`);
+export const SHOPS = range('abcdefghijklmn', (c) => `commercial/building-${c}`);
+export const TOWERS = range('abcde', (c) => `commercial/building-skyscraper-${c}`);
+export const CARS = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi', 'delivery', 'truck', 'police'].map((c) => `cars/${c}`);
+/** How often each car model turns up (police and trucks are rare). */
+export const CAR_WEIGHTS = [5, 3, 4, 2, 1, 1, 1, 0.4];
+export const CHARACTERS = [...range('abcdef', (c) => `character-female-${c}`), ...range('abcdef', (c) => `character-male-${c}`)];
+export const TREES = ['tree_default', 'tree_oak', 'tree_detailed', 'tree_fat', 'tree_pineRoundA', 'tree_pineRoundC', 'tree_cone', 'tree_simple', 'tree_small'].map(
+  (n) => `nature/${n}`,
+);
+export const BUSHES = ['plant_bush', 'plant_bushLarge', 'plant_bushSmall', 'grass'].map((n) => `nature/${n}`);
+export const FLOWERS = ['flower_redA', 'flower_purpleA', 'flower_yellowA'].map((n) => `nature/${n}`);
+export const CROPS = ['crop_carrot', 'crop_pumpkin', 'crop_turnip', 'crops_cornStageC', 'crops_leafsStageB', 'crops_wheatStageB'].map((n) => `nature/${n}`);
+export const PROPS = ['nature/rock_smallA', 'nature/log_stack', 'nature/pot_large', 'suburban/planter', 'suburban/fence', 'commercial/detail-awning'];
+
+/** Which model families suit each kind of building. */
+export const KIND_MODELS: Record<BuildingKind | 'office', readonly string[]> = {
+  house: HOUSES,
+  workshop: SHOPS.slice(0, 6),
+  shop: SHOPS,
+  office: [...SHOPS.slice(6), ...TOWERS],
+  hall: SHOPS.slice(8),
+  church: SHOPS.slice(10),
+};
+
+/** Alternative colourmaps each kit ships (roof and facade colours). */
+const VARIATIONS: Record<string, string[]> = {
+  suburban: ['variation-a', 'variation-b', 'variation-c'],
+  commercial: ['variation-a', 'variation-b'],
+};
+
+export interface TownAssets {
+  prefab(name: string): Prefab;
+  /** The same model in one of its kit's colour variations (0 = the default colourmap). */
+  variant(name: string, variation: number): Prefab;
+  variationCount(name: string): number;
+  /** A rigged character (scene and clips) to clone per walker. */
+  character(name: string): GLTF;
+}
+
+export async function loadTownAssets(): Promise<TownAssets> {
+  const loader = new GLTFLoader();
+  const statics = [...HOUSES, ...SHOPS, ...TOWERS, ...CARS, ...TREES, ...BUSHES, ...FLOWERS, ...CROPS, ...PROPS];
+  const [prefabs, characters, variations] = await Promise.all([
+    Promise.all(statics.map(async (name) => flatten(name, (await loader.loadAsync(`${BASE}/${name}.glb`)).scene))),
+    Promise.all(CHARACTERS.map((name) => loader.loadAsync(`${BASE}/characters/${name}.glb`))),
+    loadVariations(),
+  ]);
+  const byName = new Map(prefabs.map((p) => [p.name, p]));
+  const charByName = new Map(CHARACTERS.map((n, i) => [n, characters[i]]));
+  const variants = new Map<string, Prefab>();
+  const recoloured = new Map<string, Material>();
+
+  const prefab = (name: string): Prefab => {
+    const p = byName.get(name);
+    if (!p) throw new Error(`unknown model ${name}`);
+    return p;
+  };
+  return {
+    prefab,
+    variationCount: (name) => 1 + (VARIATIONS[name.split('/')[0]]?.length ?? 0),
+    variant(name, variation) {
+      const base = prefab(name);
+      const maps = variations.get(name.split('/')[0]);
+      if (!variation || !maps?.[variation - 1]) return base;
+      const key = `${name}#${variation}`;
+      let p = variants.get(key);
+      if (!p) {
+        p = {
+          ...base,
+          parts: base.parts.map((part) => {
+            const mkey = `${part.material.uuid}#${variation}`;
+            let m = recoloured.get(mkey);
+            if (!m) {
+              m = recolour(part.material, maps[variation - 1]);
+              recoloured.set(mkey, m);
+            }
+            return { geometry: part.geometry, material: m };
+          }),
+        };
+        variants.set(key, p);
       }
-      return t;
-    };
-    return {
-      building: (n: number) => tex[building(n)] ?? Texture.EMPTY,
-      groundFloor,
-      paving: tex[other.paving],
-      grass: tex[other.grass],
-      sand: tex[other.sand],
-      dirt: tex[other.dirt],
-      water: tex[other.water],
-      fountain: tex[other.fountain],
-      lamp: tex[other.lamp],
-      tree: tex[other.tree],
-      benches: [tex[other.bench1], tex[other.bench2]],
-      fence: (side: Facing) => tex[fenceUrl(side)],
-      farmland: tex[other.farmland],
-      crops: [tex[other.cornYoung], tex[other.corn]],
-      hay: tex[other.hay],
-      crates: tex[other.crates],
-      foliage: foliageUrls.map((u) => tex[u]),
-    };
-  })();
-  return loaded;
+      return p;
+    },
+    character(name) {
+      const c = charByName.get(name);
+      if (!c) throw new Error(`unknown character ${name}`);
+      return c;
+    },
+  };
 }
 
-/**
- * Keep only a ground floor's building box: erase its paved base (the ground
- * layer draws paving instead) by clearing everything outside the box's
- * columns and below its bottom edges. The box is 99px wide, centred, with its
- * bottom corners 67.5px (sides) and 42.75px (front) above the sprite's bottom.
- */
-function cutBase(tex: Texture): Texture {
-  const src = tex.source.resource as CanvasImageSource | undefined;
-  if (!src || !tex.width) return tex;
-  const w = tex.width;
-  const h = tex.height;
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d')!;
-  const left = w / 2 - 49.5;
-  const right = w / 2 + 49.5;
-  ctx.beginPath();
-  ctx.moveTo(left, 0);
-  ctx.lineTo(right, 0);
-  ctx.lineTo(right, h - 67.5);
-  ctx.lineTo(w / 2, h - 42.75);
-  ctx.lineTo(left, h - 67.5);
-  ctx.closePath();
-  ctx.clip();
-  ctx.drawImage(src, 0, 0);
-  return Texture.from(canvas);
+async function loadVariations(): Promise<Map<string, Texture[]>> {
+  const loader = new TextureLoader();
+  const out = new Map<string, Texture[]>();
+  await Promise.all(
+    Object.entries(VARIATIONS).map(async ([kit, files]) => {
+      out.set(kit, await Promise.all(files.map((f) => loader.loadAsync(`${BASE}/${kit}/Textures/${f}.png`))));
+    }),
+  );
+  return out;
+}
+
+/** A copy of a kit material using another colourmap, sampled the same way. */
+function recolour(material: Material, map: Texture): Material {
+  const m = (material as MeshStandardMaterial).clone();
+  const old = m.map;
+  const tex = map.clone();
+  tex.flipY = false; // glTF texture convention
+  tex.colorSpace = SRGBColorSpace;
+  if (old) {
+    tex.magFilter = old.magFilter;
+    tex.minFilter = old.minFilter;
+    tex.wrapS = old.wrapS;
+    tex.wrapT = old.wrapT;
+  }
+  tex.needsUpdate = true;
+  m.map = tex;
+  return m;
+}
+
+/** Bake a loaded scene's meshes into world space, merged per material. */
+export function flatten(name: string, scene: Object3D): Prefab {
+  scene.updateMatrixWorld(true);
+  const groups = new Map<Material, BufferGeometry[]>();
+  scene.traverse((o) => {
+    const mesh = o as Mesh;
+    if (!mesh.isMesh) return;
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    // The nature kit's materials say fully metallic, which renders near-black without an environment map: keep everything matte.
+    for (const m of materials) if ((m as MeshStandardMaterial).isMeshStandardMaterial) (m as MeshStandardMaterial).metalness = 0;
+    const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+    if (materials.length === 1) {
+      push(groups, materials[0], g);
+      return;
+    }
+    // Multi-material meshes: split by their draw groups.
+    for (const grp of g.groups) {
+      const part = g.clone();
+      part.clearGroups();
+      part.setDrawRange(0, Infinity);
+      if (part.index) {
+        const idx = part.index.array.slice(grp.start, grp.start + grp.count);
+        part.setIndex(Array.from(idx));
+      }
+      push(groups, materials[grp.materialIndex ?? 0], part);
+    }
+  });
+  const parts = [...groups].flatMap(([material, geoms]) => {
+    const merged = geoms.length > 1 ? mergeGeometries(geoms.map(normalise)) : geoms[0];
+    // Meshes that can't merge (mismatched attributes) stay separate parts.
+    return (merged ? [merged] : geoms).map((geometry) => ({ geometry, material }));
+  });
+  const box = new Box3();
+  for (const p of parts) {
+    p.geometry.computeBoundingBox();
+    box.union(p.geometry.boundingBox!);
+  }
+  return { name, parts, min: box.min.clone(), size: box.getSize(new Vector3()) };
+}
+
+function push(groups: Map<Material, BufferGeometry[]>, m: Material, g: BufferGeometry): void {
+  const list = groups.get(m);
+  if (list) list.push(g);
+  else groups.set(m, [g]);
+}
+
+/** Make geometries mergeable: indexed, with only the attributes every kit mesh has. */
+function normalise(g: BufferGeometry): BufferGeometry {
+  const out = g.index ? g : g.setIndex([...Array(g.attributes.position.count).keys()]);
+  for (const key of Object.keys(out.attributes)) if (!['position', 'normal', 'uv'].includes(key)) out.deleteAttribute(key);
+  return out;
 }

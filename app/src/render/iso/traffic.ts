@@ -1,42 +1,46 @@
 // Moving traffic on every through road: cars keep to the right-hand lane,
 // follow the road graph through junctions (U-turning at the map edge) and slow
 // down behind the car ahead. Dead-end side streets keep their parked cars.
+// Pure state; the view draws each car's model at its pose.
 
-import { Sprite } from 'pixi.js';
 import { dist } from '../../core/geometry';
 import type { Rng } from '../../core/rng';
 import type { Vec2 } from '../../model/types';
-import { depthOf, toScreen } from './coords';
 import { deadEnds, type IsoLayout, type RoadStroke } from './layout';
-import { CAR_COLOURS, CAR_TEX, carTexture } from './textures';
 
 const CRUISE = 2.4; // tiles per second
-const GAP = 1.3; // tiles kept behind the car ahead
+const GAP = 1.6; // tiles kept behind the car ahead
 const CARS_PER_TILE = 1 / 12;
 const MAX_CARS = 70;
 
-interface Car {
-  sprite: Sprite;
-  colour: string;
+export interface CarPose {
+  /** Index into the car model list. */
+  model: number;
+  x: number;
+  y: number;
+  /** Direction of travel, radians in world space (atan2(dy, dx)). */
+  heading: number;
+}
+
+interface Car extends CarPose {
   road: number;
   s: number;
   dir: 1 | -1;
   speed: number;
-  heading: number;
 }
 
 export class Traffic {
-  private readonly cars: Car[] = [];
+  readonly cars: Car[] = [];
   private readonly roads: RoadStroke[];
   private readonly lengths: number[];
   private readonly at: number[][];
-  /** Main roads meeting at each graph node. */
+  /** Through roads meeting at each graph node. */
   private readonly byNode = new Map<number, number[]>();
 
   constructor(
     layout: IsoLayout,
-    add: (s: Sprite) => void,
     private readonly rng: Rng,
+    pickModel: (rng: Rng) => number,
   ) {
     this.roads = layout.roads;
     this.at = this.roads.map((r) => {
@@ -57,18 +61,15 @@ export class Traffic {
     const count = Math.min(MAX_CARS, Math.floor(total * CARS_PER_TILE));
     for (let k = 0; k < count && mains.length; k++) {
       const road = rng.pick(mains);
-      const colour = rng.pick(CAR_COLOURS);
-      const sprite = new Sprite(carTexture(colour, 0));
-      sprite.anchor.set(CAR_TEX.cx / CAR_TEX.w, CAR_TEX.cy / CAR_TEX.h);
-      add(sprite);
-      this.cars.push({ sprite, colour, road, s: rng.range(0, this.lengths[road]), dir: rng.chance(0.5) ? 1 : -1, speed: CRUISE, heading: 0 });
+      const car: Car = { model: pickModel(rng), road, s: rng.range(0, this.lengths[road]), dir: rng.chance(0.5) ? 1 : -1, speed: CRUISE, heading: 0, x: 0, y: 0 };
+      this.cars.push(car);
     }
     this.update(0);
   }
 
-  /** Where each car is on screen (for dev tooling). */
+  /** Where each car is (world tiles), for dev tooling. */
   positions(): { x: number; y: number; heading: number }[] {
-    return this.cars.map((c) => ({ x: c.sprite.x, y: c.sprite.y, heading: c.heading }));
+    return this.cars.map((c) => ({ x: c.x, y: c.y, heading: c.heading }));
   }
 
   update(dt: number): void {
@@ -127,12 +128,8 @@ export class Traffic {
     }
     // Keep right: the lane centre is a quarter of the road's width to the right of travel.
     const lane = r.width / 4;
-    const x = p.x - ty * lane;
-    const y = p.y + tx * lane;
-    const screen = toScreen(x, y);
-    car.sprite.position.set(screen.x, screen.y);
-    car.sprite.texture = carTexture(car.colour, car.heading);
-    car.sprite.zIndex = depthOf(x, y, 6);
+    car.x = p.x - ty * lane;
+    car.y = p.y + tx * lane;
   }
 }
 
