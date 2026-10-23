@@ -1,0 +1,22 @@
+{
+  "name": "porchlight",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^7.3.7",
+    "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "lil-gui": "^0.21.0",
+    "pixi.js": "^8.22.0",
+    "simplex-noise": "^4.0.3"
+  }
+}

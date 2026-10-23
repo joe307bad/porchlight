@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Porchlight</title>
+  </head>
+  <body>
+    <canvas id="map"></canvas>
+    <div id="iso" hidden></div>
+    <div id="topbar">
+      <h1>Porchlight</h1>
+      <button id="regenerate" type="button">Regenerate</button>
+      <label id="seed-label" for="seed">seed</label>
+      <input id="seed" type="text" spellcheck="false" autocomplete="off" title="Edit and press Enter to load this seed" />
+      <span class="divider"></span>
+      <button id="explore" class="primary" type="button" title="Spawn as a random character and walk the town">Explore</button>
+      <span class="map-only">
+        <button id="export-json" class="secondary" type="button" title="Download the TownModel as JSON">JSON</button>
+        <button id="export-png" class="secondary" type="button" title="Download the blueprint as a PNG">PNG</button>
+      </span>
+      <span class="iso-only">
+        <button id="daynight" class="secondary" type="button" title="Toggle day and night (N)">Night</button>
+        <button id="autowalk" class="secondary" type="button" title="Wander the sidewalks on your own; arrow keys then turn round or cross the street (T)">Auto walk</button>
+        <button id="walkmode" class="secondary" type="button" title="Walk anywhere, or stay on roads and sidewalks (R)">Walk: anywhere</button>
+        <button id="newchar" class="secondary" type="button" title="Become someone else (C)">New character</button>
+        <button id="back" class="secondary" type="button" title="Back to the blueprint (Esc)">Back to map</button>
+      </span>
+    </div>
+    <div id="iso-help" class="iso-only">WASD / arrow keys to walk · T auto walk (then arrows: back = turn round, towards road = cross) · click the minimap to jump · scroll to zoom · N day/night · R streets only · C new character · Esc map</div>
+    <div id="footer">
+      <div id="hover"></div>
+      <div id="status"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

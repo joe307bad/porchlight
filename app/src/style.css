@@ -1,0 +1,208 @@
+:root {
+  --bar-bg: rgba(28, 27, 24, 0.92);
+  --bar-fg: #efe6cf;
+  --accent: #c2412d;
+  --muted: #a99f88;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #2b2a27;
+  color: var(--bar-fg);
+}
+
+#map {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+#map.dragging {
+  cursor: grabbing;
+}
+
+#topbar {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bar-bg);
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+#topbar h1 {
+  margin: 0 6px 0 2px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+#regenerate {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+#regenerate:hover {
+  filter: brightness(1.1);
+}
+
+.secondary {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 9px;
+  border: 1px solid #555;
+  border-radius: 5px;
+  background: #1d1c1a;
+  color: var(--bar-fg);
+  cursor: pointer;
+}
+
+.secondary:hover {
+  border-color: #888;
+}
+
+.divider {
+  width: 1px;
+  align-self: stretch;
+  background: #444;
+  margin: 0 2px;
+}
+
+#seed-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+#seed {
+  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 11ch;
+  padding: 5px 7px;
+  border: 1px solid #555;
+  border-radius: 5px;
+  background: #1d1c1a;
+  color: var(--bar-fg);
+}
+
+#footer {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  pointer-events: none;
+}
+
+#footer > div:not(:empty) {
+  padding: 4px 8px;
+  background: var(--bar-bg);
+  border-radius: 5px;
+  width: fit-content;
+}
+
+#status {
+  color: var(--muted);
+}
+
+#status.error {
+  color: #ff8a73;
+}
+
+#iso {
+  position: fixed;
+  inset: 0;
+}
+
+#iso canvas {
+  display: block;
+}
+
+.primary {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: #3f7d4f;
+  color: #fff;
+  cursor: pointer;
+}
+
+.primary:hover {
+  filter: brightness(1.1);
+}
+
+.primary:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+#topbar > span {
+  display: flex;
+  gap: 8px;
+}
+
+body:not(.exploring) .iso-only,
+body.exploring .map-only {
+  display: none !important;
+}
+
+body.exploring #map,
+body.exploring #footer,
+body.exploring .lil-gui.lil-root {
+  display: none !important;
+}
+
+#iso-help {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: var(--bar-bg);
+  font-size: 12px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.minimap {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  border: 2px solid rgba(28, 27, 24, 0.85);
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  cursor: crosshair;
+  image-rendering: pixelated;
+}
+
+.secondary.active {
+  background: #3f7d4f;
+  border-color: #3f7d4f;
+}
