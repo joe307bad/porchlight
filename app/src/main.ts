@@ -29,6 +29,7 @@ const statusEl = document.querySelector<HTMLDivElement>('#status')!;
 const turnLeftButton = document.querySelector<HTMLButtonElement>('#turnleft')!;
 const turnRightButton = document.querySelector<HTMLButtonElement>('#turnright')!;
 const lookAheadButton = document.querySelector<HTMLButtonElement>('#lookahead')!;
+const closeUpButton = document.querySelector<HTMLButtonElement>('#closeup')!;
 
 const renderer = new BlueprintRenderer(canvas);
 const initial = readUrlState();
@@ -159,6 +160,14 @@ function toggleAutoWalk(): void {
   syncAutoWalkButton();
 }
 
+function toggleCloseUp(): void {
+  if (!iso) return;
+  iso.setCameraMode(iso.cameraMode === 'close' ? 'iso' : 'close');
+  const close = iso.cameraMode === 'close';
+  closeUpButton.textContent = close ? 'Overview' : 'Close up';
+  closeUpButton.classList.toggle('active', close);
+}
+
 function toggleWalkMode(): void {
   if (!iso) return;
   iso.setStreetsOnly(!iso.isStreetsOnly);
@@ -203,11 +212,13 @@ newCharButton.addEventListener('click', () => void spawnCharacter());
 turnLeftButton.addEventListener('click', () => iso?.rotate(-1));
 turnRightButton.addEventListener('click', () => iso?.rotate(1));
 lookAheadButton.addEventListener('click', () => iso?.lookAlongWalk());
+closeUpButton.addEventListener('click', toggleCloseUp);
 window.addEventListener('keydown', (e) => {
   if (!exploring || e.target instanceof HTMLInputElement) return;
   if (e.code === 'KeyN') toggleNight();
   if (e.code === 'KeyR') toggleWalkMode();
   if (e.code === 'KeyT') toggleAutoWalk();
+  if (e.code === 'KeyV' && !e.repeat) toggleCloseUp();
   if (e.code === 'KeyC') void spawnCharacter();
   if (e.code === 'Escape') leaveExplore();
 });

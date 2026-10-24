@@ -27,6 +27,13 @@ before, but the town is real geometry, so the camera can turn.
   the heading is clearly past halfway to it (`stopBehind`), so curves and quick
   road crossings don't swing it about. `Q` / `E` / `F` still work; the camera
   goes back to following five seconds later.
+- **Close-up (`V`, or the **Close up** button):** a perspective
+  third-person camera just behind and above the player, turning with them
+  (`chaseYaw`). `W` / `S` walk forward and back, `A` / `D` turn, `Q` / `E`
+  swing the camera 30° round them (`F` puts it back behind), scroll moves it
+  nearer or further. If a building is between the player and the camera, the
+  camera comes in closer rather than sit inside it. Fog fades the town into
+  the sky. Auto walk works here too, with the camera following from behind.
 - **Seeing through buildings:** when a building stands between the player
   and the camera, their silhouette is drawn through it in orange.
 - **X-ray:** the player carries a copy of their skinned meshes in flat orange

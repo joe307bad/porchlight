@@ -10,15 +10,22 @@
 // them to stay behind them. Whenever a building hides them, their silhouette
 // shows through in orange. Day and night blend smoothly; at night the street lamps (a few of
 // them faulty) light up.
+//
+// V (handled with the other mode keys in main.ts) switches to a close-up third-person camera: a perspective view just
+// behind and above the player that turns with them. There, W / S walk
+// forward and back, A / D turn, Q / E swing the camera round them in 30°
+// steps (F puts it back behind), and scroll moves it nearer or further.
 
 import {
   Color,
   DirectionalLight,
+  Fog,
   HemisphereLight,
   Mesh,
   MeshBasicMaterial,
   OrthographicCamera,
   PCFSoftShadowMap,
+  PerspectiveCamera,
   Scene,
   SRGBColorSpace,
   Vector3,
@@ -40,7 +47,9 @@ import {
   CAMERA_STOPS,
   DEFAULT_STOP,
   cameraOffset,
+  chaseYaw,
   nearestStop,
+  rayBoxDistance,
   rayHitsBox,
   screenToWorld,
   shortestTurn,
@@ -70,6 +79,23 @@ const HEADING_SMOOTHING = 1.2;
 /** After a manual turn while auto-walking, leave the camera where it was put for this long. */
 const MANUAL_HOLD = 5;
 
+/** Close-up camera: how far behind the player (tiles), how far it may zoom, and how it looks down. */
+const CHASE_DISTANCE = 3;
+const CHASE_MIN = 1.4;
+const CHASE_MAX = 8;
+const CHASE_PITCH = 0.3;
+const CHASE_FOV = 50;
+/** Where on the player the close-up camera looks (tiles up), and how far ahead of them. */
+const CHASE_LOOK_HEIGHT = 0.55;
+const CHASE_LOOK_AHEAD = 0.8;
+/** Turning speed for A / D in close-up (radians per second). */
+const TURN_RATE = 2.6;
+/** Close-up fog, so the view fades into the sky instead of ending at the map's edge. */
+const FOG_NEAR = 22;
+const FOG_FAR = 60;
+
+export type CameraMode = 'iso' | 'close';
+
 const KEYS: Record<string, [number, number]> = {
   KeyW: [0, -1], ArrowUp: [0, -1],
   KeyS: [0, 1], ArrowDown: [0, 1],
@@ -87,6 +113,15 @@ export class IsoView {
   private fleet: Fleet | null = null;
   private readonly scene = new Scene();
   private readonly camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, CAMERA_DISTANCE * 3);
+  private readonly chase = new PerspectiveCamera(CHASE_FOV, 1, 0.05, 300);
+  private readonly fog = new Fog(DAY_SKY, FOG_NEAR, FOG_FAR);
+  private mode: CameraMode = 'iso';
+  /** Close-up heading now, the swing Q / E add on top of following, and the distance behind. */
+  private chaseYawNow = 0;
+  private chaseSwing = 0;
+  private chaseDistance = CHASE_DISTANCE;
+  private shownChaseDistance = CHASE_DISTANCE;
+  private readonly chaseLook = new Vector3();
   private readonly hemi = new HemisphereLight(0xe2efff, 0x7d8a5a, 1.2);
   private readonly sun = new DirectionalLight(0xfff1d8, 2.6);
   /** Camera heading now (eases toward `targetYaw`, unwrapped so turns go the short way). */
@@ -192,6 +227,7 @@ export class IsoView {
     const world = buildWorld(model, this.assets);
     this.world = world;
     this.scene.add(world.root);
+    world.lampFx.halos.material.sizeAttenuation = this.mode === 'close';
     this.snap = true;
     this.open = this.walkMask();
     this.minimap.setTown(model);
@@ -314,16 +350,46 @@ export class IsoView {
     return this.streetsOnly;
   }
 
-  /** Turn the camera one stop round the player (+1 or -1). */
+  /** Turn the camera one stop round the player (+1 or -1); in close-up, swing it 30° round them. */
   rotate(step: number): void {
+    if (this.mode === 'close') {
+      this.chaseSwing += (step * Math.PI) / 6;
+      return;
+    }
     this.setStop(this.cameraStop + step);
     this.manualHold = MANUAL_HOLD;
+  }
+
+  /** Switch between the iso overview and the close-up third-person camera. */
+  setCameraMode(mode: CameraMode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    this.held.clear();
+    this.chaseSwing = 0;
+    if (this.player) this.chaseYawNow = chaseYaw(this.player.heading);
+    this.shownChaseDistance = this.chaseDistance;
+    this.scene.fog = mode === 'close' ? this.fog : null;
+    // Lamp halos are sized on screen in iso, and in the world in perspective.
+    const halos = this.world?.lampFx.halos.material;
+    if (halos) {
+      halos.sizeAttenuation = mode === 'close';
+      halos.needsUpdate = true;
+    }
+    this.snap = true;
+  }
+
+  get cameraMode(): CameraMode {
+    return this.mode;
   }
 
   /** Turn the camera to look the way the player is walking (down the street ahead). */
   lookAlongWalk(): void {
     const p = this.player;
     if (!p) return;
+    if (this.mode === 'close') {
+      this.chaseSwing = 0;
+      return;
+    }
     const dir = p.autoHeading() ?? { x: Math.sin(p.heading), y: Math.cos(p.heading) };
     if (Math.hypot(dir.x, dir.y) < 1e-6) return;
     this.setStop(stopLookingAlong(dir));
@@ -360,6 +426,7 @@ export class IsoView {
       goal: this.player?.autoGoal() ?? null,
       inBuilding: !!(world && tile >= 0 && world.layout.use[tile] === Use.HOUSE),
       outlined: this.hidden,
+      cameraMode: this.mode,
       cameraStop: this.cameraStop,
       cameraStops: CAMERA_STOPS,
       cars: this.traffic?.positions() ?? [],
@@ -408,7 +475,7 @@ export class IsoView {
       e.preventDefault();
       if (this.player?.isAuto) {
         // Auto-walking: a key press is a one-off request (turn round / cross here).
-        const d = screenToWorld({ x: KEYS[e.code][0], y: KEYS[e.code][1] }, this.yaw);
+        const d = screenToWorld({ x: KEYS[e.code][0], y: KEYS[e.code][1] }, this.viewYaw);
         if (!e.repeat && d) this.player.command(d);
         return;
       }
@@ -418,7 +485,9 @@ export class IsoView {
     const blur = () => this.held.clear();
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
-      this.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.zoom * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))));
+      const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015));
+      if (this.mode === 'close') this.chaseDistance = Math.min(CHASE_MAX, Math.max(CHASE_MIN, this.chaseDistance / k));
+      else this.zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, this.zoom * k));
     };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
@@ -442,7 +511,16 @@ export class IsoView {
       input.x += KEYS[code][0];
       input.y += KEYS[code][1];
     }
-    this.player?.update(screenToWorld(input, this.yaw), dt, world.model, this.open);
+    const p = this.player;
+    if (p && this.mode === 'close' && !p.isAuto) {
+      // Close-up: forward and back along the way they face, left and right turn.
+      const heading = p.heading - input.x * TURN_RATE * dt;
+      const ahead = { x: Math.sin(heading), y: Math.cos(heading) };
+      p.update(input.y ? { x: -ahead.x * Math.sign(input.y), y: -ahead.y * Math.sign(input.y) } : null, dt, world.model, this.open);
+      p.heading = heading; // walking backwards keeps them facing forwards
+    } else {
+      p?.update(screenToWorld(input, this.yaw), dt, world.model, this.open);
+    }
     for (const p of this.people) p.update(dt);
     this.traffic?.update(dt);
     this.dusk += ((this.night ? 1 : 0) - this.dusk) * Math.min(1, dt * 2.5);
@@ -505,6 +583,7 @@ export class IsoView {
     this.shownZoom += (this.zoom - this.shownZoom) * (this.snap ? 1 : Math.min(1, dt * 10));
     const target = p ? new Vector3(p.x, 0.3, p.y) : new Vector3(world.model.spawn.x, 0.3, world.model.spawn.y);
     this.focus.lerp(target, this.snap ? 1 : Math.min(1, dt * 8));
+    if (this.mode === 'close' && p) this.placeChase(world, p, dt);
     this.snap = false;
     this.placeCamera();
     this.placeSun();
@@ -517,7 +596,40 @@ export class IsoView {
       this.routeTimer = 0.2;
     }
     this.minimap.draw(p ? { x: p.x, y: p.y } : null, this.viewQuad(), this.goal, this.route);
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.view);
+  }
+
+  /** The camera being drawn through. */
+  private get view(): OrthographicCamera | PerspectiveCamera {
+    return this.mode === 'close' ? this.chase : this.camera;
+  }
+
+  /** The heading of the camera being drawn through (for screen-relative keys). */
+  private get viewYaw(): number {
+    return this.mode === 'close' ? this.chaseYawNow : this.yaw;
+  }
+
+  /**
+   * The close-up camera: behind the player (plus any Q / E swing), easing
+   * round as they turn, looking at them from a little above and just ahead.
+   * If a building is in the way it comes in closer rather than sit inside it.
+   */
+  private placeChase(world: TownWorld, p: Player, dt: number): void {
+    const want = chaseYaw(p.heading) + this.chaseSwing;
+    this.chaseYawNow += shortestTurn(this.chaseYawNow, want) * (this.snap ? 1 : Math.min(1, dt * 3.5));
+    this.shownChaseDistance += (this.chaseDistance - this.shownChaseDistance) * (this.snap ? 1 : Math.min(1, dt * 8));
+    const o = cameraOffset(this.chaseYawNow, CHASE_PITCH);
+    let dist = this.shownChaseDistance;
+    for (const b of world.boxes) dist = Math.min(dist, Math.max(0.5, rayBoxDistance(p, CHASE_LOOK_HEIGHT, o, b) - 0.2));
+    const ahead = { x: -o.x / Math.hypot(o.x, o.y), y: -o.y / Math.hypot(o.x, o.y) };
+    const look = new Vector3(p.x + ahead.x * CHASE_LOOK_AHEAD, CHASE_LOOK_HEIGHT, p.y + ahead.y * CHASE_LOOK_AHEAD);
+    if (this.snap) this.chaseLook.copy(look);
+    else this.chaseLook.lerp(look, Math.min(1, dt * 10));
+    const { clientWidth: w, clientHeight: h } = this.host;
+    this.chase.aspect = Math.max(1, w) / Math.max(1, h);
+    this.chase.updateProjectionMatrix();
+    this.chase.position.set(p.x + o.x * dist, CHASE_LOOK_HEIGHT + o.up * dist, p.y + o.y * dist);
+    this.chase.lookAt(this.chaseLook);
   }
 
   private placeCamera(): void {
@@ -536,7 +648,7 @@ export class IsoView {
 
   /** Keep the sun's shadow map centred on what's in view, big enough to cover it. */
   private placeSun(): void {
-    const half = Math.min(90, Math.max(20, (VIEW_HEIGHT / this.shownZoom) * 1.25));
+    const half = this.mode === 'close' ? 30 : Math.min(90, Math.max(20, (VIEW_HEIGHT / this.shownZoom) * 1.25));
     const cam = this.sun.shadow.camera;
     if (cam.right !== half) {
       cam.left = -half;
@@ -553,19 +665,23 @@ export class IsoView {
     this.sun.position.set(fx + SUN.x * 100, SUN.y * 100, fz + SUN.z * 100);
   }
 
-  /** What the camera sees, as a quad on the ground (for the minimap). */
+  /** What the camera sees, as a quad on the ground (for the minimap); rays above the horizon stop at the fog. */
   private viewQuad(): Vec2[] {
-    const dir = new Vector3();
-    this.camera.getWorldDirection(dir);
+    const cam = this.view;
     return [
       [-1, 1],
       [1, 1],
       [1, -1],
       [-1, -1],
     ].map(([nx, ny]) => {
-      const p = new Vector3(nx, ny, -1).unproject(this.camera);
-      const t = -p.y / (dir.y || -1e-6);
-      return { x: p.x + dir.x * t, y: p.z + dir.z * t };
+      const near = new Vector3(nx, ny, -1).unproject(cam);
+      const dir = new Vector3(nx, ny, 1).unproject(cam).sub(near).normalize();
+      let t = dir.y < -1e-4 ? -near.y / dir.y : Infinity;
+      if (this.mode === 'close') {
+        const flat = Math.hypot(dir.x, dir.z) || 1;
+        t = Math.min(t, FOG_FAR / flat);
+      }
+      return { x: near.x + dir.x * t, y: near.z + dir.z * t };
     });
   }
 
@@ -630,6 +746,7 @@ export class IsoView {
   private animateDayNight(world: TownWorld): void {
     const d = this.dusk;
     (this.scene.background as Color).setHex(DAY_SKY).lerp(new Color(NIGHT_SKY), d);
+    this.fog.color.copy(this.scene.background as Color);
     this.hemi.intensity = 1.2 - d * 0.95;
     this.hemi.color.setHex(0xe2efff).lerp(new Color(0x6f7fb0), d);
     this.hemi.groundColor.setHex(0x7d8a5a).lerp(new Color(0x232a3a), d);
@@ -659,9 +776,10 @@ export class IsoView {
     if (bulbs.instanceColor) bulbs.instanceColor.needsUpdate = true;
     if (pools.instanceColor) pools.instanceColor.needsUpdate = true;
     haloColors.needsUpdate = true;
-    // Halos are screen-space points: keep them about a tile across at any zoom.
+    // Keep halos about a tile across: in iso they're sized in screen pixels, so
+    // follow the zoom; in perspective three scales them by height / 2 / depth.
     const pxPerTile = this.host.clientHeight / (VIEW_HEIGHT / this.shownZoom);
-    halos.material.size = pxPerTile * 0.9;
+    halos.material.size = this.mode === 'close' ? 0.9 / Math.tan(((CHASE_FOV / 2) * Math.PI) / 180) : pxPerTile * 0.9;
   }
 
   private animateWater(world: TownWorld, dt: number): void {

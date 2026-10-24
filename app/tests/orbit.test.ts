@@ -4,6 +4,8 @@ import {
   DEFAULT_STOP,
   cameraOffset,
   nearestStop,
+  chaseYaw,
+  rayBoxDistance,
   rayHitsBox,
   screenToWorld,
   shortestTurn,
@@ -94,5 +96,27 @@ describe('camera orbit', () => {
     expect(stopBehind(3, at(3, -25))).toBe(2);
     expect(stopBehind(3, at(3, 180))).toBe(9); // turned round: the camera goes round too
     expect(stopBehind(3, { x: 0, y: 0 })).toBe(3);
+  });
+
+  it('measures how far a sight line runs before it enters a building', () => {
+    const o = cameraOffset(stopYaw(DEFAULT_STOP));
+    const b = { x0: 11, y0: 11, x1: 13, y1: 13, top: 3 };
+    const d = rayBoxDistance({ x: 10, y: 10 }, 0.4, o, b);
+    // It enters through the x = 11 / y = 11 faces, 1 tile away on each axis.
+    expect(d).toBeCloseTo(1 / o.x);
+    expect(rayBoxDistance({ x: 10, y: 10 }, 0.4, cameraOffset(stopYaw(DEFAULT_STOP + 6)), b)).toBe(Infinity);
+    expect(rayBoxDistance({ x: 12, y: 12 }, 0.4, o, b)).toBe(0);
+  });
+
+  it('puts the close-up camera straight behind the walker', () => {
+    for (const heading of [0, 1, -2, 3]) {
+      const o = cameraOffset(chaseYaw(heading));
+      const facing = { x: Math.sin(heading), y: Math.cos(heading) };
+      expect((o.x * facing.x + o.y * facing.y) / Math.hypot(o.x, o.y)).toBeCloseTo(-1);
+      // And screen up walks the way they face.
+      const up = screenToWorld({ x: 0, y: -1 }, chaseYaw(heading))!;
+      expect(up.x).toBeCloseTo(facing.x);
+      expect(up.y).toBeCloseTo(facing.y);
+    }
   });
 });

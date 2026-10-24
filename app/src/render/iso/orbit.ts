@@ -97,11 +97,12 @@ export interface Box {
 }
 
 /**
- * True if the line from a point (at height h above ground point p) toward a
- * camera in direction `offset` passes through the box.
+ * How far along the line from a point (at height h above ground point p)
+ * toward a camera in direction `offset` it first enters the box, or Infinity
+ * if it never does. (0 if the point is already inside.)
  */
-export function rayHitsBox(p: Vec2, h: number, offset: { x: number; up: number; y: number }, b: Box): boolean {
-  let near = 1e-4;
+export function rayBoxDistance(p: Vec2, h: number, offset: { x: number; up: number; y: number }, b: Box): number {
+  let near = 0;
   let far = Infinity;
   const slab = (o: number, d: number, lo: number, hi: number) => {
     if (Math.abs(d) < 1e-12) return o >= lo && o <= hi;
@@ -112,7 +113,17 @@ export function rayHitsBox(p: Vec2, h: number, offset: { x: number; up: number; 
     far = Math.min(far, t1);
     return near <= far;
   };
-  return slab(p.x, offset.x, b.x0, b.x1) && slab(p.y, offset.y, b.y0, b.y1) && slab(h, offset.up, 0, b.top);
+  return slab(p.x, offset.x, b.x0, b.x1) && slab(p.y, offset.y, b.y0, b.y1) && slab(h, offset.up, 0, b.top) ? near : Infinity;
+}
+
+/** True if the line from a point (at height h above ground point p) toward a camera in direction `offset` passes through the box. */
+export function rayHitsBox(p: Vec2, h: number, offset: { x: number; up: number; y: number }, b: Box): boolean {
+  return rayBoxDistance(p, h, offset, b) < Infinity;
+}
+
+/** The close-up camera's heading for a walker facing `heading` (Walker.heading): straight behind them. */
+export function chaseYaw(heading: number): number {
+  return heading + Math.PI;
 }
 
 function mod(a: number, n: number): number {
