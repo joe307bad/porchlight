@@ -73,7 +73,7 @@ before, but the town is real geometry, so the camera can turn.
   camera eases to a fixed view of the room: from the street side, pitched
   down at 55°, zoomed to fit the whole room. In close-up mode it's the
   perspective camera easing to a fixed spot instead, and walking back out
-  eases it round behind you again. `Q` / `E` turn the room view a quarter
+  eases it round behind you again. Walking out, the overview camera stays on the street side you came out of (the nearest stop to the room view) instead of swinging back to where it was, and in close-up the keys stay screen-relative until you let go, so the key that walked you out keeps walking you out. `Q` / `E` turn the room view a quarter
   round the room, and `F` brings it back to the street side. Whichever walls
   face the camera are cut down low, so you see in over them. A warm light
   comes on, brighter at night.

@@ -161,6 +161,12 @@ export class IsoView {
    * room, or a Q / E turn) never bends the way you're already walking.
    */
   private inputYaw = stopYaw(DEFAULT_STOP);
+  /**
+   * Set when you walk out of a room in close-up with a key held: keep reading
+   * keys screen-relative (as in the room) until you let go, so the key you
+   * walked out with doesn't turn into "walk backwards" into the building.
+   */
+  private screenKeys = false;
   /** Tilt stop per mode (Z / X), and the pitch being shown (eases toward the stop). */
   private isoTilt = DEFAULT_ISO_TILT;
   private chaseTilt = DEFAULT_CHASE_TILT;
@@ -584,8 +590,11 @@ export class IsoView {
       input.y += KEYS[code][1];
     }
     const p = this.player;
-    if (!this.held.size) this.inputYaw = this.viewYaw;
-    if (p && this.mode === 'close' && !p.isAuto && this.room === null) {
+    if (!this.held.size) {
+      this.inputYaw = this.viewYaw;
+      this.screenKeys = false;
+    }
+    if (p && this.mode === 'close' && !p.isAuto && this.room === null && !this.screenKeys) {
       // Close-up: forward and back along the way they face, left and right turn.
       const heading = p.heading - input.x * TURN_RATE * dt;
       const ahead = { x: Math.sin(heading), y: Math.cos(heading) };
@@ -638,8 +647,16 @@ export class IsoView {
     const left = this.room;
     this.room = now;
     this.roomTurn = 0;
-    // Back out in close-up: pick the chase up from where the room camera is, and ease round behind.
+    // Back out on the street, keep looking from the side you came out of
+    // (the nearest camera stop to the room view), so the keys that walked you
+    // out keep walking you out instead of the camera swinging back round.
+    if (left !== null && now === null && this.mode === 'iso') {
+      this.setStop(nearestStop(this.yaw));
+      this.manualHold = MANUAL_HOLD;
+    }
+    // In close-up: pick the chase up from where the room camera is, and ease round behind.
     if (left !== null && now === null && this.mode === 'close' && p) {
+      if (this.held.size) this.screenKeys = true;
       this.chaseYawNow = Math.atan2(this.chase.position.x - p.x, this.chase.position.z - p.y);
       this.shownChaseDistance = Math.min(CHASE_MAX, Math.hypot(this.chase.position.x - p.x, this.chase.position.z - p.y) / Math.cos(CHASE_TILT_GUESS));
     }
