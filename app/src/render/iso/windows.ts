@@ -10,8 +10,9 @@
 //
 // A small patch to the building materials' shader then glows a random share
 // of the panes warm yellow after dark: more often the higher up they are, so
-// towers twinkle more than cottages, varied per building, and about one lit
-// window in eight flickers like a failing bulb or a television.
+// towers twinkle more than cottages, varied per building. Low windows: about
+// one lit window in eight flickers like a failing bulb. Tall buildings: dimmer
+// and steady, with about 3% of windows flickering blue like a television.
 
 import { BufferAttribute, type BufferGeometry, type Material, type MeshStandardMaterial } from 'three';
 
@@ -79,15 +80,31 @@ export function lightWindows(material: Material): void {
           float h = litHash(key);
           float chance = mix(0.15, 0.36, clamp(vLitPos.y / 3.5, 0.0, 1.0));
           float lit = step(1.0 - chance, h);
-          // About one lit window in eight flickers.
-          float f = litHash(key + 17.0);
-          if (f < 0.12) {
-            float t = uTime * (6.0 + f * 40.0) + h * 50.0;
-            float n = fract(sin(floor(t) * 91.7 + h * 13.0) * 4375.5);
-            lit *= mix(0.25, 1.0, step(0.3, n)) * (0.85 + 0.15 * sin(t * 3.1));
-          }
           vec3 warm = mix(vec3(1.0, 0.72, 0.38), vec3(1.0, 0.86, 0.6), litHash(key + 3.0));
-          totalEmissiveRadiance += warm * lit * uNight * 0.7;
+          // Tall buildings (tower curtain walls, or anything this high up) glow
+          // dimmer and steady, and about 3% of their windows flicker blue, like
+          // a television left on.
+          bool tall = vSeed > 2.5 || vLitPos.y > 2.2;
+          if (tall) {
+            float tv = litHash(key + 29.0);
+            if (tv < 0.03) {
+              float t = uTime * 7.0 + tv * 300.0;
+              float n = fract(sin(floor(t) * 78.2 + h * 31.0) * 4375.5);
+              float glow = mix(0.3, 1.0, n) * (0.8 + 0.2 * sin(t * 9.0));
+              totalEmissiveRadiance += vec3(0.35, 0.55, 1.0) * glow * uNight * 0.45;
+            } else {
+              totalEmissiveRadiance += warm * lit * uNight * 0.35;
+            }
+          } else {
+            // About one lit window in eight flickers.
+            float f = litHash(key + 17.0);
+            if (f < 0.12) {
+              float t = uTime * (6.0 + f * 40.0) + h * 50.0;
+              float n = fract(sin(floor(t) * 91.7 + h * 13.0) * 4375.5);
+              lit *= mix(0.25, 1.0, step(0.3, n)) * (0.85 + 0.15 * sin(t * 3.1));
+            }
+            totalEmissiveRadiance += warm * lit * uNight * 0.7;
+          }
         }`,
       );
   };
