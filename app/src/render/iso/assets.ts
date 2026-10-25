@@ -1,7 +1,7 @@
 // Kenney's CC0 3D kits (www.kenney.nl), served from public/models: City Kit
 // Suburban (houses, fences), City Kit Commercial (shops, offices, towers), Car
 // Kit, Mini Characters (rigged, with walk and idle clips) and Nature Kit (trees,
-// bushes, crops). Static models are flattened into one geometry per material so
+// bushes, crops) and Furniture Kit (room furniture and counters). Static models are flattened into one geometry per material so
 // the world can draw every copy of a model as a single InstancedMesh.
 
 import { Box3, Material, Mesh, MeshStandardMaterial, SRGBColorSpace, Texture, TextureLoader, Vector3, type BufferGeometry, type Object3D } from 'three';
@@ -35,6 +35,10 @@ export const TREES = ['tree_default', 'tree_oak', 'tree_detailed', 'tree_fat', '
 export const BUSHES = ['plant_bush', 'plant_bushLarge', 'plant_bushSmall', 'grass'].map((n) => `nature/${n}`);
 export const FLOWERS = ['flower_redA', 'flower_purpleA', 'flower_yellowA'].map((n) => `nature/${n}`);
 export const CROPS = ['crop_carrot', 'crop_pumpkin', 'crop_turnip', 'crops_cornStageC', 'crops_leafsStageB', 'crops_wheatStageB'].map((n) => `nature/${n}`);
+import { FURNITURE } from './interiors';
+import { lightWindows } from './windows';
+
+export const FURNISHINGS = FURNITURE.map((n) => `furniture/${n}`);
 export const PROPS = ['nature/rock_smallA', 'nature/log_stack', 'nature/pot_large', 'suburban/planter', 'suburban/fence', 'commercial/detail-awning'];
 
 /** Which model families suit each kind of building. */
@@ -64,13 +68,15 @@ export interface TownAssets {
 
 export async function loadTownAssets(): Promise<TownAssets> {
   const loader = new GLTFLoader();
-  const statics = [...HOUSES, ...SHOPS, ...TOWERS, ...CARS, ...TREES, ...BUSHES, ...FLOWERS, ...CROPS, ...PROPS];
+  const statics = [...HOUSES, ...SHOPS, ...TOWERS, ...CARS, ...TREES, ...BUSHES, ...FLOWERS, ...CROPS, ...PROPS, ...FURNISHINGS];
   const [prefabs, characters, variations] = await Promise.all([
     Promise.all(statics.map(async (name) => flatten(name, (await loader.loadAsync(`${BASE}/${name}.glb`)).scene))),
     Promise.all(CHARACTERS.map((name) => loader.loadAsync(`${BASE}/characters/${name}.glb`))),
     loadVariations(),
   ]);
   const byName = new Map(prefabs.map((p) => [p.name, p]));
+  // Building windows light up at night.
+  for (const p of prefabs) if (p.name.startsWith('suburban/building') || p.name.startsWith('commercial/building')) for (const part of p.parts) lightWindows(part.material);
   const charByName = new Map(CHARACTERS.map((n, i) => [n, characters[i]]));
   const variants = new Map<string, Prefab>();
   const recoloured = new Map<string, Material>();
@@ -97,6 +103,10 @@ export async function loadTownAssets(): Promise<TownAssets> {
             let m = recoloured.get(mkey);
             if (!m) {
               m = recolour(part.material, maps[variation - 1]);
+              if (part.material.userData.windows) {
+                m.userData.windows = false;
+                lightWindows(m);
+              }
               recoloured.set(mkey, m);
             }
             return { geometry: part.geometry, material: m };

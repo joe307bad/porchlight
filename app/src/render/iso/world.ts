@@ -42,6 +42,8 @@ import { BUSHES, CARS, CROPS, FLOWERS, KIND_MODELS, TOWERS, TREES, type Prefab, 
 import { SIDEWALK, Use, buildLayout, type House, type IsoLayout, type SidewalkNetwork } from './layout';
 import { MeshBuilder, v } from './mesh';
 import type { Box } from './orbit';
+import { Solids } from './collide';
+import { DOOR_HEIGHT, DOOR_WIDTH, FURNITURE_SCALE, WALL, WALL_HEIGHT, doorOf, furnishRoom, innerRect, roomWalls, type Rect, type Room, type RoomPlan } from './interiors';
 import { glowTexture } from './textures';
 
 /** Height of the water surface and the river bed below the land. */
@@ -117,8 +119,33 @@ export interface TownWorld {
   water: ShaderMaterial;
   streaks: { mesh: InstancedMesh; items: Streak[] };
   fountain: { at: Vec2; drops: InstancedMesh; items: Droplet[] } | null;
+  /** One ground-floor room per building piece, its furnishing, and its door. */
+  rooms: Room[];
+  plans: RoomPlan[];
+  doors: Door[];
+  /** The door panels, one instance per room, swung by `swingDoor`. */
+  doorPanels: InstancedMesh;
+  /** Walls and furniture the player can't walk through. */
+  solids: Solids;
+  /** Show or hide a room's building (hidden while you're inside it, so you see in). */
+  setShellVisible(room: number, visible: boolean): void;
+  /** The furnished ground floor of a room, built on first use and kept. */
+  interior(room: number): Group;
   dispose(): void;
 }
+
+export interface Door {
+  /** Hinge on the map, and the panel's turn when shut. */
+  hinge: Vec2;
+  shut: number;
+  /** Which way round opens it inward (+1 or -1). */
+  swing: number;
+  /** 0 = shut, 1 = wide open; eased by the view. */
+  open: number;
+}
+
+/** How far a door swings open (radians). */
+const DOOR_SWING = 1.75;
 
 export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   const layout = buildLayout(model);
@@ -126,6 +153,8 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   const root = new Group();
   const owned: { dispose(): void }[] = [];
   const instancer = new Instancer();
+  const interiors = new Map<number, Group>();
+  const shells: { prefab: Prefab; index: number }[] = [];
 
   const world: TownWorld = {
     root,
@@ -138,8 +167,20 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
     water: null!,
     streaks: null!,
     fountain: null,
+    rooms: [],
+    plans: [],
+    doors: [],
+    doorPanels: null!,
+    solids: null!,
+    setShellVisible: () => {},
+    interior: () => {
+      throw new Error('no rooms yet');
+    },
     dispose: () => {
       root.removeFromParent();
+      for (const g of interiors.values()) g.traverse((o) => {
+        if ((o as Mesh).isMesh && o.userData.owned) (o as Mesh).geometry.dispose();
+      });
       root.traverse((o) => {
         if ((o as InstancedMesh).isInstancedMesh) (o as InstancedMesh).dispose();
       });
@@ -163,7 +204,9 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   addStatic(buildRoads(model, layout), lambert, { cast: true, receive: true });
 
   const sheds = new MeshBuilder();
-  addHouses(world, assets, instancer, rng);
+  addHouses(world, assets, instancer, rng, shells);
+  furnish(world, assets, rng);
+  addDoors(world, rng, owned);
   addYards(world, assets, instancer, sheds, rng);
   addTrees(world, assets, instancer, rng);
   addPlazaDecor(world, assets, instancer, rng);
@@ -173,7 +216,136 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   addStreaks(world, owned);
   addFountain(world, owned);
   instancer.build(root);
+  world.setShellVisible = (room, visible) => instancer.setVisible(shells[room].prefab, shells[room].index, visible);
+  const interiorMaterial = new MeshLambertMaterial({ vertexColors: true });
+  owned.push(interiorMaterial);
+  world.interior = (room) => {
+    let g = interiors.get(room);
+    if (!g) {
+      g = buildInterior(world, assets, room, interiorMaterial);
+      interiors.set(room, g);
+      root.add(g);
+    }
+    return g;
+  };
   return world;
+}
+
+const FLOORS: Record<string, number> = { house: 0xb98b5e, shop: 0xd9d2c5, office: 0xcfd3d6, workshop: 0x9a958c, hall: 0xa8794f, church: 0xa8794f };
+
+/**
+ * A room's ground floor: a floor, the walls (the front one cut down low so the
+ * fixed room camera sees in over it), and its furniture.
+ */
+function buildInterior(world: TownWorld, assets: TownAssets, id: number, material: Material): Group {
+  const room = world.rooms[id];
+  const g = new Group();
+  const b = new MeshBuilder();
+  const inner = innerRect(room);
+  b.rect(inner.x0, inner.y0, inner.x1, inner.y1, 0.012, FLOORS[room.style] ?? FLOORS.house);
+  const door = doorOf(room);
+  for (const w of roomWalls(room)) {
+    // The front wall: the stretch either side of the door, in line with it.
+    const front = Math.abs((w.x0 + w.x1) / 2 - door.at.x) * Math.abs(door.outward.x) + Math.abs((w.y0 + w.y1) / 2 - door.at.y) * Math.abs(door.outward.y) < WALL;
+    b.box(w.x0, w.y0, w.x1, w.y1, 0, front ? 0.12 : WALL_HEIGHT, 0xefe6d6, 0xb8ad9a);
+  }
+  const shell = new Mesh(b.build(), material);
+  shell.receiveShadow = true;
+  shell.castShadow = true;
+  shell.userData.owned = true;
+  g.add(shell);
+  for (const p of world.plans[id].furniture) {
+    const prefab = assets.prefab(`furniture/${p.name}`);
+    const m = placement(prefab, p, p.rot, FURNITURE_SCALE, FURNITURE_SCALE, FURNITURE_SCALE, p.lift + 0.012);
+    for (const part of prefab.parts) {
+      const mesh = new Mesh(part.geometry, part.material);
+      mesh.matrixAutoUpdate = false;
+      mesh.matrix.copy(m);
+      mesh.castShadow = !p.flat;
+      mesh.receiveShadow = true;
+      g.add(mesh);
+    }
+  }
+  return g;
+}
+
+/** Plan every room's furniture, and make walls and furniture solid. */
+function furnish(world: TownWorld, assets: TownAssets, rng: Rng): void {
+  const size = (name: string) => {
+    const p = assets.prefab(`furniture/${name}`);
+    return { w: p.size.x * FURNITURE_SCALE, d: p.size.z * FURNITURE_SCALE, h: p.size.y * FURNITURE_SCALE };
+  };
+  const solid: Rect[] = [];
+  for (const room of world.rooms) {
+    const plan = furnishRoom(room, size, rng);
+    world.plans.push(plan);
+    solid.push(...roomWalls(room));
+    for (const f of plan.furniture) if (!f.flat && f.lift === 0) solid.push(f.box);
+  }
+  world.solids = new Solids(solid, world.model.width);
+}
+
+const DOOR_COLOURS = [0x8a3b2e, 0x2f5d50, 0x2e4a7a, 0x6b4a2f, 0xb08a3e, 0x5b3b5e, 0xe8e2d0];
+
+/** A door in every room's front wall: a frame (fixed) and a panel that swings in. */
+function addDoors(world: TownWorld, rng: Rng, owned: { dispose(): void }[]): void {
+  const frames = new MeshBuilder();
+  const count = Math.max(1, world.rooms.length);
+  const panelGeo = new BoxGeometry(DOOR_WIDTH - 0.03, DOOR_HEIGHT - 0.02, 0.035).translate((DOOR_WIDTH - 0.03) / 2, (DOOR_HEIGHT - 0.02) / 2, 0);
+  const panelMat = new MeshLambertMaterial({ color: 0xffffff });
+  const panels = new InstancedMesh(panelGeo, panelMat, count);
+  panels.count = world.rooms.length;
+  panels.instanceMatrix.setUsage(DynamicDrawUsage);
+  panels.castShadow = true;
+  panels.frustumCulled = false;
+  world.rooms.forEach((room, i) => {
+    const { at, outward, along } = doorOf(room);
+    // Frame: two posts and a lintel standing a hair proud of the front wall.
+    const post = 0.045;
+    const depth = WALL + 0.05;
+    for (const side of [-1, 1]) {
+      const c = { x: at.x + along.x * side * (DOOR_WIDTH / 2 + post / 2) - outward.x * (WALL / 2), y: at.y + along.y * side * (DOOR_WIDTH / 2 + post / 2) - outward.y * (WALL / 2) };
+      const hx = Math.abs(along.x) * post / 2 + Math.abs(outward.x) * depth / 2;
+      const hy = Math.abs(along.y) * post / 2 + Math.abs(outward.y) * depth / 2;
+      frames.box(c.x - hx, c.y - hy, c.x + hx, c.y + hy, 0, DOOR_HEIGHT + 0.04, 0xf2eee4);
+    }
+    const lc = { x: at.x - outward.x * (WALL / 2), y: at.y - outward.y * (WALL / 2) };
+    const lx = Math.abs(along.x) * (DOOR_WIDTH / 2 + post) + Math.abs(outward.x) * depth / 2;
+    const ly = Math.abs(along.y) * (DOOR_WIDTH / 2 + post) + Math.abs(outward.y) * depth / 2;
+    frames.box(lc.x - lx, lc.y - ly, lc.x + lx, lc.y + ly, DOOR_HEIGHT - 0.01, DOOR_HEIGHT + 0.06, 0xf2eee4);
+    // The panel hangs from a hinge at one side of the gap; local +X runs along it.
+    const hinge = { x: at.x - along.x * (DOOR_WIDTH / 2 - 0.01) - outward.x * (WALL / 2), y: at.y - along.y * (DOOR_WIDTH / 2 - 0.01) - outward.y * (WALL / 2) };
+    const shut = Math.atan2(-along.y, along.x);
+    // Turning by +φ moves local +X toward (-sin, -cos) of the shut angle; open inward (away from outward).
+    const swing = -Math.sin(shut) * -outward.x + -Math.cos(shut) * -outward.y > 0 ? 1 : -1;
+    const door: Door = { hinge, shut, swing, open: 0 };
+    world.doors.push(door);
+    panels.setColorAt(i, new Color(DOOR_COLOURS[Math.floor(rng.next() * DOOR_COLOURS.length)]));
+    swingDoor(world, i, panels);
+  });
+  world.doorPanels = panels;
+  world.root.add(panels);
+  const frameGeo = frames.build();
+  const frameMat = new MeshLambertMaterial({ vertexColors: true });
+  const frameMesh = new Mesh(frameGeo, frameMat);
+  frameMesh.castShadow = frameMesh.receiveShadow = true;
+  world.root.add(frameMesh);
+  owned.push(panelGeo, panelMat, frameGeo, frameMat);
+}
+
+const panelMatrix = new Matrix4();
+const panelQuat = new Quaternion();
+const panelPos = new Vector3();
+const ONE = new Vector3(1, 1, 1);
+
+/** Set door i's panel to its current opening. */
+export function swingDoor(world: TownWorld, i: number, panels = world.doorPanels): void {
+  const d = world.doors[i];
+  const eased = d.open * d.open * (3 - 2 * d.open);
+  panelQuat.setFromAxisAngle(Y_AXIS, d.shut + d.swing * eased * DOOR_SWING);
+  panelPos.set(d.hinge.x, 0.01, d.hinge.y);
+  panels.setMatrixAt(i, panelMatrix.compose(panelPos, panelQuat, ONE));
+  panels.instanceMatrix.needsUpdate = true;
 }
 
 const isWaterTerrain = (t: number) => t === Terrain.WATER_SHALLOW || t === Terrain.WATER_DEEP;
@@ -347,11 +519,24 @@ class Instancer {
   private readonly items = new Map<Prefab, Matrix4[]>();
   private readonly noShadow = new Set<Prefab>();
 
-  add(p: Prefab, m: Matrix4, castShadow = true): void {
+  private readonly meshes = new Map<Prefab, InstancedMesh[]>();
+
+  /** Add a copy; returns its index among this prefab's copies. */
+  add(p: Prefab, m: Matrix4, castShadow = true): number {
     const list = this.items.get(p);
-    if (list) list.push(m);
-    else this.items.set(p, [m]);
     if (!castShadow) this.noShadow.add(p);
+    if (list) return list.push(m) - 1;
+    this.items.set(p, [m]);
+    return 0;
+  }
+
+  /** Hide one copy (squashed to nothing) or put it back. */
+  setVisible(p: Prefab, index: number, visible: boolean): void {
+    const m = visible ? this.items.get(p)![index] : ZERO;
+    for (const mesh of this.meshes.get(p) ?? []) {
+      mesh.setMatrixAt(index, m);
+      mesh.instanceMatrix.needsUpdate = true;
+    }
   }
 
   build(root: Group): void {
@@ -363,10 +548,13 @@ class Instancer {
         mesh.receiveShadow = true;
         mesh.computeBoundingSphere();
         root.add(mesh);
+        this.meshes.set(prefab, [...(this.meshes.get(prefab) ?? []), mesh]);
       }
     }
   }
 }
+
+const ZERO = new Matrix4().makeScale(0, 0, 0);
 
 const q = new Quaternion();
 const Y_AXIS = new Vector3(0, 1, 0);
@@ -396,7 +584,7 @@ const FRONT: Record<Facing, Vec2> = { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: 
  * street front is split into a row of narrower buildings whose proportions
  * suit the models; each piece's model is stretched to fill its share.
  */
-function addHouses(world: TownWorld, assets: TownAssets, instancer: Instancer, rng: Rng): void {
+function addHouses(world: TownWorld, assets: TownAssets, instancer: Instancer, rng: Rng, shells: { prefab: Prefab; index: number }[]): void {
   for (const house of world.layout.houses) {
     const xs = house.tiles.map((t) => t.x);
     const ys = house.tiles.map((t) => t.y);
@@ -426,10 +614,13 @@ function addHouses(world: TownWorld, assets: TownAssets, instancer: Instancer, r
       // Piece k's centre: along the frontage from the low end, mid-depth.
       const along = (alongX ? x0 : y0) + (k + 0.5) * len;
       const at = alongX ? { x: along, y: (y0 + y1) / 2 } : { x: (x0 + x1) / 2, y: along };
-      instancer.add(prefab, placement(prefab, at, rot, sx, sy, sz));
+      const index = instancer.add(prefab, placement(prefab, at, rot, sx, sy, sz));
       const halfX = alongX ? len / 2 : depth / 2;
       const halfY = alongX ? depth / 2 : len / 2;
       world.boxes.push({ x0: at.x - halfX, y0: at.y - halfY, x1: at.x + halfX, y1: at.y + halfY, top: prefab.size.y * sy });
+      // Its ground-floor room fills the same rectangle, inside the shell.
+      shells.push({ prefab, index });
+      world.rooms.push({ id: world.rooms.length, x0: at.x - halfX + gap, y0: at.y - halfY + gap, x1: at.x + halfX - gap, y1: at.y + halfY - gap, facing: house.facing, style: house.style });
     }
   }
 }
@@ -719,7 +910,7 @@ function addLamps(world: TownWorld, rng: Rng, owned: { dispose(): void }[]): voi
   haloCol.setUsage(DynamicDrawUsage);
   haloGeo.setAttribute('color', haloCol);
   haloGeo.setDrawRange(0, world.lamps.length);
-  const haloMat = new PointsMaterial({ size: 40, map: glowTexture(), vertexColors: true, transparent: true, depthWrite: false, blending: AdditiveBlending, sizeAttenuation: false });
+  const haloMat = new PointsMaterial({ size: 40, map: glowTexture(), vertexColors: true, transparent: true, depthWrite: false, blending: AdditiveBlending, sizeAttenuation: true }); // attenuation only applies through the perspective camera
   const halos = new Points(haloGeo, haloMat);
   pools.renderOrder = 6;
   halos.renderOrder = 7;

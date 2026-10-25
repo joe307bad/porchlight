@@ -12,6 +12,11 @@
 // shows through in orange. Day and night blend smoothly; at night the street lamps (a few of
 // them faulty) light up.
 //
+// Every building piece has a furnished ground floor. Walk up to its door and
+// it swings open (and shuts behind you); step inside and that building's
+// shell hides, its room shows, and the camera holds a fixed view of the room
+// until you walk back out.
+//
 // V (handled with the other mode keys in main.ts) switches to a close-up third-person camera: a perspective view just
 // behind and above the player that turns with them. There, W / S walk
 // forward and back, A / D turn, Q / E swing the camera round them in 30°
@@ -22,6 +27,7 @@ import {
   DirectionalLight,
   Fog,
   HemisphereLight,
+  PointLight,
   Mesh,
   MeshBasicMaterial,
   OrthographicCamera,
@@ -37,7 +43,8 @@ import {
 import { index } from '../../core/grid';
 import { createRng, type Rng } from '../../core/rng';
 import type { TownModel, Vec2 } from '../../model/types';
-import { Pedestrian, Player } from './actors';
+import { Pedestrian, Player, Walker, standable } from './actors';
+import { WALL_HEIGHT, doorOf, frame as roomFrame, inRoom } from './interiors';
 import { loadTownAssets, type TownAssets } from './assets';
 import { Avatar, PERSON_HEIGHT, randomLook, type Look } from './characters';
 import { Fleet, pickCarModel } from './fleet';
@@ -66,7 +73,8 @@ import {
 } from './orbit';
 import { streetMask } from './streets';
 import { Traffic } from './traffic';
-import { WATER_Y, buildWorld, type TownWorld } from './world';
+import { WATER_Y, buildWorld, swingDoor, type TownWorld } from './world';
+import { windowUniforms } from './windows';
 
 const DAY_SKY = 0x87b7d8;
 const NIGHT_SKY = 0x101828;
@@ -80,20 +88,20 @@ const CAMERA_DISTANCE = 150;
 /** The sun's direction (toward it): high, from the north-west, so shadows fall south-east. */
 const SUN = new Vector3(-0.5, 1.15, -0.3).normalize();
 /** Height on the player the camera tries to keep a clear line to (tiles). */
-const SIGHT_HEIGHT = 0.35;
+const SIGHT_HEIGHT = 0.26;
 /** How quickly the camera's idea of the walking direction catches up (per second). */
 const HEADING_SMOOTHING = 1.2;
 /** After a manual turn while auto-walking, leave the camera where it was put for this long. */
 const MANUAL_HOLD = 5;
 
 /** Close-up camera: how far behind the player (tiles), how far it may zoom, and how it looks down. */
-const CHASE_DISTANCE = 3;
-const CHASE_MIN = 1.4;
+const CHASE_DISTANCE = 2.4;
+const CHASE_MIN = 1.1;
 const CHASE_MAX = 8;
 const CHASE_FOV = 50;
 /** Where on the player the close-up camera looks (tiles up), and how far ahead of them. */
-const CHASE_LOOK_HEIGHT = 0.55;
-const CHASE_LOOK_AHEAD = 0.8;
+const CHASE_LOOK_HEIGHT = 0.42;
+const CHASE_LOOK_AHEAD = 0.6;
 /** Turning speed for A / D in close-up (radians per second). */
 const TURN_RATE = 2.6;
 /** Close-up fog, so the view fades into the sky instead of ending at the map's edge. */
@@ -101,6 +109,15 @@ const FOG_NEAR = 22;
 const FOG_FAR = 60;
 
 export type CameraMode = 'iso' | 'close';
+
+/** Doors start opening when the player is this close (tiles), and how fast they swing (per second). */
+const DOOR_REACH = 0.85;
+const DOOR_SPEED = 3;
+/** The fixed room camera's pitch, and how much room to leave round the room in view. */
+const ROOM_PITCH = (55 * Math.PI) / 180;
+const ROOM_MARGIN = 1.35;
+/** Zoomed out further than this (overview zoom), auto walk leaves the camera's heading alone. */
+const AUTO_TURN_MIN_ZOOM = 0.7;
 
 const KEYS: Record<string, [number, number]> = {
   KeyW: [0, -1], ArrowUp: [0, -1],
@@ -128,6 +145,11 @@ export class IsoView {
   private chaseDistance = CHASE_DISTANCE;
   private shownChaseDistance = CHASE_DISTANCE;
   private readonly chaseLook = new Vector3();
+  /** The room the player is standing in (index into world.rooms), or null outside. */
+  private room: number | null = null;
+  /** Shopkeepers, made the first time you walk into their room. */
+  private keepers = new Map<number, { walker: Walker; avatar: Avatar }>();
+  private readonly roomLight = new PointLight(0xffd9a0, 0, 6, 1.4);
   /** Tilt stop per mode (Z / X), and the pitch being shown (eases toward the stop). */
   private isoTilt = DEFAULT_ISO_TILT;
   private chaseTilt = DEFAULT_CHASE_TILT;
@@ -181,7 +203,7 @@ export class IsoView {
     this.sun.shadow.normalBias = 0.02;
     this.sun.shadow.camera.near = 1;
     this.sun.shadow.camera.far = 220;
-    this.scene.add(this.hemi, this.sun, this.sun.target);
+    this.scene.add(this.hemi, this.sun, this.sun.target, this.roomLight);
     this.minimap = new Minimap(host, (at) => this.teleport(at));
     this.resize();
     const observer = new ResizeObserver(() => this.resize());
@@ -229,6 +251,9 @@ export class IsoView {
     this.fleet?.dispose();
     for (const a of this.avatars) a.dispose();
     this.playerAvatar?.dispose();
+    for (const k of this.keepers.values()) k.avatar.dispose();
+    this.keepers.clear();
+    this.room = null;
     this.clearRoute();
     this.avatars = [];
     this.people = [];
@@ -237,7 +262,6 @@ export class IsoView {
     const world = buildWorld(model, this.assets);
     this.world = world;
     this.scene.add(world.root);
-    world.lampFx.halos.material.sizeAttenuation = this.mode === 'close';
     this.snap = true;
     this.open = this.walkMask();
     this.minimap.setTown(model);
@@ -281,11 +305,13 @@ export class IsoView {
     const { width: w, height: h } = this.world.model;
     let x = Math.min(w - 0.2, Math.max(0.2, at.x));
     let y = Math.min(h - 0.2, Math.max(0.2, at.y));
-    // Never land inside a building: step out to the nearest open tile.
-    if (this.open.length && !this.open[index(Math.floor(x), Math.floor(y), w)]) {
+    // Never land in a wall or on furniture: step out to the nearest open tile.
+    const model = this.world.model;
+    const solids = this.world.solids;
+    if (this.open.length && !standable(x, y, this.open, model, solids)) {
       let bestD = Infinity;
       for (let i = 0; i < this.open.length; i++) {
-        if (!this.open[i]) continue;
+        if (!this.open[i] || !standable((i % w) + 0.5, Math.floor(i / w) + 0.5, this.open, model, solids)) continue;
         const d = Math.hypot((i % w) + 0.5 - x, Math.floor(i / w) + 0.5 - y);
         if (d < bestD) {
           bestD = d;
@@ -342,17 +368,18 @@ export class IsoView {
     // If they're standing somewhere they can't, put them on the nearest open spot.
     if (this.player && this.world) {
       const here = index(Math.floor(this.player.x), Math.floor(this.player.y), this.world.model.width);
-      if (!this.open[here]) this.teleport({ x: this.player.x, y: this.player.y });
+      if (!this.open[here] || !standable(this.player.x, this.player.y, this.open, this.world.model, this.world.solids)) this.teleport({ x: this.player.x, y: this.player.y });
     }
   }
 
-  /** Walkable tiles: streets only, or anywhere except buildings and sheds. */
+  /** Walkable tiles: streets only, or anywhere except sheds (building walls are solids). */
   private walkMask(): Uint8Array {
     const world = this.world;
     if (!world) return new Uint8Array(0);
     if (this.streetsOnly) return streetMask(world.model.tiles);
     const out = new Uint8Array(world.layout.use.length);
-    for (let i = 0; i < out.length; i++) out[i] = world.layout.use[i] === Use.HOUSE || world.layout.use[i] === Use.SHED ? 0 : 1;
+    // Buildings are open ground here: their walls (world.solids) keep you to the doors.
+    for (let i = 0; i < out.length; i++) out[i] = world.layout.use[i] === Use.SHED ? 0 : 1;
     return out;
   }
 
@@ -390,12 +417,6 @@ export class IsoView {
     if (this.player) this.chaseYawNow = chaseYaw(this.player.heading);
     this.shownChaseDistance = this.chaseDistance;
     this.scene.fog = mode === 'close' ? this.fog : null;
-    // Lamp halos are sized on screen in iso, and in the world in perspective.
-    const halos = this.world?.lampFx.halos.material;
-    if (halos) {
-      halos.sizeAttenuation = mode === 'close';
-      halos.needsUpdate = true;
-    }
     this.snap = true;
   }
 
@@ -448,6 +469,9 @@ export class IsoView {
       inBuilding: !!(world && tile >= 0 && world.layout.use[tile] === Use.HOUSE),
       outlined: this.hidden,
       cameraMode: this.mode,
+      room: this.room,
+      roomStyle: this.room !== null && world ? world.rooms[this.room].style : null,
+      openDoors: world?.doors.filter((d) => d.open > 0.5).length ?? 0,
       cameraStop: this.cameraStop,
       cameraPitch: (this.pitch * 180) / Math.PI,
       cameraStops: CAMERA_STOPS,
@@ -539,19 +563,77 @@ export class IsoView {
       input.y += KEYS[code][1];
     }
     const p = this.player;
-    if (p && this.mode === 'close' && !p.isAuto) {
+    if (p && this.mode === 'close' && !p.isAuto && this.room === null) {
       // Close-up: forward and back along the way they face, left and right turn.
       const heading = p.heading - input.x * TURN_RATE * dt;
       const ahead = { x: Math.sin(heading), y: Math.cos(heading) };
-      p.update(input.y ? { x: -ahead.x * Math.sign(input.y), y: -ahead.y * Math.sign(input.y) } : null, dt, world.model, this.open);
+      p.update(input.y ? { x: -ahead.x * Math.sign(input.y), y: -ahead.y * Math.sign(input.y) } : null, dt, world.model, this.open, world.solids);
       p.heading = heading; // walking backwards keeps them facing forwards
     } else {
-      p?.update(screenToWorld(input, this.yaw), dt, world.model, this.open);
+      p?.update(screenToWorld(input, this.yaw), dt, world.model, this.open, world.solids);
     }
+    this.updateDoors(world, dt);
+    this.updateRoom(world);
     for (const p of this.people) p.update(dt);
     this.traffic?.update(dt);
     this.dusk += ((this.night ? 1 : 0) - this.dusk) * Math.min(1, dt * 2.5);
     this.keepInSight(world, dt);
+  }
+
+  /** Doors swing open as the player comes near, and shut once they've gone. */
+  private updateDoors(world: TownWorld, dt: number): void {
+    const p = this.player;
+    world.doors.forEach((d, i) => {
+      const at = doorOf(world.rooms[i]).at;
+      const near = !!p && Math.abs(p.x - at.x) < DOOR_REACH && Math.abs(p.y - at.y) < DOOR_REACH && Math.hypot(p.x - at.x, p.y - at.y) < DOOR_REACH;
+      const target = near ? 1 : 0;
+      if (d.open === target) return;
+      d.open = target > d.open ? Math.min(1, d.open + dt * DOOR_SPEED) : Math.max(0, d.open - dt * DOOR_SPEED);
+      swingDoor(world, i);
+    });
+  }
+
+  /** Notice the player stepping into or out of a room: swap the building's shell for its ground floor. */
+  private updateRoom(world: TownWorld): void {
+    const p = this.player;
+    let now: number | null = null;
+    if (p) {
+      if (this.room !== null && inRoom(world.rooms[this.room], p)) now = this.room;
+      else now = world.rooms.findIndex((r) => inRoom(r, p));
+      if (now === -1) now = null;
+    }
+    if (now === this.room) return;
+    if (this.room !== null) {
+      world.setShellVisible(this.room, true);
+      world.interior(this.room).visible = false;
+      const k = this.keepers.get(this.room);
+      if (k) k.avatar.root.visible = false;
+    }
+    this.room = now;
+    if (now !== null) {
+      world.setShellVisible(now, false);
+      world.interior(now).visible = true;
+      this.showKeeper(world, now);
+    }
+  }
+
+  /** Someone behind the counter in shops (and at reception in offices). */
+  private showKeeper(world: TownWorld, room: number): void {
+    const spot = world.plans[room].keeper;
+    if (!spot) return;
+    let k = this.keepers.get(room);
+    if (!k) {
+      const rng = createRng(`${world.model.seed}::keeper::${room}`);
+      const look = randomLook(rng);
+      const walker = new Walker(look, spot.x, spot.y);
+      walker.heading = spot.rot;
+      const avatar = new Avatar(this.assets.character(look.model), PERSON_HEIGHT, rng.next());
+      avatar.root.rotation.y = spot.rot;
+      world.root.add(avatar.root);
+      k = { walker, avatar };
+      this.keepers.set(room, k);
+    }
+    k.avatar.root.visible = true;
   }
 
   /**
@@ -570,7 +652,7 @@ export class IsoView {
     }
     if (this.sightTimer <= 0) {
       this.sightTimer = 0.1;
-      this.hidden = this.blocked(world, p, stopYaw(this.cameraStop));
+      this.hidden = this.room === null && this.blocked(world, p, stopYaw(this.cameraStop));
     }
     if (!p.isAuto) {
       this.walkDir = null;
@@ -585,7 +667,9 @@ export class IsoView {
       this.walkDir.x += (h.x - this.walkDir.x) * k;
       this.walkDir.y += (h.y - this.walkDir.y) * k;
     }
-    if (!this.walkDir || this.manualHold > 0) return;
+    // Inside, the room camera holds still; zoomed right out, there's no need to turn.
+    if (!this.walkDir || this.manualHold > 0 || this.room !== null) return;
+    if (this.mode === 'iso' && this.zoom < AUTO_TURN_MIN_ZOOM) return;
     const next = stopBehind(this.cameraStop, this.walkDir);
     if (next !== this.cameraStop) this.setStop(next);
   }
@@ -605,13 +689,28 @@ export class IsoView {
     this.people.forEach((q, k) => this.avatars[k].update(q, dt));
     this.fleet?.update();
 
-    // Camera: ease round to its heading, follow the player, zoom.
-    this.yaw += shortestTurn(this.yaw, this.targetYaw) * (this.snap ? 1 : Math.min(1, dt * 5));
-    this.shownZoom += (this.zoom - this.shownZoom) * (this.snap ? 1 : Math.min(1, dt * 10));
-    const target = p ? new Vector3(p.x, 0.3, p.y) : new Vector3(world.model.spawn.x, 0.3, world.model.spawn.y);
-    this.focus.lerp(target, this.snap ? 1 : Math.min(1, dt * 8));
-    this.pitch += (this.targetPitch - this.pitch) * (this.snap ? 1 : Math.min(1, dt * 6));
-    if (this.mode === 'close' && p) this.placeChase(world, p, dt);
+    for (const k of this.keepers.values()) if (k.avatar.root.visible) k.avatar.update(k.walker, dt);
+
+    // Camera: ease round to its heading, follow the player, zoom. Inside a
+    // room it eases to a fixed view instead: from the street side, looking
+    // down into the room, framing all of it.
+    const fixed = this.room !== null ? this.roomView(world, this.room) : null;
+    const yawTarget = fixed?.yaw ?? this.targetYaw;
+    const zoomTarget = fixed?.zoom ?? this.zoom;
+    const pitchTarget = fixed?.pitch ?? this.targetPitch;
+    this.yaw += shortestTurn(this.yaw, yawTarget) * (this.snap ? 1 : Math.min(1, dt * 5));
+    this.shownZoom += (zoomTarget - this.shownZoom) * (this.snap ? 1 : Math.min(1, dt * (fixed ? 5 : 10)));
+    const target = fixed?.focus ?? (p ? new Vector3(p.x, 0.3, p.y) : new Vector3(world.model.spawn.x, 0.3, world.model.spawn.y));
+    this.focus.lerp(target, this.snap ? 1 : Math.min(1, dt * (fixed ? 5 : 8)));
+    this.pitch += (pitchTarget - this.pitch) * (this.snap ? 1 : Math.min(1, dt * 6));
+    if (this.mode === 'close' && p && !fixed) this.placeChase(world, p, dt);
+    // A warm light in the room you're in (brighter at night).
+    if (fixed) {
+      this.roomLight.position.set(fixed.focus.x, WALL_HEIGHT * 0.9, fixed.focus.z);
+      this.roomLight.intensity = 0.8 + this.dusk * 2.6;
+    } else {
+      this.roomLight.intensity = 0;
+    }
     this.snap = false;
     this.placeCamera();
     this.placeSun();
@@ -629,12 +728,28 @@ export class IsoView {
 
   /** The camera being drawn through. */
   private get view(): OrthographicCamera | PerspectiveCamera {
-    return this.mode === 'close' ? this.chase : this.camera;
+    return this.mode === 'close' && this.room === null ? this.chase : this.camera;
+  }
+
+  /** The fixed camera for a room: from its street side, pitched down, zoomed to fit it all. */
+  private roomView(world: TownWorld, id: number): { yaw: number; pitch: number; zoom: number; focus: Vector3 } {
+    const room = world.rooms[id];
+    const fr = roomFrame(room);
+    const { clientWidth: w, clientHeight: h } = this.host;
+    const aspect = Math.max(1, w) / Math.max(1, h);
+    const tall = fr.depth * Math.sin(ROOM_PITCH) + WALL_HEIGHT * Math.cos(ROOM_PITCH);
+    const half = Math.max(1.6, ((tall / 2) * ROOM_MARGIN), ((fr.width / 2) * ROOM_MARGIN) / aspect);
+    return {
+      yaw: Math.atan2(fr.outward.x, fr.outward.y),
+      pitch: ROOM_PITCH,
+      zoom: VIEW_HEIGHT / 2 / half,
+      focus: new Vector3((room.x0 + room.x1) / 2, 0.2, (room.y0 + room.y1) / 2),
+    };
   }
 
   /** The heading of the camera being drawn through (for screen-relative keys). */
   private get viewYaw(): number {
-    return this.mode === 'close' ? this.chaseYawNow : this.yaw;
+    return this.mode === 'close' && this.room === null ? this.chaseYawNow : this.yaw;
   }
 
   /**
@@ -781,6 +896,8 @@ export class IsoView {
     this.sun.intensity = 2.6 - d * 2.25;
     this.sun.color.setHex(0xfff1d8).lerp(new Color(0x9fb0e0), d);
     world.water.uniforms.night.value = d;
+    windowUniforms.uNight.value = d;
+    windowUniforms.uTime.value = this.time;
 
     const { bulbs, halos, pools } = world.lampFx;
     const t = this.time;
@@ -807,7 +924,7 @@ export class IsoView {
     // Keep halos about a tile across: in iso they're sized in screen pixels, so
     // follow the zoom; in perspective three scales them by height / 2 / depth.
     const pxPerTile = this.host.clientHeight / (VIEW_HEIGHT / this.shownZoom);
-    halos.material.size = this.mode === 'close' ? 0.9 / Math.tan(((CHASE_FOV / 2) * Math.PI) / 180) : pxPerTile * 0.9;
+    halos.material.size = this.view === this.chase ? 0.9 / Math.tan(((CHASE_FOV / 2) * Math.PI) / 180) : pxPerTile * 0.9;
   }
 
   private animateWater(world: TownWorld, dt: number): void {

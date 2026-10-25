@@ -6,6 +6,7 @@ import { index } from '../../core/grid';
 import type { Rng } from '../../core/rng';
 import type { TownModel, Vec2 } from '../../model/types';
 import type { Look } from './characters';
+import type { Solids } from './collide';
 import type { SidewalkNetwork } from './layout';
 import { SidewalkWalk } from './walking';
 
@@ -34,7 +35,7 @@ export class Walker {
 const PLAYER_SPEED = 3.4; // tiles per second
 /** How close to the map edge the player may walk (tiles). */
 const EDGE = 0.2;
-const PLAYER_RADIUS = 0.18;
+const PLAYER_RADIUS = 0.13;
 
 const AUTO_SPEED = 1.8; // tiles per second
 
@@ -86,9 +87,10 @@ export class Player extends Walker {
 
   /**
    * Walk in a world direction (unit vector or null to stand still), only onto
-   * tiles `open` allows (1 = walkable), sliding along walls.
+   * tiles `open` allows (1 = walkable) and clear of `solids` (walls,
+   * furniture), sliding along them.
    */
-  update(dir: Vec2 | null, dt: number, model: TownModel, open: Uint8Array): void {
+  update(dir: Vec2 | null, dt: number, model: TownModel, open: Uint8Array, solids?: Solids): void {
     if (this.auto) {
       const next = this.auto.advance(AUTO_SPEED * dt);
       this.moved(next.x - this.x, next.y - this.y, dt);
@@ -106,7 +108,7 @@ export class Player extends Walker {
       for (const [mx, my] of [[dir.x, dir.y], [dir.x, 0], [0, dir.y]]) {
         const nx = clampX(this.x + mx * step);
         const ny = clampY(this.y + my * step);
-        if (canStand(nx, ny, open, model)) {
+        if (canStand(nx, ny, open, model) && !solids?.hits(nx, ny, PLAYER_RADIUS)) {
           dx = nx - this.x;
           dy = ny - this.y;
           break;
@@ -117,6 +119,11 @@ export class Player extends Walker {
     }
     this.moved(dx, dy, dt);
   }
+}
+
+/** True if the player could stand at (x, y): on open tiles and clear of solids. */
+export function standable(x: number, y: number, open: Uint8Array, model: TownModel, solids?: Solids): boolean {
+  return canStand(x, y, open, model) && !solids?.hits(x, y, PLAYER_RADIUS);
 }
 
 function canStand(x: number, y: number, open: Uint8Array, model: TownModel): boolean {

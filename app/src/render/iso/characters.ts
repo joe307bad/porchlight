@@ -33,9 +33,9 @@ export function randomLook(rng: Rng): Look {
 }
 
 /** A townsperson's height in tiles (the player is a little taller). */
-export const PERSON_HEIGHT = 0.62;
+export const PERSON_HEIGHT = 0.465;
 /** Walking speed (tiles per second) at which the walk clip plays at its natural pace. */
-const NATURAL_WALK = 0.9;
+const NATURAL_WALK = 0.68;
 /** Render order for the x-ray pass: after the town, before the player themself. */
 export const XRAY_ORDER = 10;
 const PLAYER_ORDER = 20;

@@ -11,6 +11,7 @@ import type { Prefab, TownAssets } from '../src/render/iso/assets';
 import { Traffic } from '../src/render/iso/traffic';
 import { Fleet, pickCarModel } from '../src/render/iso/fleet';
 import { buildWorld } from '../src/render/iso/world';
+import { doorOf, inRoom } from '../src/render/iso/interiors';
 import { testSeeds } from './seeds';
 
 vi.mock('../src/render/iso/textures', () => ({ glowTexture: () => new Texture() }));
@@ -70,6 +71,25 @@ describe('3D town builder', () => {
       });
       expect(instances).toBeGreaterThan(houses.length);
       expect(world.lamps.length).toBeGreaterThan(0);
+
+      // A furnished room behind every piece, each with a door you can walk in by.
+      expect(world.rooms.length).toBe(world.boxes.length);
+      expect(world.doors.length).toBe(world.rooms.length);
+      let furnished = 0;
+      world.rooms.forEach((room, i) => {
+        const { at, outward } = doorOf(room);
+        for (let s = 0.35; s >= -0.35; s -= 0.05) {
+          const p = { x: at.x + outward.x * s, y: at.y + outward.y * s };
+          expect(world.solids.hits(p.x, p.y, 0.13), `room ${i} (${room.style}, ${room.facing}) at ${s.toFixed(2)}`).toBe(false);
+        }
+        expect(inRoom(room, { x: at.x - outward.x * 0.35, y: at.y - outward.y * 0.35 })).toBe(true);
+        if (world.plans[i].furniture.length >= 3) furnished++;
+        // Its interior builds.
+        expect(world.interior(i).children.length).toBeGreaterThan(0);
+        world.setShellVisible(i, false);
+        world.setShellVisible(i, true);
+      });
+      expect(furnished / world.rooms.length).toBeGreaterThan(0.8);
 
       const traffic = new Traffic(world.layout, createRng(`${seed}::traffic`), pickCarModel);
       const fleet = new Fleet(traffic, fakeAssets(), world.root);

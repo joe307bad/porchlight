@@ -6,7 +6,9 @@ import type { Group } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
 import { Walker } from '../src/render/iso/actors';
-import { BUSHES, CARS, CHARACTERS, CROPS, FLOWERS, HOUSES, PROPS, SHOPS, TOWERS, TREES, flatten } from '../src/render/iso/assets';
+import { BUSHES, CARS, CHARACTERS, CROPS, FLOWERS, FURNISHINGS, HOUSES, PROPS, SHOPS, TOWERS, TREES, flatten } from '../src/render/iso/assets';
+import { lightWindows } from '../src/render/iso/windows';
+import { MeshStandardMaterial, ShaderLib } from 'three';
 import { Avatar } from '../src/render/iso/characters';
 
 /** Every model file, as a base64 data URL. */
@@ -53,12 +55,14 @@ function parse(name: string): Promise<GLTF> {
 
 describe('Kenney models', () => {
   it('flatten every static model into parts that stand on the ground', async () => {
-    for (const name of [...HOUSES, ...SHOPS, ...TOWERS, ...CARS, ...TREES, ...BUSHES, ...FLOWERS, ...CROPS, ...PROPS]) {
+    for (const name of [...HOUSES, ...SHOPS, ...TOWERS, ...CARS, ...TREES, ...BUSHES, ...FLOWERS, ...CROPS, ...PROPS, ...FURNISHINGS]) {
       const p = flatten(name, (await parse(name)).scene as Group);
       expect(p.parts.length, name).toBeGreaterThan(0);
-      for (const v of [p.size.x, p.size.y, p.size.z]) expect(v, name).toBeGreaterThan(0.02);
-      // Wheels hang a little below a car's origin; everything else starts at y = 0.
-      expect(Math.abs(p.min.y), name).toBeLessThan(name.startsWith('cars/') ? 0.35 : 0.06);
+      // Every model has some size each way (rugs are all but flat).
+      for (const v of [p.size.x, p.size.y, p.size.z]) expect(v, name).toBeGreaterThan(name.includes('/rug') ? 0.005 : 0.02);
+      // Wheels hang a little below a car's origin, and the odd furniture model
+      // sits below its own; placement stands everything on its lowest point anyway.
+      expect(Math.abs(p.min.y), name).toBeLessThan(name.startsWith('cars/') || name.startsWith('furniture/') ? 0.35 : 0.06);
       for (const part of p.parts) expect(part.geometry.attributes.position.count, name).toBeGreaterThan(0);
     }
   });
@@ -131,9 +135,26 @@ describe('Kenney model orientation', () => {
 
 describe('Kenney materials', () => {
   it('are all matte once flattened (the nature kit ships them fully metallic)', async () => {
-    for (const name of [...TREES, ...BUSHES, ...FLOWERS, ...CROPS, ...HOUSES.slice(0, 2)]) {
+    for (const name of [...TREES, ...BUSHES, ...FLOWERS, ...CROPS, ...FURNISHINGS, ...HOUSES.slice(0, 2)]) {
       const p = flatten(name, (await parse(name)).scene as Group);
       for (const part of p.parts) expect((part.material as unknown as { metalness: number }).metalness, name).toBe(0);
     }
+  });
+});
+
+describe('lit windows', () => {
+  it('patch the standard shader at the points they hook into', () => {
+    const m = new MeshStandardMaterial();
+    lightWindows(m);
+    const shader = { uniforms: {} as Record<string, unknown>, vertexShader: ShaderLib.standard.vertexShader, fragmentShader: ShaderLib.standard.fragmentShader };
+    m.onBeforeCompile(shader as never, null as never);
+    expect(shader.vertexShader).toContain('vLitPos = ');
+    expect(shader.vertexShader).toContain('vLitUp = ');
+    expect(shader.fragmentShader).toContain('totalEmissiveRadiance += warm');
+    expect(shader.fragmentShader).toContain('float litHash');
+    expect(shader.uniforms.uNight).toBeDefined();
+    // Patching twice is harmless.
+    lightWindows(m);
+    expect(m.customProgramCacheKey()).toBe('lit-windows');
   });
 });

@@ -40,6 +40,34 @@ before, but the town is real geometry, so the camera can turn.
   nearer or further. If a building is between the player and the camera, the
   camera comes in closer rather than sit inside it. Fog fades the town into
   the sky. Auto walk works here too, with the camera following from behind.
+- **Ground floors (`interiors.ts`):** every building piece has a room behind
+  its street front, with walls and a door in the middle of the front wall.
+  Rooms are furnished at random (seeded) for the kind of building:
+  - **Homes:** a kitchen run along the back wall, a sofa, a bookcase and TV
+    cabinet, a table and chairs on a rug, plants, a lamp and a coat rack.
+  - **Shops:** a counter across the room with a shopkeeper behind it, a radio
+    or till on top, and shelves and boxes along the walls.
+  - **Offices:** a reception counter, then rows of desks with screens and
+    chairs.
+  - **Workshops:** workbenches, cabinets and boxes.
+  - **Halls and the church:** a table at the far end and rows of benches
+    facing it.
+
+  Nothing blocks the door. Walls and furniture are solid (`collide.ts`), so
+  the door is the only way in.
+- **Doors:** walk up to one and it swings open, then shuts once you've gone
+  (no key needed).
+- **Inside:** stepping through a door hides that building's shell (its upper
+  floors and roof) and shows its ground floor, with the front wall cut down
+  low. The camera eases to a fixed view of the room: from the street side,
+  pitched down at 55°, zoomed to fit the whole room. A warm light comes on,
+  brighter at night. Walking back out puts everything back.
+- **Lit windows (`windows.ts`):** at night a shader patch on the city-kit
+  materials glows window-blue texels on walls, warm yellow. Each window-sized
+  cell is lit or not at random, more often the higher up it is, so towers
+  twinkle more than cottages, and about one lit window in eight flickers.
+- **Zoomed out:** past overview zoom 0.7, auto walk no longer turns the
+  camera.
 - **Seeing through buildings:** when a building stands between the player
   and the camera, their silhouette is drawn through it in orange.
 - **X-ray:** the player carries a copy of their skinned meshes in flat orange
@@ -91,6 +119,9 @@ before, but the town is real geometry, so the camera can turn.
 | `walking.ts` | Following, turning round on and crossing between sidewalks (pure, unit-tested) |
 | `traffic.ts` | Moving cars on the through roads: pure state |
 | `fleet.ts` | Draws the moving cars |
+| `interiors.ts` | Ground-floor rooms: walls with a door gap, furnishing by building kind (pure, unit-tested) |
+| `collide.ts` | Solid walls and furniture the player can't walk through (pure, unit-tested) |
+| `windows.ts` | Night-time lit and flickering windows (a shader patch on the building materials) |
 | `streets.ts` | Tiles allowed in streets-only walking |
 | `minimap.ts` | Corner map with player marker and camera outline |
 | `textures.ts` | The glow texture for lamp halos and light pools |
@@ -103,7 +134,7 @@ each kit in its own folder with its licence and `Textures/colormap.png`:
 **City Kit Suburban** (houses, fences, planters, plus three colour
 variations), **City Kit Commercial** (shops, offices, skyscrapers, plus two
 colour variations), **Car Kit**, **Mini Characters** (rigged, with animation
-clips) and **Nature Kit** (trees, bushes, flowers, crops, rocks).
+clips), **Furniture Kit** (room furniture and counters, facing +Z) and **Nature Kit** (trees, bushes, flowers, crops, rocks).
 
 Orientation: Kenney's cars and characters face +Z, but the city-kit buildings
 have their fronts on -Z, so the world turns them half round (`BUILDING_TURN`;
@@ -114,4 +145,4 @@ without an environment map, so every kit material is made matte on load.
 ## World space
 
 Map `(x, y)` (tiles, y down the map, as on the blueprint) is Three's `(x, z)`;
-Three's `y` is up; 1 unit = 1 tile. A townsperson is about 0.6 tiles tall.
+Three's `y` is up; 1 unit = 1 tile. A townsperson is about 0.47 tiles tall; furniture is drawn at 0.6 tiles per kit unit.
