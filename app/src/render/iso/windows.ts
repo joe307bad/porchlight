@@ -54,7 +54,7 @@ export function lightWindows(material: Material): void {
           if (glass > 0.0) {
             vec3 cell = floor(vLitPos * vec3(3.2, 2.6, 3.2));
             float h = litHash(cell);
-            float chance = mix(0.3, 0.72, clamp(vLitPos.y / 3.5, 0.0, 1.0));
+            float chance = mix(0.15, 0.36, clamp(vLitPos.y / 3.5, 0.0, 1.0));
             float lit = step(1.0 - chance, h);
             // About one lit window in eight flickers.
             float f = litHash(cell + 17.0);
@@ -64,7 +64,7 @@ export function lightWindows(material: Material): void {
               lit *= mix(0.25, 1.0, step(0.3, n)) * (0.85 + 0.15 * sin(t * 3.1));
             }
             vec3 warm = mix(vec3(1.0, 0.72, 0.38), vec3(1.0, 0.86, 0.6), litHash(cell + 3.0));
-            totalEmissiveRadiance += warm * glass * lit * uNight * 1.4;
+            totalEmissiveRadiance += warm * glass * lit * uNight * 0.7;
           }
         }`,
       );
