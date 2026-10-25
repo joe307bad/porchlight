@@ -4,12 +4,15 @@
 // bushes, crops) and Furniture Kit (room furniture and counters). Static models are flattened into one geometry per material so
 // the world can draw every copy of a model as a single InstancedMesh.
 
-import { Box3, Material, Mesh, MeshStandardMaterial, SRGBColorSpace, Texture, TextureLoader, Vector3, type BufferGeometry, type Object3D } from 'three';
+import { Box3, Material, Plane, Mesh, MeshStandardMaterial, SRGBColorSpace, Texture, TextureLoader, Vector3, type BufferGeometry, type Object3D } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { BuildingKind } from '../../model/types';
 
 const BASE = `${import.meta.env.BASE_URL}models`;
+
+/** Keeps what's above the modelled ground floor (y > WALL_HEIGHT). */
+export const ABOVE_GROUND_FLOOR = new Plane(new Vector3(0, 1, 0), -WALL_HEIGHT);
 
 /** A static model baked down to world-space geometry, one part per material. */
 export interface Prefab {
@@ -35,7 +38,7 @@ export const TREES = ['tree_default', 'tree_oak', 'tree_detailed', 'tree_fat', '
 export const BUSHES = ['plant_bush', 'plant_bushLarge', 'plant_bushSmall', 'grass'].map((n) => `nature/${n}`);
 export const FLOWERS = ['flower_redA', 'flower_purpleA', 'flower_yellowA'].map((n) => `nature/${n}`);
 export const CROPS = ['crop_carrot', 'crop_pumpkin', 'crop_turnip', 'crops_cornStageC', 'crops_leafsStageB', 'crops_wheatStageB'].map((n) => `nature/${n}`);
-import { FURNITURE } from './interiors';
+import { FURNITURE, WALL_HEIGHT } from './interiors';
 import { lightWindows } from './windows';
 
 export const FURNISHINGS = FURNITURE.map((n) => `furniture/${n}`);
@@ -75,8 +78,16 @@ export async function loadTownAssets(): Promise<TownAssets> {
     loadVariations(),
   ]);
   const byName = new Map(prefabs.map((p) => [p.name, p]));
-  // Building windows light up at night.
-  for (const p of prefabs) if (p.name.startsWith('suburban/building') || p.name.startsWith('commercial/building')) for (const part of p.parts) lightWindows(part.material);
+  // Buildings stand on the town's own modelled ground floors (world.ts): draw
+  // each Kenney building only above it, and light its windows at night.
+  for (const p of prefabs) {
+    if (!p.name.startsWith('suburban/building') && !p.name.startsWith('commercial/building')) continue;
+    for (const part of p.parts) {
+      part.material.clippingPlanes = [ABOVE_GROUND_FLOOR];
+      part.material.clipShadows = true;
+      lightWindows(part.material);
+    }
+  }
   const charByName = new Map(CHARACTERS.map((n, i) => [n, characters[i]]));
   const variants = new Map<string, Prefab>();
   const recoloured = new Map<string, Material>();

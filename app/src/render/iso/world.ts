@@ -23,6 +23,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
+  MeshStandardMaterial,
   PlaneGeometry,
   Points,
   PointsMaterial,
@@ -43,8 +44,9 @@ import { SIDEWALK, Use, buildLayout, type House, type IsoLayout, type SidewalkNe
 import { MeshBuilder, v } from './mesh';
 import type { Box } from './orbit';
 import { Solids } from './collide';
-import { DOOR_HEIGHT, DOOR_WIDTH, FURNITURE_SCALE, WALL, WALL_HEIGHT, doorOf, furnishRoom, innerRect, roomWalls, type Rect, type Room, type RoomPlan } from './interiors';
+import { DOOR_HEIGHT, DOOR_WIDTH, FURNITURE_SCALE, WALL, WALL_HEIGHT, doorOf, furnishRoom, innerRect, roomWalls, wallSide, type Rect, type Room, type RoomPlan } from './interiors';
 import { glowTexture } from './textures';
+import { lightWindows } from './windows';
 
 /** Height of the water surface and the river bed below the land. */
 export const WATER_Y = -0.14;
@@ -121,6 +123,8 @@ export interface TownWorld {
   fountain: { at: Vec2; drops: InstancedMesh; items: Droplet[] } | null;
   /** One ground-floor room per building piece, its furnishing, and its door. */
   rooms: Room[];
+  /** Which blueprint building (index into layout.houses) each room belongs to. */
+  roomBuilding: number[];
   plans: RoomPlan[];
   doors: Door[];
   /** The door panels, one instance per room, swung by `swingDoor`. */
@@ -168,6 +172,7 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
     streaks: null!,
     fountain: null,
     rooms: [],
+    roomBuilding: [],
     plans: [],
     doors: [],
     doorPanels: null!,
@@ -206,6 +211,7 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   const sheds = new MeshBuilder();
   addHouses(world, assets, instancer, rng, shells);
   furnish(world, assets, rng);
+  const facades = addFacades(world, rng, owned);
   addDoors(world, rng, owned);
   addYards(world, assets, instancer, sheds, rng);
   addTrees(world, assets, instancer, rng);
@@ -216,7 +222,10 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   addStreaks(world, owned);
   addFountain(world, owned);
   instancer.build(root);
-  world.setShellVisible = (room, visible) => instancer.setVisible(shells[room].prefab, shells[room].index, visible);
+  world.setShellVisible = (room, visible) => {
+    instancer.setVisible(shells[room].prefab, shells[room].index, visible);
+    facades[room].visible = visible;
+  };
   const interiorMaterial = new MeshLambertMaterial({ vertexColors: true });
   owned.push(interiorMaterial);
   world.interior = (room) => {
@@ -231,29 +240,151 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   return world;
 }
 
+/** The modelled ground floor is this tall; every Kenney building is clipped to stand on it. */
+export const GROUND_FLOOR = WALL_HEIGHT;
+
+const FACADES = [0xb5563f, 0xe9dcc0, 0xf1efe9, 0xa9b99a, 0x9aa8b5, 0xd8bf8f, 0xc9c4b8, 0xc98a5a, 0x8fa6a0];
+const GLASS = 0x8fb8e8;
+const TRIM = 0xf4f1ea;
+
+/**
+ * Every piece's ground floor, modelled: facade walls in the building's
+ * colour round its room, with the doorway (where the door hangs), windows
+ * with frames (wide shop windows on shops), a plinth, a cornice band and a
+ * slab on top for the Kenney upper floors to stand on. One mesh per piece, so
+ * the view can hide it while you're inside.
+ */
+function addFacades(world: TownWorld, rng: Rng, owned: { dispose(): void }[]): Mesh[] {
+  const material = new MeshStandardMaterial({ vertexColors: true, roughness: 0.9, metalness: 0 });
+  lightWindows(material);
+  owned.push(material);
+  let lastBuilding = -1;
+  let colour = FACADES[0];
+  return world.rooms.map((room, i) => {
+    // One colour per building, so a row of pieces reads as a terrace.
+    if (world.roomBuilding[i] !== lastBuilding) {
+      lastBuilding = world.roomBuilding[i];
+      colour = FACADES[Math.floor(rng.next() * FACADES.length)];
+    }
+    const b = new MeshBuilder();
+    const H = GROUND_FLOOR;
+    const shade = darker(colour, 0.78);
+    const door = doorOf(room);
+    for (const w of roomWalls(room)) b.box(w.x0, w.y0, w.x1, w.y1, 0, H, colour, shade);
+    // Over the doorway: the wall carries on above the door.
+    const half = DOOR_WIDTH / 2;
+    const corners = [-1, 1].flatMap((side) =>
+      [0, WALL].map((inward) => ({ x: door.at.x + door.along.x * side * half - door.outward.x * inward, y: door.at.y + door.along.y * side * half - door.outward.y * inward })),
+    );
+    const xs = corners.map((q) => q.x);
+    const ys = corners.map((q) => q.y);
+    b.box(Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys), DOOR_HEIGHT + 0.06, H, colour, shade);
+    // Plinth and cornice, a little proud of the walls; the slab caps the top.
+    const p = 0.015;
+    // (a ring round the walls, not a slab, so it doesn't cover the floor seen through the door)
+    const base = darker(colour, 0.6);
+    const r = { x0: room.x0 - p, y0: room.y0 - p, x1: room.x1 + p, y1: room.y1 + p };
+    const t = WALL + p;
+    b.box(r.x0, r.y0, r.x1, r.y0 + t, 0, 0.05, base);
+    b.box(r.x0, r.y1 - t, r.x1, r.y1, 0, 0.05, base);
+    b.box(r.x0, r.y0 + t, r.x0 + t, r.y1 - t, 0, 0.05, base);
+    b.box(r.x1 - t, r.y0 + t, r.x1, r.y1 - t, 0, 0.05, base);
+    const c = 0.035;
+    b.box(room.x0 - c, room.y0 - c, room.x1 + c, room.y1 + c, H - 0.05, H + 0.02, TRIM, 0x8c8a84);
+    // Windows on every wall, skipping the doorway.
+    const shop = room.style === 'shop' || room.style === 'office';
+    for (const side of ['N', 'E', 'S', 'W'] as const) {
+      const front = side === room.facing;
+      const n = SIDE_NORMAL[side];
+      const along = { x: Math.abs(n.y), y: Math.abs(n.x) };
+      const len = along.x ? room.x1 - room.x0 : room.y1 - room.y0;
+      const origin = { x: n.x > 0 ? room.x1 : room.x0, y: n.y > 0 ? room.y1 : room.y0 };
+      const wide = front && shop;
+      const width = wide ? 0.62 : 0.28;
+      const spacing = wide ? 0.82 : 0.6;
+      const sill = wide ? 0.12 : 0.26;
+      const top = wide ? 0.58 : 0.58;
+      const count = Math.floor((len - 0.3) / spacing);
+      if (count < 1) continue;
+      const start = (len - count * spacing) / 2 + spacing / 2;
+      for (let k = 0; k < count; k++) {
+        const t = start + k * spacing;
+        const cx = origin.x + along.x * t;
+        const cy = origin.y + along.y * t;
+        if (front && Math.hypot(cx - door.at.x, cy - door.at.y) < half + width / 2 + 0.08) continue;
+        windowPane(b, { x: cx, y: cy }, along, n, width, sill, top);
+      }
+    }
+    const mesh = new Mesh(b.build(), material);
+    mesh.castShadow = mesh.receiveShadow = true;
+    owned.push(mesh.geometry);
+    world.root.add(mesh);
+    return mesh;
+  });
+}
+
+const SIDE_NORMAL: Record<Facing, Vec2> = { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: { x: 0, y: 1 }, W: { x: -1, y: 0 } };
+
+/** A framed pane of glass standing just proud of a wall whose outward normal is n. */
+function windowPane(b: MeshBuilder, c: Vec2, along: Vec2, n: Vec2, width: number, y0: number, y1: number): void {
+  const face = new Vector3(n.x, 0, n.y);
+  const quad = (half: number, lo: number, hi: number, out: number, color: number) => {
+    const ox = c.x + n.x * out;
+    const oy = c.y + n.y * out;
+    b.quad(
+      v(ox - along.x * half, lo, oy - along.y * half),
+      v(ox + along.x * half, lo, oy + along.y * half),
+      v(ox + along.x * half, hi, oy + along.y * half),
+      v(ox - along.x * half, hi, oy - along.y * half),
+      color,
+      face,
+    );
+  };
+  quad(width / 2 + 0.03, y0 - 0.03, y1 + 0.03, 0.004, TRIM);
+  quad(width / 2, y0, y1, 0.008, GLASS);
+  // A sill.
+  quad(width / 2 + 0.05, y0 - 0.05, y0 - 0.02, 0.012, 0xdcd8cf);
+}
+
+function darker(c: number, k: number): number {
+  return (Math.round(((c >> 16) & 255) * k) << 16) | (Math.round(((c >> 8) & 255) * k) << 8) | Math.round((c & 255) * k);
+}
+
 const FLOORS: Record<string, number> = { house: 0xb98b5e, shop: 0xd9d2c5, office: 0xcfd3d6, workshop: 0x9a958c, hall: 0xa8794f, church: 0xa8794f };
 
 /**
- * A room's ground floor: a floor, the walls (the front one cut down low so the
- * fixed room camera sees in over it), and its furniture.
+ * A room's ground floor: a floor, the walls (one mesh per side, so the view
+ * can cut down the ones facing the camera), and its furniture.
  */
 function buildInterior(world: TownWorld, assets: TownAssets, id: number, material: Material): Group {
   const room = world.rooms[id];
   const g = new Group();
-  const b = new MeshBuilder();
+  const floor = new MeshBuilder();
   const inner = innerRect(room);
-  b.rect(inner.x0, inner.y0, inner.x1, inner.y1, 0.012, FLOORS[room.style] ?? FLOORS.house);
-  const door = doorOf(room);
+  floor.rect(inner.x0, inner.y0, inner.x1, inner.y1, 0.012, FLOORS[room.style] ?? FLOORS.house);
+  const floorMesh = new Mesh(floor.build(), material);
+  floorMesh.receiveShadow = true;
+  floorMesh.userData.owned = true;
+  g.add(floorMesh);
+  // One mesh per wall side, standing on y = 0, so the view can cut down
+  // whichever walls face the camera (scale.y) to see in over them.
+  const sides = new Map<Facing, MeshBuilder>();
   for (const w of roomWalls(room)) {
-    // The front wall: the stretch either side of the door, in line with it.
-    const front = Math.abs((w.x0 + w.x1) / 2 - door.at.x) * Math.abs(door.outward.x) + Math.abs((w.y0 + w.y1) / 2 - door.at.y) * Math.abs(door.outward.y) < WALL;
-    b.box(w.x0, w.y0, w.x1, w.y1, 0, front ? 0.12 : WALL_HEIGHT, 0xefe6d6, 0xb8ad9a);
+    const side = wallSide(room, w);
+    let b = sides.get(side);
+    if (!b) sides.set(side, (b = new MeshBuilder()));
+    // A hair inside the facade's faces, so the two never fight when both show (door open).
+    const e = 0.006;
+    b.box(w.x0 + e, w.y0 + e, w.x1 - e, w.y1 - e, 0, WALL_HEIGHT - e, 0xefe6d6, 0xb8ad9a);
   }
-  const shell = new Mesh(b.build(), material);
-  shell.receiveShadow = true;
-  shell.castShadow = true;
-  shell.userData.owned = true;
-  g.add(shell);
+  for (const [side, b] of sides) {
+    const wall = new Mesh(b.build(), material);
+    wall.receiveShadow = true;
+    wall.castShadow = true;
+    wall.userData.owned = true;
+    wall.userData.side = side;
+    g.add(wall);
+  }
   for (const p of world.plans[id].furniture) {
     const prefab = assets.prefab(`furniture/${p.name}`);
     const m = placement(prefab, p, p.rot, FURNITURE_SCALE, FURNITURE_SCALE, FURNITURE_SCALE, p.lift + 0.012);
@@ -620,6 +751,7 @@ function addHouses(world: TownWorld, assets: TownAssets, instancer: Instancer, r
       world.boxes.push({ x0: at.x - halfX, y0: at.y - halfY, x1: at.x + halfX, y1: at.y + halfY, top: prefab.size.y * sy });
       // Its ground-floor room fills the same rectangle, inside the shell.
       shells.push({ prefab, index });
+      world.roomBuilding.push(world.layout.houses.indexOf(house));
       world.rooms.push({ id: world.rooms.length, x0: at.x - halfX + gap, y0: at.y - halfY + gap, x1: at.x + halfX - gap, y1: at.y + halfY - gap, facing: house.facing, style: house.style });
     }
   }

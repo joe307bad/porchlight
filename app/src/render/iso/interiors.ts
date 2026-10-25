@@ -100,9 +100,46 @@ export function innerRect(room: Room): Rect {
   return { x0: room.x0 + WALL, y0: room.y0 + WALL, x1: room.x1 - WALL, y1: room.y1 - WALL };
 }
 
-export function inRoom(room: Room, p: Vec2): boolean {
+/** True if p is on the room's floor; a positive margin counts a band round it as inside too. */
+export function inRoom(room: Room, p: Vec2, margin = 0): boolean {
   const r = innerRect(room);
-  return p.x > r.x0 && p.x < r.x1 && p.y > r.y0 && p.y < r.y1;
+  return p.x > r.x0 - margin && p.x < r.x1 + margin && p.y > r.y0 - margin && p.y < r.y1 + margin;
+}
+
+/**
+ * You're in a room once you're a little way past its doorway, and stay in it
+ * until you're clearly back out past the wall, so standing on the threshold
+ * doesn't flick between the street and the room.
+ */
+export const ENTER_MARGIN = -0.05;
+export const LEAVE_MARGIN = WALL + 0.1;
+
+/** Outward directions of a room's four walls. */
+export const SIDE_OUT: Record<Facing, Vec2> = { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: { x: 0, y: 1 }, W: { x: -1, y: 0 } };
+
+/** Which side of its room a wall rectangle (from roomWalls) is on. */
+export function wallSide(room: Room, w: Rect): Facing {
+  const t = WALL + 1e-6;
+  if (w.y1 - room.y0 <= t) return 'N';
+  if (room.y1 - w.y0 <= t) return 'S';
+  if (w.x1 - room.x0 <= t) return 'W';
+  return 'E';
+}
+
+/**
+ * The fixed room camera's heading: from the street side (turn 0), or a
+ * quarter turn round the room per step of `turn`.
+ */
+export function roomCameraYaw(room: Room, turn: number): number {
+  const out = SIDE_OUT[room.facing];
+  return Math.atan2(out.x, out.y) + (turn * Math.PI) / 2;
+}
+
+/** True if a wall on `side` stands between the room and a camera off in direction (x, y): cut it down. */
+export function wallFacesCamera(side: Facing, camera: Vec2): boolean {
+  const n = SIDE_OUT[side];
+  const len = Math.hypot(camera.x, camera.y) || 1;
+  return (n.x * camera.x + n.y * camera.y) / len > 0.25;
 }
 
 /** The room's walls as solid rectangles, the front one split round the door. */

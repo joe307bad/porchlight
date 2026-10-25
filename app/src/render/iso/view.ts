@@ -44,7 +44,8 @@ import { index } from '../../core/grid';
 import { createRng, type Rng } from '../../core/rng';
 import type { TownModel, Vec2 } from '../../model/types';
 import { Pedestrian, Player, Walker, standable } from './actors';
-import { WALL_HEIGHT, doorOf, frame as roomFrame, inRoom } from './interiors';
+import { ENTER_MARGIN, LEAVE_MARGIN, WALL_HEIGHT, doorOf, frame as roomFrame, inRoom, roomCameraYaw, wallFacesCamera } from './interiors';
+import type { Facing } from '../../model/types';
 import { loadTownAssets, type TownAssets } from './assets';
 import { Avatar, PERSON_HEIGHT, randomLook, type Look } from './characters';
 import { Fleet, pickCarModel } from './fleet';
@@ -116,6 +117,8 @@ const DOOR_SPEED = 3;
 /** The fixed room camera's pitch, and how much room to leave round the room in view. */
 const ROOM_PITCH = (55 * Math.PI) / 180;
 const ROOM_MARGIN = 1.35;
+/** Roughly how steeply the chase looks down, for picking it back up after a room. */
+const CHASE_TILT_GUESS = 0.3;
 /** Zoomed out further than this (overview zoom), auto walk leaves the camera's heading alone. */
 const AUTO_TURN_MIN_ZOOM = 0.7;
 
@@ -150,6 +153,14 @@ export class IsoView {
   /** Shopkeepers, made the first time you walk into their room. */
   private keepers = new Map<number, { walker: Walker; avatar: Avatar }>();
   private readonly roomLight = new PointLight(0xffd9a0, 0, 6, 1.4);
+  /** Quarter turns Q / E have taken the room camera round the room (0 = from the street). */
+  private roomTurn = 0;
+  /**
+   * The camera heading the movement keys are read against. It only catches up
+   * with the camera once no movement key is held, so a camera swing (into a
+   * room, or a Q / E turn) never bends the way you're already walking.
+   */
+  private inputYaw = stopYaw(DEFAULT_STOP);
   /** Tilt stop per mode (Z / X), and the pitch being shown (eases toward the stop). */
   private isoTilt = DEFAULT_ISO_TILT;
   private chaseTilt = DEFAULT_CHASE_TILT;
@@ -233,6 +244,7 @@ export class IsoView {
     renderer.outputColorSpace = SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = PCFSoftShadowMap;
+    renderer.localClippingEnabled = true; // Kenney buildings are clipped to stand on the modelled ground floors
     renderer.domElement.style.display = 'block';
     host.appendChild(renderer.domElement);
     try {
@@ -389,6 +401,10 @@ export class IsoView {
 
   /** Turn the camera one stop round the player (+1 or -1); in close-up, swing it 30° round them. */
   rotate(step: number): void {
+    if (this.room !== null) {
+      this.roomTurn += step;
+      return;
+    }
     if (this.mode === 'close') {
       this.chaseSwing += (step * Math.PI) / 6;
       return;
@@ -428,6 +444,10 @@ export class IsoView {
   lookAlongWalk(): void {
     const p = this.player;
     if (!p) return;
+    if (this.room !== null) {
+      this.roomTurn = 0;
+      return;
+    }
     if (this.mode === 'close') {
       this.chaseSwing = 0;
       return;
@@ -470,6 +490,7 @@ export class IsoView {
       outlined: this.hidden,
       cameraMode: this.mode,
       room: this.room,
+      roomTurn: this.roomTurn,
       roomStyle: this.room !== null && world ? world.rooms[this.room].style : null,
       openDoors: world?.doors.filter((d) => d.open > 0.5).length ?? 0,
       cameraStop: this.cameraStop,
@@ -526,7 +547,7 @@ export class IsoView {
       e.preventDefault();
       if (this.player?.isAuto) {
         // Auto-walking: a key press is a one-off request (turn round / cross here).
-        const d = screenToWorld({ x: KEYS[e.code][0], y: KEYS[e.code][1] }, this.viewYaw);
+        const d = screenToWorld({ x: KEYS[e.code][0], y: KEYS[e.code][1] }, this.inputYaw);
         if (!e.repeat && d) this.player.command(d);
         return;
       }
@@ -563,6 +584,7 @@ export class IsoView {
       input.y += KEYS[code][1];
     }
     const p = this.player;
+    if (!this.held.size) this.inputYaw = this.viewYaw;
     if (p && this.mode === 'close' && !p.isAuto && this.room === null) {
       // Close-up: forward and back along the way they face, left and right turn.
       const heading = p.heading - input.x * TURN_RATE * dt;
@@ -570,7 +592,7 @@ export class IsoView {
       p.update(input.y ? { x: -ahead.x * Math.sign(input.y), y: -ahead.y * Math.sign(input.y) } : null, dt, world.model, this.open, world.solids);
       p.heading = heading; // walking backwards keeps them facing forwards
     } else {
-      p?.update(screenToWorld(input, this.yaw), dt, world.model, this.open, world.solids);
+      p?.update(screenToWorld(input, this.inputYaw), dt, world.model, this.open, world.solids);
     }
     this.updateDoors(world, dt);
     this.updateRoom(world);
@@ -588,8 +610,12 @@ export class IsoView {
       const near = !!p && Math.abs(p.x - at.x) < DOOR_REACH && Math.abs(p.y - at.y) < DOOR_REACH && Math.hypot(p.x - at.x, p.y - at.y) < DOOR_REACH;
       const target = near ? 1 : 0;
       if (d.open === target) return;
+      const was = d.open;
       d.open = target > d.open ? Math.min(1, d.open + dt * DOOR_SPEED) : Math.max(0, d.open - dt * DOOR_SPEED);
       swingDoor(world, i);
+      // An open door shows the room behind it (and whoever minds it).
+      if (was === 0 && d.open > 0) this.showRoom(world, i, true);
+      if (d.open === 0 && i !== this.room) this.showRoom(world, i, false);
     });
   }
 
@@ -598,22 +624,38 @@ export class IsoView {
     const p = this.player;
     let now: number | null = null;
     if (p) {
-      if (this.room !== null && inRoom(world.rooms[this.room], p)) now = this.room;
-      else now = world.rooms.findIndex((r) => inRoom(r, p));
+      if (this.room !== null && inRoom(world.rooms[this.room], p, LEAVE_MARGIN)) now = this.room;
+      else now = world.rooms.findIndex((r) => inRoom(r, p, ENTER_MARGIN));
       if (now === -1) now = null;
     }
     if (now === this.room) return;
     if (this.room !== null) {
       world.setShellVisible(this.room, true);
-      world.interior(this.room).visible = false;
-      const k = this.keepers.get(this.room);
-      if (k) k.avatar.root.visible = false;
+      // Walls back up to full height for the view through the door.
+      for (const wall of world.interior(this.room).children) if (wall.userData.side) wall.scale.y = 1;
+      if (world.doors[this.room].open === 0) this.showRoom(world, this.room, false);
     }
+    const left = this.room;
     this.room = now;
+    this.roomTurn = 0;
+    // Back out in close-up: pick the chase up from where the room camera is, and ease round behind.
+    if (left !== null && now === null && this.mode === 'close' && p) {
+      this.chaseYawNow = Math.atan2(this.chase.position.x - p.x, this.chase.position.z - p.y);
+      this.shownChaseDistance = Math.min(CHASE_MAX, Math.hypot(this.chase.position.x - p.x, this.chase.position.z - p.y) / Math.cos(CHASE_TILT_GUESS));
+    }
     if (now !== null) {
       world.setShellVisible(now, false);
-      world.interior(now).visible = true;
-      this.showKeeper(world, now);
+      this.showRoom(world, now, true);
+    }
+  }
+
+  /** Show or hide a room's furnished ground floor and its keeper. */
+  private showRoom(world: TownWorld, room: number, on: boolean): void {
+    world.interior(room).visible = on;
+    if (on) this.showKeeper(world, room);
+    else {
+      const k = this.keepers.get(room);
+      if (k) k.avatar.root.visible = false;
     }
   }
 
@@ -704,6 +746,8 @@ export class IsoView {
     this.focus.lerp(target, this.snap ? 1 : Math.min(1, dt * (fixed ? 5 : 8)));
     this.pitch += (pitchTarget - this.pitch) * (this.snap ? 1 : Math.min(1, dt * 6));
     if (this.mode === 'close' && p && !fixed) this.placeChase(world, p, dt);
+    if (this.mode === 'close' && fixed) this.placeChaseInRoom(fixed, dt);
+    if (this.room !== null) this.cutWalls(world, this.room, dt);
     // A warm light in the room you're in (brighter at night).
     if (fixed) {
       this.roomLight.position.set(fixed.focus.x, WALL_HEIGHT * 0.9, fixed.focus.z);
@@ -728,21 +772,54 @@ export class IsoView {
 
   /** The camera being drawn through. */
   private get view(): OrthographicCamera | PerspectiveCamera {
-    return this.mode === 'close' && this.room === null ? this.chase : this.camera;
+    return this.mode === 'close' ? this.chase : this.camera;
+  }
+
+  /** In close-up, the room camera is the chase camera easing to a fixed spot framing the room. */
+  private placeChaseInRoom(fixed: { yaw: number; pitch: number; half: number; focus: Vector3 }, dt: number): void {
+    const o = cameraOffset(fixed.yaw, fixed.pitch);
+    const d = (fixed.half / Math.tan(((CHASE_FOV / 2) * Math.PI) / 180)) * 1.05;
+    const at = new Vector3(fixed.focus.x + o.x * d, fixed.focus.y + o.up * d, fixed.focus.z + o.y * d);
+    const k = this.snap ? 1 : Math.min(1, dt * 4);
+    this.chase.position.lerp(at, k);
+    this.chaseLook.lerp(fixed.focus, k);
+    const { clientWidth: w, clientHeight: h } = this.host;
+    this.chase.aspect = Math.max(1, w) / Math.max(1, h);
+    this.chase.updateProjectionMatrix();
+    this.chase.lookAt(this.chaseLook);
+  }
+
+  /** Cut down the room's walls on the camera's side (eased), so you see in over them. */
+  private cutWalls(world: TownWorld, room: number, dt: number): void {
+    const cam = this.view.position;
+    const r = world.rooms[room];
+    const dir = { x: cam.x - (r.x0 + r.x1) / 2, y: cam.z - (r.y0 + r.y1) / 2 };
+    const low = 0.12 / WALL_HEIGHT;
+    for (const wall of world.interior(room).children) {
+      const side = wall.userData.side as Facing | undefined;
+      if (!side) continue;
+      const want = wallFacesCamera(side, dir) ? low : 1;
+      wall.scale.y += (want - wall.scale.y) * (this.snap ? 1 : Math.min(1, dt * 8));
+    }
   }
 
   /** The fixed camera for a room: from its street side, pitched down, zoomed to fit it all. */
-  private roomView(world: TownWorld, id: number): { yaw: number; pitch: number; zoom: number; focus: Vector3 } {
+  private roomView(world: TownWorld, id: number): { yaw: number; pitch: number; zoom: number; half: number; focus: Vector3 } {
     const room = world.rooms[id];
     const fr = roomFrame(room);
     const { clientWidth: w, clientHeight: h } = this.host;
     const aspect = Math.max(1, w) / Math.max(1, h);
-    const tall = fr.depth * Math.sin(ROOM_PITCH) + WALL_HEIGHT * Math.cos(ROOM_PITCH);
-    const half = Math.max(1.6, ((tall / 2) * ROOM_MARGIN), ((fr.width / 2) * ROOM_MARGIN) / aspect);
+    // Turned a quarter round, the room's depth runs across the screen instead.
+    const quarter = Math.abs(this.roomTurn) % 2 === 1;
+    const across = quarter ? fr.depth : fr.width;
+    const deep = quarter ? fr.width : fr.depth;
+    const tall = deep * Math.sin(ROOM_PITCH) + WALL_HEIGHT * Math.cos(ROOM_PITCH);
+    const half = Math.max(1.6, (tall / 2) * ROOM_MARGIN, ((across / 2) * ROOM_MARGIN) / aspect);
     return {
-      yaw: Math.atan2(fr.outward.x, fr.outward.y),
+      yaw: roomCameraYaw(room, this.roomTurn),
       pitch: ROOM_PITCH,
       zoom: VIEW_HEIGHT / 2 / half,
+      half,
       focus: new Vector3((room.x0 + room.x1) / 2, 0.2, (room.y0 + room.y1) / 2),
     };
   }
@@ -750,6 +827,11 @@ export class IsoView {
   /** The heading of the camera being drawn through (for screen-relative keys). */
   private get viewYaw(): number {
     return this.mode === 'close' && this.room === null ? this.chaseYawNow : this.yaw;
+  }
+
+  /** The room camera's turn, for tests and tooling. */
+  get roomCameraTurn(): number {
+    return this.roomTurn;
   }
 
   /**

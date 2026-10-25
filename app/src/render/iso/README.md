@@ -55,13 +55,32 @@ before, but the town is real geometry, so the camera can turn.
 
   Nothing blocks the door. Walls and furniture are solid (`collide.ts`), so
   the door is the only way in.
-- **Doors:** walk up to one and it swings open, then shuts once you've gone
-  (no key needed).
-- **Inside:** stepping through a door hides that building's shell (its upper
-  floors and roof) and shows its ground floor, with the front wall cut down
-  low. The camera eases to a fixed view of the room: from the street side,
-  pitched down at 55°, zoomed to fit the whole room. A warm light comes on,
-  brighter at night. Walking back out puts everything back.
+- **Modelled ground floors:** every building's ground floor is modelled by
+  the town itself, not by the Kenney model: facade walls in the building's
+  colour (one colour per building, so a row reads as a terrace), the
+  doorway the door hangs in, framed windows on every wall (wide shop windows
+  on shops and offices), a plinth, a cornice band and a slab on top. The
+  Kenney model stands on it as the upper floors and roof: a clipping plane
+  on the city-kit materials (`ABOVE_GROUND_FLOOR` in `assets.ts`) cuts away
+  everything of it below the ground floor's height (0.8 tiles), including its
+  own painted door. So the door you walk through is the building's only door,
+  and the room behind it matches the outside.
+- **Doors:** walk up to one and it swings open, showing the furnished room
+  behind it, then shuts once you've gone (no key needed).
+- **Inside:** you're in once you're a little way past the doorway, and stay
+  in until you're clearly back out, so the threshold doesn't flick between
+  the two. Inside, that building's upper floors and facade hide, and the
+  camera eases to a fixed view of the room: from the street side, pitched
+  down at 55°, zoomed to fit the whole room. In close-up mode it's the
+  perspective camera easing to a fixed spot instead, and walking back out
+  eases it round behind you again. `Q` / `E` turn the room view a quarter
+  round the room, and `F` brings it back to the street side. Whichever walls
+  face the camera are cut down low, so you see in over them. A warm light
+  comes on, brighter at night.
+- **Keys keep their direction:** the movement keys are read against the
+  camera's heading from when you started holding them, and only catch up
+  once you let go. So when the camera swings round as you go through a door
+  (or on a Q / E turn), the way you're walking doesn't bend under you.
 - **Lit windows (`windows.ts`):** at night a shader patch on the city-kit
   materials glows window-blue texels on walls, warm yellow. Each window-sized
   cell is lit or not at random, more often the higher up it is, so towers

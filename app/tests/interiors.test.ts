@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createRng } from '../src/core/rng';
 import type { Facing } from '../src/model/types';
 import { Solids } from '../src/render/iso/collide';
-import { DOOR_WIDTH, FURNITURE, WALL, doorOf, furnishRoom, inRoom, innerRect, roomWalls, type FurnitureSize, type Room } from '../src/render/iso/interiors';
+import { DOOR_WIDTH, ENTER_MARGIN, FURNITURE, LEAVE_MARGIN, WALL, doorOf, roomCameraYaw, wallFacesCamera, wallSide, furnishRoom, inRoom, innerRect, roomWalls, type FurnitureSize, type Room } from '../src/render/iso/interiors';
 import type { HouseStyle } from '../src/render/iso/layout';
 
 /** Rough furniture footprints (tiles), like the kit's at scale. */
@@ -102,5 +102,49 @@ describe('ground-floor rooms', () => {
     // The back wall of a south-facing room is at the north (y0): the kitchen faces south.
     expect(fridge!.y).toBeLessThan(r.y0 + WALL + 0.4);
     expect(Math.cos(fridge!.rot)).toBeCloseTo(1);
+  });
+
+  it('knows which side each wall is on, with the door gap in the front one', () => {
+    for (const f of FACINGS) {
+      const r = room(f, 'house');
+      const sides = roomWalls(r).map((w) => wallSide(r, w));
+      expect(sides.filter((x) => x === f).length).toBe(2);
+      for (const other of FACINGS.filter((x) => x !== f)) expect(sides.filter((x) => x === other).length).toBe(1);
+    }
+  });
+
+  it("doesn't flick in and out on the threshold", () => {
+    const r = room('S', 'house');
+    const { at, outward } = doorOf(r);
+    const step = (s: number) => ({ x: at.x - outward.x * s, y: at.y - outward.y * s });
+    // On the threshold (in the wall's thickness) you haven't entered yet...
+    expect(inRoom(r, step(WALL / 2), ENTER_MARGIN)).toBe(false);
+    // ...a little way in you have...
+    expect(inRoom(r, step(0.2), ENTER_MARGIN)).toBe(true);
+    // ...and once in, standing on the threshold or just outside still counts...
+    expect(inRoom(r, step(WALL / 2), LEAVE_MARGIN)).toBe(true);
+    expect(inRoom(r, step(-0.05), LEAVE_MARGIN)).toBe(true);
+    // ...until you're clearly out.
+    expect(inRoom(r, step(-0.25), LEAVE_MARGIN)).toBe(false);
+  });
+
+  it('turns the room camera a quarter round the room per step, starting from the street', () => {
+    for (const f of FACINGS) {
+      const r = room(f, 'house');
+      const out = doorOf(r).outward;
+      for (let turn = -4; turn <= 4; turn++) {
+        const yaw = roomCameraYaw(r, turn);
+        const cam = { x: Math.sin(yaw), y: Math.cos(yaw) };
+        if (turn % 4 === 0) {
+          expect(cam.x).toBeCloseTo(out.x);
+          expect(cam.y).toBeCloseTo(out.y);
+        }
+        // The wall on the camera's side is cut down; the far one isn't.
+        const near = FACINGS.find((side) => wallFacesCamera(side, cam));
+        expect(near).toBeDefined();
+        const far = FACINGS.filter((side) => wallFacesCamera(side, { x: -cam.x, y: -cam.y }));
+        expect(far).not.toContain(near);
+      }
+    }
   });
 });
