@@ -39,7 +39,7 @@ export const BUSHES = ['plant_bush', 'plant_bushLarge', 'plant_bushSmall', 'gras
 export const FLOWERS = ['flower_redA', 'flower_purpleA', 'flower_yellowA'].map((n) => `nature/${n}`);
 export const CROPS = ['crop_carrot', 'crop_pumpkin', 'crop_turnip', 'crops_cornStageC', 'crops_leafsStageB', 'crops_wheatStageB'].map((n) => `nature/${n}`);
 import { FURNITURE, WALL_HEIGHT } from './interiors';
-import { lightWindows } from './windows';
+import { lightWindows, readPixels, tagWindows, type Pixels } from './windows';
 
 export const FURNISHINGS = FURNITURE.map((n) => `furniture/${n}`);
 export const PROPS = ['nature/rock_smallA', 'nature/log_stack', 'nature/pot_large', 'suburban/planter', 'suburban/fence', 'commercial/detail-awning'];
@@ -83,6 +83,7 @@ export async function loadTownAssets(): Promise<TownAssets> {
   for (const p of prefabs) {
     if (!p.name.startsWith('suburban/building') && !p.name.startsWith('commercial/building')) continue;
     for (const part of p.parts) {
+      part.geometry = tagWindows(part.geometry, colourmapPixels(part.material));
       part.material.clippingPlanes = [ABOVE_GROUND_FLOOR];
       part.material.clipShadows = true;
       lightWindows(part.material);
@@ -133,6 +134,16 @@ export async function loadTownAssets(): Promise<TownAssets> {
       return c;
     },
   };
+}
+
+const pixelCache = new Map<unknown, Pixels | null>();
+
+/** The pixels of a material's colourmap (cached per image), to find its window panes. */
+function colourmapPixels(material: Material): Pixels | null {
+  const image = (material as MeshStandardMaterial).map?.image as (CanvasImageSource & { width: number; height: number }) | undefined;
+  if (!image) return null;
+  if (!pixelCache.has(image)) pixelCache.set(image, readPixels(image));
+  return pixelCache.get(image) ?? null;
 }
 
 async function loadVariations(): Promise<Map<string, Texture[]>> {

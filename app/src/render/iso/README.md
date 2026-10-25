@@ -81,10 +81,15 @@ before, but the town is real geometry, so the camera can turn.
   camera's heading from when you started holding them, and only catch up
   once you let go. So when the camera swings round as you go through a door
   (or on a Q / E turn), the way you're walking doesn't bend under you.
-- **Lit windows (`windows.ts`):** at night a shader patch on the city-kit
-  materials glows window-blue texels on walls, warm yellow. Each window-sized
-  cell is lit or not at random, more often the higher up it is, so towers
-  twinkle more than cottages, and about one lit window in eight flickers.
+- **Lit windows (`windows.ts`):** decided window by window, so a window is
+  either all lit or all dark. On load, each Kenney building's window panes
+  are found: triangles whose colourmap texel is window blue, grouped into
+  connected panes. Each pane gets its own `windowSeed` vertex attribute, and
+  the geometry is un-indexed first so no wall triangle shares a corner with
+  glass. The town's own ground-floor panes get seeds as they're built. At
+  night a shader patch lights a random share of panes warm yellow: 15% low
+  down rising to 36% at tower heights, varied per building, at half
+  brightness, and about one lit window in eight flickers.
 - **Zoomed out:** past overview zoom 0.7, auto walk no longer turns the
   camera.
 - **Seeing through buildings:** when a building stands between the player

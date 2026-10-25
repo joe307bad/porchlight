@@ -16,19 +16,27 @@ export class MeshBuilder {
   private readonly pos: number[] = [];
   private readonly col: number[] = [];
   private readonly idx: number[] = [];
+  /** Per vertex: 0, or a window pane's seed (see windows.ts). */
+  private readonly seeds: number[] = [];
 
   get empty(): boolean {
     return this.idx.length === 0;
   }
 
-  /** A quad (corners in order round its edge) facing roughly `facing` (winding is fixed up to match). */
-  quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: number, facing: Vector3 = UP): void {
+  /**
+   * A quad (corners in order round its edge) facing roughly `facing` (winding
+   * is fixed up to match). A window pane passes its seed (1..2) to light at night.
+   */
+  quad(a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: number, facing: Vector3 = UP, seed = 0): void {
     const base = this.pos.length / 3;
     n.crossVectors(ab.subVectors(b, a), ac.subVectors(c, a));
     const flip = n.dot(facing) < 0;
     for (const p of flip ? [a, d, c, b] : [a, b, c, d]) this.pos.push(p.x, p.y, p.z);
     tmp.setHex(color);
-    for (let k = 0; k < 4; k++) this.col.push(tmp.r, tmp.g, tmp.b);
+    for (let k = 0; k < 4; k++) {
+      this.col.push(tmp.r, tmp.g, tmp.b);
+      this.seeds.push(seed);
+    }
     this.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
   }
 
@@ -93,6 +101,7 @@ export class MeshBuilder {
     const g = new BufferGeometry();
     g.setAttribute('position', new Float32BufferAttribute(this.pos, 3));
     g.setAttribute('color', new Float32BufferAttribute(this.col, 3));
+    g.setAttribute('windowSeed', new Float32BufferAttribute(this.seeds, 1));
     g.setIndex(this.idx);
     g.computeVertexNormals();
     g.computeBoundingSphere();

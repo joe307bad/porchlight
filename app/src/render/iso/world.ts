@@ -46,7 +46,7 @@ import type { Box } from './orbit';
 import { Solids } from './collide';
 import { DOOR_HEIGHT, DOOR_WIDTH, FURNITURE_SCALE, WALL, WALL_HEIGHT, doorOf, furnishRoom, innerRect, roomWalls, wallSide, type Rect, type Room, type RoomPlan } from './interiors';
 import { glowTexture } from './textures';
-import { lightWindows } from './windows';
+import { lightWindows, paneHash } from './windows';
 
 /** Height of the water surface and the river bed below the land. */
 export const WATER_Y = -0.14;
@@ -326,9 +326,13 @@ function addFacades(world: TownWorld, rng: Rng, owned: { dispose(): void }[]): M
 const SIDE_NORMAL: Record<Facing, Vec2> = { N: { x: 0, y: -1 }, E: { x: 1, y: 0 }, S: { x: 0, y: 1 }, W: { x: -1, y: 0 } };
 
 /** A framed pane of glass standing just proud of a wall whose outward normal is n. */
+let paneCount = 0;
+
 function windowPane(b: MeshBuilder, c: Vec2, along: Vec2, n: Vec2, width: number, y0: number, y1: number): void {
   const face = new Vector3(n.x, 0, n.y);
-  const quad = (half: number, lo: number, hi: number, out: number, color: number) => {
+  // Its own seed, so the whole pane lights (or not) together at night.
+  const seed = 1 + paneHash(++paneCount);
+  const quad = (half: number, lo: number, hi: number, out: number, color: number, glass = false) => {
     const ox = c.x + n.x * out;
     const oy = c.y + n.y * out;
     b.quad(
@@ -338,10 +342,11 @@ function windowPane(b: MeshBuilder, c: Vec2, along: Vec2, n: Vec2, width: number
       v(ox - along.x * half, hi, oy - along.y * half),
       color,
       face,
+      glass ? seed : 0,
     );
   };
   quad(width / 2 + 0.03, y0 - 0.03, y1 + 0.03, 0.004, TRIM);
-  quad(width / 2, y0, y1, 0.008, GLASS);
+  quad(width / 2, y0, y1, 0.008, GLASS, true);
   // A sill.
   quad(width / 2 + 0.05, y0 - 0.05, y0 - 0.02, 0.012, 0xdcd8cf);
 }
