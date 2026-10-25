@@ -86,7 +86,10 @@ before, but the town is real geometry, so the camera can turn.
   are found: triangles whose colourmap texel is window blue, grouped into
   connected panes. Each pane gets its own `windowSeed` vertex attribute, and
   the geometry is un-indexed first so no wall triangle shares a corner with
-  glass. The town's own ground-floor panes get seeds as they're built. At
+  glass. Glass is the kits' pale sky-blue swatches only (`isGlass`), not
+  their lavender-white wall paint, which is faintly blue too. Panes spanning
+  more than a fifth of a building (tower curtain walls) light floor by floor,
+  bay by bay. The town's own ground-floor panes get seeds as they're built. At
   night a shader patch lights a random share of panes warm yellow: 15% low
   down rising to 36% at tower heights, varied per building, at half
   brightness, and about one lit window in eight flickers.

@@ -115,10 +115,33 @@ function panes(g: BufferGeometry): { panes: number; mixed: number; glassTris: nu
   return { panes: set.size, mixed, glassTris };
 }
 
+/** How much of a model's surface (by area) is tagged glass. */
+function glassShare(p: ReturnType<typeof flatten>): number {
+  let glass = 0;
+  let all = 0;
+  for (const part of p.parts) {
+    const g = part.geometry.attributes.windowSeed ? part.geometry : null;
+    if (!g) continue;
+    const pos = g.attributes.position;
+    const seeds = g.attributes.windowSeed;
+    for (let t = 0; t < pos.count / 3; t++) {
+      const v = [0, 1, 2].map((k) => [pos.getX(t * 3 + k), pos.getY(t * 3 + k), pos.getZ(t * 3 + k)]);
+      const ab = v[1].map((x, i) => x - v[0][i]);
+      const ac = v[2].map((x, i) => x - v[0][i]);
+      const area = Math.hypot(ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]) / 2;
+      all += area;
+      if (seeds.getX(t * 3) > 0) glass += area;
+    }
+  }
+  return all ? glass / all : 0;
+}
+
 describe('window panes', () => {
   it('know glass from walls and roofs', () => {
-    expect(isGlass(204, 229, 255)).toBe(true); // pale window blue
-    expect(isGlass(98, 148, 216)).toBe(true); // mid window blue
+    expect(isGlass(175, 206, 243)).toBe(true); // pale window blue
+    expect(isGlass(124, 165, 225)).toBe(true); // deeper window blue
+    expect(isGlass(214, 214, 229)).toBe(false); // the kits' lavender-white walls
+    expect(isGlass(98, 148, 216)).toBe(false); // roof blue
     expect(isGlass(240, 240, 240)).toBe(false); // white wall
     expect(isGlass(96, 200, 140)).toBe(false); // green roof
     expect(isGlass(154, 168, 181)).toBe(false); // blue-grey render
@@ -126,7 +149,7 @@ describe('window panes', () => {
 
   it('give every triangle of one pane the same seed, and separate panes their own', () => {
     // Two separate quads of glass and one of wall, on a 2x1 texture: left texel glass, right texel wall.
-    const pixels: Pixels = { data: new Uint8Array([204, 229, 255, 255, 240, 240, 240, 255]), width: 2, height: 1 };
+    const pixels: Pixels = { data: new Uint8Array([175, 206, 243, 255, 240, 240, 240, 255]), width: 2, height: 1 };
     const g = new BufferGeometry();
     const quad = (x: number, u: number) => [
       [x, 0, 0, u], [x + 1, 0, 0, u], [x + 1, 1, 0, u],
@@ -141,6 +164,8 @@ describe('window panes', () => {
     expect(new Set(s.slice(6, 12)).size).toBe(1);
     expect(s[0]).not.toBe(s[6]);
     expect(s[0]).toBeGreaterThanOrEqual(1);
+    // Each pane is a big share of this little test "building": curtain walls (3..4).
+    expect(s[0]).toBeGreaterThanOrEqual(3);
     expect([...s.slice(12)]).toEqual([0, 0, 0, 0, 0, 0]);
   });
 
@@ -156,12 +181,14 @@ describe('window panes', () => {
       const kit = name.split('/')[0] as keyof typeof colourmaps;
       let count = 0;
       for (const part of p.parts) {
-        const r = panes(tagWindows(part.geometry, colourmaps[kit]));
+        part.geometry = tagWindows(part.geometry, colourmaps[kit]);
+        const r = panes(part.geometry);
         // No triangle is split between two panes (or half lit).
         expect(r.mixed, name).toBe(0);
         count += r.panes;
       }
       if (count >= 2) withWindows++;
+      expect(glassShare(p), name).toBeLessThan(0.35);
       // Not every face of the building: windows are a minority of it.
       expect(count, name).toBeLessThan(400);
     }

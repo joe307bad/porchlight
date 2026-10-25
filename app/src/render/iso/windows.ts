@@ -1,7 +1,9 @@
 // Lit windows at night, decided window by window. Each window pane in a
 // building's geometry carries a `windowSeed` vertex attribute: 0 for anything
 // that isn't glass, and for glass a random value in 1..2 shared by every
-// vertex of that pane, so a whole window is lit or dark together. For the
+// vertex of that pane, so a whole window is lit or dark together. (Curtain
+// walls, panes spanning much of a building, get 3..4 and light floor by
+// floor instead.) For the
 // Kenney buildings the panes are found on load (`tagWindows`): triangles whose
 // colourmap texel is window blue, grouped into connected panes. The town's own
 // ground-floor windows are tagged as they're built.
@@ -62,7 +64,9 @@ export function lightWindows(material: Material): void {
         // Window panes on walls (skylights on roofs stay dark).
         if (uNight > 0.01 && vSeed > 0.5 && vLitUp < 0.35) {
           // One pane, one decision: its seed, varied by which building it's on.
+          // Curtain walls (seeds 3..4) decide floor by floor and bay by bay instead.
           vec3 key = vec3(vSeed * 97.0, floor(vBuilding.x * 10.0), floor(vBuilding.z * 10.0));
+          if (vSeed > 2.5) key += vec3(floor(vLitPos.y / 0.42) * 13.0, floor((vLitPos.x + vLitPos.z) / 0.55) * 7.0, 0.0);
           float h = litHash(key);
           float chance = mix(0.15, 0.36, clamp(vLitPos.y / 3.5, 0.0, 1.0));
           float lit = step(1.0 - chance, h);
@@ -82,14 +86,15 @@ export function lightWindows(material: Material): void {
   m.needsUpdate = true;
 }
 
-/** True if an sRGB colour (0..255) is window glass: clearly bluer than red or green, and bright. */
+/**
+ * True if an sRGB colour (0..255) is window glass: the kits' pale sky-blue
+ * swatches, e.g. (175, 206, 243) to (124, 165, 225). Blue well above red,
+ * with green part way between. Not the lavender-white wall paint
+ * (214, 214, 229), which is only faintly blue, nor the stronger roof blues,
+ * whose green sits further from red.
+ */
 export function isGlass(r: number, g: number, b: number): boolean {
-  const lin = (c: number) => {
-    const s = c / 255;
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  const [lr, lg, lb] = [lin(r), lin(g), lin(b)];
-  return lb - Math.max(lr, lg) > 0.1 && lb > 0.45;
+  return b >= 200 && b - r >= 40 && g - r >= 20 && g - r <= 45 && b - g >= 15;
 }
 
 /** An image's pixels (RGBA rows, top row first), for sampling a colourmap on the CPU. */
@@ -147,6 +152,23 @@ export function tagWindows(source: BufferGeometry, pixels: Pixels | null): Buffe
       union(a, b);
       union(b, c);
     }
+    // Each pane's extent, to tell windows from curtain walls.
+    const extent = new Map<number, { lo: number[]; hi: number[] }>();
+    for (const t of glass) {
+      for (let k = 0; k < 3; k++) {
+        const i = corner(t, k);
+        const root = find(i);
+        const p = [pos.getX(i), pos.getY(i), pos.getZ(i)];
+        const e = extent.get(root);
+        if (!e) extent.set(root, { lo: [...p], hi: [...p] });
+        else for (let d = 0; d < 3; d++) {
+          e.lo[d] = Math.min(e.lo[d], p[d]);
+          e.hi[d] = Math.max(e.hi[d], p[d]);
+        }
+      }
+    }
+    geometry.computeBoundingBox();
+    const size = geometry.boundingBox!.max.clone().sub(geometry.boundingBox!.min);
     const seedOf = new Map<number, number>();
     for (const t of glass) {
       for (let k = 0; k < 3; k++) {
@@ -154,7 +176,11 @@ export function tagWindows(source: BufferGeometry, pixels: Pixels | null): Buffe
         const root = find(i);
         let s = seedOf.get(root);
         if (s === undefined) {
-          s = 1 + paneHash(seedOf.size + 1);
+          // A pane more than a fifth of the building's height or width is a
+          // curtain wall: seeds 3..4 tell the shader to light it in floor bays.
+          const e = extent.get(root)!;
+          const big = e.hi[1] - e.lo[1] > size.y * 0.2 || Math.max(e.hi[0] - e.lo[0], e.hi[2] - e.lo[2]) > Math.max(size.x, size.z) * 0.2;
+          s = (big ? 3 : 1) + paneHash(seedOf.size + 1);
           seedOf.set(root, s);
         }
         seeds[i] = s;
