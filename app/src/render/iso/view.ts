@@ -6,7 +6,8 @@
 //
 // The camera orbits the player between 12 fixed headings (Q / E), so you can
 // look down avenues from different sides; F turns it to look the way you're
-// walking. It always follows the player; while auto-walking it turns with
+// walking, and Z / X tilt it down and up through fixed steps. It always
+// follows the player; while auto-walking it turns with
 // them to stay behind them. Whenever a building hides them, their silhouette
 // shows through in orange. Day and night blend smoothly; at night the street lamps (a few of
 // them faulty) light up.
@@ -46,8 +47,14 @@ import { Minimap } from './minimap';
 import {
   CAMERA_STOPS,
   DEFAULT_STOP,
+  CHASE_TILTS,
+  DEFAULT_CHASE_TILT,
+  DEFAULT_ISO_TILT,
+  ISO_TILTS,
   cameraOffset,
   chaseYaw,
+  clampTilt,
+  tiltPitch,
   nearestStop,
   rayBoxDistance,
   rayHitsBox,
@@ -83,7 +90,6 @@ const MANUAL_HOLD = 5;
 const CHASE_DISTANCE = 3;
 const CHASE_MIN = 1.4;
 const CHASE_MAX = 8;
-const CHASE_PITCH = 0.3;
 const CHASE_FOV = 50;
 /** Where on the player the close-up camera looks (tiles up), and how far ahead of them. */
 const CHASE_LOOK_HEIGHT = 0.55;
@@ -122,6 +128,10 @@ export class IsoView {
   private chaseDistance = CHASE_DISTANCE;
   private shownChaseDistance = CHASE_DISTANCE;
   private readonly chaseLook = new Vector3();
+  /** Tilt stop per mode (Z / X), and the pitch being shown (eases toward the stop). */
+  private isoTilt = DEFAULT_ISO_TILT;
+  private chaseTilt = DEFAULT_CHASE_TILT;
+  private pitch = tiltPitch(ISO_TILTS, DEFAULT_ISO_TILT);
   private readonly hemi = new HemisphereLight(0xe2efff, 0x7d8a5a, 1.2);
   private readonly sun = new DirectionalLight(0xfff1d8, 2.6);
   /** Camera heading now (eases toward `targetYaw`, unwrapped so turns go the short way). */
@@ -360,6 +370,17 @@ export class IsoView {
     this.manualHold = MANUAL_HOLD;
   }
 
+  /** Tilt the camera one stop: +1 raises it toward looking straight down, -1 lowers it toward the horizon. */
+  tilt(step: number): void {
+    if (this.mode === 'close') this.chaseTilt = clampTilt(CHASE_TILTS, this.chaseTilt + step);
+    else this.isoTilt = clampTilt(ISO_TILTS, this.isoTilt + step);
+  }
+
+  /** The pitch the current mode's tilt stop asks for. */
+  private get targetPitch(): number {
+    return this.mode === 'close' ? tiltPitch(CHASE_TILTS, this.chaseTilt) : tiltPitch(ISO_TILTS, this.isoTilt);
+  }
+
   /** Switch between the iso overview and the close-up third-person camera. */
   setCameraMode(mode: CameraMode): void {
     if (mode === this.mode) return;
@@ -428,6 +449,7 @@ export class IsoView {
       outlined: this.hidden,
       cameraMode: this.mode,
       cameraStop: this.cameraStop,
+      cameraPitch: (this.pitch * 180) / Math.PI,
       cameraStops: CAMERA_STOPS,
       cars: this.traffic?.positions() ?? [],
       drawCalls: this.renderer.info.render.calls,
@@ -465,6 +487,11 @@ export class IsoView {
       if (isTyping(e) || this.background) return;
       if (e.code === 'KeyQ' || e.code === 'KeyE') {
         if (!e.repeat) this.rotate(e.code === 'KeyQ' ? -1 : 1);
+        return;
+      }
+      if (e.code === 'KeyZ' || e.code === 'KeyX' || e.code === 'PageUp' || e.code === 'PageDown') {
+        if (!e.repeat) this.tilt(e.code === 'KeyX' || e.code === 'PageUp' ? 1 : -1);
+        e.preventDefault();
         return;
       }
       if (e.code === 'KeyF') {
@@ -565,7 +592,7 @@ export class IsoView {
 
   /** True if a building stands between a spot and a camera at this heading. */
   private blocked(world: TownWorld, at: Vec2, yaw: number): boolean {
-    const o = cameraOffset(yaw);
+    const o = cameraOffset(yaw, this.pitch);
     return world.boxes.some((b) => rayHitsBox(at, SIGHT_HEIGHT, o, b));
   }
 
@@ -583,6 +610,7 @@ export class IsoView {
     this.shownZoom += (this.zoom - this.shownZoom) * (this.snap ? 1 : Math.min(1, dt * 10));
     const target = p ? new Vector3(p.x, 0.3, p.y) : new Vector3(world.model.spawn.x, 0.3, world.model.spawn.y);
     this.focus.lerp(target, this.snap ? 1 : Math.min(1, dt * 8));
+    this.pitch += (this.targetPitch - this.pitch) * (this.snap ? 1 : Math.min(1, dt * 6));
     if (this.mode === 'close' && p) this.placeChase(world, p, dt);
     this.snap = false;
     this.placeCamera();
@@ -618,7 +646,7 @@ export class IsoView {
     const want = chaseYaw(p.heading) + this.chaseSwing;
     this.chaseYawNow += shortestTurn(this.chaseYawNow, want) * (this.snap ? 1 : Math.min(1, dt * 3.5));
     this.shownChaseDistance += (this.chaseDistance - this.shownChaseDistance) * (this.snap ? 1 : Math.min(1, dt * 8));
-    const o = cameraOffset(this.chaseYawNow, CHASE_PITCH);
+    const o = cameraOffset(this.chaseYawNow, this.pitch);
     let dist = this.shownChaseDistance;
     for (const b of world.boxes) dist = Math.min(dist, Math.max(0.5, rayBoxDistance(p, CHASE_LOOK_HEIGHT, o, b) - 0.2));
     const ahead = { x: -o.x / Math.hypot(o.x, o.y), y: -o.y / Math.hypot(o.x, o.y) };
@@ -641,7 +669,7 @@ export class IsoView {
     this.camera.top = half;
     this.camera.bottom = -half;
     this.camera.updateProjectionMatrix();
-    const o = cameraOffset(this.yaw);
+    const o = cameraOffset(this.yaw, this.pitch);
     this.camera.position.set(this.focus.x + o.x * CAMERA_DISTANCE, this.focus.y + o.up * CAMERA_DISTANCE, this.focus.z + o.y * CAMERA_DISTANCE);
     this.camera.lookAt(this.focus);
   }

@@ -30,6 +30,8 @@ const turnLeftButton = document.querySelector<HTMLButtonElement>('#turnleft')!;
 const turnRightButton = document.querySelector<HTMLButtonElement>('#turnright')!;
 const lookAheadButton = document.querySelector<HTMLButtonElement>('#lookahead')!;
 const closeUpButton = document.querySelector<HTMLButtonElement>('#closeup')!;
+const tiltDownButton = document.querySelector<HTMLButtonElement>('#tiltdown')!;
+const tiltUpButton = document.querySelector<HTMLButtonElement>('#tiltup')!;
 
 const renderer = new BlueprintRenderer(canvas);
 const initial = readUrlState();
@@ -213,6 +215,8 @@ turnLeftButton.addEventListener('click', () => iso?.rotate(-1));
 turnRightButton.addEventListener('click', () => iso?.rotate(1));
 lookAheadButton.addEventListener('click', () => iso?.lookAlongWalk());
 closeUpButton.addEventListener('click', toggleCloseUp);
+tiltDownButton.addEventListener('click', () => iso?.tilt(-1));
+tiltUpButton.addEventListener('click', () => iso?.tilt(1));
 window.addEventListener('keydown', (e) => {
   if (!exploring || e.target instanceof HTMLInputElement) return;
   if (e.code === 'KeyN') toggleNight();

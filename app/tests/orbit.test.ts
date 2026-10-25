@@ -4,7 +4,14 @@ import {
   DEFAULT_STOP,
   cameraOffset,
   nearestStop,
+  CHASE_TILTS,
+  DEFAULT_CHASE_TILT,
+  DEFAULT_ISO_TILT,
+  ISO_TILTS,
+  PITCH,
   chaseYaw,
+  clampTilt,
+  tiltPitch,
   rayBoxDistance,
   rayHitsBox,
   screenToWorld,
@@ -117,6 +124,18 @@ describe('camera orbit', () => {
       const up = screenToWorld({ x: 0, y: -1 }, chaseYaw(heading))!;
       expect(up.x).toBeCloseTo(facing.x);
       expect(up.y).toBeCloseTo(facing.y);
+    }
+  });
+
+  it('tilts in fixed steps, defaulting to the classic 30° view, and stops at the ends', () => {
+    expect(tiltPitch(ISO_TILTS, DEFAULT_ISO_TILT)).toBeCloseTo(PITCH);
+    expect(deg(tiltPitch(CHASE_TILTS, DEFAULT_CHASE_TILT))).toBeCloseTo(17);
+    expect(clampTilt(ISO_TILTS, -3)).toBe(0);
+    expect(clampTilt(ISO_TILTS, 99)).toBe(ISO_TILTS.length - 1);
+    for (const tilts of [ISO_TILTS, CHASE_TILTS]) {
+      for (let k = 1; k < tilts.length; k++) expect(tiltPitch(tilts, k)).toBeGreaterThan(tiltPitch(tilts, k - 1));
+      expect(tiltPitch(tilts, tilts.length - 1)).toBeLessThan(Math.PI / 2);
+      expect(tiltPitch(tilts, 0)).toBeGreaterThan(0);
     }
   });
 });

@@ -21,6 +21,12 @@ before, but the town is real geometry, so the camera can turn.
   75° and so on. 45°, 135°, 225° and 315° are the four classic isometric
   views; the ones in between look down avenues from 15° off-axis. Turns ease
   the short way round. The camera always follows the player.
+- **Tilt:** `Z` / `X` (or **Tilt ↓** / **Tilt ↑**, or Page Down / Page Up)
+  move the camera through fixed tilt stops, eased like the turns: the
+  overview from 10° (nearly level, looking along the streets) to 80° (nearly
+  top-down), default 30°; the close-up from 2° (eye level) to 70° (high over
+  the shoulder), default 17°. Each mode remembers its own tilt
+  (`ISO_TILTS`, `CHASE_TILTS` in `orbit.ts`).
 - **Auto-walk camera:** while auto-walking, the camera turns with the player
   to stay behind them, looking down the street ahead. It follows their
   heading smoothed over about a second, and only moves to the next stop once

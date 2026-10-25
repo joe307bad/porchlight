@@ -16,6 +16,26 @@ const OFFSET = Math.PI / 12; // 15°: the stops straddle the axes, so 45° is on
 export const PITCH = Math.PI / 6;
 export const DEFAULT_STOP = 1;
 
+/**
+ * Tilt stops (degrees above the ground), lowest first: the overview from
+ * nearly level to nearly top-down, and the close-up from eye level to high
+ * over the shoulder. The defaults are the classic 30° view and a low chase.
+ */
+export const ISO_TILTS = [10, 20, 30, 45, 60, 80] as const;
+export const CHASE_TILTS = [2, 10, 17, 28, 40, 55, 70] as const;
+export const DEFAULT_ISO_TILT = 2;
+export const DEFAULT_CHASE_TILT = 2;
+
+/** Pitch (radians) of tilt stop k in a list, clamped to its ends. */
+export function tiltPitch(tilts: readonly number[], k: number): number {
+  return (tilts[clampTilt(tilts, k)] * Math.PI) / 180;
+}
+
+/** A tilt stop kept within a list's range. */
+export function clampTilt(tilts: readonly number[], k: number): number {
+  return Math.min(tilts.length - 1, Math.max(0, Math.round(k)));
+}
+
 /** Yaw of camera stop k (radians), any integer k. */
 export function stopYaw(k: number): number {
   return OFFSET + mod(k, CAMERA_STOPS) * STEP;
