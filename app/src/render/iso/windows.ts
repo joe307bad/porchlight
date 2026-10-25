@@ -12,7 +12,7 @@
 // of the panes warm yellow after dark: more often the higher up they are, so
 // towers twinkle more than cottages, varied per building. Low windows: about
 // one lit window in eight flickers like a failing bulb. Tall buildings: dimmer
-// and steady, with about 3% of windows flickering blue like a television.
+// and steady, with about 3% of windows a steady cool blue.
 
 import { BufferAttribute, type BufferGeometry, type Material, type MeshStandardMaterial } from 'three';
 
@@ -82,16 +82,11 @@ export function lightWindows(material: Material): void {
           float lit = step(1.0 - chance, h);
           vec3 warm = mix(vec3(1.0, 0.72, 0.38), vec3(1.0, 0.86, 0.6), litHash(key + 3.0));
           // Tall buildings (tower curtain walls, or anything this high up) glow
-          // dimmer and steady, and about 3% of their windows flicker blue, like
-          // a television left on.
+          // dimmer and steady; about 3% of their windows glow a steady cool blue.
           bool tall = vSeed > 2.5 || vLitPos.y > 2.2;
           if (tall) {
-            float tv = litHash(key + 29.0);
-            if (tv < 0.03) {
-              float t = uTime * 7.0 + tv * 300.0;
-              float n = fract(sin(floor(t) * 78.2 + h * 31.0) * 4375.5);
-              float glow = mix(0.3, 1.0, n) * (0.8 + 0.2 * sin(t * 9.0));
-              totalEmissiveRadiance += vec3(0.35, 0.55, 1.0) * glow * uNight * 0.45;
+            if (litHash(key + 29.0) < 0.03) {
+              totalEmissiveRadiance += vec3(0.35, 0.55, 1.0) * uNight * 0.35;
             } else {
               totalEmissiveRadiance += warm * lit * uNight * 0.35;
             }

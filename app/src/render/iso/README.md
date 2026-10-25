@@ -98,8 +98,8 @@ before, but the town is real geometry, so the camera can turn.
   down rising to 36% at tower heights, varied per building. Low windows glow
   at half brightness and about one lit window in eight flickers. Tall
   buildings (curtain walls, or anything above 2.2 tiles) glow at a quarter
-  brightness and steady, and about 3% of their windows flicker blue like a
-  television.
+  brightness and steady, and about 3% of their windows glow a steady cool
+  blue. None of them flicker.
 - **Zoomed out:** past overview zoom 0.7, auto walk no longer turns the
   camera.
 - **Seeing through buildings:** when a building stands between the player
