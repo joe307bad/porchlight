@@ -194,4 +194,27 @@ describe('window panes', () => {
     }
     expect(withWindows / all.length).toBeGreaterThan(0.8);
   });
+
+  it("light the towers' curtain walls in cells between their own floor bars", async () => {
+    const cm = await decodePng(bytes(pngs['../public/models/commercial/Textures/colormap.png']));
+    for (const name of TOWERS) {
+      const p = flatten(name, await model(name));
+      let curtains = 0;
+      for (const part of p.parts) {
+        const g = tagWindows(part.geometry, cm);
+        const s = g.attributes.windowSeed;
+        const grid = g.attributes.windowGrid;
+        for (let i = 0; i < s.count; i++) {
+          if (s.getX(i) <= 2.5) continue;
+          curtains++;
+          // A storey a third of a model unit or so, starting above the ground floor; bays across.
+          expect(grid.getY(i), name).toBeGreaterThan(0.25);
+          expect(grid.getY(i), name).toBeLessThan(0.5);
+          expect(grid.getX(i), name).toBeGreaterThan(0.5);
+          expect(grid.getW(i), name).toBeGreaterThan(0.1);
+        }
+      }
+      expect(curtains, name).toBeGreaterThan(0);
+    }
+  });
 });

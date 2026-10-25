@@ -29,12 +29,15 @@ export function lightWindows(material: Material): void {
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
-        '#include <common>\nattribute float windowSeed;\nvarying float vSeed;\nvarying vec3 vLitPos;\nvarying vec3 vBuilding;\nvarying float vLitUp;',
+        '#include <common>\nattribute float windowSeed;\nattribute vec4 windowGrid;\nattribute float windowAxis;\nvarying float vSeed;\nvarying vec4 vGrid;\nvarying vec2 vLocal;\nvarying vec3 vLitPos;\nvarying vec3 vBuilding;\nvarying float vLitUp;',
       )
       .replace(
         '#include <project_vertex>',
         `#include <project_vertex>
         vSeed = windowSeed;
+        vGrid = windowGrid;
+        // Model-space height and across-the-wall position, to find the curtain-wall cell.
+        vLocal = vec2(transformed.y, windowAxis > 0.5 ? transformed.z : transformed.x);
         vec4 litWorld = vec4(transformed, 1.0);
         vec3 litNormal = objectNormal;
         vBuilding = modelMatrix[3].xyz;
@@ -51,6 +54,8 @@ export function lightWindows(material: Material): void {
         '#include <common>',
         `#include <common>
         varying float vSeed;
+        varying vec4 vGrid;
+        varying vec2 vLocal;
         varying vec3 vLitPos;
         varying vec3 vBuilding;
         varying float vLitUp;
@@ -64,9 +69,13 @@ export function lightWindows(material: Material): void {
         // Window panes on walls (skylights on roofs stay dark).
         if (uNight > 0.01 && vSeed > 0.5 && vLitUp < 0.35) {
           // One pane, one decision: its seed, varied by which building it's on.
-          // Curtain walls (seeds 3..4) decide floor by floor and bay by bay instead.
           vec3 key = vec3(vSeed * 97.0, floor(vBuilding.x * 10.0), floor(vBuilding.z * 10.0));
-          if (vSeed > 2.5) key += vec3(floor(vLitPos.y / 0.42) * 13.0, floor((vLitPos.x + vLitPos.z) / 0.55) * 7.0, 0.0);
+          // Curtain walls (seeds 3..4) decide cell by cell, between their own floor bars and mullions.
+          if (vSeed > 2.5) {
+            float floorN = vGrid.y > 0.0 ? floor((vLocal.x - vGrid.x) / vGrid.y) : floor(vLocal.x / 0.35);
+            float bayN = vGrid.w > 0.0 ? floor((vLocal.y - vGrid.z) / vGrid.w) : 0.0;
+            key += vec3(floorN * 13.0, bayN * 7.0, 0.0);
+          }
           float h = litHash(key);
           float chance = mix(0.15, 0.36, clamp(vLitPos.y / 3.5, 0.0, 1.0));
           float lit = step(1.0 - chance, h);
@@ -115,6 +124,10 @@ export function tagWindows(source: BufferGeometry, pixels: Pixels | null): Buffe
   const geometry = source.index ? source.toNonIndexed() : source;
   const pos = geometry.attributes.position;
   const seeds = new Float32Array(pos.count);
+  /** Per vertex, for curtain walls: (first floor line, floor spacing, first mullion, mullion spacing), model units. */
+  const grid = new Float32Array(pos.count * 4);
+  /** Per vertex: which model axis runs across a curtain wall (0 = x, 1 = z). */
+  const axis = new Float32Array(pos.count);
   const uv = geometry.attributes.uv;
   if (pixels && uv) {
     const index = geometry.index;
@@ -169,28 +182,108 @@ export function tagWindows(source: BufferGeometry, pixels: Pixels | null): Buffe
     }
     geometry.computeBoundingBox();
     const size = geometry.boundingBox!.max.clone().sub(geometry.boundingBox!.min);
-    const seedOf = new Map<number, number>();
+    const isGlassTri = new Uint8Array(tris);
+    for (const t of glass) isGlassTri[t] = 1;
+    const seedOf = new Map<number, { seed: number; grid: number[]; axis: number }>();
     for (const t of glass) {
       for (let k = 0; k < 3; k++) {
         const i = corner(t, k);
         const root = find(i);
-        let s = seedOf.get(root);
-        if (s === undefined) {
+        let pane = seedOf.get(root);
+        if (pane === undefined) {
           // A pane more than a fifth of the building's height or width is a
-          // curtain wall: seeds 3..4 tell the shader to light it in floor bays.
+          // curtain wall: seeds 3..4 tell the shader to light it cell by cell,
+          // between the floor bars and mullions standing in front of it.
           const e = extent.get(root)!;
           const big = e.hi[1] - e.lo[1] > size.y * 0.2 || Math.max(e.hi[0] - e.lo[0], e.hi[2] - e.lo[2]) > Math.max(size.x, size.z) * 0.2;
-          s = (big ? 3 : 1) + paneHash(seedOf.size + 1);
-          seedOf.set(root, s);
+          const g = big ? curtainGrid(e, pos, tris, corner, isGlassTri) : { grid: [0, 0, 0, 0], axis: 0 };
+          pane = { seed: (big ? 3 : 1) + paneHash(seedOf.size + 1), ...g };
+          seedOf.set(root, pane);
         }
-        seeds[i] = s;
+        seeds[i] = pane.seed;
+        grid.set(pane.grid, i * 4);
+        axis[i] = pane.axis;
       }
     }
   }
   geometry.setAttribute('windowSeed', new BufferAttribute(seeds, 1));
+  geometry.setAttribute('windowGrid', new BufferAttribute(grid, 4));
+  geometry.setAttribute('windowAxis', new BufferAttribute(axis, 1));
   geometry.computeBoundingSphere();
   geometry.computeBoundingBox();
   return geometry;
+}
+
+type Attr = { getX(i: number): number; getY(i: number): number; getZ(i: number): number };
+
+/**
+ * A curtain wall's cell grid, read off its frame: the thin horizontal bars
+ * (floor slabs) and thin vertical bars (mullions) standing just in front of
+ * or behind the glass. Returns the first line and spacing each way (model
+ * units), and which axis runs across the wall. With no floor bars found the
+ * floor spacing is 0 (the shader falls back to a default); with no mullions
+ * each floor is split into equal bays from the pane's edges.
+ */
+export function curtainGrid(
+  e: { lo: number[]; hi: number[] },
+  pos: Attr,
+  tris: number,
+  corner: (t: number, k: number) => number,
+  isGlassTri: Uint8Array,
+): { grid: number[]; axis: number } {
+  // The wall is flat in x or in z; the other one runs across it.
+  const flatInX = e.hi[0] - e.lo[0] < e.hi[2] - e.lo[2];
+  const across = flatInX ? 2 : 0;
+  const depth = flatInX ? 0 : 2;
+  const plane = (e.lo[depth] + e.hi[depth]) / 2;
+  const height = e.hi[1] - e.lo[1];
+  const width = e.hi[across] - e.lo[across];
+  const floors: number[] = [];
+  const mullions: number[] = [];
+  for (let t = 0; t < tris; t++) {
+    if (isGlassTri[t]) continue;
+    const v = [0, 1, 2].map((k) => {
+      const i = corner(t, k);
+      return [pos.getX(i), pos.getY(i), pos.getZ(i)];
+    });
+    const lo = [0, 1, 2].map((d) => Math.min(v[0][d], v[1][d], v[2][d]));
+    const hi = [0, 1, 2].map((d) => Math.max(v[0][d], v[1][d], v[2][d]));
+    // Close to the glass, and over it.
+    if (lo[depth] > plane + 0.12 || hi[depth] < plane - 0.12) continue;
+    if (hi[1] < e.lo[1] || lo[1] > e.hi[1] || hi[across] < e.lo[across] || lo[across] > e.hi[across]) continue;
+    const tall = hi[1] - lo[1];
+    const wide = hi[across] - lo[across];
+    const mid = (y: number) => (y > e.lo[1] + 0.02 && y < e.hi[1] - 0.02 ? y : null);
+    if (tall < 0.08 && wide > width * 0.5) {
+      const y = mid((lo[1] + hi[1]) / 2);
+      if (y !== null) floors.push(y);
+    } else if (wide < 0.08 && tall > Math.min(height * 0.5, 0.15)) {
+      // (mullions may run the whole wall, or be split floor by floor)
+      const c = (lo[across] + hi[across]) / 2;
+      if (c > e.lo[across] + 0.02 && c < e.hi[across] - 0.02) mullions.push(c);
+    }
+  }
+  // No mullions: split each floor into equal bays from the pane's own edges, so a floor lights room by room.
+  let bays = spacing(mullions);
+  if (!bays[1]) {
+    const n = Math.max(1, Math.round(width / 0.3));
+    bays = [e.lo[across], width / n];
+  }
+  return { grid: [...spacing(floors), ...bays], axis: across === 2 ? 1 : 0 };
+}
+
+/** The first of a set of evenly spaced lines and their spacing, from scattered hits on them (spacing 0 if under two lines). */
+function spacing(hits: number[]): [number, number] {
+  const sorted = [...hits].sort((a, b) => a - b);
+  const lines: number[][] = [];
+  for (const h of sorted) {
+    const last = lines[lines.length - 1];
+    if (last && h - last[last.length - 1] < 0.06) last.push(h);
+    else lines.push([h]);
+  }
+  const centres = lines.map((l) => l.reduce((a, b) => a + b, 0) / l.length);
+  if (centres.length < 2) return [0, 0];
+  return [centres[0], (centres[centres.length - 1] - centres[0]) / (centres.length - 1)];
 }
 
 /** A stable pseudo-random 0..1 per pane number. */

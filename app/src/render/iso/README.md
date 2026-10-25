@@ -88,8 +88,12 @@ before, but the town is real geometry, so the camera can turn.
   the geometry is un-indexed first so no wall triangle shares a corner with
   glass. Glass is the kits' pale sky-blue swatches only (`isGlass`), not
   their lavender-white wall paint, which is faintly blue too. Panes spanning
-  more than a fifth of a building (tower curtain walls) light floor by floor,
-  bay by bay. The town's own ground-floor panes get seeds as they're built. At
+  more than a fifth of a building (tower curtain walls) light cell by cell,
+  on the tower's own grid: the floor bars standing in front of the glass are
+  found on load (`curtainGrid`) and give each wall's first floor line and
+  storey spacing, in model units. Each floor is split into equal bays from
+  the pane's edges (or between mullions, where a model has them), so lit
+  cells line up with the floors instead of straddling them. The town's own ground-floor panes get seeds as they're built. At
   night a shader patch lights a random share of panes warm yellow: 15% low
   down rising to 36% at tower heights, varied per building, at half
   brightness, and about one lit window in eight flickers.
