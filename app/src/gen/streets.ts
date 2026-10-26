@@ -59,6 +59,8 @@ const HEADING_REACH = 2;
 const PATH_COMPONENT_MIN = 150;
 /** Two roads closer than this, away from junctions, count as duplicates. */
 const DUPLICATE_DISTANCE = 1.5;
+/** Duplicates dropped one at a time; this many is far more than any town needs. */
+const MAX_DUPLICATE_PASSES = 200;
 
 interface Proposal {
   from: number;
@@ -366,14 +368,18 @@ function connectDeadEnds(
   }
 }
 
-/** Remove any street that ends up running alongside another road (a duplicate). */
+/**
+ * Remove any street (or, failing that, footpath) that ends up running
+ * alongside another road (a duplicate), one at a time until none is left. A
+ * big, dense town can need many; main roads are never dropped here.
+ */
 function dropDuplicateStreets(g: GraphBuilder): void {
-  for (let pass = 0; pass < 3; pass++) {
+  for (let pass = 0; pass < MAX_DUPLICATE_PASSES; pass++) {
     const graph = compact({ ...g, dead: new Set(g.dead) });
-    const dup = findDuplicate(graph);
+    const dup = findDuplicate(graph, true);
     if (!dup) return;
     // Map the compacted edge back to the builder by its geometry.
-    const victim = liveEdges(g).find((e) => e.kind === 'street' && sameLine(e.points, dup.points));
+    const victim = liveEdges(g).find((e) => e.kind !== 'main' && sameLine(e.points, dup.points));
     if (!victim) return;
     g.dead.add(victim.id);
   }
@@ -426,8 +432,12 @@ export function checkDuplicates(graph: RoadGraph): string[] {
   return dup ? [`roads ${dup.a} and ${dup.b} run alongside each other near ${dup.at.x.toFixed(1)},${dup.at.y.toFixed(1)}`] : [];
 }
 
-/** The first pair of roads running alongside each other; `points` is the street to drop when one is a street. */
-function findDuplicate(graph: RoadGraph): { a: number; b: number; at: Vec2; points: Vec2[] } | null {
+/**
+ * The first pair of roads running alongside each other; `points` is the one to
+ * drop (a street if either is one, else a footpath). With `droppable`, pairs of
+ * two main roads (which can't be dropped) are passed over.
+ */
+function findDuplicate(graph: RoadGraph, droppable = false): { a: number; b: number; at: Vec2; points: Vec2[] } | null {
   const edges = graph.edges;
   const nearNode = (pt: Vec2) => graph.nodes.some((n) => dist(n.at, pt) < JUNCTION_CLEARANCE);
   for (const A of edges) {
@@ -435,11 +445,12 @@ function findDuplicate(graph: RoadGraph): { a: number; b: number; at: Vec2; poin
     if (!samples.length) continue;
     for (const B of edges) {
       if (A.id === B.id || !boxesNear(A.points, B.points, DUPLICATE_DISTANCE)) continue;
+      if (droppable && A.kind === 'main' && B.kind === 'main') continue;
       let run = 0;
       for (const pt of samples) {
         run = distToPolyline(pt, B.points) < DUPLICATE_DISTANCE ? run + 1 : 0;
         if (run >= 4) {
-          const street = A.kind === 'street' ? A : B.kind === 'street' ? B : A;
+          const street = A.kind === 'street' ? A : B.kind === 'street' ? B : A.kind === 'path' ? A : B;
           return { a: A.id, b: B.id, at: pt, points: street.points };
         }
       }
