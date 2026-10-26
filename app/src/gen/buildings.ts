@@ -1,18 +1,26 @@
 // Stage 7b: buildings. Each lot (except the plaza) may get one rectangular
 // building on whole tiles: the largest rectangle inside the lot whose whole
-// front edge meets the road, set back a little from the rear and sides when
-// there's room (never from the front). The building faces the road it fronts. The biggest lot near the center
+// front edge looks onto the road across a front yard at least `frontSetback`
+// tiles deep (less, down to half a tile, where the lot is too shallow; a lot
+// too shallow even for that stays empty), set back a
+// little from the rear and sides when there's room. The yard is measured from
+// the outer edge of the sidewalk as the explore view draws it, not from the
+// road tiles, so the pavement doesn't eat into it. The building faces the road it fronts. The biggest lot near the center
 // gets the church, and the building nearest the plaza becomes the hall.
 
 import { DIRS4, index } from '../core/grid';
-import { dist, pointInPolygon, polygonArea, polygonCentroid, polylineDistance } from '../core/geometry';
+import { dist, distToPolyline, pointInPolygon, polygonArea, polygonCentroid, polylineDistance } from '../core/geometry';
 import type { Rng } from '../core/rng';
 import type { Building, BuildingKind, Landmark, TownModel, Vec2 } from '../model/types';
 import { FACINGS, frontageCounts, ground, isStreetTile, tilesIn, type Ground } from './parcels';
-import { roadDrawWidth } from './raster';
+import { roadDrawWidth, roadReach } from './raster';
 import type { Stage } from './stage';
 
 const INSET = 0.15;
+/** Slack for the explore view smoothing road corners a little inward (tiles). */
+const SMOOTHING_SLACK = 0.1;
+/** The shallowest front yard a building gets when a setback is asked for (tiles past the sidewalk). */
+const MIN_YARD = 0.5;
 const CHURCH_REACH = 0.45; // of the town radius
 
 interface Rect {
@@ -51,9 +59,18 @@ export const buildings: Stage = {
       const counts = frontageCounts(tiles, g, w, h);
       const facingIndex = counts.indexOf(Math.max(...counts));
       const maxSide = p.maxBuildingSize + (isChurch ? 2 : 0);
-      const rect = bestRect(tiles, facingIndex, maxSide, g, w, h);
+      const lotTiles = new Set(tiles);
+      const gaps = p.frontSetback > 0 ? kerbGaps(model, tiles) : null;
+      let rect: Rect | null = null;
+      let yard = p.frontSetback;
+      // A shallow lot gets a shallower yard, half a tile at a time, but never none:
+      // with a setback asked for, a lot with no room for one stays a garden.
+      for (; ; yard -= 0.5) {
+        rect = bestRect(tiles, lotTiles, gaps, facingIndex, maxSide, yard, g, w, h);
+        if (rect || yard <= MIN_YARD) break;
+      }
       if (!rect) continue;
-      setBack(rect, facingIndex, g, w, h, rng);
+      setBack(rect, facingIndex, lotTiles, reachFor(yard), g, w, h, rng);
 
       const kind: BuildingKind = isChurch ? 'church' : pickKind(d, rng);
       const footprint = [
@@ -118,25 +135,90 @@ export function checkBuildings(model: TownModel, g: Ground): string[] {
         return [`building ${b.id} overlaps road ${e.id}`];
       }
     }
-    // Facing: every tile along the front edge meets a street (road, path or avenue).
+    // Facing: every tile along the front edge looks onto a street (road, path or avenue)
+    // across open front yard: at most `frontSetback` tiles past the sidewalk, plus the
+    // tile the sidewalk spills onto.
     const d = FACINGS.indexOf(b.facing);
     const [dx, dy] = DIRS4[d];
     const own = new Set(b.tiles.map((t) => index(t.x, t.y, w)));
     for (const t of b.tiles) {
       const nx = t.x + dx;
       const ny = t.y + dy;
-      const inside = nx >= 0 && ny >= 0 && nx < w && ny < h;
-      if (inside && own.has(index(nx, ny, w))) continue; // not on the front row
-      if (!inside || !isStreetTile(g, index(nx, ny, w))) {
-        return [`building ${b.id}'s front at ${t.x},${t.y} doesn't meet the road it faces (${b.facing})`];
+      if (nx >= 0 && ny >= 0 && nx < w && ny < h && own.has(index(nx, ny, w))) continue; // not on the front row
+      let fronts = false;
+      for (let k = 1; k <= reachFor(params.frontSetback); k++) {
+        const x = t.x + dx * k;
+        const y = t.y + dy * k;
+        if (x < 0 || y < 0 || x >= w || y >= h) break;
+        const i = index(x, y, w);
+        if (isStreetTile(g, i)) {
+          fronts = true;
+          break;
+        }
+        if (owner[i] >= 0 || g.water[i] || g.road.kind[i]) break; // the yard must be open ground
       }
+      if (!fronts) return [`building ${b.id}'s front at ${t.x},${t.y} doesn't meet the road it faces (${b.facing})`];
     }
   }
   return [];
 }
 
-/** Largest rectangle of lot tiles, at most maxSide per side, whose whole front row borders a street. */
-function bestRect(tiles: readonly number[], facing: number, maxSide: number, g: Ground, w: number, h: number): Rect | null {
+/**
+ * How far each lot tile's edge is from the nearest drawn sidewalk (or footpath),
+ * in tiles: about how deep a front yard a building standing on it would have.
+ */
+function kerbGaps(model: TownModel, tiles: readonly number[]): Map<number, number> {
+  const { width: w, params } = model;
+  const out = new Map<number, number>();
+  if (!tiles.length) return out;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const t of tiles) {
+    const x = t % w;
+    const y = (t - x) / w;
+    x0 = Math.min(x0, x);
+    y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x + 1);
+    y1 = Math.max(y1, y + 1);
+  }
+  // Only roads that could come within the deepest yard asked for matter.
+  const near = params.frontSetback + 3;
+  const roads = model.roads.edges.filter((e) =>
+    e.points.some((q) => q.x > x0 - near && q.x < x1 + near && q.y > y0 - near && q.y < y1 + near) ||
+    polylineDistance([{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 }], e.points) < near,
+  );
+  for (const t of tiles) {
+    const x = t % w;
+    const c = { x: x + 0.5, y: (t - x) / w + 0.5 };
+    let gap = Infinity;
+    for (const e of roads) gap = Math.min(gap, distToPolyline(c, e.points) - roadReach(e.kind, params) - 0.5 - SMOOTHING_SLACK);
+    out.set(t, gap);
+  }
+  return out;
+}
+
+/** How many tiles ahead a building's front may look for its street, for a yard of `yard` tiles. */
+function reachFor(yard: number): number {
+  // The sidewalk spills about half a tile past the road tiles, so a yard of n
+  // tiles past the sidewalk can need up to n + 1 lot tiles in front.
+  return yard === 0 ? 1 : Math.ceil(yard) + 2;
+}
+
+/**
+ * Largest rectangle of lot tiles, at most maxSide per side, whose whole front row
+ * looks onto a street across at most `reachFor(yard) - 1` tiles of the lot, and
+ * (with `gaps`) none of whose tiles is closer than `yard` to a drawn sidewalk.
+ */
+function bestRect(
+  tiles: readonly number[],
+  lotTiles: ReadonlySet<number>,
+  gaps: ReadonlyMap<number, number> | null,
+  facing: number,
+  maxSide: number,
+  yard: number,
+  g: Ground,
+  w: number,
+  h: number,
+): Rect | null {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const t of tiles) {
     const x = t % w;
@@ -155,10 +237,9 @@ function bestRect(tiles: readonly number[], facing: number, maxSide: number, g: 
     const x = t % w;
     const y = (t - x) / w;
     const li = (y - y0) * bw + (x - x0);
+    if (yard > 0 && gaps && (gaps.get(t) ?? Infinity) < yard) continue; // in the front yard: keep it open
     inLot[li] = 1;
-    const nx = x + fx;
-    const ny = y + fy;
-    if (nx >= 0 && ny >= 0 && nx < w && ny < h && isStreetTile(g, index(nx, ny, w))) front[li] = 1;
+    if (streetAhead(x, y, fx, fy, reachFor(yard), lotTiles, g, w, h)) front[li] = 1;
   }
   // Summed-area table of lot membership.
   const sat = new Int32Array((bw + 1) * (bh + 1));
@@ -170,7 +251,7 @@ function bestRect(tiles: readonly number[], facing: number, maxSide: number, g: 
   const filled = (ax: number, ay: number, bx: number, by: number) =>
     sat[(by + 1) * (bw + 1) + bx + 1] - sat[ay * (bw + 1) + bx + 1] - sat[(by + 1) * (bw + 1) + ax] + sat[ay * (bw + 1) + ax] ===
     (bx - ax + 1) * (by - ay + 1);
-  // The whole front row must sit against the street, so the building meets the road along its full width.
+  // The whole front row must look onto the street, so the building meets the road along its full width.
   const hasFront = (ax: number, ay: number, bx: number, by: number) => {
     if (facing === 0) for (let x = ax; x <= bx; x++) { if (!front[ay * bw + x]) return false; }
     if (facing === 2) for (let x = ax; x <= bx; x++) { if (!front[by * bw + x]) return false; }
@@ -202,7 +283,7 @@ function bestRect(tiles: readonly number[], facing: number, maxSide: number, g: 
 }
 
 /** Leave a yard at the back and sometimes a gap at one side, keeping the front on the road. */
-function setBack(rect: Rect, facing: number, g: Ground, w: number, h: number, rng: Rng): void {
+function setBack(rect: Rect, facing: number, lotTiles: ReadonlySet<number>, reach: number, g: Ground, w: number, h: number, rng: Rng): void {
   const depthAlongY = facing === 0 || facing === 2;
   const depth = depthAlongY ? rect.y1 - rect.y0 + 1 : rect.x1 - rect.x0 + 1;
   const width = depthAlongY ? rect.x1 - rect.x0 + 1 : rect.y1 - rect.y0 + 1;
@@ -220,18 +301,29 @@ function setBack(rect: Rect, facing: number, g: Ground, w: number, h: number, rn
       else trial.x1--;
     } else if (low) trial.y0++;
     else trial.y1--;
-    if (frontsStreet(trial, facing, g, w, h)) Object.assign(rect, trial);
+    if (frontsStreet(trial, facing, lotTiles, reach, g, w, h)) Object.assign(rect, trial);
   }
 }
 
-function frontsStreet(r: Rect, facing: number, g: Ground, w: number, h: number): boolean {
+function frontsStreet(r: Rect, facing: number, lotTiles: ReadonlySet<number>, reach: number, g: Ground, w: number, h: number): boolean {
   const [dx, dy] = DIRS4[facing];
   for (let y = r.y0; y <= r.y1; y++) {
     for (let x = r.x0; x <= r.x1; x++) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx >= 0 && ny >= 0 && nx < w && ny < h && isStreetTile(g, index(nx, ny, w))) return true;
+      if (streetAhead(x, y, dx, dy, reach, lotTiles, g, w, h)) return true;
     }
+  }
+  return false;
+}
+
+/** Is there a street within `reach` steps ahead of (x, y), with only this lot's open tiles in between? */
+function streetAhead(x: number, y: number, dx: number, dy: number, reach: number, lotTiles: ReadonlySet<number>, g: Ground, w: number, h: number): boolean {
+  for (let k = 1; k <= reach; k++) {
+    const nx = x + dx * k;
+    const ny = y + dy * k;
+    if (nx < 0 || ny < 0 || nx >= w || ny >= h) return false;
+    const i = index(nx, ny, w);
+    if (isStreetTile(g, i)) return true;
+    if (!lotTiles.has(i) || g.water[i]) return false;
   }
   return false;
 }

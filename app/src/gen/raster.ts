@@ -17,6 +17,14 @@ const KIND_CODE: Record<RoadKind, number> = { main: ROAD_MAIN, street: ROAD_STRE
 const KIND_RANK = [99, 0, 1, 2];
 
 /** Width a road is drawn at in the blueprint, in tiles. */
+/** Width of the sidewalk the explore view draws along each side of a road or street (tiles). */
+export const SIDEWALK_WIDTH = 0.45;
+
+/** How far a road's drawn surface reaches from its centreline, sidewalks included (footpaths have none). */
+export function roadReach(kind: RoadKind, params: GenParams): number {
+  return roadDrawWidth(kind, params) / 2 + (kind === 'path' ? 0 : SIDEWALK_WIDTH);
+}
+
 export function roadDrawWidth(kind: RoadKind, params: GenParams): number {
   if (kind === 'main') return params.mainRoadWidth;
   if (kind === 'street') return params.streetWidth;

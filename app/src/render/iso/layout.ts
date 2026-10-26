@@ -14,11 +14,12 @@
 import { DIRS4, index, inBounds } from '../../core/grid';
 import { arcPosition, chaikin, dist, samplePolyline, subPolyline } from '../../core/geometry';
 import { tilesIn } from '../../gen/parcels';
+import { SIDEWALK_WIDTH } from '../../gen/raster';
 import type { BuildingKind, Facing, RoadKind, TownModel, Vec2 } from '../../model/types';
 import { Overlay, Terrain } from '../../model/types';
 
 /** Width of the sidewalk along each side of a road (tiles). */
-export const SIDEWALK = 0.45;
+export const SIDEWALK = SIDEWALK_WIDTH;
 const SMOOTHING_PASSES = 2;
 /** Roads round their corners within this distance of each bend (tiles), so long straight runs stay put. */
 const CORNER_RADIUS = 0.9;

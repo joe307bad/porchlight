@@ -33,6 +33,7 @@ export interface GenParams {
   lotMaxSize: number; // tiles
   buildingDensity: number; // 0..1 share of lots that get a building
   maxBuildingSize: number; // tiles per side
+  frontSetback: number; // tiles of front yard between a building and the sidewalk in front of it, where the lot is deep enough
 }
 
 export const DEFAULT_PARAMS: GenParams = {
@@ -60,6 +61,7 @@ export const DEFAULT_PARAMS: GenParams = {
   lotMaxSize: 30,
   buildingDensity: 0.85,
   maxBuildingSize: 7,
+  frontSetback: 0,
 };
 
 export type ParamGroup = 'Map' | 'Terrain' | 'Rivers' | 'Town & roads' | 'Streets' | 'Lots & buildings';
@@ -98,6 +100,7 @@ export const PARAM_SPECS: readonly ParamSpec[] = [
   { key: 'lotMaxSize', label: 'Lot max size', group: 'Lots & buildings', min: 12, max: 120, step: 1 },
   { key: 'buildingDensity', label: 'Building density', group: 'Lots & buildings', min: 0, max: 1, step: 0.01 },
   { key: 'maxBuildingSize', label: 'Max building size', group: 'Lots & buildings', min: 2, max: 12, step: 1 },
+  { key: 'frontSetback', label: 'Front setback', group: 'Lots & buildings', min: 0, max: 3, step: 1 },
 ];
 
 /** Fill in defaults, snap to each spec's step and clamp to its range. */

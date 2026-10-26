@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { DIRS4, index, inBounds } from '../src/core/grid';
-import { distToPolyline } from '../src/core/geometry';
+import { distToPolyline, polylineDistance } from '../src/core/geometry';
 import { generateTown } from '../src/gen';
 import { tilesIn } from '../src/gen/parcels';
 import { Overlay, type TownModel } from '../src/model/types';
-import { Use, buildLayout } from '../src/render/iso/layout';
+import { SIDEWALK, Use, buildLayout } from '../src/render/iso/layout';
 import { testSeeds } from './seeds';
 
 const DIR = { N: DIRS4[0], E: DIRS4[1], S: DIRS4[2], W: DIRS4[3] } as const;
@@ -65,6 +65,44 @@ describe('iso layout: block by block', () => {
     expect(yards).toBeGreaterThan(100);
     expect(sheds).toBeGreaterThan(20);
     expect(gardens).toBeGreaterThan(20);
+  });
+
+  it('sets buildings back behind a front yard when asked, keeping them facing the street', () => {
+    let built = 0;
+    let setBack = 0;
+    for (const seed of testSeeds(4)) {
+      const m = generateTown(seed, { frontSetback: 2 }, { check: true });
+      const { houses, use, fences, roads } = buildLayout(m);
+      expect(houses.length).toBe(m.buildings.length);
+      for (const h of houses) {
+        const [dx, dy] = DIR[h.facing];
+        const own = new Set(h.tiles.map((t) => index(t.x, t.y, m.width)));
+        const front = h.tiles.filter((t) => !own.has(index(t.x + dx, t.y + dy, m.width)));
+        // Every front tile looks onto the street across at most three tiles of its own yard
+        // (two past the sidewalk, plus the one the sidewalk spills onto).
+        for (const t of front) {
+          let k = 1;
+          while (k <= 4 && !isStreet(m, t.x + dx * k, t.y + dy * k)) {
+            expect(use[index(t.x + dx * k, t.y + dy * k, m.width)]).not.toBe(Use.HOUSE);
+            k++;
+          }
+          expect(k).toBeLessThanOrEqual(4);
+        }
+        // No wall comes within half a tile of a drawn sidewalk: the rooms stay clear of the pavement.
+        const xs = h.tiles.map((t) => t.x);
+        const ys = h.tiles.map((t) => t.y);
+        const [x0, y0, x1, y1] = [Math.min(...xs), Math.min(...ys), Math.max(...xs) + 1, Math.max(...ys) + 1];
+        const outline = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 }];
+        for (const r of roads) {
+          const kerb = r.width / 2 + (r.kind === 'path' ? 0 : SIDEWALK);
+          expect(polylineDistance(outline, r.points) - kerb).toBeGreaterThan(0.45);
+        }
+        built++;
+        if (!isStreet(m, front[0].x + dx, front[0].y + dy)) setBack++;
+      }
+      for (const f of fences) expect(isStreet(m, f.x + DIR[f.side][0], f.y + DIR[f.side][1])).toBe(false);
+    }
+    expect(setBack / built).toBeGreaterThan(0.5);
   });
 
   it('turns some empty lots among houses into community gardens', () => {
