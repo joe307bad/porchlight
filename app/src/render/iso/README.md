@@ -17,6 +17,37 @@ before, but the town is real geometry, so the camera can turn.
   and night, `C` swaps to a new random character, `Esc` returns to the
   blueprint. The minimap (bottom left) shows where you are and what the camera
   sees; click it to jump there.
+- **Driving (`driving.ts`):** walk up to a car, parked or passing in the
+  traffic (a prompt shows when one's in reach), and press `G` (or **Get in
+  car**) to get in. Take one from the traffic and its driver gets out and
+  walks off to the sidewalk.
+  `W` / `S` (or the arrows) are the accelerator and the brake, holding the
+  brake at a standstill reverses, and `A` / `D` steer, whichever way the
+  camera faces. The handling is arcade: steering bites harder the faster you
+  go, the car coasts to a stop when you let go, and it stops dead against
+  buildings, sheds, open water and the map's edge (roads, bridges, lawns and
+  plazas are all fine). The camera follows the car round as it turns, and the
+  close-up camera pulls back. `G` again gets you out beside the driver's door
+  (or wherever's clear), and the car stays where you left it, to get back
+  into later. A car taken from the traffic leaves it for good. The traffic
+  stops for you when you're in the road, and for any car you've driven, and
+  turns round (swinging into the other lane) if it's held up for a few
+  seconds.
+  A minimap jump or a new character gets you out first. There's always a
+  car waiting on the pavement right by where you first spawn
+  (`carSpotNear`), clear of the traffic lanes.
+- **Auto drive:** auto walk (`T`) at the wheel makes the car drive itself
+  (`AutoDrive`): it pulls onto the nearest road and drives the right-hand
+  lane at a brisk 4.4 tiles a second (top speed is 5.2), planning a route
+  over the road graph to a far-off junction and on arriving picking another,
+  like auto walk does. It brakes for sharp corners and turns round at dead
+  ends, keeps its distance from the car ahead, and eases onto each lane so it
+  doesn't jump at junctions. The route is drawn on the ground and the
+  minimap, and the street panel lists the turn-by-turn directions to the
+  destination (`drivingDirections`): "Head east on High Street", "Turn left
+  onto Mill Lane", "Turn round at the end of …", each with its distance.
+  A direction key takes the wheel back, and `T` stops it.
+  Auto-walking up to a car and getting in carries on as auto drive.
 - **Street names (`names.ts`, `signs.ts`):** on entering explore mode every
   road gets a street name, seeded from the town. Road edges join into one
   street where they carry straight on through a junction (same kind of road,
@@ -37,17 +68,6 @@ before, but the town is real geometry, so the camera can turn.
   destination on …", each with the distance to walk after it (about 4 m a
   tile). The step you're on is highlighted; steps drop off as you pass them,
   and a new list starts with each new destination.
-- **Cars (`driving.ts`):** `G` (or **Get in car**) gets into the nearest car
-  within reach: a parked one, one you left earlier, or one in traffic, whose
-  driver gets out and walks off to the sidewalk. Driving, `W` / `S` are
-  throttle and brake (holding `S` once stopped reverses) and `A` / `D` steer,
-  in either camera; steering eases off with speed. The car stops at walls,
-  sheds and other cars, and shows through buildings in orange like you do.
-  `G` again brakes to a stop and gets out of the driver's door (or whichever
-  side has room); the car stays where you left it. Traffic stops short of you
-  and of any car out of traffic in its lane, and turns round if you don't
-  move within a few seconds. Characters are about 1.6 m tall beside the
-  cars (`PERSON_HEIGHT`).
 - **Camera stops (`orbit.ts`):** 12 fixed headings 30° apart, at 15°, 45°,
   75° and so on. 45°, 135°, 225° and 315° are the four classic isometric
   views; the ones in between look down avenues from 15° off-axis. Turns ease
@@ -135,7 +155,10 @@ before, but the town is real geometry, so the camera can turn.
   camera.
 - **Seeing through buildings:** when a building stands between the player
   and the camera, their silhouette is drawn through it in orange.
-- **X-ray:** the player carries a copy of their skinned meshes in flat orange
+- **X-ray:** the car you're driving shows through buildings the same way
+  (an orange copy of each part, drawn before the car itself), riding 0.035
+  tiles up like the player's feet so its tyres don't x-ray through the road.
+  The player carries a copy of their skinned meshes in flat orange
   that is drawn with `depthFunc: GreaterDepth`, after the town but before the
   player themself (render order), so it only shows where something already
   drawn is in front of them, and never where they overlap themself.
@@ -164,9 +187,16 @@ before, but the town is real geometry, so the camera can turn.
   parked cars.
 - **People (`actors.ts`, `characters.ts`):** Kenney mini characters with their
   idle and walk clips blended by speed, the walk sped up to match the pace.
+  Townsfolk are about 1.6 m tall beside the cars (`PERSON_HEIGHT`); the
+  player is a touch taller (`PLAYER_SCALE`).
 - **Day and night:** the sky, the hemisphere light and the sun ease to
   moonlight. At night the lamps' bulbs light, each with a halo (screen-space
   points) and a pool of light on the pavement; a few faulty ones flicker hard.
+- **Car lights (`headlights.ts`):** at night every moving car (the traffic,
+  and the one you're driving) has two headlights and two red tail lights,
+  each with a halo, and throws a pool of warm light on the road ahead.
+  Parked cars, and cars you've left, stay dark. They fade with the dusk like
+  the street lamps.
 - **Animation:** water shimmers in a small shader, pale streaks run down the
   rivers, and the plaza fountain sprays.
 
@@ -183,7 +213,9 @@ before, but the town is real geometry, so the camera can turn.
 | `actors.ts` | Player (manual, streets-only or auto walk) and pedestrians: pure state |
 | `walking.ts` | Following, turning round on and crossing between sidewalks (pure, unit-tested) |
 | `traffic.ts` | Moving cars on the through roads: pure state |
+| `driving.ts` | The car the player drives: handling, where it can go, where the driver gets out (pure, unit-tested) |
 | `fleet.ts` | Draws the moving cars |
+| `headlights.ts` | Night-time headlights, tail lights and beams on moving cars (lamp layout pure, unit-tested) |
 | `interiors.ts` | Ground-floor rooms: walls with a door gap, furnishing by building kind (pure, unit-tested) |
 | `collide.ts` | Solid walls and furniture the player can't walk through (pure, unit-tested) |
 | `names.ts` | Joins roads into streets and names them (pure, unit-tested) |
@@ -214,4 +246,4 @@ without an environment map, so every kit material is made matte on load.
 ## World space
 
 Map `(x, y)` (tiles, y down the map, as on the blueprint) is Three's `(x, z)`;
-Three's `y` is up; 1 unit = 1 tile. A townsperson is about 0.47 tiles tall; furniture is drawn at 0.6 tiles per kit unit.
+Three's `y` is up; 1 unit = 1 tile. A townsperson is about 0.36 tiles tall (the player about 0.38); furniture is drawn at 0.6 tiles per kit unit.

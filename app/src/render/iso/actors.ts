@@ -35,7 +35,7 @@ export class Walker {
 const PLAYER_SPEED = 3.4; // tiles per second
 /** How close to the map edge the player may walk (tiles). */
 const EDGE = 0.2;
-const PLAYER_RADIUS = 0.13;
+const PLAYER_RADIUS = 0.1;
 
 const AUTO_SPEED = 1.8; // tiles per second
 

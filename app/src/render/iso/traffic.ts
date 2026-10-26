@@ -1,15 +1,13 @@
 // Moving traffic on every through road: cars keep to the right-hand lane,
 // follow the road graph through junctions (U-turning at the map edge) and slow
-// down behind the car ahead. They also stop for whatever's in their lane (you,
-// or a car you've left there), and turn round if it doesn't move. A car can be
-// taken out of traffic altogether when the player gets in. Dead-end side
-// streets keep their parked cars. Pure state; the view draws each car's model
-// at its pose.
+// down behind the car ahead, or for the player (on foot or at the wheel) in
+// their lane, turning round if they're held up too long. A car the player
+// gets into leaves the traffic. Dead-end side streets keep their parked cars.
+// Pure state; the view draws each car's model at its pose.
 
 import { dist } from '../../core/geometry';
 import type { Rng } from '../../core/rng';
 import type { Vec2 } from '../../model/types';
-import type { CarPose } from './driving';
 import { deadEnds, type IsoLayout, type RoadStroke } from './layout';
 import { shortestTurn } from './orbit';
 
@@ -17,14 +15,17 @@ const CRUISE = 2.4; // tiles per second
 const GAP = 1.6; // tiles kept behind the car ahead
 const CARS_PER_TILE = 1 / 12;
 const MAX_CARS = 70;
-/** Stop this far (tiles, middle of the car to it) short of something in the lane. */
-const OBSTACLE_GAP = 0.9;
-/** How far either side of a car's line something counts as in the way (tiles). */
-const LANE_HALF = 0.35;
 /** Held up this long (seconds) by something that isn't traffic, turn round. */
 const PATIENCE = 4;
 
-export { type CarPose } from './driving';
+export interface CarPose {
+  /** Index into the car model list. */
+  model: number;
+  x: number;
+  y: number;
+  /** Direction of travel, radians in world space (atan2(dy, dx)). */
+  heading: number;
+}
 
 interface Car extends CarPose {
   road: number;
@@ -35,9 +36,12 @@ interface Car extends CarPose {
   side: number;
   /** Seconds spent stopped for an obstacle. */
   wait: number;
-  /** Taken out of traffic (the player got in): no longer moved or drawn. */
-  gone: boolean;
+  /** Taken out of the traffic (the player got in): no longer driven or drawn here. */
+  taken: boolean;
 }
+
+/** Something in the road the traffic stops for, if it's in their lane. */
+const LANE_HALF = 0.42;
 
 export class Traffic {
   readonly cars: Car[] = [];
@@ -71,7 +75,7 @@ export class Traffic {
     const count = Math.min(MAX_CARS, Math.floor(total * CARS_PER_TILE));
     for (let k = 0; k < count && mains.length; k++) {
       const road = rng.pick(mains);
-      const car: Car = { model: pickModel(rng), road, s: rng.range(0, this.lengths[road]), dir: rng.chance(0.5) ? 1 : -1, speed: CRUISE, heading: 0, x: 0, y: 0, side: 0, wait: 0, gone: false };
+      const car: Car = { model: pickModel(rng), road, s: rng.range(0, this.lengths[road]), dir: rng.chance(0.5) ? 1 : -1, speed: CRUISE, heading: 0, x: 0, y: 0, side: 0, wait: 0, taken: false };
       car.side = car.dir;
       this.cars.push(car);
     }
@@ -80,29 +84,41 @@ export class Traffic {
 
   /** Where each car is (world tiles), for dev tooling. */
   positions(): { x: number; y: number; heading: number }[] {
-    return this.cars.filter((c) => !c.gone).map((c) => ({ x: c.x, y: c.y, heading: c.heading }));
+    return this.cars.filter((c) => !c.taken).map((c) => ({ x: c.x, y: c.y, heading: c.heading }));
   }
 
-  /** Take a car out of traffic (the player is getting in) and return where it was. */
-  take(i: number): CarPose {
+  /** The car nearest `at` within `reach` tiles that's still in the traffic, or -1. */
+  nearest(at: Vec2, reach: number): number {
+    let best = -1;
+    let bestD = reach;
+    this.cars.forEach((c, i) => {
+      const d = Math.hypot(c.x - at.x, c.y - at.y);
+      if (!c.taken && d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  /** Take a car out of the traffic (the player is getting in); returns where it was and how fast it went. */
+  take(i: number): CarPose & { speed: number } {
     const c = this.cars[i];
-    c.gone = true;
-    return { model: c.model, x: c.x, y: c.y, heading: c.heading };
+    c.taken = true;
+    return { model: c.model, x: c.x, y: c.y, heading: c.heading, speed: c.speed };
   }
 
-  /**
-   * Move every car on. `obstacles` are points cars must stop short of (the
-   * player, and the body of any car out of traffic).
-   */
+  /** Step the traffic; cars also stop for `obstacles` (the player, their car) in their lane ahead. */
   update(dt: number, obstacles: readonly Vec2[] = []): void {
     for (const car of this.cars) {
-      if (car.gone) continue;
+      if (car.taken) continue;
       // Ease towards cruising speed, or towards a stop behind the car ahead.
-      const ahead = this.gapAhead(car);
-      const blocked = this.obstacleAhead(car, obstacles);
-      const target = Math.min(ease(ahead, GAP), ease(blocked, OBSTACLE_GAP));
-      car.speed += (target - car.speed) * Math.min(1, dt * (target < car.speed ? 6 : 3));
-      car.wait = blocked < OBSTACLE_GAP * 1.5 && car.speed < 0.2 ? car.wait + dt : 0;
+      const blocked = blockedAhead(car, obstacles);
+      const ahead = Math.min(this.gapAhead(car), blocked);
+      const target = ahead < GAP ? 0 : ahead < GAP * 2 ? CRUISE * ((ahead - GAP) / GAP) : CRUISE;
+      car.speed += (target - car.speed) * Math.min(1, dt * 3);
+      // Stopped for something that isn't traffic: wait a while, then turn round.
+      car.wait = blocked < GAP * 1.5 && car.speed < 0.2 ? car.wait + dt : 0;
       if (car.wait > PATIENCE) {
         car.dir = (car.dir * -1) as 1 | -1;
         car.wait = 0;
@@ -114,24 +130,10 @@ export class Traffic {
     }
   }
 
-  /** How far ahead (tiles) the nearest obstacle in this car's lane is. */
-  private obstacleAhead(car: Car, obstacles: readonly Vec2[]): number {
-    const hx = Math.cos(car.heading);
-    const hy = Math.sin(car.heading);
-    let best = Infinity;
-    for (const o of obstacles) {
-      const dx = o.x - car.x;
-      const dy = o.y - car.y;
-      const along = dx * hx + dy * hy;
-      if (along > 0 && along < best && Math.abs(dy * hx - dx * hy) < LANE_HALF) best = along;
-    }
-    return best;
-  }
-
   private gapAhead(car: Car): number {
     let best = Infinity;
     for (const o of this.cars) {
-      if (o === car || o.gone || o.road !== car.road || o.dir !== car.dir) continue;
+      if (o === car || o.taken || o.road !== car.road || o.dir !== car.dir) continue;
       const d = (o.s - car.s) * car.dir;
       if (d > 0 && d < best) best = d;
     }
@@ -183,9 +185,18 @@ export class Traffic {
   }
 }
 
-/** Target speed with something `gap` tiles ahead: stop at `stop`, full speed from twice that. */
-function ease(gap: number, stop: number): number {
-  return gap < stop ? 0 : gap < stop * 2 ? CRUISE * ((gap - stop) / stop) : CRUISE;
+/** Distance to the nearest obstacle in a car's lane ahead of it (Infinity if none). */
+function blockedAhead(car: Car, obstacles: readonly Vec2[]): number {
+  const fx = Math.cos(car.heading);
+  const fy = Math.sin(car.heading);
+  let best = Infinity;
+  for (const o of obstacles) {
+    const dx = o.x - car.x;
+    const dy = o.y - car.y;
+    const along = dx * fx + dy * fy;
+    if (along > 0 && along < GAP * 2.5 && Math.abs(dx * fy - dy * fx) < LANE_HALF) best = Math.min(best, along);
+  }
+  return best;
 }
 
 function pointAt(points: readonly Vec2[], at: readonly number[], s: number): Vec2 {

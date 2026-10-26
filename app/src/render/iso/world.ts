@@ -44,7 +44,6 @@ import { SIDEWALK, Use, buildLayout, type House, type IsoLayout, type SidewalkNe
 import { MeshBuilder, v } from './mesh';
 import type { Box } from './orbit';
 import { Solids } from './collide';
-import type { CarPose } from './driving';
 import { DOOR_HEIGHT, DOOR_WIDTH, FURNITURE_SCALE, WALL, WALL_HEIGHT, doorOf, furnishRoom, innerRect, roomWalls, wallSide, type Rect, type Room, type RoomPlan } from './interiors';
 import { nameStreets, type StreetNames } from './names';
 import { addStreetSigns, planSigns, type Signpost } from './signs';
@@ -138,10 +137,10 @@ export interface TownWorld {
   doorPanels: InstancedMesh;
   /** Walls and furniture the player can't walk through. */
   solids: Solids;
-  /** The cars parked along the side streets, where each stands. */
-  parked: CarPose[];
+  /** Parked cars the player can get into: pose and car model index (into CARS). */
+  parked: { x: number; y: number; heading: number; model: number }[];
   /** Show or hide a parked car (hidden once the player drives it away). */
-  setParkedVisible(car: number, visible: boolean): void;
+  setParkedVisible(i: number, visible: boolean): void;
   /** Show or hide a room's building (hidden while you're inside it, so you see in). */
   setShellVisible(room: number, visible: boolean): void;
   /** The furnished ground floor of a room, built on first use and kept. */
@@ -231,7 +230,7 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   addYards(world, assets, instancer, sheds, rng);
   addTrees(world, assets, instancer, rng);
   addPlazaDecor(world, assets, instancer, rng);
-  const parked = addParkedCars(world, assets, instancer);
+  const parkedCopies = addParkedCars(world, assets, instancer);
   if (!sheds.empty) addStatic(sheds.build(), lambert, { cast: true, receive: true });
   addLamps(world, rng, owned);
   world.signs = planSigns(model, layout, world.names);
@@ -239,11 +238,11 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   addStreaks(world, owned);
   addFountain(world, owned);
   instancer.build(root);
+  world.setParkedVisible = (i, visible) => instancer.setVisible(parkedCopies[i].prefab, parkedCopies[i].index, visible);
   world.setShellVisible = (room, visible) => {
     instancer.setVisible(shells[room].prefab, shells[room].index, visible);
     facades[room].visible = visible;
   };
-  world.setParkedVisible = (car, visible) => instancer.setVisible(parked[car].prefab, parked[car].index, visible);
   const interiorMaterial = new MeshLambertMaterial({ vertexColors: true });
   owned.push(interiorMaterial);
   world.interior = (room) => {
@@ -985,7 +984,8 @@ export function carScale(p: Prefab): number {
   return CAR_LENGTH / p.size.z;
 }
 
-/** Parked cars along the side-street kerbs, lined up with the road; returns each one's instance. */
+/** Parked cars along the side-street kerbs, lined up with the road. */
+/** Parked cars along the kerbs; returns each one's instance, so it can be hidden once driven off. */
 function addParkedCars(world: TownWorld, assets: TownAssets, instancer: Instancer): { prefab: Prefab; index: number }[] {
   return world.layout.cars.map((car) => {
     // Parked either way round.
@@ -993,7 +993,7 @@ function addParkedCars(world: TownWorld, assets: TownAssets, instancer: Instance
     const model = car.variant % 6;
     const p = assets.prefab(CARS[model]);
     const s = carScale(p);
-    world.parked.push({ model, x: car.x, y: car.y, heading });
+    world.parked.push({ x: car.x, y: car.y, heading, model });
     return { prefab: p, index: instancer.add(p, placement(p, car, Math.atan2(Math.cos(heading), Math.sin(heading)), s, s, s)) };
   });
 }

@@ -99,7 +99,8 @@ async function spawnCharacter(): Promise<void> {
 
 function syncAutoWalkButton(): void {
   const on = iso?.isAuto ?? false;
-  autoWalkButton.textContent = on ? 'Stop auto walk' : 'Auto walk';
+  const what = iso?.isDriving ? 'auto drive' : 'auto walk';
+  autoWalkButton.textContent = on ? `Stop ${what}` : what[0].toUpperCase() + what.slice(1);
   autoWalkButton.classList.toggle('active', on);
 }
 
@@ -112,6 +113,7 @@ async function explore(): Promise<void> {
       const { IsoView } = await import('./render/iso/view');
       iso = await IsoView.create(isoHost);
       iso.onCarChange = syncCarButton;
+      iso.onAutoChange = syncAutoWalkButton;
     }
     exploring = true;
     document.body.classList.add('exploring');
@@ -164,20 +166,20 @@ function toggleAutoWalk(): void {
   syncAutoWalkButton();
 }
 
-/** G: into the nearest car, or out of this one. Auto walk stops on getting in. */
+/** Into the nearest car, or out of this one (the view handles G itself). */
 function toggleCar(): void {
   if (!iso) return;
   if (!iso.toggleCar()) {
-    carButton.classList.add('nudge'); // nothing near enough to get into
+    carButton.classList.add('nudge'); // no car near enough to get into, or nowhere to get out
     setTimeout(() => carButton.classList.remove('nudge'), 400);
   }
-  syncAutoWalkButton();
 }
 
+/** In or out of a car: the car button follows, and auto walk becomes auto drive (or back). */
 function syncCarButton(driving: boolean): void {
   carButton.textContent = driving ? 'Get out' : 'Get in car';
   carButton.classList.toggle('active', driving);
-  autoWalkButton.disabled = driving;
+  syncAutoWalkButton();
 }
 
 function toggleCloseUp(): void {
@@ -242,7 +244,6 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') toggleWalkMode();
   if (e.code === 'KeyT') toggleAutoWalk();
   if (e.code === 'KeyV' && !e.repeat) toggleCloseUp();
-  if (e.code === 'KeyG' && !e.repeat) toggleCar();
   if (e.code === 'KeyC') void spawnCharacter();
   if (e.code === 'Escape') leaveExplore();
 });
