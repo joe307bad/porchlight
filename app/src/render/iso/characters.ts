@@ -32,10 +32,13 @@ export function randomLook(rng: Rng): Look {
   return { model: rng.pick(CHARACTERS) };
 }
 
-/** A townsperson's height in tiles (the player is a little taller). */
-export const PERSON_HEIGHT = 0.465;
+/**
+ * A townsperson's height in tiles (the player is a little taller): about
+ * 1.6 m beside a car CAR_LENGTH (about 4.4 m) long.
+ */
+export const PERSON_HEIGHT = 0.36;
 /** Walking speed (tiles per second) at which the walk clip plays at its natural pace. */
-const NATURAL_WALK = 0.68;
+const NATURAL_WALK = 0.53;
 /** Render order for the x-ray pass: after the town, before the player themself. */
 export const XRAY_ORDER = 10;
 const PLAYER_ORDER = 20;
@@ -84,7 +87,7 @@ export class Avatar {
     this.walkWeight += ((moving ? 1 : 0) - this.walkWeight) * Math.min(1, dt * 10);
     if (this.walk) {
       this.walk.setEffectiveWeight(this.walkWeight);
-      if (moving) this.walk.timeScale = Math.min(4, Math.max(0.5, w.speed / (NATURAL_WALK * w.scale)));
+      if (moving) this.walk.timeScale = Math.min(6, Math.max(0.5, w.speed / (NATURAL_WALK * w.scale)));
     }
     this.idle?.setEffectiveWeight(1 - this.walkWeight);
     this.mixer.update(dt);

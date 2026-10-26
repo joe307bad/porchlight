@@ -37,6 +37,17 @@ before, but the town is real geometry, so the camera can turn.
   destination on …", each with the distance to walk after it (about 4 m a
   tile). The step you're on is highlighted; steps drop off as you pass them,
   and a new list starts with each new destination.
+- **Cars (`driving.ts`):** `G` (or **Get in car**) gets into the nearest car
+  within reach: a parked one, one you left earlier, or one in traffic, whose
+  driver gets out and walks off to the sidewalk. Driving, `W` / `S` are
+  throttle and brake (holding `S` once stopped reverses) and `A` / `D` steer,
+  in either camera; steering eases off with speed. The car stops at walls,
+  sheds and other cars, and shows through buildings in orange like you do.
+  `G` again brakes to a stop and gets out of the driver's door (or whichever
+  side has room); the car stays where you left it. Traffic stops short of you
+  and of any car out of traffic in its lane, and turns round if you don't
+  move within a few seconds. Characters are about 1.6 m tall beside the
+  cars (`PERSON_HEIGHT`).
 - **Camera stops (`orbit.ts`):** 12 fixed headings 30° apart, at 15°, 45°,
   75° and so on. 45°, 135°, 225° and 315° are the four classic isometric
   views; the ones in between look down avenues from 15° off-axis. Turns ease

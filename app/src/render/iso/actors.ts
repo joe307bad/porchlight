@@ -141,7 +141,7 @@ function canStand(x: number, y: number, open: Uint8Array, model: TownModel): boo
   return true;
 }
 
-/** A townsperson strolling the sidewalks (now and then crossing the road). */
+/** A townsperson strolling the sidewalks (now and then crossing the road), or heading for them from `from`. */
 export class Pedestrian extends Walker {
   private readonly walk: SidewalkWalk;
   private pause = 0;
@@ -151,8 +151,9 @@ export class Pedestrian extends Walker {
     look: Look,
     net: SidewalkNetwork,
     private readonly rng: Rng,
+    from?: Vec2,
   ) {
-    const walk = SidewalkWalk.random(net, rng);
+    const walk = from ? SidewalkWalk.join(net, rng, from) : SidewalkWalk.random(net, rng);
     const at = walk.position();
     super(look, at.x, at.y, rng.range(0.85, 1.05));
     this.walk = walk;

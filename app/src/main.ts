@@ -25,6 +25,7 @@ const newCharButton = document.querySelector<HTMLButtonElement>('#newchar')!;
 const backButton = document.querySelector<HTMLButtonElement>('#back')!;
 const walkModeButton = document.querySelector<HTMLButtonElement>('#walkmode')!;
 const autoWalkButton = document.querySelector<HTMLButtonElement>('#autowalk')!;
+const carButton = document.querySelector<HTMLButtonElement>('#car')!;
 const statusEl = document.querySelector<HTMLDivElement>('#status')!;
 const turnLeftButton = document.querySelector<HTMLButtonElement>('#turnleft')!;
 const turnRightButton = document.querySelector<HTMLButtonElement>('#turnright')!;
@@ -110,6 +111,7 @@ async function explore(): Promise<void> {
       isoHost.hidden = false;
       const { IsoView } = await import('./render/iso/view');
       iso = await IsoView.create(isoHost);
+      iso.onCarChange = syncCarButton;
     }
     exploring = true;
     document.body.classList.add('exploring');
@@ -162,6 +164,22 @@ function toggleAutoWalk(): void {
   syncAutoWalkButton();
 }
 
+/** G: into the nearest car, or out of this one. Auto walk stops on getting in. */
+function toggleCar(): void {
+  if (!iso) return;
+  if (!iso.toggleCar()) {
+    carButton.classList.add('nudge'); // nothing near enough to get into
+    setTimeout(() => carButton.classList.remove('nudge'), 400);
+  }
+  syncAutoWalkButton();
+}
+
+function syncCarButton(driving: boolean): void {
+  carButton.textContent = driving ? 'Get out' : 'Get in car';
+  carButton.classList.toggle('active', driving);
+  autoWalkButton.disabled = driving;
+}
+
 function toggleCloseUp(): void {
   if (!iso) return;
   iso.setCameraMode(iso.cameraMode === 'close' ? 'iso' : 'close');
@@ -208,6 +226,7 @@ requestAnimationFrame(follow);
 exploreButton.addEventListener('click', () => void explore());
 walkModeButton.addEventListener('click', toggleWalkMode);
 autoWalkButton.addEventListener('click', toggleAutoWalk);
+carButton.addEventListener('click', toggleCar);
 backButton.addEventListener('click', leaveExplore);
 dayNightButton.addEventListener('click', toggleNight);
 newCharButton.addEventListener('click', () => void spawnCharacter());
@@ -223,6 +242,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') toggleWalkMode();
   if (e.code === 'KeyT') toggleAutoWalk();
   if (e.code === 'KeyV' && !e.repeat) toggleCloseUp();
+  if (e.code === 'KeyG' && !e.repeat) toggleCar();
   if (e.code === 'KeyC') void spawnCharacter();
   if (e.code === 'Escape') leaveExplore();
 });
