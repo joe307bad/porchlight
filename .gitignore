@@ -1,3 +1,6 @@
 node_modules/
 dist/
 .DS_Store
+
+# Local, hand-run scripts (credentials, one-time setup)
+*.local.sh

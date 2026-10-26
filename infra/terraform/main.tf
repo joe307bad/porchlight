@@ -319,7 +319,7 @@ resource "aws_dlm_lifecycle_policy" "snapshots" {
     resource_types = ["VOLUME"]
 
     schedule {
-      name = "Daily, 7 kept"
+      name = "Daily snapshots with 7-day retention"
 
       create_rule {
         interval      = 24
