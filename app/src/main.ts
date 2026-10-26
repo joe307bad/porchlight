@@ -1,3 +1,5 @@
+import { requireSignIn } from './auth/gate';
+import { signOut } from './auth/session';
 import { generateTown } from './gen';
 import { DEFAULT_PARAMS, type GenParams } from './model/params';
 import type { TownModel } from './model/types';
@@ -8,21 +10,22 @@ import { exportJson, exportPng } from './ui/export';
 import { describeTile } from './ui/hover';
 import { Panel } from './ui/panel';
 import { randomSeed } from './ui/seed';
+import { Sidebar } from './ui/sidebar';
 import { readUrlState, writeUrlState } from './ui/urlState';
 import { attachViewport } from './ui/viewport';
 import './style.css';
 
+// Nothing starts until someone is signed in (when sign-in is configured).
+const user = await requireSignIn();
+
 const canvas = document.querySelector<HTMLCanvasElement>('#map')!;
-const seedInput = document.querySelector<HTMLInputElement>('#seed')!;
-const regenButton = document.querySelector<HTMLButtonElement>('#regenerate')!;
-const jsonButton = document.querySelector<HTMLButtonElement>('#export-json')!;
-const pngButton = document.querySelector<HTMLButtonElement>('#export-png')!;
+const sidebarEl = document.querySelector<HTMLElement>('#sidebar')!;
 const hoverEl = document.querySelector<HTMLDivElement>('#hover')!;
 const isoHost = document.querySelector<HTMLDivElement>('#iso')!;
-const exploreButton = document.querySelector<HTMLButtonElement>('#explore')!;
 const dayNightButton = document.querySelector<HTMLButtonElement>('#daynight')!;
 const newCharButton = document.querySelector<HTMLButtonElement>('#newchar')!;
-const backButton = document.querySelector<HTMLButtonElement>('#back')!;
+const exploreControls = document.querySelector<HTMLElement>('#explore-controls')!;
+const minimapHost = document.querySelector<HTMLElement>('#minimap-host')!;
 const walkModeButton = document.querySelector<HTMLButtonElement>('#walkmode')!;
 const autoWalkButton = document.querySelector<HTMLButtonElement>('#autowalk')!;
 const carButton = document.querySelector<HTMLButtonElement>('#car')!;
@@ -70,7 +73,7 @@ function regenerate(nextSeed: string, nextParams: GenParams): void {
     statusEl.classList.add('error');
     model = generateTown(seed, params); // still show what we got
   }
-  seedInput.value = seed;
+  sidebar.setSeed(seed);
   writeUrlState(seed, params);
   renderer.marker = null; // a new town; the character's spot no longer applies
   renderer.route = [];
@@ -105,18 +108,18 @@ function syncAutoWalkButton(): void {
 }
 
 async function explore(): Promise<void> {
-  exploreButton.disabled = true;
-  exploreButton.textContent = 'Loading…';
+  sidebar.setLoading(true);
   try {
     if (!iso) {
       isoHost.hidden = false;
       const { IsoView } = await import('./render/iso/view');
-      iso = await IsoView.create(isoHost);
+      iso = await IsoView.create(isoHost, minimapHost);
       iso.onCarChange = syncCarButton;
       iso.onAutoChange = syncAutoWalkButton;
     }
     exploring = true;
     document.body.classList.add('exploring');
+    sidebar.setExploring(true);
     isoHost.hidden = false;
     iso.setBackground(false);
     if (isoTown !== model) {
@@ -133,14 +136,14 @@ async function explore(): Promise<void> {
     statusEl.classList.add('error');
     leaveExplore();
   } finally {
-    exploreButton.disabled = false;
-    exploreButton.textContent = 'Explore';
+    sidebar.setLoading(false);
   }
 }
 
 function leaveExplore(): void {
   exploring = false;
   document.body.classList.remove('exploring');
+  sidebar.setExploring(false);
   isoHost.hidden = true;
   iso?.setBackground(true); // keep the town (and an auto-walking character) going behind the map
   renderer.resize();
@@ -225,11 +228,9 @@ function follow(now: number): void {
 }
 requestAnimationFrame(follow);
 
-exploreButton.addEventListener('click', () => void explore());
 walkModeButton.addEventListener('click', toggleWalkMode);
 autoWalkButton.addEventListener('click', toggleAutoWalk);
 carButton.addEventListener('click', toggleCar);
-backButton.addEventListener('click', leaveExplore);
 dayNightButton.addEventListener('click', toggleNight);
 newCharButton.addEventListener('click', () => void spawnCharacter());
 turnLeftButton.addEventListener('click', () => iso?.rotate(-1));
@@ -254,35 +255,71 @@ function fit(): void {
   requestDraw();
 }
 
+/** Params changed in one control surface: mirror them in the other and rebuild. */
+function changeParams(next: GenParams): void {
+  panel.setParams(next);
+  sidebar.setParams(next);
+  regenerate(seed, next);
+}
+
+function resetParams(): void {
+  changeParams({ ...DEFAULT_PARAMS });
+}
+
+function toggleLayer(id: string, on: boolean): void {
+  if (on) renderer.visible.add(id);
+  else renderer.visible.delete(id);
+  requestDraw();
+}
+
+const DEBUG_KEY = 'porchlight.debugPanel';
+function setDebugOpen(open: boolean): void {
+  panel.setOpen(open);
+  sidebar.setDebugOpen(open);
+  try {
+    localStorage.setItem(DEBUG_KEY, open ? '1' : '0');
+  } catch {
+    // storage blocked; the panel just won't be remembered
+  }
+}
+
 const panel = new Panel(params, renderer.visible, {
-  onParamsChange: (p) => regenerate(seed, p),
+  onParamsChange: changeParams,
+  onResetParams: resetParams,
+  onLayerToggle: toggleLayer,
+});
+
+const sidebar: Sidebar = new Sidebar(sidebarEl, params, renderer.visible, {
+  onParamsChange: changeParams,
   onRegenerate: () => regenerate(randomSeed(), params),
-  onResetParams: () => {
-    panel.setParams(DEFAULT_PARAMS);
-    regenerate(seed, { ...DEFAULT_PARAMS });
-  },
-  onLayerToggle: (id, on) => {
-    if (on) renderer.visible.add(id);
-    else renderer.visible.delete(id);
-    requestDraw();
-  },
+  onSeed: (value) => regenerate(value, params),
+  onExplore: () => void explore(),
+  onBack: leaveExplore,
+  onResetParams: resetParams,
+  onLayerToggle: toggleLayer,
   onFitView: fit,
   onExportJson: () => exportJson(model),
   onExportPng: () => exportPng(model, renderer.visible),
-});
+  onToggleDebug: () => setDebugOpen(!panel.isOpen),
+}, exploreControls);
+if (user) sidebar.setAccount(user, signOut);
+// Small screens start with the map, not the controls.
+if (window.matchMedia('(max-width: 720px)').matches) sidebar.setOpen(false);
+try {
+  if (localStorage.getItem(DEBUG_KEY) === '1') setDebugOpen(true);
+} catch {
+  // storage blocked; start with the debug panel hidden
+}
 
-regenButton.addEventListener('click', () => regenerate(randomSeed(), params));
-jsonButton.addEventListener('click', () => exportJson(model));
-pngButton.addEventListener('click', () => exportPng(model, renderer.visible));
-seedInput.addEventListener('keydown', (e) => {
-  if (e.key !== 'Enter') return;
-  const value = seedInput.value.trim();
-  if (value) regenerate(value, params);
+window.addEventListener('keydown', (e) => {
+  if (exploring || e.target instanceof HTMLInputElement) return;
+  if (e.code === 'Backquote') setDebugOpen(!panel.isOpen);
 });
 
 window.addEventListener('hashchange', () => {
   const state = readUrlState();
   panel.setParams(state.params);
+  sidebar.setParams(state.params);
   regenerate(state.seed ?? randomSeed(), state.params);
 });
 

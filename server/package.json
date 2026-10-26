@@ -1,0 +1,21 @@
+{
+  "name": "porchlight-auth",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Sign-in for Porchlight: the OIDC handshake with Keycloak, kept off the page. Sessions live in an HttpOnly, SameSite=Lax cookie.",
+  "engines": { "node": ">=23.6" },
+  "scripts": {
+    "start": "node src/main.ts",
+    "dev": "node --watch --env-file-if-exists=.env.development src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "jose": "^6.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.9.3"
+  }
+}

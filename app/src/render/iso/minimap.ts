@@ -1,4 +1,4 @@
-// A small top-down map of the whole town in the corner of the explore view,
+// A small top-down map of the whole town, shown in the sidebar while exploring,
 // drawn the same way up as the blueprint. It marks the player (and auto-walk's
 // destination) and outlines what the camera can see; clicking it moves the
 // player there.
@@ -7,7 +7,7 @@ import type { TownModel, Vec2 } from '../../model/types';
 import { TILE_BUILDING, TILE_OVERLAY, TILE_TERRAIN } from '../blueprint/style';
 
 /** Longest side of the minimap, in CSS pixels. */
-const SIZE = 200;
+const SIZE = 264;
 
 export class Minimap {
   readonly canvas = document.createElement('canvas');
@@ -24,7 +24,9 @@ export class Minimap {
     this.canvas.addEventListener('pointerdown', (e) => {
       if (!this.model) return;
       const r = this.canvas.getBoundingClientRect();
-      onPick({ x: (e.clientX - r.left) / this.scale, y: (e.clientY - r.top) / this.scale });
+      // Measured from the drawn size, which CSS may shrink to fit a narrow sidebar.
+      const { width: w, height: h } = this.model;
+      onPick({ x: ((e.clientX - r.left) / r.width) * w, y: ((e.clientY - r.top) / r.height) * h });
       e.stopPropagation();
     });
   }

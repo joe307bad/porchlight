@@ -1,0 +1,25 @@
+# Local Keycloak for sign-in during development. ./dev.sh starts it and runs
+# infra/keycloak/init-keycloak.sh dev, which seeds the realm and a user:
+#
+#   username: dev   password: dev
+#
+# Admin console: http://localhost:8080/admin (admin / admin).
+
+name: porchlight-dev
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7
+    command: start-dev
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      # The dev database (H2), so the realm and user survive a restart.
+      - keycloak-data:/opt/keycloak/data
+
+volumes:
+  keycloak-data:

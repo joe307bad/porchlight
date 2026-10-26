@@ -1,5 +1,5 @@
-// lil-gui panel: a slider per GenParams value (grouped by stage), layer
-// toggles, debug views, view and export actions.
+// Debug panel (lil-gui): a slider per GenParams value (grouped by stage) and
+// the debug views. Hidden by default; the sidebar holds the everyday controls.
 
 import GUI from 'lil-gui';
 import { PARAM_SPECS, type GenParams, type ParamGroup } from '../model/params';
@@ -7,22 +7,18 @@ import { LAYERS } from '../render/blueprint/layers';
 
 export interface PanelHandlers {
   onParamsChange(params: GenParams): void;
-  onRegenerate(): void;
   onResetParams(): void;
   onLayerToggle(id: string, on: boolean): void;
-  onFitView(): void;
-  onExportJson(): void;
-  onExportPng(): void;
 }
 
 export class Panel {
-  private readonly gui = new GUI({ title: 'Porchlight' });
+  private readonly gui = new GUI({ title: 'Debug' });
   private readonly params: GenParams;
 
   constructor(initial: GenParams, visible: ReadonlySet<string>, handlers: PanelHandlers) {
     this.params = { ...initial };
-
-    this.gui.add({ regenerate: handlers.onRegenerate }, 'regenerate').name('Regenerate (new seed)');
+    this.gui.domElement.classList.add('debug-panel');
+    this.gui.hide();
 
     const generator = this.gui.addFolder('Generator');
     const groups = new Map<ParamGroup, GUI>();
@@ -40,22 +36,25 @@ export class Panel {
     }
     generator.add({ reset: handlers.onResetParams }, 'reset').name('Reset to defaults');
 
-    const layerFolder = this.gui.addFolder('Layers');
     const debugFolder = this.gui.addFolder('Debug views');
-    debugFolder.close();
     const toggles: Record<string, boolean> = {};
     for (const layer of LAYERS) {
+      if (!layer.debug) continue;
       toggles[layer.id] = visible.has(layer.id);
-      (layer.debug ? debugFolder : layerFolder)
+      debugFolder
         .add(toggles, layer.id)
         .name(layer.label)
         .onChange((on: boolean) => handlers.onLayerToggle(layer.id, on));
     }
+  }
 
-    const viewFolder = this.gui.addFolder('View & export');
-    viewFolder.add({ fit: handlers.onFitView }, 'fit').name('Fit to screen');
-    viewFolder.add({ json: handlers.onExportJson }, 'json').name('Download JSON');
-    viewFolder.add({ png: handlers.onExportPng }, 'png').name('Download PNG');
+  get isOpen(): boolean {
+    return !this.gui._hidden;
+  }
+
+  setOpen(open: boolean): void {
+    if (open) this.gui.show();
+    else this.gui.hide();
   }
 
   /** Reflect params loaded from elsewhere (e.g. the URL) in the sliders. */

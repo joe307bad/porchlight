@@ -255,6 +255,7 @@ export class IsoView {
     private readonly renderer: WebGLRenderer,
     private readonly assets: TownAssets,
     private readonly host: HTMLElement,
+    minimapHost: HTMLElement,
   ) {
     this.scene.background = new Color(DAY_SKY);
     this.sun.castShadow = true;
@@ -264,7 +265,7 @@ export class IsoView {
     this.sun.shadow.camera.near = 1;
     this.sun.shadow.camera.far = 220;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.roomLight);
-    this.minimap = new Minimap(host, (at) => this.teleport(at));
+    this.minimap = new Minimap(minimapHost, (at) => this.teleport(at));
     this.hud = new StreetHud(host);
     this.resize();
     const observer = new ResizeObserver(() => this.resize());
@@ -288,7 +289,8 @@ export class IsoView {
 
   private lastFrame = performance.now();
 
-  static async create(host: HTMLElement): Promise<IsoView> {
+  /** `minimapHost` is where the town minimap goes (the sidebar). */
+  static async create(host: HTMLElement, minimapHost: HTMLElement): Promise<IsoView> {
     const renderer = new WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.outputColorSpace = SRGBColorSpace;
@@ -299,7 +301,7 @@ export class IsoView {
     host.appendChild(renderer.domElement);
     try {
       const assets = await loadTownAssets();
-      return new IsoView(renderer, assets, host);
+      return new IsoView(renderer, assets, host, minimapHost);
     } catch (err) {
       renderer.domElement.remove();
       renderer.dispose();

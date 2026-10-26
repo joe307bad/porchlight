@@ -1,0 +1,113 @@
+# Porchlight in production, on one small EC2 box (see infra/terraform).
+#
+#   caddy     the only thing listening publicly: TLS for both names, the static
+#             app off disk, /auth/* to the auth service, auth.<domain> to Keycloak
+#   auth      the OIDC handshake, kept off the page (server/); sessions are
+#             HttpOnly SameSite=Lax cookies
+#   keycloak  the identity provider at auth.<domain>; brokers Google, and the
+#             user never sees it (kc_idp_hint + a browser flow that only redirects)
+#   postgres  Keycloak's database, on the persistent data volume
+#
+# Sized for a t4g.micro (1 GB + 2 GB swap): every memory knob below is turned
+# down from its default. Nothing is built from the app here; CI builds it and
+# copies dist/ to /opt/porchlight/site.
+
+name: porchlight
+
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: porchlight-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /opt/porchlight/site:/srv/site:ro
+      - /data/caddy/data:/data
+      - /data/caddy/config:/config
+    # Not gated on Keycloak's health: Caddy resolves upstreams per request, and a
+    # Keycloak that failed to boot should cost sign-in a 502, not the whole site.
+    depends_on:
+      - auth
+
+  auth:
+    build:
+      context: ../../server
+    container_name: porchlight-auth
+    restart: unless-stopped
+    environment:
+      APP_URL: https://${DOMAIN}
+      KEYCLOAK_ISSUER: https://auth.${DOMAIN}/realms/porchlight
+      # The back channel (token exchange, signing keys) stays on the container
+      # network; the browser is only ever sent to the public name.
+      KEYCLOAK_INTERNAL_URL: http://keycloak:8080/realms/porchlight
+      KEYCLOAK_CLIENT_ID: porchlight-web
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      KEYCLOAK_IDP_HINT: google
+      SESSION_SECRET: ${SESSION_SECRET}
+
+  keycloak:
+    build:
+      context: ../keycloak
+    container_name: porchlight-keycloak
+    restart: unless-stopped
+    environment:
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_DB_POOL_MAX_SIZE: "8"
+      # The public origin: every issuer, redirect and discovery URL is built
+      # from it, whichever network the request came in on.
+      KC_HOSTNAME: https://auth.${DOMAIN}
+      # Created only when the master realm has no admin; the same account every boot after.
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_LOG_LEVEL: info
+      # Keycloak's default heap is a share of RAM, far more than one login page
+      # for a handful of people needs on a 1 GB box. (Keycloak already picks the
+      # GC; adding another one here stops the JVM from starting.)
+      JAVA_OPTS_KC_HEAP: "-Xms64m -Xmx320m"
+      JAVA_OPTS_APPEND: "-XX:ReservedCodeCacheSize=64m -XX:MaxMetaspaceSize=256m -Xss512k"
+    healthcheck:
+      # The management port (9000). No curl in the image, so bash's /dev/tcp.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '200 OK' <&3
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 180s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: porchlight-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command: >
+      postgres
+      -c shared_buffers=32MB
+      -c max_connections=20
+      -c work_mem=2MB
+      -c maintenance_work_mem=16MB
+    volumes:
+      - /data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s

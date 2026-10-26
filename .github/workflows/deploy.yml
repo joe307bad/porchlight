@@ -1,0 +1,171 @@
+name: Deploy
+
+# Test, build, provision (Terraform) and deploy to the EC2 box. The same shape
+# as topspin's deploy-ec2.yml: Terraform owns the box, the box runs Docker
+# Compose, and this job copies files over and runs infra/docker/deploy.sh.
+# See infra/README.md for the one-time setup (secrets, Google, DNS).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'server/**'
+      - 'infra/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  DOMAIN: porchlight.joebad.com
+  # The zone the two A records go in (best-effort; see "Point DNS at the box").
+  DNS_ZONE: joebad.com
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # --- Gate: nothing reaches the box unless both halves pass ---------------
+      - name: App — install, typecheck, test, build
+        working-directory: app
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Auth service — install, typecheck, test
+        working-directory: server
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+
+      # --- Provision -----------------------------------------------------------
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_porchlight
+          chmod 600 ~/.ssh/id_porchlight
+          echo "SSH_PUBLIC_KEY=$(ssh-keygen -y -f ~/.ssh/id_porchlight)" >> "$GITHUB_ENV"
+
+      - name: Terraform state bucket
+        run: |
+          ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET="porchlight-terraform-state-$ACCOUNT"
+          echo "TF_STATE_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            exit 0
+          fi
+          echo "creating $BUCKET"
+          aws s3api create-bucket --bucket "$BUCKET" --region "$AWS_REGION"
+          aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+          aws s3api put-public-access-block --bucket "$BUCKET" --public-access-block-configuration \
+            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+          terraform_wrapper: false
+
+      - name: Terraform apply
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=porchlight/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION"
+          terraform apply -auto-approve -input=false \
+            -var="ssh_public_key=$SSH_PUBLIC_KEY" \
+            -var="domain=$DOMAIN"
+          echo "HOST=$(terraform output -raw elastic_ip)" >> "$GITHUB_ENV"
+          echo "SECRET_ID=$(terraform output -raw secret_id)" >> "$GITHUB_ENV"
+
+      - name: Point DNS at the box
+        # Best-effort and never fatal, as in topspin: the zone may not be in this
+        # account. Caddy keeps retrying certificates until the records exist.
+        continue-on-error: true
+        run: |
+          ZONE=$(aws route53 list-hosted-zones-by-name --dns-name "$DNS_ZONE" --max-items 1 \
+            --query "HostedZones[?Name=='$DNS_ZONE.'].Id | [0]" --output text 2>/dev/null | sed 's|/hostedzone/||')
+          if [ -z "$ZONE" ] || [ "$ZONE" = "None" ]; then
+            echo "::warning::No Route53 zone for $DNS_ZONE. Create by hand: $DOMAIN A $HOST and auth.$DOMAIN A $HOST"
+            exit 0
+          fi
+          cat > /tmp/records.json <<JSON
+          {"Changes": [
+            {"Action": "UPSERT", "ResourceRecordSet": {"Name": "$DOMAIN", "Type": "A", "TTL": 300, "ResourceRecords": [{"Value": "$HOST"}]}},
+            {"Action": "UPSERT", "ResourceRecordSet": {"Name": "auth.$DOMAIN", "Type": "A", "TTL": 300, "ResourceRecords": [{"Value": "$HOST"}]}}
+          ]}
+          JSON
+          aws route53 change-resource-record-sets --hosted-zone-id "$ZONE" --change-batch file:///tmp/records.json >/dev/null
+          echo "$DOMAIN and auth.$DOMAIN -> $HOST"
+
+      - name: Google OAuth client into Secrets Manager
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          if [ -z "$GOOGLE_CLIENT_ID" ] || [ -z "$GOOGLE_CLIENT_SECRET" ]; then
+            echo "::warning::GOOGLE_CLIENT_ID/SECRET not set; leaving whatever the secret already holds"
+            exit 0
+          fi
+          CURRENT=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --query SecretString --output text)
+          UPDATED=$(jq --arg id "$GOOGLE_CLIENT_ID" --arg secret "$GOOGLE_CLIENT_SECRET" \
+            '.GOOGLE_CLIENT_ID = $id | .GOOGLE_CLIENT_SECRET = $secret' <<<"$CURRENT")
+          if [ "$UPDATED" != "$CURRENT" ]; then
+            aws secretsmanager put-secret-value --secret-id "$SECRET_ID" --secret-string "$UPDATED" >/dev/null
+            echo "updated"
+          fi
+
+      # --- Deploy --------------------------------------------------------------
+      - name: Wait for the box
+        run: |
+          SSH="ssh -i ~/.ssh/id_porchlight -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ec2-user@$HOST"
+          echo "SSH=$SSH" >> "$GITHUB_ENV"
+          for i in $(seq 1 40); do
+            # A fresh box is still running user-data; wait for it to finish.
+            if $SSH 'sudo cloud-init status --wait >/dev/null; test -x /usr/local/lib/docker/cli-plugins/docker-compose'; then
+              exit 0
+            fi
+            echo "box not ready ($i/40)"
+            sleep 15
+          done
+          exit 1
+
+      - name: Copy files
+        run: |
+          RSYNC="rsync -az --delete -e 'ssh -i $HOME/.ssh/id_porchlight -o StrictHostKeyChecking=accept-new'"
+          eval $RSYNC --exclude .env --exclude 'terraform/' infra/ "ec2-user@$HOST:/opt/porchlight/infra/"
+          eval $RSYNC --exclude node_modules --exclude '.env*' --exclude test server/ "ec2-user@$HOST:/opt/porchlight/server/"
+          # The site last and with delayed deletes, so a page mid-load still finds its old assets.
+          eval $RSYNC --delete-delay app/dist/ "ec2-user@$HOST:/opt/porchlight/site/"
+
+      - name: Run deploy.sh
+        run: |
+          $SSH "SECRET_ID='$SECRET_ID' AWS_REGION='$AWS_REGION' DOMAIN='$DOMAIN' /opt/porchlight/infra/docker/deploy.sh"
+
+      - name: Smoke test
+        continue-on-error: true
+        run: |
+          for url in "https://$DOMAIN/" "https://$DOMAIN/auth/health" "https://auth.$DOMAIN/realms/porchlight/.well-known/openid-configuration"; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --retry 5 --retry-delay 10 --retry-all-errors "$url" || true)
+            echo "$code $url"
+            [ "$code" = 200 ] || echo "::warning::$url answered $code (DNS or certificates may still be settling)"
+          done

@@ -8,33 +8,44 @@
   <body>
     <canvas id="map"></canvas>
     <div id="iso" hidden></div>
-    <div id="topbar">
-      <h1>Porchlight</h1>
-      <button id="regenerate" type="button">Regenerate</button>
-      <label id="seed-label" for="seed">seed</label>
-      <input id="seed" type="text" spellcheck="false" autocomplete="off" title="Edit and press Enter to load this seed" />
-      <span class="divider"></span>
-      <button id="explore" class="primary" type="button" title="Spawn as a random character and walk the town">Explore</button>
-      <span class="map-only">
-        <button id="export-json" class="secondary" type="button" title="Download the TownModel as JSON">JSON</button>
-        <button id="export-png" class="secondary" type="button" title="Download the blueprint as a PNG">PNG</button>
-      </span>
-      <span class="iso-only">
-        <button id="turnleft" class="secondary" type="button" title="Turn the camera round the player (Q)">⟲</button>
-        <button id="turnright" class="secondary" type="button" title="Turn the camera round the player (E)">⟳</button>
+    <aside id="sidebar" aria-label="Porchlight menu"></aside>
+    <!-- Explore-mode controls; the sidebar moves these into its explore section. -->
+    <div id="explore-controls">
+      <div class="sb-minimap" id="minimap-host"></div>
+      <div class="sb-grid4">
+        <button id="turnleft" class="secondary" type="button" title="Turn the camera round the player (Q)">⟲ Turn</button>
+        <button id="turnright" class="secondary" type="button" title="Turn the camera round the player (E)">Turn ⟳</button>
         <button id="tiltdown" class="secondary" type="button" title="Tilt the camera down toward the horizon (Z)">Tilt ↓</button>
         <button id="tiltup" class="secondary" type="button" title="Tilt the camera up toward looking straight down (X)">Tilt ↑</button>
+      </div>
+      <div class="sb-grid2">
         <button id="closeup" class="secondary" type="button" title="Switch to a close-up camera just behind your character (V)">Close up</button>
         <button id="lookahead" class="secondary" type="button" title="Look down the street you're walking (F)">Look ahead</button>
-        <button id="daynight" class="secondary" type="button" title="Toggle day and night (N)">Night</button>
         <button id="car" class="secondary" type="button" title="Get into the nearest car, or out of the one you're driving (G)">Get in car</button>
         <button id="autowalk" class="secondary" type="button" title="Wander the sidewalks on your own; arrow keys then turn round or cross the street (T)">Auto walk</button>
+        <button id="daynight" class="secondary" type="button" title="Toggle day and night (N)">Night</button>
         <button id="walkmode" class="secondary" type="button" title="Walk anywhere, or stay on roads and sidewalks (R)">Walk: anywhere</button>
         <button id="newchar" class="secondary" type="button" title="Become someone else (C)">New character</button>
-        <button id="back" class="secondary" type="button" title="Back to the blueprint (Esc)">Back to map</button>
-      </span>
+      </div>
+      <details class="sb-section sb-help">
+        <summary>Controls</summary>
+        <dl>
+          <dt>WASD / arrows</dt><dd>Walk (walk up to a door to go in)</dd>
+          <dt>Q / E</dt><dd>Turn the camera</dd>
+          <dt>Z / X</dt><dd>Tilt the camera</dd>
+          <dt>Scroll</dt><dd>Zoom</dd>
+          <dt>F</dt><dd>Look down the street</dd>
+          <dt>V</dt><dd>Close up (W/S walk, A/D turn)</dd>
+          <dt>G</dt><dd>Get in / out of a car (W/S drive, A/D steer)</dd>
+          <dt>T</dt><dd>Auto walk or drive with directions; then arrows: back = turn round, towards road = cross</dd>
+          <dt>N</dt><dd>Day / night</dd>
+          <dt>R</dt><dd>Streets only</dd>
+          <dt>C</dt><dd>New character</dd>
+          <dt>Minimap</dt><dd>Click to jump there</dd>
+          <dt>Esc</dt><dd>Back to the map</dd>
+        </dl>
+      </details>
     </div>
-    <div id="iso-help" class="iso-only">WASD / arrow keys to walk (walk up to a door to go in) · Q / E turn the camera · Z / X tilt it · F look down the street · V close up (W/S walk, A/D turn) · G get in / out of a car (W/S drive, A/D steer, T auto drive) · T auto walk with directions (then arrows: back = turn round, towards road = cross) · click the minimap to jump · scroll to zoom · N day/night · R streets only · C new character · Esc map</div>
     <div id="footer">
       <div id="hover"></div>
       <div id="status"></div>

@@ -1,0 +1,48 @@
+# Porchlight: the app and its sign-in on {$DOMAIN}, Keycloak on auth.{$DOMAIN}.
+# Caddy gets and renews both certificates itself (needs both A records first).
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The auth service: same origin as the app, so its cookies are first-party.
+	handle /auth/* {
+		reverse_proxy auth:3017
+	}
+
+	# The app: Vite's static build, copied here by the deploy.
+	handle {
+		root * /srv/site
+		# Hashed file names: cache them for good.
+		@hashed path /assets/*
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+		# The page itself must always be fresh, or a deploy is invisible.
+		@page path / /index.html
+		header @page Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+# Keycloak. Caddy forwards the original scheme and host (X-Forwarded-*), which
+# KC_PROXY_HEADERS=xforwarded tells Keycloak to trust.
+auth.{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy keycloak:8080
+
+	log {
+		output stdout
+		format json
+	}
+}

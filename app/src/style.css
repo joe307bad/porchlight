@@ -3,6 +3,8 @@
   --bar-fg: #efe6cf;
   --accent: #c2412d;
   --muted: #a99f88;
+  --line: #444038;
+  --sidebar-w: 300px;
   font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
@@ -29,31 +31,16 @@ body {
   touch-action: none;
 }
 
+body:not(.sidebar-closed) #map,
+body:not(.sidebar-closed) #iso {
+  width: calc(100% - var(--sidebar-w));
+}
+
 #map.dragging {
   cursor: grabbing;
 }
 
-#topbar {
-  position: fixed;
-  top: 12px;
-  left: 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  background: var(--bar-bg);
-  border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-}
-
-#topbar h1 {
-  margin: 0 6px 0 2px;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-#regenerate {
+.sb-regenerate {
   font: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -65,7 +52,7 @@ body {
   cursor: pointer;
 }
 
-#regenerate:hover {
+.sb-regenerate:hover {
   filter: brightness(1.1);
 }
 
@@ -84,21 +71,10 @@ body {
   border-color: #888;
 }
 
-.divider {
-  width: 1px;
-  align-self: stretch;
-  background: #444;
-  margin: 0 2px;
-}
-
-#seed-label {
-  font-size: 12px;
-  color: var(--muted);
-}
-
 #seed {
   font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
-  width: 11ch;
+  flex: 1;
+  min-width: 0;
   padding: 5px 7px;
   border: 1px solid #555;
   border-radius: 5px;
@@ -162,11 +138,6 @@ body {
   cursor: progress;
 }
 
-#topbar > span {
-  display: flex;
-  gap: 8px;
-}
-
 body:not(.exploring) .iso-only,
 body.exploring .map-only {
   display: none !important;
@@ -178,26 +149,12 @@ body.exploring .lil-gui.lil-root {
   display: none !important;
 }
 
-#iso-help {
-  position: fixed;
-  left: 50%;
-  bottom: 14px;
-  transform: translateX(-50%);
-  padding: 6px 12px;
-  border-radius: 6px;
-  background: var(--bar-bg);
-  font-size: 12px;
-  color: var(--muted);
-  pointer-events: none;
-}
-
 .minimap {
-  position: absolute;
-  left: 14px;
-  bottom: 14px;
-  border: 2px solid rgba(28, 27, 24, 0.85);
+  display: block;
+  max-width: 100%;
+  height: auto !important; /* keep the aspect when a narrow sidebar shrinks it */
+  border: 1px solid var(--line);
   border-radius: 6px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
   cursor: crosshair;
   image-rendering: pixelated;
 }
@@ -209,7 +166,7 @@ body.exploring .lil-gui.lil-root {
 
 .street-hud {
   position: absolute;
-  top: 58px;
+  top: 14px;
   right: 14px;
   width: 300px;
   max-width: calc(100vw - 28px);
@@ -315,4 +272,332 @@ body.exploring .lil-gui.lil-root {
 .street-hud [hidden],
 .hud-prompt[hidden] {
   display: none !important;
+}
+
+/* Sidebar: the blueprint page's everyday controls. */
+#sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  max-width: 100vw;
+  background: #1f1e1b;
+  border-left: 1px solid var(--line);
+  box-shadow: -2px 0 12px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease;
+  z-index: 10;
+}
+
+body.sidebar-closed #sidebar {
+  transform: translateX(100%);
+}
+
+.sb-body {
+  height: 100%;
+  overflow-y: auto;
+  padding: 18px 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.sb-collapse {
+  position: absolute;
+  top: 14px;
+  left: -32px;
+  width: 32px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-right: 0;
+  border-radius: 6px 0 0 6px;
+  background: #1f1e1b;
+  color: var(--bar-fg);
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.sb-collapse::before {
+  content: '›';
+}
+
+body.sidebar-closed .sb-collapse::before {
+  content: '‹';
+}
+
+.sb-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.sb-header p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sb-seed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sb-section h2,
+.sb-section summary {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.sb-section summary {
+  cursor: pointer;
+  margin-bottom: 0;
+}
+
+.sb-section[open] summary {
+  margin-bottom: 10px;
+}
+
+.sb-sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sb-slider-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+
+.sb-slider output {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--muted);
+}
+
+.sb-slider input[type='range'] {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sb-link {
+  margin-top: 12px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.sb-link:hover {
+  color: var(--bar-fg);
+}
+
+.sb-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sb-actions button {
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.sb-layers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+  font-size: 13px;
+}
+
+.sb-layers label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.sb-layers input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.sb-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: auto;
+}
+
+/* The debug panel (lil-gui) sits top-left, clear of the sidebar. */
+.lil-gui.lil-root.debug-panel {
+  top: 12px;
+  left: 12px;
+  right: auto;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+
+@media (max-width: 720px) {
+  :root {
+    --sidebar-w: min(300px, calc(100vw - 40px));
+  }
+
+  /* The sidebar overlays the map instead of squeezing it. */
+  body:not(.sidebar-closed) #map,
+  body:not(.sidebar-closed) #iso {
+    width: 100%;
+  }
+}
+
+/* Explore section: minimap, camera and movement buttons, controls help. */
+#explore-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sb-grid4,
+.sb-grid2 {
+  display: grid;
+  gap: 6px;
+}
+
+.sb-grid4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.sb-grid2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.sb-grid4 .secondary,
+.sb-grid2 .secondary {
+  padding: 6px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sb-help {
+  margin-top: 6px;
+}
+
+.sb-help dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.sb-help dt {
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--bar-fg);
+  white-space: nowrap;
+}
+
+.sb-help dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+/* Signed in as, and the way out. */
+.sb-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.sb-account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-account .sb-link {
+  margin: 0;
+  flex: none;
+}
+
+/* The sign-in screen, in front of everything until someone signs in. */
+body.signed-out > :not(#signin) {
+  display: none !important;
+}
+
+#signin {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: radial-gradient(circle at 50% 40%, #3a3832, #1f1e1b 70%);
+}
+
+.signin-card {
+  width: min(360px, 100%);
+  padding: 32px 28px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #1f1e1b;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.signin-card h1 {
+  margin: 0 0 6px;
+  font-size: 26px;
+  letter-spacing: 0.02em;
+}
+
+.signin-card p {
+  margin: 0 0 22px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.signin-button {
+  width: 100%;
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.signin-button:hover {
+  filter: brightness(1.1);
+}
+
+.signin-button:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.signin-card .signin-error {
+  margin: 16px 0 0;
+  color: #ff8a73;
 }
