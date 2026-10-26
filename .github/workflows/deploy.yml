@@ -137,7 +137,7 @@ jobs:
       # --- Deploy --------------------------------------------------------------
       - name: Wait for the box
         run: |
-          SSH="ssh -i ~/.ssh/id_porchlight -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 ec2-user@$HOST"
+          SSH="ssh -i ~/.ssh/id_porchlight -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ec2-user@$HOST"
           echo "SSH=$SSH" >> "$GITHUB_ENV"
           for i in $(seq 1 40); do
             # A fresh box is still running user-data; wait for it to finish.

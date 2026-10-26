@@ -354,9 +354,12 @@ resource "aws_instance" "main" {
   subnet_id              = aws_subnet.public.id
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
 
-  # Burstable credits: "standard" so a busy spell is throttled, never billed.
+  # Unlimited, the t4g default. In "standard" mode a new t4g starts with no
+  # CPU credits and is held to its 10% baseline, which turned Keycloak's first
+  # start into many minutes. An idle site stays under the baseline and costs
+  # nothing extra; only sustained use above it is billed.
   credit_specification {
-    cpu_credits = "standard"
+    cpu_credits = "unlimited"
   }
 
   root_block_device {
