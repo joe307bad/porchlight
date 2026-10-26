@@ -1,7 +1,8 @@
 // Draws the moving traffic: one InstancedMesh per car model part, with every
-// car's matrix rewritten each frame from its pose in Traffic.
+// car's matrix rewritten each frame from its pose in Traffic (a car the
+// player has taken is hidden here; the view draws it instead).
 
-import { DynamicDrawUsage, InstancedMesh, type Group } from 'three';
+import { DynamicDrawUsage, InstancedMesh, Matrix4, type Group } from 'three';
 import type { Rng } from '../../core/rng';
 import { CARS, CAR_WEIGHTS, type Prefab, type TownAssets } from './assets';
 import type { Traffic } from './traffic';
@@ -17,6 +18,9 @@ export function pickCarModel(rng: Rng): number {
   }
   return 0;
 }
+
+/** Squashes a car out of sight (the player has taken it out of the traffic). */
+const GONE = new Matrix4().makeScale(0, 0, 0);
 
 export class Fleet {
   private readonly groups: { prefab: Prefab; meshes: InstancedMesh[]; cars: number[] }[] = [];
@@ -49,6 +53,10 @@ export class Fleet {
       const s = carScale(g.prefab);
       g.cars.forEach((i, k) => {
         const c = this.traffic.cars[i];
+        if (c.taken) {
+          for (const mesh of g.meshes) mesh.setMatrixAt(k, GONE);
+          return;
+        }
         const m = placement(g.prefab, c, Math.atan2(Math.cos(c.heading), Math.sin(c.heading)), s, s, s);
         for (const mesh of g.meshes) mesh.setMatrixAt(k, m);
       });

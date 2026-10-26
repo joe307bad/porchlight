@@ -38,9 +38,14 @@ export const PERSON_HEIGHT = 0.465;
 const NATURAL_WALK = 0.68;
 /** Render order for the x-ray pass: after the town, before the player themself. */
 export const XRAY_ORDER = 10;
-const PLAYER_ORDER = 20;
+export const PLAYER_ORDER = 20;
 /** Feet stand just clear of the road markings, so soles never x-ray through the paint. */
 const FEET = 0.035;
+
+/** Fluorescent orange, drawn only where something already drawn is in front: the see-through-buildings silhouette. */
+export function xrayMaterial(): MeshBasicMaterial {
+  return new MeshBasicMaterial({ color: 0xff6a00, depthFunc: GreaterDepth, depthWrite: false });
+}
 
 export class Avatar {
   readonly root = new Group();
@@ -96,7 +101,7 @@ export class Avatar {
    * player's own meshes so they don't x-ray themselves.
    */
   addXray(): void {
-    const material = new MeshBasicMaterial({ color: 0xff6a00, depthFunc: GreaterDepth, depthWrite: false });
+    const material = xrayMaterial();
     const meshes: Mesh[] = [];
     this.model.traverse((o) => {
       if ((o as Mesh).isMesh) meshes.push(o as Mesh);

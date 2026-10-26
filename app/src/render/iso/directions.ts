@@ -1,6 +1,6 @@
-// Turn-by-turn directions for auto walk: the planned route over the sidewalks
-// (walking.ts) read out as steps on named streets (names.ts), the way a map
-// app would: "Head north on Elm Street", "Turn left onto High Street",
+// Turn-by-turn directions for auto walk and auto drive: the planned route over
+// the sidewalks (walking.ts) or the roads (driving.ts) read out as steps on
+// named streets (names.ts), the way a map app would: "Head north on Elm Street", "Turn left onto High Street",
 // "Cross Mill Lane", "Arrive at your destination". Pure (no Three, no DOM).
 
 import { arcPosition } from '../../core/geometry';
@@ -159,4 +159,41 @@ export function formatDistance(tiles: number): string {
   if (m < 100) return `${Math.round(m / 5) * 5} m`;
   if (m < 1000) return `${Math.round(m / 10) * 10} m`;
   return `${(m / 1000).toFixed(1)} km`;
+}
+
+/**
+ * Auto drive's route as steps: start on the street you're on, a step at every
+ * change of street (or turning round at a dead end), then the arrival.
+ * `stretches` are the roads still to drive, in order (AutoDrive.stretches).
+ */
+export function drivingDirections(names: StreetNames, stretches: readonly { road: number; length: number; start: Vec2; end: Vec2 }[]): Step[] {
+  const name = (street: number) => names.streets[street]?.name ?? 'the road';
+  const steps: Step[] = [];
+  stretches.forEach((st, i) => {
+    const street = names.ofRoad[st.road];
+    if (i === 0) {
+      steps.push({ kind: 'start', text: `Head ${compass(st.start)} on ${name(street)}`, street, distance: st.length });
+      return;
+    }
+    const last = steps[steps.length - 1];
+    const turn = turnKind(stretches[i - 1].end, st.start);
+    if (street === last.street && turn !== 'uturn') {
+      last.distance += st.length;
+      return;
+    }
+    const text =
+      turn === 'uturn'
+        ? street === last.street
+          ? `Turn round at the end of ${name(street)}`
+          : `Turn round onto ${name(street)}`
+        : turn === 'straight'
+          ? `Continue onto ${name(street)}`
+          : `${turn.startsWith('slight') ? 'Bear' : 'Turn'} ${turn.endsWith('left') ? 'left' : 'right'} onto ${name(street)}`;
+    steps.push({ kind: turn, text, street, distance: st.length });
+  });
+  if (stretches.length) {
+    const street = names.ofRoad[stretches[stretches.length - 1].road];
+    steps.push({ kind: 'arrive', text: `Arrive at your destination on ${name(street)}`, street, distance: 0 });
+  }
+  return steps;
 }

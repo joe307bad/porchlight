@@ -98,7 +98,8 @@ async function spawnCharacter(): Promise<void> {
 
 function syncAutoWalkButton(): void {
   const on = iso?.isAuto ?? false;
-  autoWalkButton.textContent = on ? 'Stop auto walk' : 'Auto walk';
+  const what = iso?.isDriving ? 'auto drive' : 'auto walk';
+  autoWalkButton.textContent = on ? `Stop ${what}` : what[0].toUpperCase() + what.slice(1);
   autoWalkButton.classList.toggle('active', on);
 }
 
@@ -110,6 +111,7 @@ async function explore(): Promise<void> {
       isoHost.hidden = false;
       const { IsoView } = await import('./render/iso/view');
       iso = await IsoView.create(isoHost);
+      iso.onAutoChange = syncAutoWalkButton;
     }
     exploring = true;
     document.body.classList.add('exploring');
@@ -224,6 +226,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyT') toggleAutoWalk();
   if (e.code === 'KeyV' && !e.repeat) toggleCloseUp();
   if (e.code === 'KeyC') void spawnCharacter();
+  if (e.code === 'KeyG') queueMicrotask(syncAutoWalkButton); // in or out of a car: auto walk or auto drive
   if (e.code === 'Escape') leaveExplore();
 });
 

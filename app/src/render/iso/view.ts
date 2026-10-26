@@ -25,10 +25,14 @@
 // Every street has a name (names.ts), on small signs at the junctions; the
 // panel top right says which street you're on, and while auto-walking lists
 // the turn-by-turn directions to where you're heading (directions.ts).
+//
+// G gets into the nearest car, parked or passing (driving.ts): W / S drive
+// and brake, A / D steer, and G gets back out, leaving the car where it is.
 
 import {
   Color,
   DirectionalLight,
+  Group,
   Fog,
   HemisphereLight,
   PointLight,
@@ -52,9 +56,12 @@ import { Pedestrian, Player, Walker, standable } from './actors';
 import { ENTER_MARGIN, LEAVE_MARGIN, WALL_HEIGHT, doorOf, frame as roomFrame, inRoom, roomCameraYaw, wallFacesCamera } from './interiors';
 import type { Facing } from '../../model/types';
 import { loadTownAssets, type TownAssets } from './assets';
-import { Avatar, PERSON_HEIGHT, randomLook, type Look } from './characters';
+import { Avatar, PERSON_HEIGHT, PLAYER_ORDER, XRAY_ORDER, randomLook, xrayMaterial, type Look } from './characters';
 import { Fleet, pickCarModel } from './fleet';
-import { directions, type Step } from './directions';
+import { CARS, type Prefab } from './assets';
+import { directions, drivingDirections, type Step } from './directions';
+import { AutoDrive, TOP_SPEED, Vehicle, carSpotNear, drivable, exitSpot } from './driving';
+import { Headlights, carShape, type CarShape } from './headlights';
 import { StreetHud } from './hud';
 import { SIDEWALK, Use } from './layout';
 import { MeshBuilder } from './mesh';
@@ -81,7 +88,7 @@ import {
 } from './orbit';
 import { streetMask } from './streets';
 import { Traffic } from './traffic';
-import { WATER_Y, buildWorld, swingDoor, type TownWorld } from './world';
+import { WATER_Y, buildWorld, carScale, placement, swingDoor, type TownWorld } from './world';
 import { windowUniforms } from './windows';
 
 const DAY_SKY = 0x87b7d8;
@@ -128,6 +135,13 @@ const ROOM_MARGIN = 1.35;
 const CHASE_TILT_GUESS = 0.3;
 /** Zoomed out further than this (overview zoom), auto walk leaves the camera's heading alone. */
 const AUTO_TURN_MIN_ZOOM = 0.7;
+/** The player's size relative to an average townsperson. */
+const PLAYER_SCALE = 0.82;
+/** How close to a car (tiles, centre to centre) you can get in, and the close-up camera's pull-back at the wheel. */
+const CAR_REACH = 1.0;
+const DRIVING_CHASE = 1.7;
+/** Your cars ride just clear of the road markings (as the player's feet do), so the tyres never x-ray through the paint. */
+const CAR_LIFT = 0.035;
 
 const KEYS: Record<string, [number, number]> = {
   KeyW: [0, -1], ArrowUp: [0, -1],
@@ -144,6 +158,9 @@ export class IsoView {
   private avatars: Avatar[] = [];
   private traffic: Traffic | null = null;
   private fleet: Fleet | null = null;
+  private headlights: Headlights | null = null;
+  /** Each car model's lamp layout, by index into CARS. */
+  private carShapes: CarShape[] = [];
   private readonly scene = new Scene();
   private readonly camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, CAMERA_DISTANCE * 3);
   private readonly chase = new PerspectiveCamera(CHASE_FOV, 1, 0.05, 300);
@@ -212,6 +229,18 @@ export class IsoView {
   private readonly held = new Set<string>();
   private readonly cleanup: (() => void)[] = [];
   private readonly minimap: Minimap;
+  /** Cars the player has got into (they stay where they're left), and the one being driven. */
+  private cars: { car: Vehicle; prefab: Prefab; group: Group; xray: Mesh[] }[] = [];
+  /** The orange see-through copy of the car you're driving, as the player has. */
+  private readonly carXray = xrayMaterial();
+  private driving: number | null = null;
+  /** Set while the car you're in drives itself (auto walk at the wheel). */
+  private autoDrive: AutoDrive | null = null;
+  /** Told whenever auto walk or auto drive starts or stops on its own (so a button can follow). */
+  onAutoChange: (() => void) | null = null;
+  /** Parked cars driven away (their parked copies are hidden). */
+  private takenParked = new Set<number>();
+  private canDrive: (x: number, y: number) => boolean = () => false;
   private readonly hud: StreetHud;
   private hudTimer = 0;
   /** The street the player is on (index into world.names.streets), and auto walk's directions. */
@@ -280,11 +309,16 @@ export class IsoView {
   setTown(model: TownModel): void {
     this.world?.dispose();
     this.fleet?.dispose();
+    this.headlights?.dispose();
     for (const a of this.avatars) a.dispose();
     this.playerAvatar?.dispose();
     for (const k of this.keepers.values()) k.avatar.dispose();
     this.keepers.clear();
     this.room = null;
+    this.cars = []; // their meshes went with the old world's root
+    this.driving = null;
+    this.autoDrive = null;
+    this.takenParked.clear();
     this.clearRoute();
     this.avatars = [];
     this.people = [];
@@ -295,10 +329,17 @@ export class IsoView {
     this.scene.add(world.root);
     this.snap = true;
     this.open = this.walkMask();
+    this.canDrive = drivable(model, world.layout);
     this.minimap.setTown(model);
+    this.leaveCarAtSpawn(world);
 
     this.traffic = new Traffic(world.layout, createRng(`${model.seed}::traffic`), pickCarModel);
     this.fleet = new Fleet(this.traffic, this.assets, world.root);
+    this.headlights = new Headlights(world.root);
+    this.carShapes = CARS.map((name) => {
+      const prefab = this.assets.prefab(name);
+      return carShape(prefab, carScale(prefab));
+    });
     const rng = createRng(`${model.seed}::townsfolk`);
     const paths = world.sidewalks.paths;
     const walkable = paths.reduce((sum, p) => sum + p.at[p.at.length - 1], 0);
@@ -316,11 +357,12 @@ export class IsoView {
   spawn(look: Look): void {
     const world = this.world;
     if (!world) return;
+    this.getOut(true);
     const keep = this.player;
     const at = keep ? { x: keep.x, y: keep.y } : world.model.spawn;
     const wasAuto = keep?.isAuto ?? false;
     this.playerAvatar?.dispose();
-    this.player = new Player(look, at.x, at.y, 1.1);
+    this.player = new Player(look, at.x, at.y, PLAYER_SCALE);
     if (keep) this.player.heading = keep.heading;
     this.playerAvatar = new Avatar(this.assets.character(look.model), PERSON_HEIGHT, 0);
     this.playerAvatar.addXray();
@@ -333,6 +375,7 @@ export class IsoView {
   /** Move the player straight to a map position (from a minimap click). */
   private teleport(at: Vec2): void {
     if (!this.player || !this.world) return;
+    this.getOut(true); // the car stays where it was
     const { width: w, height: h } = this.world.model;
     let x = Math.min(w - 0.2, Math.max(0.2, at.x));
     let y = Math.min(h - 0.2, Math.max(0.2, at.y));
@@ -358,12 +401,12 @@ export class IsoView {
 
   /** Auto-walk's planned route (world tiles), empty when not auto-walking. */
   get route(): Vec2[] {
-    return this.player?.autoRoute() ?? [];
+    return this.autoDrive?.routePoints() ?? this.player?.autoRoute() ?? [];
   }
 
   /** Where auto-walk is heading, if anywhere. */
   get goal(): Vec2 | null {
-    return this.player?.autoGoal() ?? null;
+    return this.autoDrive ? this.autoDrive.goalPoint() : (this.player?.autoGoal() ?? null);
   }
 
   /**
@@ -384,12 +427,141 @@ export class IsoView {
   setAuto(on: boolean): void {
     if (!this.player || !this.world) return;
     this.held.clear();
+    if (this.driving !== null) {
+      // At the wheel, auto walk is auto drive: the car takes you round town.
+      this.autoDrive = on ? new AutoDrive(this.world.layout.roads, this.autoRng, this.cars[this.driving].car) : null;
+      return;
+    }
     if (on) this.player.startAuto(this.world.sidewalks, this.autoRng);
     else this.player.stopAuto();
   }
 
   get isAuto(): boolean {
-    return this.player?.isAuto ?? false;
+    return (this.player?.isAuto ?? false) || this.autoDrive !== null;
+  }
+
+  get isDriving(): boolean {
+    return this.driving !== null;
+  }
+
+  /** Get into the nearest car (parked, passing, or one you left), or out of the one you're driving. */
+  toggleCar(): void {
+    if (this.driving !== null) this.getOut(false);
+    else this.getIn();
+  }
+
+  /** The car you'd get into from where you're standing, if any. */
+  private carInReach(world: TownWorld): { kind: 'own' | 'parked' | 'traffic'; i: number } | null {
+    const p = this.player;
+    if (!p || this.room !== null) return null;
+    let best: { kind: 'own' | 'parked' | 'traffic'; i: number } | null = null;
+    let bestD = CAR_REACH;
+    const consider = (kind: 'own' | 'parked' | 'traffic', i: number, x: number, y: number) => {
+      const d = Math.hypot(x - p.x, y - p.y);
+      if (d < bestD) {
+        bestD = d;
+        best = { kind, i };
+      }
+    };
+    this.cars.forEach((c, i) => consider('own', i, c.car.x, c.car.y));
+    world.parked.forEach((c, i) => {
+      if (!this.takenParked.has(i)) consider('parked', i, c.x, c.y);
+    });
+    const t = this.traffic?.nearest({ x: p.x, y: p.y }, bestD) ?? -1;
+    if (t >= 0) consider('traffic', t, this.traffic!.cars[t].x, this.traffic!.cars[t].y);
+    return best;
+  }
+
+  private getIn(): void {
+    const world = this.world;
+    const p = this.player;
+    if (!world || !p) return;
+    const pick = this.carInReach(world);
+    if (!pick) return;
+    if (pick.kind === 'own') {
+      this.driving = pick.i;
+    } else {
+      let car: Vehicle;
+      if (pick.kind === 'parked') {
+        const c = world.parked[pick.i];
+        this.takenParked.add(pick.i);
+        world.setParkedVisible(pick.i, false);
+        car = new Vehicle(c.model, c.x, c.y, c.heading);
+      } else {
+        const c = this.traffic!.take(pick.i);
+        car = new Vehicle(c.model, c.x, c.y, c.heading);
+        car.speed = Math.min(c.speed, 1); // they brake as you jump in
+      }
+      this.driving = this.addCar(world, car);
+    }
+    this.held.clear();
+    this.syncDriver();
+    // Auto-walking into a car carries on as auto drive.
+    if (p.isAuto) {
+      p.stopAuto();
+      this.setAuto(true);
+    }
+  }
+
+  /** Draw a car the player can drive (or has driven) as its own model; returns its index in `cars`. */
+  private addCar(world: TownWorld, car: Vehicle): number {
+    const prefab = this.assets.prefab(CARS[car.model]);
+    const group = new Group();
+    const xray: Mesh[] = [];
+    for (const part of prefab.parts) {
+      const mesh = new Mesh(part.geometry, part.material);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      // Drawn after its x-ray copy, so the car never x-rays itself (as for the player).
+      mesh.renderOrder = PLAYER_ORDER;
+      const x = new Mesh(part.geometry, this.carXray);
+      x.renderOrder = XRAY_ORDER;
+      x.visible = false;
+      xray.push(x);
+      group.add(mesh, x);
+    }
+    group.matrixAutoUpdate = false;
+    world.root.add(group);
+    this.cars.push({ car, prefab, group, xray });
+    return this.cars.length - 1;
+  }
+
+  /** Leave a car on the pavement right by where the player first stands, so there's always one to hand. */
+  private leaveCarAtSpawn(world: TownWorld): void {
+    const rng = createRng(`${world.model.seed}::spawn-car`);
+    const spot = carSpotNear(world.model.spawn, world.layout.roads, SIDEWALK, this.canDrive, world.parked);
+    if (spot) this.addCar(world, new Vehicle(rng.pick([0, 1, 2, 4]), spot.x, spot.y, spot.heading));
+  }
+
+  /** Step out beside the car (it stays where it is). `force` gets out even with nowhere clear to stand. */
+  private getOut(force: boolean): void {
+    const world = this.world;
+    const p = this.player;
+    if (this.driving === null || !world || !p) return;
+    const { car } = this.cars[this.driving];
+    const spot = exitSpot(car, (x, y) => standable(x, y, this.open, world.model, world.solids));
+    if (!spot && !force) return;
+    car.speed = 0;
+    this.driving = null;
+    if (this.autoDrive) {
+      this.autoDrive = null;
+      this.onAutoChange?.();
+    }
+    this.held.clear();
+    p.x = spot?.x ?? car.x;
+    p.y = spot?.y ?? car.y;
+    p.heading = Math.atan2(car.forward.x, car.forward.y);
+    p.speed = 0;
+  }
+
+  /** Keep the player (and so the camera, minimap and street panel) with the car they're driving. */
+  private syncDriver(): void {
+    if (this.driving === null || !this.player) return;
+    const { car } = this.cars[this.driving];
+    this.player.x = car.x;
+    this.player.y = car.y;
+    this.player.heading = Math.atan2(car.forward.x, car.forward.y);
+    this.player.speed = 0;
   }
 
   /** Keep the player to the streets (true) or let them walk anywhere (false). */
@@ -504,6 +676,7 @@ export class IsoView {
       houses: world?.boxes.length ?? 0,
       sidewalkPaths: world?.sidewalks.paths.length ?? 0,
       auto: this.isAuto,
+      driving: this.driving !== null ? (({ x, y, heading, speed }) => ({ x, y, heading, speed }))(this.cars[this.driving].car) : null,
       street: this.street !== null && world ? world.names.streets[this.street].name : null,
       streets: world?.names.streets.map((st) => st.name) ?? [],
       signs: world?.signs.length ?? 0,
@@ -538,7 +711,9 @@ export class IsoView {
     this.renderer.setAnimationLoop(null);
     this.world?.dispose();
     this.fleet?.dispose();
+    this.headlights?.dispose();
     this.clearRoute();
+    this.carXray.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -566,8 +741,17 @@ export class IsoView {
         if (!e.repeat) this.lookAlongWalk();
         return;
       }
+      if (e.code === 'KeyG') {
+        if (!e.repeat) this.toggleCar();
+        return;
+      }
       if (!KEYS[e.code]) return;
       e.preventDefault();
+      if (this.autoDrive) {
+        // Auto-driving: a direction key takes the wheel back.
+        this.autoDrive = null;
+        this.onAutoChange?.();
+      }
       if (this.player?.isAuto) {
         // Auto-walking: a key press is a one-off request (turn round / cross here).
         const d = screenToWorld({ x: KEYS[e.code][0], y: KEYS[e.code][1] }, this.inputYaw);
@@ -611,7 +795,21 @@ export class IsoView {
       this.inputYaw = this.viewYaw;
       this.screenKeys = false;
     }
-    if (p && this.mode === 'close' && !p.isAuto && this.room === null && !this.screenKeys) {
+    if (p && this.driving !== null) {
+      // At the wheel: W / S accelerate and brake (then reverse), A / D steer, whichever way the camera faces.
+      const { car } = this.cars[this.driving];
+      if (this.autoDrive) {
+        // Mind the traffic, and any car you've left in the road.
+        const others = this.traffic?.positions() ?? [];
+        this.cars.forEach((c, i) => {
+          if (i !== this.driving) others.push({ x: c.car.x, y: c.car.y, heading: c.car.heading });
+        });
+        this.autoDrive.step(car, dt, others);
+      } else {
+        car.drive(-Math.sign(input.y), Math.sign(input.x), dt, this.canDrive);
+      }
+      this.syncDriver();
+    } else if (p && this.mode === 'close' && !p.isAuto && this.room === null && !this.screenKeys) {
       // Close-up: forward and back along the way they face, left and right turn.
       const heading = p.heading - input.x * TURN_RATE * dt;
       const ahead = { x: Math.sin(heading), y: Math.cos(heading) };
@@ -623,7 +821,10 @@ export class IsoView {
     this.updateDoors(world, dt);
     this.updateRoom(world);
     for (const p of this.people) p.update(dt);
-    this.traffic?.update(dt);
+    // Traffic stops for you in the road, and for every car you've driven.
+    const obstacles = this.cars.map((c) => ({ x: c.car.x, y: c.car.y }));
+    if (p && this.driving === null && this.room === null) obstacles.push({ x: p.x, y: p.y });
+    this.traffic?.update(dt, obstacles);
     this.dusk += ((this.night ? 1 : 0) - this.dusk) * Math.min(1, dt * 2.5);
     this.keepInSight(world, dt);
   }
@@ -633,7 +834,7 @@ export class IsoView {
     const p = this.player;
     world.doors.forEach((d, i) => {
       const at = doorOf(world.rooms[i]).at;
-      const near = !!p && Math.abs(p.x - at.x) < DOOR_REACH && Math.abs(p.y - at.y) < DOOR_REACH && Math.hypot(p.x - at.x, p.y - at.y) < DOOR_REACH;
+      const near = !!p && this.driving === null && Math.abs(p.x - at.x) < DOOR_REACH && Math.abs(p.y - at.y) < DOOR_REACH && Math.hypot(p.x - at.x, p.y - at.y) < DOOR_REACH;
       const target = near ? 1 : 0;
       if (d.open === target) return;
       const was = d.open;
@@ -730,13 +931,15 @@ export class IsoView {
       this.sightTimer = 0.1;
       this.hidden = this.room === null && this.blocked(world, p, stopYaw(this.cameraStop));
     }
-    if (!p.isAuto) {
+    const car = this.driving !== null ? this.cars[this.driving].car : null;
+    if (!p.isAuto && !car) {
       this.walkDir = null;
       return;
     }
     // Smooth the heading over about a second, so a quick road crossing or a
-    // kink in the sidewalk doesn't swing the camera round.
-    const h = p.autoHeading();
+    // kink in the sidewalk doesn't swing the camera round. At the wheel, follow
+    // the way the car points once it's moving.
+    const h = car ? (Math.abs(car.speed) > 0.4 ? car.forward : null) : p.autoHeading();
     if (h && Math.hypot(h.x, h.y) > 1e-6) {
       if (!this.walkDir) this.walkDir = { ...h };
       const k = Math.min(1, dt * HEADING_SMOOTHING);
@@ -761,7 +964,17 @@ export class IsoView {
     const world = this.world;
     if (!world || this.background) return;
     const p = this.player;
-    if (p && this.playerAvatar) this.playerAvatar.update(p, dt);
+    if (p && this.playerAvatar) {
+      this.playerAvatar.root.visible = this.driving === null;
+      this.playerAvatar.update(p, dt);
+    }
+    this.cars.forEach((c, i) => {
+      // Only the car you're in shows through buildings, like you do on foot.
+      for (const x of c.xray) x.visible = i === this.driving;
+      const s = carScale(c.prefab);
+      c.group.matrix.copy(placement(c.prefab, c.car, Math.atan2(c.car.forward.x, c.car.forward.y), s, s, s, CAR_LIFT));
+      c.group.matrixWorldNeedsUpdate = true;
+    });
     this.people.forEach((q, k) => this.avatars[k].update(q, dt));
     this.fleet?.update();
 
@@ -813,11 +1026,25 @@ export class IsoView {
   private updateHud(world: TownWorld): void {
     const p = this.player;
     const it = p?.autoItinerary() ?? null;
-    this.steps = it ? directions(world.sidewalks, world.names, it) : null;
+    this.steps = this.autoDrive
+      ? drivingDirections(world.names, this.autoDrive.stretches())
+      : it
+        ? directions(world.sidewalks, world.names, it)
+        : null;
     if (it && !it.joining) this.street = world.names.ofRoad[world.sidewalks.paths[it.start.path].road];
     else this.street = p && this.room === null ? this.streetAt(world, p) : null;
     const name = this.street !== null ? world.names.streets[this.street].name : null;
     this.hud.update(name, this.steps);
+    if (this.driving !== null) {
+      const kmh = Math.round((Math.abs(this.cars[this.driving].car.speed) / TOP_SPEED) * 50);
+      this.hud.setPrompt(
+        this.autoDrive
+          ? `Auto drive · ${kmh} km/h · arrows take the wheel · T stop · G to get out`
+          : `Driving · ${kmh} km/h · W/S speed and brake, A/D steer · T auto drive · G to get out`,
+      );
+    } else {
+      this.hud.setPrompt(this.carInReach(world) ? 'Press G to get in the car' : null);
+    }
   }
 
   /** The street whose road or pavement is under (or right beside) a point, if any. */
@@ -906,7 +1133,8 @@ export class IsoView {
   private placeChase(world: TownWorld, p: Player, dt: number): void {
     const want = chaseYaw(p.heading) + this.chaseSwing;
     this.chaseYawNow += shortestTurn(this.chaseYawNow, want) * (this.snap ? 1 : Math.min(1, dt * 3.5));
-    this.shownChaseDistance += (this.chaseDistance - this.shownChaseDistance) * (this.snap ? 1 : Math.min(1, dt * 8));
+    const wanted = this.chaseDistance * (this.driving !== null ? DRIVING_CHASE : 1);
+    this.shownChaseDistance += (wanted - this.shownChaseDistance) * (this.snap ? 1 : Math.min(1, dt * 8));
     const o = cameraOffset(this.chaseYawNow, this.pitch);
     let dist = this.shownChaseDistance;
     for (const b of world.boxes) dist = Math.min(dist, Math.max(0.5, rayBoxDistance(p, CHASE_LOOK_HEIGHT, o, b) - 0.2));
@@ -1070,7 +1298,17 @@ export class IsoView {
     // Keep halos about a tile across: in iso they're sized in screen pixels, so
     // follow the zoom; in perspective three scales them by height / 2 / depth.
     const pxPerTile = this.host.clientHeight / (VIEW_HEIGHT / this.shownZoom);
-    halos.material.size = this.view === this.chase ? 0.9 / Math.tan(((CHASE_FOV / 2) * Math.PI) / 180) : pxPerTile * 0.9;
+    const haloScale = this.view === this.chase ? 1 / Math.tan(((CHASE_FOV / 2) * Math.PI) / 180) : pxPerTile;
+    halos.material.size = haloScale * 0.9;
+
+    // Headlights and tail lights on every car that's moving: the traffic, and the one you're driving.
+    const lit: { x: number; y: number; heading: number; shape: CarShape }[] = [];
+    for (const c of this.traffic?.cars ?? []) if (!c.taken) lit.push({ x: c.x, y: c.y, heading: c.heading, shape: this.carShapes[c.model] });
+    if (this.driving !== null) {
+      const { car } = this.cars[this.driving];
+      lit.push({ x: car.x, y: car.y, heading: car.heading, shape: this.carShapes[car.model] });
+    }
+    this.headlights?.update(lit, d, haloScale * 0.32);
   }
 
   private animateWater(world: TownWorld, dt: number): void {

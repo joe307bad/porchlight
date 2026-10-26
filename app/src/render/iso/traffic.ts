@@ -1,6 +1,8 @@
 // Moving traffic on every through road: cars keep to the right-hand lane,
 // follow the road graph through junctions (U-turning at the map edge) and slow
-// down behind the car ahead. Dead-end side streets keep their parked cars.
+// down behind the car ahead, or for the player (on foot or at the wheel) in
+// their lane. A car the player gets into leaves the traffic. Dead-end side
+// streets keep their parked cars.
 // Pure state; the view draws each car's model at its pose.
 
 import { dist } from '../../core/geometry';
@@ -27,7 +29,12 @@ interface Car extends CarPose {
   s: number;
   dir: 1 | -1;
   speed: number;
+  /** Taken out of the traffic (the player got in): no longer driven or drawn here. */
+  taken: boolean;
 }
+
+/** Something in the road the traffic stops for, if it's in their lane. */
+const LANE_HALF = 0.42;
 
 export class Traffic {
   readonly cars: Car[] = [];
@@ -61,7 +68,7 @@ export class Traffic {
     const count = Math.min(MAX_CARS, Math.floor(total * CARS_PER_TILE));
     for (let k = 0; k < count && mains.length; k++) {
       const road = rng.pick(mains);
-      const car: Car = { model: pickModel(rng), road, s: rng.range(0, this.lengths[road]), dir: rng.chance(0.5) ? 1 : -1, speed: CRUISE, heading: 0, x: 0, y: 0 };
+      const car: Car = { model: pickModel(rng), road, s: rng.range(0, this.lengths[road]), dir: rng.chance(0.5) ? 1 : -1, speed: CRUISE, heading: 0, x: 0, y: 0, taken: false };
       this.cars.push(car);
     }
     this.update(0);
@@ -69,13 +76,36 @@ export class Traffic {
 
   /** Where each car is (world tiles), for dev tooling. */
   positions(): { x: number; y: number; heading: number }[] {
-    return this.cars.map((c) => ({ x: c.x, y: c.y, heading: c.heading }));
+    return this.cars.filter((c) => !c.taken).map((c) => ({ x: c.x, y: c.y, heading: c.heading }));
   }
 
-  update(dt: number): void {
+  /** The car nearest `at` within `reach` tiles that's still in the traffic, or -1. */
+  nearest(at: Vec2, reach: number): number {
+    let best = -1;
+    let bestD = reach;
+    this.cars.forEach((c, i) => {
+      const d = Math.hypot(c.x - at.x, c.y - at.y);
+      if (!c.taken && d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  /** Take a car out of the traffic (the player is getting in); returns where it was and how fast it went. */
+  take(i: number): CarPose & { speed: number } {
+    const c = this.cars[i];
+    c.taken = true;
+    return { model: c.model, x: c.x, y: c.y, heading: c.heading, speed: c.speed };
+  }
+
+  /** Step the traffic; cars also stop for `obstacles` (the player, their car) in their lane ahead. */
+  update(dt: number, obstacles: readonly Vec2[] = []): void {
     for (const car of this.cars) {
+      if (car.taken) continue;
       // Ease towards cruising speed, or towards a stop behind the car ahead.
-      const ahead = this.gapAhead(car);
+      const ahead = Math.min(this.gapAhead(car), blockedAhead(car, obstacles));
       const target = ahead < GAP ? 0 : ahead < GAP * 2 ? CRUISE * ((ahead - GAP) / GAP) : CRUISE;
       car.speed += (target - car.speed) * Math.min(1, dt * 3);
       car.s += car.dir * car.speed * dt;
@@ -87,7 +117,7 @@ export class Traffic {
   private gapAhead(car: Car): number {
     let best = Infinity;
     for (const o of this.cars) {
-      if (o === car || o.road !== car.road || o.dir !== car.dir) continue;
+      if (o === car || o.taken || o.road !== car.road || o.dir !== car.dir) continue;
       const d = (o.s - car.s) * car.dir;
       if (d > 0 && d < best) best = d;
     }
@@ -131,6 +161,20 @@ export class Traffic {
     car.x = p.x - ty * lane;
     car.y = p.y + tx * lane;
   }
+}
+
+/** Distance to the nearest obstacle in a car's lane ahead of it (Infinity if none). */
+function blockedAhead(car: Car, obstacles: readonly Vec2[]): number {
+  const fx = Math.cos(car.heading);
+  const fy = Math.sin(car.heading);
+  let best = Infinity;
+  for (const o of obstacles) {
+    const dx = o.x - car.x;
+    const dy = o.y - car.y;
+    const along = dx * fx + dy * fy;
+    if (along > 0 && along < GAP * 2.5 && Math.abs(dx * fy - dy * fx) < LANE_HALF) best = Math.min(best, along);
+  }
+  return best;
 }
 
 function pointAt(points: readonly Vec2[], at: readonly number[], s: number): Vec2 {

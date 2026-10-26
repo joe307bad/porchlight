@@ -1,6 +1,7 @@
 // The explore view's street panel (top right): the name of the street you're
 // on, and while auto-walking, turn-by-turn directions to where you're
 // heading, the step you're on first. Redrawn only when what it says changes.
+// Below it, bottom centre, a one-line prompt (getting into a car, driving).
 
 import { formatDistance, type Step, type StepKind } from './directions';
 
@@ -25,14 +26,24 @@ export class StreetHud {
   private readonly street = document.createElement('div');
   private readonly list = document.createElement('ol');
   private shown = '';
+  private readonly prompt = document.createElement('div');
 
   constructor(host: HTMLElement) {
+    this.prompt.className = 'hud-prompt';
+    this.prompt.hidden = true;
+    host.appendChild(this.prompt);
     this.root.className = 'street-hud';
     this.street.className = 'street-hud-name';
     this.list.className = 'street-hud-steps';
     this.root.append(this.street, this.list);
     host.appendChild(this.root);
     this.root.hidden = true;
+  }
+
+  /** Show a one-line prompt (null hides it). */
+  setPrompt(text: string | null): void {
+    if (this.prompt.textContent !== (text ?? '')) this.prompt.textContent = text ?? '';
+    this.prompt.hidden = !text;
   }
 
   /** Show the street you're on (null hides it) and, while auto-walking, the directions (null hides them). */
