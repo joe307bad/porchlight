@@ -8,14 +8,14 @@ import type { Rng } from '../../core/rng';
 import type { Vec2 } from '../../model/types';
 import type { SidewalkNetwork, SidewalkPath } from './layout';
 
-interface Spot {
+export interface Spot {
   path: number;
   s: number;
   dir: 1 | -1;
 }
 
 /** One step of a planned route: walk `path` in `dir`, reached by crossing the road if `cross`. */
-interface Leg {
+export interface Leg {
   path: number;
   dir: 1 | -1;
   cross: boolean;
@@ -35,6 +35,8 @@ export class SidewalkWalk {
   private goal: number | null = null;
   /** When set, pick a new far-off goal every time one is reached. */
   private roaming = false;
+  /** Still on the way from where we started to the first sidewalk. */
+  private joining = false;
 
   constructor(
     private readonly net: SidewalkNetwork,
@@ -63,6 +65,7 @@ export class SidewalkWalk {
     });
     const walk = new SidewalkWalk(net, rng, { path: best.path, s: best.s, dir: rng.chance(0.5) ? 1 : -1 });
     walk.crossing = { from, to: pointAlong(net.paths[best.path], best.s), t: 0, then: { path: best.path, s: best.s, dir: walk.dir } };
+    walk.joining = true;
     return walk;
   }
 
@@ -117,6 +120,17 @@ export class SidewalkWalk {
       pts.push(...slice(p, s, length(p) / 2));
     }
     return pts;
+  }
+
+  /**
+   * Where we are on the network and the legs still to walk, for turn-by-turn
+   * directions (null when not heading anywhere). Mid-crossing, it starts from
+   * the far side. Goal is reached half-way along the `goal` sidewalk.
+   */
+  itinerary(): { start: Spot; legs: Leg[]; goal: number; joining: boolean } | null {
+    if (this.goal === null) return null;
+    const start = this.crossing ? { ...this.crossing.then } : { path: this.path, s: this.s, dir: this.dir };
+    return { start, legs: this.route.map((l) => ({ ...l })), goal: this.goal, joining: this.joining };
   }
 
   private pickFarGoal(): void {
@@ -249,6 +263,7 @@ export class SidewalkWalk {
           left -= need;
           ({ path: this.path, s: this.s, dir: this.dir } = c.then);
           this.crossing = null;
+          this.joining = false;
         }
         continue;
       }

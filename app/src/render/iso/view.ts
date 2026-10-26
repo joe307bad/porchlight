@@ -21,6 +21,10 @@
 // behind and above the player that turns with them. There, W / S walk
 // forward and back, A / D turn, Q / E swing the camera round them in 30°
 // steps (F puts it back behind), and scroll moves it nearer or further.
+//
+// Every street has a name (names.ts), on small signs at the junctions; the
+// panel top right says which street you're on, and while auto-walking lists
+// the turn-by-turn directions to where you're heading (directions.ts).
 
 import {
   Color,
@@ -40,6 +44,7 @@ import {
   Matrix4,
   Quaternion,
 } from 'three';
+import { distToPolyline } from '../../core/geometry';
 import { index } from '../../core/grid';
 import { createRng, type Rng } from '../../core/rng';
 import type { TownModel, Vec2 } from '../../model/types';
@@ -49,7 +54,9 @@ import type { Facing } from '../../model/types';
 import { loadTownAssets, type TownAssets } from './assets';
 import { Avatar, PERSON_HEIGHT, randomLook, type Look } from './characters';
 import { Fleet, pickCarModel } from './fleet';
-import { Use } from './layout';
+import { directions, type Step } from './directions';
+import { StreetHud } from './hud';
+import { SIDEWALK, Use } from './layout';
 import { MeshBuilder } from './mesh';
 import { Minimap } from './minimap';
 import {
@@ -205,6 +212,11 @@ export class IsoView {
   private readonly held = new Set<string>();
   private readonly cleanup: (() => void)[] = [];
   private readonly minimap: Minimap;
+  private readonly hud: StreetHud;
+  private hudTimer = 0;
+  /** The street the player is on (index into world.names.streets), and auto walk's directions. */
+  private street: number | null = null;
+  private steps: Step[] | null = null;
   private readonly autoRng = createRng('auto-walk');
   private last = performance.now();
 
@@ -222,6 +234,7 @@ export class IsoView {
     this.sun.shadow.camera.far = 220;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.roomLight);
     this.minimap = new Minimap(host, (at) => this.teleport(at));
+    this.hud = new StreetHud(host);
     this.resize();
     const observer = new ResizeObserver(() => this.resize());
     observer.observe(host);
@@ -491,6 +504,10 @@ export class IsoView {
       houses: world?.boxes.length ?? 0,
       sidewalkPaths: world?.sidewalks.paths.length ?? 0,
       auto: this.isAuto,
+      street: this.street !== null && world ? world.names.streets[this.street].name : null,
+      streets: world?.names.streets.map((st) => st.name) ?? [],
+      signs: world?.signs.length ?? 0,
+      directions: this.steps?.map((st) => st.text) ?? null,
       goal: this.player?.autoGoal() ?? null,
       inBuilding: !!(world && tile >= 0 && world.layout.use[tile] === Use.HOUSE),
       outlined: this.hidden,
@@ -784,7 +801,37 @@ export class IsoView {
       this.routeTimer = 0.2;
     }
     this.minimap.draw(p ? { x: p.x, y: p.y } : null, this.viewQuad(), this.goal, this.route);
+    this.hudTimer -= dt;
+    if (this.hudTimer <= 0) {
+      this.updateHud(world);
+      this.hudTimer = 0.25;
+    }
     this.renderer.render(this.scene, this.view);
+  }
+
+  /** Work out which street the player is on and, while auto-walking, the directions from here. */
+  private updateHud(world: TownWorld): void {
+    const p = this.player;
+    const it = p?.autoItinerary() ?? null;
+    this.steps = it ? directions(world.sidewalks, world.names, it) : null;
+    if (it && !it.joining) this.street = world.names.ofRoad[world.sidewalks.paths[it.start.path].road];
+    else this.street = p && this.room === null ? this.streetAt(world, p) : null;
+    const name = this.street !== null ? world.names.streets[this.street].name : null;
+    this.hud.update(name, this.steps);
+  }
+
+  /** The street whose road or pavement is under (or right beside) a point, if any. */
+  private streetAt(world: TownWorld, at: Vec2): number | null {
+    let best = -1;
+    let bestD = Infinity;
+    world.layout.roads.forEach((r, i) => {
+      const d = distToPolyline(at, r.points) - r.width / 2;
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    return best >= 0 && bestD < SIDEWALK + 0.35 ? world.names.ofRoad[best] : null;
   }
 
   /** The camera being drawn through. */

@@ -69,6 +69,11 @@ export class Player extends Walker {
     return this.auto?.heading() ?? null;
   }
 
+  /** Where auto-walk is and the legs it still has to walk, for turn-by-turn directions. */
+  autoItinerary(): ReturnType<SidewalkWalk['itinerary']> {
+    return this.auto?.itinerary() ?? null;
+  }
+
   stopAuto(): void {
     this.auto = null;
   }

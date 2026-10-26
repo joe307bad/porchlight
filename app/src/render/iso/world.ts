@@ -2,7 +2,7 @@
 // ground with sunken rivers, flat vector roads with sidewalks and kerbs, stone
 // bridges, Kenney houses, shops and towers fitted to every blueprint footprint
 // (long street fronts split into rows), fenced yards with sheds and vegetable
-// beds, trees, street lamps, parked cars and the plaza fountain.
+// beds, trees, street lamps, street name signs, parked cars and the plaza fountain.
 //
 // Every copy of a Kenney model is drawn through one InstancedMesh per model
 // part, so the whole town is a few hundred draw calls.
@@ -45,6 +45,8 @@ import { MeshBuilder, v } from './mesh';
 import type { Box } from './orbit';
 import { Solids } from './collide';
 import { DOOR_HEIGHT, DOOR_WIDTH, FURNITURE_SCALE, WALL, WALL_HEIGHT, doorOf, furnishRoom, innerRect, roomWalls, wallSide, type Rect, type Room, type RoomPlan } from './interiors';
+import { nameStreets, type StreetNames } from './names';
+import { addStreetSigns, planSigns, type Signpost } from './signs';
 import { glowTexture } from './textures';
 import { lightWindows, paneHash } from './windows';
 
@@ -113,6 +115,10 @@ export interface TownWorld {
   model: TownModel;
   layout: IsoLayout;
   sidewalks: SidewalkNetwork;
+  /** Every street's name, and which street each road belongs to. */
+  names: StreetNames;
+  /** Street name signs at the junctions. */
+  signs: Signpost[];
   /** Every building's box, for working out what hides the player from the camera. */
   boxes: Box[];
   lamps: Lamp[];
@@ -165,6 +171,8 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
     model,
     layout,
     sidewalks: layout.sidewalks,
+    names: nameStreets(model, layout.roads),
+    signs: [],
     boxes: [],
     lamps: [],
     lampFx: null!,
@@ -219,6 +227,8 @@ export function buildWorld(model: TownModel, assets: TownAssets): TownWorld {
   addParkedCars(world, assets, instancer);
   if (!sheds.empty) addStatic(sheds.build(), lambert, { cast: true, receive: true });
   addLamps(world, rng, owned);
+  world.signs = planSigns(model, layout, world.names);
+  owned.push(...addStreetSigns(root, world.signs, world.names));
   addStreaks(world, owned);
   addFountain(world, owned);
   instancer.build(root);

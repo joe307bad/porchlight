@@ -14,7 +14,10 @@ import { buildWorld } from '../src/render/iso/world';
 import { doorOf, inRoom } from '../src/render/iso/interiors';
 import { testSeeds } from './seeds';
 
-vi.mock('../src/render/iso/textures', () => ({ glowTexture: () => new Texture() }));
+vi.mock('../src/render/iso/textures', () => ({
+  glowTexture: () => new Texture(),
+  signAtlas: () => ({ texture: new Texture(), cell: () => ({ u0: 0, u1: 1, v0: 0, v1: 1 }) }),
+}));
 
 function boxPrefab(name: string, w: number, h: number, d: number): Prefab {
   const geometry = new BoxGeometry(w, h, d).translate(0, h / 2, 0);

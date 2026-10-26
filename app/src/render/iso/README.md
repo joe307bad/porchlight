@@ -17,6 +17,26 @@ before, but the town is real geometry, so the camera can turn.
   and night, `C` swaps to a new random character, `Esc` returns to the
   blueprint. The minimap (bottom left) shows where you are and what the camera
   sees; click it to jump there.
+- **Street names (`names.ts`, `signs.ts`):** on entering explore mode every
+  road gets a street name, seeded from the town. Road edges join into one
+  street where they carry straight on through a junction (same kind of road,
+  within about 40° of straight). The main road nearest the centre is the
+  **High Street**; other main roads are Roads and Avenues; side streets are
+  named after trees, flowers and birds, a short dead end being a Close, Court
+  or Mews and a winding one a Crescent or Drive; footpaths are Walks. One
+  street by the church is Church …, one by the plaza Market …, one over a
+  bridge Bridge …. Small green signposts stand on a corner of each junction
+  where differently named streets meet, one blade per street, each running
+  along its street and lettered on both sides (all names drawn once into one
+  texture atlas, `signAtlas` in `textures.ts`; all blades are one mesh). The
+  panel top right says which street you're on.
+- **Directions (`directions.ts`):** while auto-walking, the panel lists
+  turn-by-turn directions to the flag, read off the planned route: "Head
+  north on Elm Street", "Turn left onto High Street", "Bear right onto …",
+  "Cross Mill Lane", "Turn round at the end of …", "Arrive at your
+  destination on …", each with the distance to walk after it (about 4 m a
+  tile). The step you're on is highlighted; steps drop off as you pass them,
+  and a new list starts with each new destination.
 - **Camera stops (`orbit.ts`):** 12 fixed headings 30° apart, at 15°, 45°,
   75° and so on. 45°, 135°, 225° and 315° are the four classic isometric
   views; the ones in between look down avenues from 15° off-axis. Turns ease
@@ -155,10 +175,14 @@ before, but the town is real geometry, so the camera can turn.
 | `fleet.ts` | Draws the moving cars |
 | `interiors.ts` | Ground-floor rooms: walls with a door gap, furnishing by building kind (pure, unit-tested) |
 | `collide.ts` | Solid walls and furniture the player can't walk through (pure, unit-tested) |
+| `names.ts` | Joins roads into streets and names them (pure, unit-tested) |
+| `signs.ts` | Where street signs stand (pure, unit-tested) and their meshes |
+| `directions.ts` | Auto walk's route as turn-by-turn steps on named streets (pure, unit-tested) |
+| `hud.ts` | The street panel: the street you're on, and the directions |
 | `windows.ts` | Night-time lit and flickering windows (a shader patch on the building materials) |
 | `streets.ts` | Tiles allowed in streets-only walking |
 | `minimap.ts` | Corner map with player marker and camera outline |
-| `textures.ts` | The glow texture for lamp halos and light pools |
+| `textures.ts` | The glow texture for lamp halos and light pools, and the street sign atlas |
 | `view.ts` | Renderer, lights, camera, input, sight-keeping, day/night and animation loop |
 
 ## Art
