@@ -1,9 +1,11 @@
 // One town, shared. Everyone who opens the same town (seed and params) in
 // explore mode lands in the same room (up to 100; past that a second copy of
 // the town opens). Each client plays one of their account's characters and
-// tells the room where it is about 20 times a second; the room checks each
-// move, and sends every client the players near them (interest.ts) as delta
-// patches, also 20 a second.
+// tells the room where it is about 30 times a second; the room checks each
+// move as it arrives, and sends every client the players near them
+// (interest.ts) as delta patches, also about 30 a second. Each position
+// carries the time its sender took it, which is what other clients play it
+// back by: the room's own ticks never decide its timing.
 //
 // The tick never waits on the database. A character is read once when it
 // joins, and written in batches every 30 s (if it moved), when it leaves, and
@@ -27,6 +29,7 @@ import {
   MSG_MOVE,
   MSG_SPAWN,
   MSG_TELEPORT,
+  SEND_MS,
   quantizeYaw,
   yawFromByte,
   type CorrectMessage,
@@ -36,6 +39,7 @@ import {
 } from './protocol.ts';
 import { CityState, Player } from './schema.ts';
 
+/** The room's housekeeping tick (idle players, who sees whom). Moves don't wait for it. */
 const TICK_MS = 50;
 const FLUSH_MS = 30_000;
 const DOTS_MS = 1_000;
@@ -64,8 +68,6 @@ interface JoinOptions {
   character?: unknown;
 }
 
-type Input = { kind: 'move'; move: MoveMessage; at: number } | { kind: 'teleport'; x: number; z: number; at: number };
-
 /** Everything about a player the clients don't get. */
 interface PlayerRuntime {
   sessionId: string;
@@ -76,7 +78,6 @@ interface PlayerRuntime {
   sessionRow: string | null;
   joinedAt: number;
   track: Track;
-  inputs: Input[];
   lastInputAt: number;
   lastTeleportAt: number;
   rate: RateLimit;
@@ -107,7 +108,7 @@ const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
 
 export class CityRoom extends Room<{ state: CityState }> {
   maxClients = 100;
-  patchRate = TICK_MS;
+  patchRate = SEND_MS;
   autoDispose = true;
   /** Colyseus's own hard limit; RateLimit below drops and kicks well before it. */
   maxMessagesPerSecond = 200;
@@ -116,7 +117,6 @@ export class CityRoom extends Room<{ state: CityState }> {
   bounds: Bounds = { width: 0, height: 0 };
   private readonly runtime = new Map<string, PlayerRuntime>();
   private readonly interest = new Interest();
-  private readonly openedAt = Date.now();
   private shuttingDown = false;
   private flushing = false;
   private flushFailures = 0;
@@ -145,15 +145,14 @@ export class CityRoom extends Room<{ state: CityState }> {
       const rt = this.admit(client);
       const move = rt && parseMove(raw);
       if (!rt || !move) return;
-      // Keep the latest few; the tick applies them in order.
-      if (rt.inputs.length >= 8) rt.inputs.shift();
-      rt.inputs.push({ kind: 'move', move, at: Date.now() });
+      // Applied as it arrives (in order: the socket keeps it), not on the next tick.
+      this.applyMove(rt, move, Date.now());
     });
     this.onMessage(MSG_TELEPORT, (client, raw: unknown) => {
       const rt = this.admit(client);
       const m = raw as { x?: unknown; z?: unknown } | null;
       if (!rt || typeof m?.x !== 'number' || typeof m.z !== 'number' || !Number.isFinite(m.x) || !Number.isFinite(m.z)) return;
-      rt.inputs.push({ kind: 'teleport', x: m.x, z: m.z, at: Date.now() });
+      this.applyTeleport(rt, m.x, m.z, Date.now());
     });
     this.onMessage(MSG_LOOK, (client, raw: unknown) => {
       const rt = this.admit(client);
@@ -226,10 +225,10 @@ export class CityRoom extends Room<{ state: CityState }> {
         sessionRow,
         joinedAt: Date.now(),
         track: newTrack(),
-        inputs: [],
         lastInputAt: Date.now(),
         lastTeleportAt: 0,
-        rate: new RateLimit(),
+        // Moves come about 30 a second: room for that and the odd teleport or look.
+        rate: new RateLimit(45),
         strikes: new Strikes(),
         change: 0,
         savedChange: 0,
@@ -255,7 +254,6 @@ export class CityRoom extends Room<{ state: CityState }> {
     const rt = this.runtime.get(client.sessionId);
     if (!rt || rt.finished || this.shuttingDown) return; // onLeave follows straight away
     rt.client = null;
-    rt.inputs = [];
     rt.player.away = true;
     if (rt.player.anim !== ANIM_DRIVE) rt.player.anim = ANIM_IDLE;
     // Not awaited: Colyseus calls onLeave if the window runs out.
@@ -325,14 +323,8 @@ export class CityRoom extends Room<{ state: CityState }> {
   private tick(): void {
     const start = performance.now();
     const now = Date.now();
-    this.state.serverTime = (now - this.openedAt) >>> 0;
     for (const rt of this.runtime.values()) {
       if (rt.finished || !rt.client) continue;
-      for (const input of rt.inputs) {
-        if (input.kind === 'move') this.applyMove(rt, input.move, input.at);
-        else this.applyTeleport(rt, input.x, input.z, input.at);
-      }
-      rt.inputs.length = 0;
       // Gone quiet (a background tab, a sleeping laptop): show them standing.
       if (now - rt.lastInputAt > IDLE_AFTER_MS && rt.player.anim !== ANIM_IDLE && rt.player.anim !== ANIM_DRIVE) {
         rt.player.anim = ANIM_IDLE;
@@ -373,6 +365,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     const moved = p.x !== m.x || p.z !== m.z;
     this.place(rt, m.x, m.y, m.z);
     p.rotY = quantizeYaw(m.yaw);
+    p.t = m.t;
     p.anim = m.anim;
     p.car = m.ride ? 0 : m.car;
     p.ride = m.ride;

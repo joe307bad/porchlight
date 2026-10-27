@@ -265,8 +265,13 @@ before, but the town is real geometry, so the camera can turn.
   each tab or device can play a different one at the same time. Other
   players are drawn as their characters (or as their car while they drive),
   with a name tag that shows through buildings, and as blue dots on the
-  minimap. They move smoothly: each is drawn 100 ms behind the server's
-  clock, between the two patches either side (`net/interp.ts`). Your own
+  minimap. They move smoothly: every position a client sends (about 30 a
+  second) is stamped with when it took it, and each other player is played
+  back on their own stamps, about 120 ms behind, between the two either
+  side. The playhead runs steadily with the frames, only ever a touch faster
+  or slower to stay on course, so the motion doesn't stutter however the
+  network bunches the moves up (`net/interp.ts`). A passenger's camera rides
+  that smooth playback of the driver's car. Your own
   character moves the instant you press a key. The server only corrects
   you, with a snap back after a move it won't accept. A minimap jump goes
   through the server first. Each character comes back where they left off

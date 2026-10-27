@@ -8,7 +8,7 @@
 export const CITY_ROOM = 'city';
 
 /** Client → server. */
-export const MSG_MOVE = 'move'; // MoveMessage, about 20 a second while anything changes
+export const MSG_MOVE = 'move'; // MoveMessage, about 30 a second while moving (see SEND_MS)
 export const MSG_TELEPORT = 'teleport'; // { x, z }: a minimap jump; answered with `correct`
 export const MSG_LOOK = 'look'; // { model }: a new character
 
@@ -34,9 +34,18 @@ export const ANIM_MAX = 5;
 /** Seats in a car: the driver and three passengers. */
 export const CAR_SEATS = 4;
 
+/** How often clients send moves, and the room sends patches (ms): about 30 a second. */
+export const SEND_MS = 33;
+
 export interface MoveMessage {
   /** Increments every send (wraps at 65536). */
   seq: number;
+  /**
+   * When the sender sampled this position, on its own clock (ms). Others play
+   * each player back on that player's clock, so the spacing of their moves
+   * stays even however the network and the room's ticks bunch them up.
+   */
+  t: number;
   /** The `epoch` of the last `correct` the client applied. */
   epoch: number;
   x: number;

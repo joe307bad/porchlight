@@ -498,8 +498,8 @@ export class IsoView implements NetHost {
     this.moveTo(x, z);
   }
 
-  syncRemotes(serverTime: number, players: RemoteState[], me: string): void {
-    this.remotes?.sync(serverTime, players, me);
+  syncRemotes(players: RemoteState[], me: string): void {
+    this.remotes?.sync(players, me);
   }
 
   clearRemotes(): void {

@@ -1,19 +1,20 @@
-// Smooth motion for other players. Their positions arrive in patches about 20
-// times a second; each player's are kept with the server time they're for, and
-// drawn a little in the past (INTERP_DELAY), between the two patches either
-// side, so they glide rather than step. If patches stop coming they carry on a
-// moment (EXTRAPOLATE), then hold; after a long gap they jump straight to the
-// latest. Pure, so it's unit-tested.
+// Smooth motion for other players. Each sends its position about 30 times a
+// second, stamped with when it took it on its own clock; we keep them by that
+// stamp and draw each player a little in the past (INTERP_DELAY) on their own
+// clock (PlaybackClock), between the two moves either side, so they glide
+// rather than step, however unevenly the moves arrive. If moves stop coming
+// they carry on a moment (EXTRAPOLATE), then hold; after a long gap they jump
+// straight to the latest. Pure, so it's unit-tested.
 
-/** How far behind the server's clock others are drawn (ms): two patches' worth. */
-export const INTERP_DELAY = 100;
+/** How far behind their best-case arrival others are drawn (ms): room for about three moves' worth of network jitter. */
+export const INTERP_DELAY = 120;
 /** How long to carry on past the last patch before holding still (ms). */
 export const EXTRAPOLATE = 200;
-/** Snapshots this far behind the render time are history (ms). */
-const KEEP = 1000;
+/** Snapshots this far behind the render time are history (ms): past a background tab's once-a-second sends. */
+const KEEP = 1500;
 
 export interface Snap {
-  /** Server time (ms). */
+  /** When it was taken, on the sender's clock (ms). */
   t: number;
   x: number;
   y: number;
@@ -86,25 +87,41 @@ export class SnapshotBuffer {
   }
 }
 
-/**
- * The server's clock, read off the patches (each carries the server time).
- * A patch arrives some latency after it was stamped, so each reading is the
- * true offset minus that latency; the best (highest) recent one is kept,
- * easing down slowly in case the network gets slower.
- */
-export class ServerClock {
-  private offset: number | null = null;
+/** How far back the recent arrivals are kept, to tell the network's best case (ms). */
+const WINDOW = 3000;
+/** Off by more than this (ms), the playhead jumps rather than catching up. */
+const JUMP = 400;
+/** How hard the playhead leans toward where it should be, and its limit (a rate of 0.85 to 1.15). */
+const CATCH_UP = 300;
+const MAX_WARP = 0.15;
 
-  /** A patch stamped `serverTime` arrived at local time `now` (ms). */
-  observe(serverTime: number, now: number): void {
-    const sample = serverTime - now;
-    // The first patch can come before the room has stamped a time: one NaN here would stick for good.
-    if (!Number.isFinite(sample)) return;
-    this.offset = this.offset === null ? sample : Math.max(sample, this.offset - 2);
+/**
+ * Which moment of one player's own clock to show (their moves' `t`). A move
+ * arrives some delay after it was taken; the smallest recent delay is the
+ * network at its best, and the playhead runs INTERP_DELAY behind that, so
+ * moves held up by a jittery network are still there in time. It advances
+ * with the frames, a touch faster or slower to stay on course, never jumping
+ * back and forth with each arrival: steady motion on screen.
+ */
+export class PlaybackClock {
+  private arrivals: { at: number; delay: number }[] = [];
+  private head: number | null = null;
+
+  /** A move taken at `sent` (their clock) arrived at `now` (ours), both ms. */
+  observe(sent: number, now: number): void {
+    if (!Number.isFinite(sent) || !Number.isFinite(now)) return;
+    this.arrivals.push({ at: now, delay: now - sent });
+    while (this.arrivals.length > 1 && now - this.arrivals[0].at > WINDOW) this.arrivals.shift();
   }
 
-  /** The server's time now, or null before the first patch. */
-  now(local: number): number | null {
-    return this.offset === null ? null : local + this.offset;
+  /** Move on by `dt` ms to local time `now`; returns the moment of their clock to show, or null before any move. */
+  advance(now: number, dt: number): number | null {
+    if (!this.arrivals.length) return null;
+    let best = Infinity;
+    for (const a of this.arrivals) best = Math.min(best, a.delay);
+    const ideal = now - best - INTERP_DELAY;
+    if (this.head === null || Math.abs(ideal - this.head) > JUMP) this.head = ideal;
+    else this.head += dt * (1 + Math.max(-MAX_WARP, Math.min(MAX_WARP, (ideal - this.head) / CATCH_UP)));
+    return this.head;
   }
 }

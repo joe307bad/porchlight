@@ -4,11 +4,11 @@ import { MAX_SPEED, RateLimit, Strikes, judgeMove, newTrack, parseMove, seqNewer
 import type { MoveMessage } from '../src/multiplayer/protocol.ts';
 
 const bounds = { width: 128, height: 128 };
-const move = (over: Partial<MoveMessage> = {}): MoveMessage => ({ seq: 1, epoch: 0, x: 10, y: 0, z: 10, yaw: 0, anim: 1, car: 0, ride: '', ...over });
+const move = (over: Partial<MoveMessage> = {}): MoveMessage => ({ seq: 1, t: 0, epoch: 0, x: 10, y: 0, z: 10, yaw: 0, anim: 1, car: 0, ride: '', ...over });
 
 test('parseMove rejects junk', () => {
   assert.ok(parseMove(move()));
-  for (const bad of [null, 'x', {}, move({ x: NaN }), move({ z: Infinity }), move({ anim: 9 }), move({ seq: 70000 }), { ...move(), y: '1' }]) {
+  for (const bad of [null, 'x', {}, move({ t: -1 }), move({ t: 1.5 }), move({ x: NaN }), move({ z: Infinity }), move({ anim: 9 }), move({ seq: 70000 }), { ...move(), y: '1' }]) {
     assert.equal(parseMove(bad), null, JSON.stringify(bad));
   }
 });

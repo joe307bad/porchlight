@@ -1,4 +1,4 @@
-// The synced state: what every client gets (in delta patches, 20 a second).
+// The synced state: what every client gets (in delta patches, about 30 a second).
 // Only players in a client's StateView reach it (interest.ts decides who);
 // anything server-only lives on the room's PlayerRuntime instead.
 //
@@ -29,6 +29,8 @@ export const Player = schema(
     appearance: 'string',
     /** Dropped and maybe coming back (the reconnection window). */
     away: 'boolean',
+    /** When their client sampled this position, on its own clock (MoveMessage.t). */
+    t: 'uint32',
   },
   'Player',
 );
@@ -37,8 +39,6 @@ export type Player = InstanceType<typeof Player>;
 export const CityState = schema(
   {
     players: { map: Player, view: true },
-    /** Milliseconds since the room opened, for clients to time their interpolation. */
-    serverTime: 'uint32',
   },
   'CityState',
 );

@@ -1,7 +1,7 @@
 // Other players in the town, as the server sends them (net/multiplayer.ts).
 // Each gets the same rigged character the townsfolk use, posed from a Walker
-// whose position comes from their snapshots, drawn 100 ms in the past and
-// interpolated (net/interp.ts), with their name floating over them (through
+// whose position comes from their moves, played back on their own clock a
+// little in the past and interpolated (net/interp.ts), with their name floating over them (through
 // buildings, so you can always find each other). At the wheel they're drawn as
 // their car instead, and a passenger (riding in anyone's car, yours too) is
 // out of sight inside it, their name stacked over the car with the driver's.
@@ -12,7 +12,7 @@
 
 import { CanvasTexture, Group, LinearFilter, Mesh, SRGBColorSpace, Sprite, SpriteMaterial, type Object3D } from 'three';
 import { createRng } from '../../core/rng';
-import { INTERP_DELAY, ServerClock, SnapshotBuffer, turnBetween } from '../../net/interp';
+import { PlaybackClock, SnapshotBuffer, turnBetween } from '../../net/interp';
 import { ANIM_DRIVE, ANIM_RIDE, yawFromByte } from '../../net/protocol';
 import { Walker } from './actors';
 import { CARS, CHARACTERS, type TownAssets } from './assets';
@@ -34,6 +34,8 @@ export interface RemoteState {
   ride: string;
   appearance: string;
   away: boolean;
+  /** When their client took this position, on its clock (ms). */
+  t: number;
 }
 
 /** Another player at the wheel, where they are this frame. */
@@ -63,6 +65,9 @@ interface Remote {
   avatar: Avatar;
   look: string;
   buffer: SnapshotBuffer;
+  clock: PlaybackClock;
+  /** The last move's stamp, so a patch that didn't move them adds nothing. */
+  lastT: number;
   tag: Sprite;
   tagText: string;
   car: { model: number; group: Group } | null;
@@ -104,7 +109,6 @@ function disposeTag(tag: Sprite): void {
 
 export class RemotePlayers {
   private readonly remotes = new Map<string, Remote>();
-  private readonly clock = new ServerClock();
   /** This client's session id in the room. */
   private me = '';
   private readonly root: Object3D;
@@ -115,10 +119,10 @@ export class RemotePlayers {
     this.assets = assets;
   }
 
-  /** A patch arrived: the room's time and everyone in this client's view (but you). */
-  sync(serverTime: number, players: RemoteState[], me: string): void {
+  /** A patch arrived: everyone in this client's view (but you). */
+  sync(players: RemoteState[], me: string): void {
     this.me = me;
-    this.clock.observe(serverTime, performance.now());
+    const now = performance.now();
     const seen = new Set<string>();
     for (const s of players) {
       seen.add(s.key);
@@ -131,16 +135,18 @@ export class RemotePlayers {
       }
       if (!r) r = this.spawn(s, look);
       r.state = s;
-      r.buffer.push({ t: serverTime, x: s.x, y: s.y, z: s.z, yaw: yawFromByte(s.rotY) });
+      if (s.t !== r.lastT) {
+        r.lastT = s.t;
+        r.clock.observe(s.t, now);
+        r.buffer.push({ t: s.t, x: s.x, y: s.y, z: s.z, yaw: yawFromByte(s.rotY) });
+      }
     }
     for (const key of [...this.remotes.keys()]) if (!seen.has(key)) this.drop(key);
   }
 
   /** Pose everyone for this frame. `myCar`: where your car is, while you're driving. */
   update(dt: number, myCar: { x: number; y: number } | null = null): void {
-    const now = this.clock.now(performance.now());
-    if (now === null) return;
-    const t = now - INTERP_DELAY;
+    const now = performance.now();
     // Passengers' tags stack over the car, in a steady order.
     const seat = new Map<string, number>();
     const taken = new Map<string, number>();
@@ -151,7 +157,8 @@ export class RemotePlayers {
       seat.set(key, n);
     }
     for (const [key, r] of this.remotes) {
-      const p = r.buffer.sample(t);
+      const t = r.clock.advance(now, dt * 1000);
+      const p = t === null ? null : r.buffer.sample(t);
       if (!p) continue;
       const w = r.walker;
       const k = Math.max(1e-3, dt);
@@ -215,7 +222,18 @@ export class RemotePlayers {
     avatar.root.rotation.y = walker.heading;
     const tag = nameTag(s.name);
     this.root.add(avatar.root, tag);
-    const r: Remote = { walker, avatar, look, buffer: new SnapshotBuffer(), tag, tagText: s.name, car: null, state: s };
+    const r: Remote = {
+      walker,
+      avatar,
+      look,
+      buffer: new SnapshotBuffer(),
+      clock: new PlaybackClock(),
+      lastT: Number.NaN,
+      tag,
+      tagText: s.name,
+      car: null,
+      state: s,
+    };
     this.remotes.set(s.key, r);
     return r;
   }

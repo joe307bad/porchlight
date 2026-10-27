@@ -10,6 +10,7 @@
 import { Client, type Room } from '@colyseus/sdk';
 import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
+import { SEND_MS } from '../src/multiplayer/protocol.ts';
 
 const count = Number(process.argv[2] ?? 20);
 const seconds = Number(process.argv[3] ?? 60);
@@ -46,14 +47,14 @@ async function bot(i: number): Promise<{ room: Room; patches: number }> {
   });
   const timer = setInterval(() => {
     heading += (Math.random() - 0.5) * 0.4;
-    x += Math.sin(heading) * 3.4 * 0.05;
-    z += Math.cos(heading) * 3.4 * 0.05;
+    x += Math.sin(heading) * 3.4 * (SEND_MS / 1000);
+    z += Math.cos(heading) * 3.4 * (SEND_MS / 1000);
     if (x < 2 || x > 126 || z < 2 || z > 126) heading += Math.PI;
     x = Math.min(126, Math.max(2, x));
     z = Math.min(126, Math.max(2, z));
     seq = (seq + 1) & 0xffff;
-    room.send('move', { seq, epoch, x, y: 0, z, yaw: heading, anim: 1, car: 0 });
-  }, 50);
+    room.send('move', { seq, t: Math.round(performance.now()), epoch, x, y: 0, z, yaw: heading, anim: 1, car: 0, ride: '' });
+  }, SEND_MS);
   room.onLeave(() => clearInterval(timer));
   return stats;
 }

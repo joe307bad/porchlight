@@ -50,10 +50,11 @@ export function parseMove(raw: unknown): MoveMessage | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const m = raw as Record<string, unknown>;
   if (!isInt(m.seq, 0xffff) || !isInt(m.epoch, 0xffff) || !isInt(m.anim, ANIM_MAX) || !isInt(m.car, 255)) return null;
+  if (!isInt(m.t, 0xffffffff)) return null;
   if (!isNum(m.x) || !isNum(m.y) || !isNum(m.z) || !isNum(m.yaw)) return null;
   const ride = m.ride ?? '';
   if (typeof ride !== 'string' || ride.length > 32) return null;
-  return { seq: m.seq, epoch: m.epoch, x: m.x, y: m.y, z: m.z, yaw: m.yaw, anim: m.anim, car: m.car, ride };
+  return { seq: m.seq, t: m.t, epoch: m.epoch, x: m.x, y: m.y, z: m.z, yaw: m.yaw, anim: m.anim, car: m.car, ride };
 }
 
 /** Is `a` after `b` in a 16-bit sequence that wraps? */

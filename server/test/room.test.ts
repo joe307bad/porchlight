@@ -44,7 +44,7 @@ async function until(what: string, check: () => boolean, ms = 3000): Promise<voi
 const town = { town: 'seed=test', width: 128, height: 128 };
 let seq = 0;
 const move = (room: Room, x: number, z: number, epoch = 0, extra: { anim?: number; car?: number; ride?: string } = {}) =>
-  room.send('move', { seq: ++seq & 0xffff, epoch, x, y: 0, z, yaw: 0, anim: 1, car: 0, ride: '', ...extra });
+  room.send('move', { seq: ++seq & 0xffff, t: Math.round(performance.now()), epoch, x, y: 0, z, yaw: 0, anim: 1, car: 0, ride: '', ...extra });
 
 before(async () => {
   game = await startGameServer({

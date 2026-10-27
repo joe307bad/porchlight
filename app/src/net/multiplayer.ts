@@ -1,7 +1,9 @@
 // Playing the town with other people (the server's CityRoom, through
 // Colyseus). Everyone exploring the same town (seed and params) shares a
 // room. This client plays one character: it tells the room where that
-// character is about 20 times a second (only when something changed), hands
+// character is about 30 times a second while it moves (and a little after it
+// stops, and once a second at rest), each position stamped with when it was
+// taken so others can play it back evenly; it hands
 // the room's patches about everyone nearby to the view, and does what the
 // room says (start where you left off, snap back after a bad move).
 //
@@ -27,6 +29,7 @@ import {
   MSG_MOVE,
   MSG_SPAWN,
   MSG_TELEPORT,
+  SEND_MS,
   type CorrectMessage,
   type DotsMessage,
   type MoveMessage,
@@ -54,7 +57,7 @@ export interface NetHost {
   applySpawn(at: SpawnMessage['at'], look: string | null): void;
   /** The server says they're here (a correction, or a minimap jump it accepted). */
   placePlayer(x: number, z: number): void;
-  syncRemotes(serverTime: number, players: RemoteState[], me: string): void;
+  syncRemotes(players: RemoteState[], me: string): void;
   clearRemotes(): void;
   /** Everyone else in the room, for the minimap. */
   setDots(dots: { x: number; y: number }[]): void;
@@ -72,7 +75,10 @@ export interface Town {
   height: number;
 }
 
-const SEND_MS = 50;
+/** After the last change, keep sending this long (ms), so others see exactly where they stopped. */
+const SETTLE_MS = 300;
+/** At rest, send this often anyway (ms). */
+const HEARTBEAT_MS = 1000;
 /** Rejoin delays after losing the room (ms), longest last and then repeated. */
 const RETRY_MS = [2_000, 5_000, 10_000, 30_000];
 
@@ -94,6 +100,9 @@ export class Multiplayer {
   /** Spawn applied: until then nothing is sent (the server takes the first move as where they are). */
   private spawned = false;
   private lastSent = '';
+  /** When what we send last changed, and when we last sent (performance.now() ms). */
+  private changedAt = 0;
+  private sentAt = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private retries = 0;
@@ -223,13 +232,12 @@ export class Multiplayer {
       if (this.status.state !== 'online' || this.status.here !== here) this.setStatus({ state: 'online', here });
       this.host.setDots(dots.filter(([key]) => key !== room.sessionId).map(([, x, z]) => ({ x, y: z })));
     });
-    room.onStateChange((state: { serverTime?: number; players?: Map<string, Omit<RemoteState, 'key'>> }) => {
-      if (typeof state.serverTime !== 'number') return; // not stamped yet: wait for the next patch
+    room.onStateChange((state: { players?: Map<string, Omit<RemoteState, 'key'>> }) => {
       const players: RemoteState[] = [];
       state.players?.forEach((p, key) => {
         if (key !== room.sessionId) players.push({ ...pick(p), key });
       });
-      this.host.syncRemotes(state.serverTime, players, room.sessionId);
+      this.host.syncRemotes(players, room.sessionId);
     });
     room.onDrop(() => this.host.notify('Connection lost. Reconnecting…'));
     room.onReconnect(() => {
@@ -270,23 +278,34 @@ export class Multiplayer {
     }, delay);
   }
 
-  /** Send where the character is, if it's changed (or `force`). */
+  /**
+   * Send where the character is: while it's changing, for a moment after it
+   * stops (so others see it come to rest exactly), once a second at rest, or
+   * when forced. Each is stamped with this clock's time.
+   */
   private send(force: boolean): void {
     const room = this.room;
     if (!room || !this.spawned) return;
     const s = this.host.localState();
     if (!s) return;
+    const now = performance.now();
     const anim = animOf(s);
     const key = `${s.x.toFixed(3)},${s.y.toFixed(3)},${s.z.toFixed(3)},${s.yaw.toFixed(2)},${anim},${s.car},${s.ride}`;
-    if (!force && key === this.lastSent) return;
-    this.lastSent = key;
+    if (key !== this.lastSent) {
+      this.lastSent = key;
+      this.changedAt = now;
+    } else if (!force && now - this.changedAt > SETTLE_MS && now - this.sentAt < HEARTBEAT_MS) {
+      return;
+    }
+    this.sentAt = now;
     this.seq = (this.seq + 1) & 0xffff;
-    const move: MoveMessage = { seq: this.seq, epoch: this.epoch, x: s.x, y: s.y, z: s.z, yaw: s.yaw, anim, car: s.car, ride: s.ride };
+    const t = Math.round(now) >>> 0;
+    const move: MoveMessage = { seq: this.seq, t, epoch: this.epoch, x: s.x, y: s.y, z: s.z, yaw: s.yaw, anim, car: s.car, ride: s.ride };
     room.send(MSG_MOVE, move);
   }
 }
 
 /** The synced fields, copied off the live schema object. */
 function pick(p: Omit<RemoteState, 'key'>): Omit<RemoteState, 'key'> {
-  return { name: p.name, x: p.x, y: p.y, z: p.z, rotY: p.rotY, anim: p.anim, car: p.car, ride: p.ride ?? '', appearance: p.appearance, away: p.away };
+  return { name: p.name, x: p.x, y: p.y, z: p.z, rotY: p.rotY, anim: p.anim, car: p.car, ride: p.ride ?? '', appearance: p.appearance, away: p.away, t: p.t };
 }
