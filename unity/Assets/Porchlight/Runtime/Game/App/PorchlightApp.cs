@@ -207,6 +207,7 @@ namespace Porchlight.App
             map.OnViewChanged = () => autoFit = false;
             map.OnHover = world => hoverLabel.text = DescribeTile(model, world);
             map.OnDoubleClick = Fit;
+            map.RegisterCallback<PointerDownEvent>(_ => Unfocus(), TrickleDown.TrickleDown);
             map.RegisterCallback<GeometryChangedEvent>(_ =>
             {
                 if (autoFit && model != null) map.Fit();
@@ -280,6 +281,9 @@ namespace Porchlight.App
             var focused = root?.panel?.focusController?.focusedElement as VisualElement;
             return focused != null && (focused is TextField || focused.GetFirstAncestorOfType<TextField>() != null);
         }
+
+        /// <summary>Out of any text field, so the keys drive the game again.</summary>
+        void Unfocus() => (root?.panel?.focusController?.focusedElement as VisualElement)?.Blur();
 
         void SetSidebarOpen(bool open) => root.EnableInClassList("sidebar-closed", !open);
 
@@ -448,6 +452,7 @@ namespace Porchlight.App
                     await isoLoading;
                 }
                 exploring = true;
+                Unfocus();
                 root.AddToClassList("exploring");
                 sidebar.SetExploring(true);
                 isoHost.style.display = DisplayStyle.Flex;

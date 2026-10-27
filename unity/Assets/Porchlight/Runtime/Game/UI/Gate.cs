@@ -65,7 +65,7 @@ namespace Porchlight.App
             var list = new VisualElement();
             var error = El.Text("", "picker-error");
             error.AddToClassList("hidden");
-            var name = new TextField { maxLength = 20, textEdition = { placeholder = "New character’s name" } };
+            var name = El.ClickToFocus(new TextField { maxLength = 20, textEdition = { placeholder = "New character’s name" } });
             name.AddToClassList("picker-name");
             UnityEngine.UIElements.Button create = null;
 

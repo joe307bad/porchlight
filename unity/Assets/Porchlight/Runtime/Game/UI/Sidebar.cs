@@ -60,6 +60,23 @@ namespace Porchlight.UI
             return v;
         }
 
+        /// <summary>
+        /// A text field you click into, never one the arrow keys or a gamepad
+        /// navigate to (UI Toolkit's navigation would otherwise land on it and
+        /// swallow the game's controls); Enter or Escape gives the keys back.
+        /// </summary>
+        public static TextField ClickToFocus(TextField field)
+        {
+            field.tabIndex = -1;
+            field.Query<VisualElement>().ForEach(e => e.tabIndex = -1);
+            field.RegisterCallback<KeyDownEvent>(e =>
+            {
+                if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter || e.keyCode == KeyCode.Escape)
+                    field.schedule.Execute(() => field.Blur());
+            });
+            return field;
+        }
+
         /// <summary>A link-style button: muted, underlined text.</summary>
         public static Button Link(string text, Action onClick)
         {
@@ -145,7 +162,7 @@ namespace Porchlight.UI
             root = host;
             root.name = "sidebar";
 
-            seedInput = new TextField { name = "seed", isDelayed = false };
+            seedInput = El.ClickToFocus(new TextField { name = "seed", isDelayed = false });
             seedInput.AddToClassList("mono");
             seedInput.tooltip = "Edit and press Enter to load this seed";
             seedInput.RegisterCallback<KeyDownEvent>(e =>
