@@ -1,0 +1,296 @@
+// What the 3D view shows over the town: the minimap in the bottom-left corner
+// (the town the same way up as the blueprint, the camera's view outlined, the
+// player, auto-walk's route and flag, other players in blue; click to jump
+// there), the street panel top right (the street you're on and, while
+// auto-walking, the turn-by-turn directions), a one-line prompt bottom centre,
+// and a notice about the connection top centre. Ports of minimap.ts, hud.ts and
+// view.ts's notice.
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Porchlight.App;
+using Porchlight.Core;
+using Porchlight.Explore;
+using Porchlight.Model;
+using Porchlight.Rendering;
+using UnityEngine;
+using Space = Porchlight.Rendering.Space;
+using UnityEngine.UIElements;
+
+namespace Porchlight.UI
+{
+    public sealed class ExploreOverlay : IExploreOverlay
+    {
+        const float SIZE = 264;
+        const int MAX_STEPS = 8;
+
+        public readonly VisualElement root;
+        readonly VisualElement minimap;
+        readonly VisualElement minimapOverlay;
+        readonly VisualElement hud;
+        readonly Label hudName;
+        readonly VisualElement hudSteps;
+        readonly Label prompt;
+        readonly Label notice;
+        Texture2D baseTexture;
+        TownModel model;
+        List<Vec2> others = new List<Vec2>();
+        Vec2? player;
+        Vec2[] view = new Vec2[0];
+        Vec2? goal;
+        List<Vec2> route = new List<Vec2>();
+        string shownHud = null;
+        Action<Vec2> onPick;
+        /// <summary>Device pixels per CSS pixel: the minimap's lines and marks are sized in device pixels, as on a canvas.</summary>
+        public float Dpr = 1;
+
+        public Action<Vec2> OnMinimapPick
+        {
+            set => onPick = value;
+        }
+
+        public ExploreOverlay(VisualElement host)
+        {
+            root = host;
+            minimap = new VisualElement();
+            minimap.AddToClassList("minimap");
+            minimap.tooltip = "Click to jump there";
+            minimapOverlay = new VisualElement();
+            minimapOverlay.style.position = Position.Absolute;
+            minimapOverlay.style.left = minimapOverlay.style.top = minimapOverlay.style.right = minimapOverlay.style.bottom = 0;
+            minimapOverlay.pickingMode = PickingMode.Ignore;
+            minimapOverlay.generateVisualContent += DrawMinimapOverlay;
+            minimap.Add(minimapOverlay);
+            minimap.RegisterCallback<PointerDownEvent>(e =>
+            {
+                if (model == null) return;
+                var r = minimap.contentRect;
+                var local = e.localPosition;
+                onPick?.Invoke(new Vec2(local.x / r.width * model.width, local.y / r.height * model.height));
+                e.StopPropagation();
+            });
+            host.Add(minimap);
+
+            hud = new VisualElement();
+            hud.AddToClassList("street-hud");
+            hud.pickingMode = PickingMode.Ignore;
+            var nameRow = new VisualElement();
+            nameRow.AddToClassList("street-hud-name");
+            var sign = new VisualElement();
+            sign.AddToClassList("street-hud-sign");
+            nameRow.Add(sign);
+            hudName = new Label();
+            hudName.AddToClassList("bold");
+            nameRow.Add(hudName);
+            hud.Add(nameRow);
+            hudSteps = new VisualElement();
+            hudSteps.AddToClassList("street-hud-steps");
+            hud.Add(hudSteps);
+            hud.style.display = DisplayStyle.None;
+            host.Add(hud);
+
+            prompt = new Label();
+            prompt.AddToClassList("hud-prompt");
+            prompt.AddToClassList("semibold");
+            prompt.pickingMode = PickingMode.Ignore;
+            prompt.style.display = DisplayStyle.None;
+            host.Add(prompt);
+            notice = new Label();
+            notice.AddToClassList("net-notice");
+            notice.pickingMode = PickingMode.Ignore;
+            notice.style.display = DisplayStyle.None;
+            host.Add(notice);
+            host.RegisterCallback<GeometryChangedEvent>(_ => Center());
+            prompt.RegisterCallback<GeometryChangedEvent>(_ => Center());
+            notice.RegisterCallback<GeometryChangedEvent>(_ => Center());
+        }
+
+        /// <summary>Centre the prompt and notice (left 50%, translate -50%).</summary>
+        void Center()
+        {
+            float w = root.layout.width;
+            if (float.IsNaN(w)) return;
+            prompt.style.left = (w - prompt.layout.width) / 2;
+            notice.style.maxWidth = Math.Max(0, w - 32);
+            notice.style.left = (w - notice.layout.width) / 2;
+        }
+
+        public void SetTown(TownModel m)
+        {
+            model = m;
+            int w = m.width, h = m.height;
+            var tiles = m.tiles;
+            if (baseTexture != null) UnityEngine.Object.Destroy(baseTexture);
+            baseTexture = new Texture2D(w, h, TextureFormat.RGBA32, false, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+            var px = new Color32[w * h];
+            for (int i = 0; i < w * h; i++)
+            {
+                var rgb = BlueprintStyle.TileTerrain(tiles.terrain[i]);
+                var over = BlueprintStyle.TileOverlay(tiles.overlay[i]);
+                if (over != null) rgb = over.Value;
+                if (tiles.buildingId[i] >= 0) rgb = BlueprintStyle.TileBuilding;
+                // Texture rows go bottom up; the map's go top down.
+                int x = i % w, y = i / w;
+                px[(h - 1 - y) * w + x] = rgb;
+            }
+            baseTexture.SetPixels32(px);
+            baseTexture.Apply(false);
+            minimap.style.backgroundImage = new StyleBackground(baseTexture);
+            float scale = SIZE / Math.Max(w, h);
+            minimap.style.width = w * scale;
+            minimap.style.height = h * scale;
+            Fit();
+        }
+
+        /// <summary>max-width: min(264px, 38vw), keeping the aspect.</summary>
+        public void Fit()
+        {
+            if (model == null) return;
+            float vw = root.panel?.visualTree.layout.width ?? float.NaN;
+            float scale = SIZE / Math.Max(model.width, model.height);
+            float width = model.width * scale;
+            if (!float.IsNaN(vw)) width = Math.Min(width, Math.Min(264, vw * 0.38f));
+            minimap.style.width = width;
+            minimap.style.height = width * model.height / model.width;
+        }
+
+        public void SetOthers(List<Vec2> o) => others = o ?? new List<Vec2>();
+
+        public void DrawMinimap(Vec2? p, Vec2[] v, Vec2? g, List<Vec2> r)
+        {
+            player = p;
+            view = v;
+            goal = g;
+            route = r;
+            minimapOverlay.MarkDirtyRepaint();
+        }
+
+        void DrawMinimapOverlay(MeshGenerationContext ctx)
+        {
+            if (model == null) return;
+            var rect = minimapOverlay.contentRect;
+            float k = rect.width / model.width; // CSS px per tile
+            float dev = 1 / Dpr; // one device pixel, in CSS px
+            Vector2 P(Vec2 q) => new Vector2((float)q.x * k, (float)q.y * k);
+            var painter = ctx.painter2D;
+            if (view.Length == 4)
+            {
+                painter.BeginPath();
+                painter.MoveTo(P(view[0]));
+                for (int i = 1; i < 4; i++) painter.LineTo(P(view[i]));
+                painter.ClosePath();
+                painter.fillColor = new Color(1, 1, 1, 0.18f);
+                painter.Fill();
+                painter.strokeColor = new Color(1, 1, 1, 0.9f);
+                painter.lineWidth = 1.5f * dev;
+                painter.Stroke();
+            }
+            if (route != null && route.Count > 1)
+            {
+                painter.BeginPath();
+                painter.MoveTo(P(route[0]));
+                for (int i = 1; i < route.Count; i++) painter.LineTo(P(route[i]));
+                painter.strokeColor = Space.CssHex(0xff6a00);
+                painter.lineWidth = 1.5f * dev;
+                painter.lineJoin = LineJoin.Miter;
+                painter.lineCap = LineCap.Butt;
+                painter.Stroke();
+            }
+            if (goal != null)
+            {
+                var gp = P(goal.Value);
+                painter.strokeColor = Space.CssHex(0xfff8e8);
+                painter.lineWidth = 1.5f * dev;
+                painter.BeginPath();
+                painter.MoveTo(gp);
+                painter.LineTo(gp + new Vector2(0, -9 * dev));
+                painter.Stroke();
+                painter.fillColor = Space.CssHex(0xff6a00);
+                painter.BeginPath();
+                painter.MoveTo(gp + new Vector2(0, -9 * dev));
+                painter.LineTo(gp + new Vector2(6 * dev, -7 * dev));
+                painter.LineTo(gp + new Vector2(0, -5 * dev));
+                painter.ClosePath();
+                painter.Fill();
+            }
+            foreach (var o in others)
+            {
+                painter.BeginPath();
+                painter.Arc(P(o), 3 * dev, 0, 360);
+                painter.fillColor = Space.CssHex(0x3b82c4);
+                painter.Fill();
+                painter.lineWidth = 1.5f * dev;
+                painter.strokeColor = Space.CssHex(0xfff8e8);
+                painter.Stroke();
+            }
+            if (player != null)
+            {
+                painter.BeginPath();
+                painter.Arc(P(player.Value), 4 * dev, 0, 360);
+                painter.fillColor = Space.CssHex(0xc2412d);
+                painter.Fill();
+                painter.lineWidth = 2 * dev;
+                painter.strokeColor = Space.CssHex(0xfff8e8);
+                painter.Stroke();
+            }
+        }
+
+        public void SetPrompt(string text)
+        {
+            if (prompt.text != (text ?? "")) prompt.text = text ?? "";
+            prompt.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        public void Notify(string text)
+        {
+            notice.text = text ?? "";
+            notice.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        public void SetHud(string streetName, List<Step> steps)
+        {
+            string key = $"{streetName}|{(steps == null ? "" : string.Join("|", steps.Select(s => $"{s.text}:{Directions.FormatDistance(s.distance)}")))}";
+            if (key == shownHud) return;
+            shownHud = key;
+            bool show = streetName != null || steps != null;
+            hud.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+            hudName.text = streetName ?? (steps != null ? "Making your way to the street" : "");
+            hudSteps.Clear();
+            hudSteps.style.display = steps == null ? DisplayStyle.None : DisplayStyle.Flex;
+            if (steps == null) return;
+            for (int i = 0; i < Math.Min(MAX_STEPS, steps.Count); i++)
+            {
+                var s = steps[i];
+                var row = new VisualElement();
+                row.AddToClassList("hud-step");
+                if (i == 0) row.AddToClassList("current");
+                var icon = new Label(Directions.Icon(s.kind));
+                icon.AddToClassList("hud-step-icon");
+                icon.AddToClassList("bold");
+                row.Add(icon);
+                var t = new Label(s.text);
+                t.AddToClassList("hud-step-text");
+                row.Add(t);
+                string d = Directions.FormatDistance(s.distance);
+                if (d.Length > 0 && s.kind != StepKind.Arrive)
+                {
+                    var dist = new Label(d);
+                    dist.AddToClassList("hud-step-dist");
+                    row.Add(dist);
+                }
+                hudSteps.Add(row);
+            }
+            if (steps.Count > MAX_STEPS)
+            {
+                var more = new VisualElement();
+                more.AddToClassList("hud-step");
+                more.AddToClassList("more");
+                var t = new Label($"and {steps.Count - MAX_STEPS} more");
+                t.AddToClassList("hud-step-text");
+                more.Add(t);
+                hudSteps.Add(more);
+            }
+        }
+    }
+}

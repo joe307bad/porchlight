@@ -35,3 +35,4 @@ mono_crash.*
 # .NET builds of the parity checker
 Tools~/**/bin/
 Tools~/**/obj/
+.vscode/

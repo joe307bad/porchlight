@@ -149,7 +149,7 @@ namespace Porchlight.Core
     }
 
     /// <summary>One clip playing on a mixer (AnimationAction).</summary>
-    public sealed class Action
+    public sealed class AnimAction
     {
         public readonly Clip clip;
         public double time;
@@ -162,7 +162,7 @@ namespace Porchlight.Core
         internal int[] bindings;
         int loopCount = -1;
 
-        internal Action(Clip clip)
+        internal AnimAction(Clip clip)
         {
             this.clip = clip;
         }
@@ -229,7 +229,7 @@ namespace Porchlight.Core
         }
 
         readonly IPoseTarget target;
-        readonly List<Action> actions = new List<Action>();
+        readonly List<AnimAction> actions = new List<AnimAction>();
         readonly List<Binding> bindings = new List<Binding>();
         readonly Dictionary<(int, bool), int> bindingOf = new Dictionary<(int, bool), int>();
         readonly double[] incoming = new double[4];
@@ -240,9 +240,9 @@ namespace Porchlight.Core
         }
 
         /// <summary>clipAction(clip).play(): bound to the bones it has, in the order actions are made.</summary>
-        public Action Play(Clip clip)
+        public AnimAction Play(Clip clip)
         {
-            var a = new Action(clip);
+            var a = new AnimAction(clip);
             var list = new List<int>();
             foreach (var track in clip.tracks)
             {

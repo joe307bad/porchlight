@@ -180,7 +180,7 @@ namespace Porchlight.Rendering
         SkinnedMeshRenderer xray;
         readonly Stage stage;
         readonly Mixer mixer;
-        readonly Porchlight.Core.Action idle, walk, run, jump, fall, crouch;
+        readonly AnimAction idle, walk, run, jump, fall, crouch;
 
         // The root's and body's pose in Three's terms.
         double rootYaw;
@@ -247,7 +247,7 @@ namespace Porchlight.Rendering
             model.localRotation = new Quaternion(0, -1, 0, 0);
 
             mixer = new Mixer(this);
-            Porchlight.Core.Action Act(string name)
+            AnimAction Act(string name)
             {
                 var clip = asset.clips.Get(name);
                 if (clip == null) return null;
