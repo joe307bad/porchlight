@@ -145,10 +145,16 @@ namespace Porchlight.EditorTools
             graphics.ApplyModifiedPropertiesWithoutUndo();
         }
 
+        const string StencilFeature = "Player visible";
+
         /// <summary>
-        /// The renderer's extra passes: you (and the car you drive) drawn in flat orange
-        /// wherever something hides you; then the name tags, their plates and text, over
-        /// everything (their layer is left out of the ordinary passes).
+        /// The renderer's extra passes. You (and the car you drive) are drawn in flat
+        /// orange wherever something else hides you: first you're drawn again where
+        /// you're in sight, marking the stencil, then the orange copy goes only where
+        /// you're behind something and not marked, so your own nearer parts (your head
+        /// in front of your glasses, a car's body in front of its far wheels) never
+        /// x-ray each other. Then the name tags, their plates and text, over everything
+        /// (their layer is left out of the ordinary passes).
         /// </summary>
         static void Features(UniversalRendererData renderer)
         {
@@ -170,7 +176,8 @@ namespace Porchlight.EditorTools
             }
             xray.SetColor("_BaseColor", new Color(1f, 0.416f, 0f));
 
-            RenderObjects Feature(string name, RenderPassEvent at, RenderQueueType queue, int layers, Material material, CompareFunction depth)
+            RenderObjects Feature(string name, RenderPassEvent at, RenderQueueType queue, int layers, Material material, CompareFunction depth,
+                CompareFunction stencil = CompareFunction.Always, StencilOp onPass = StencilOp.Keep)
             {
                 var f = ScriptableObject.CreateInstance<RenderObjects>();
                 f.name = name;
@@ -181,13 +188,23 @@ namespace Porchlight.EditorTools
                 f.settings.overrideDepthState = true;
                 f.settings.depthCompareFunction = depth;
                 f.settings.enableWrite = false;
+                if (stencil != CompareFunction.Always || onPass != StencilOp.Keep)
+                {
+                    f.settings.stencilSettings.overrideStencilState = true;
+                    f.settings.stencilSettings.stencilReference = 1;
+                    f.settings.stencilSettings.stencilCompareFunction = stencil;
+                    f.settings.stencilSettings.passOperation = onPass;
+                    f.settings.stencilSettings.failOperation = StencilOp.Keep;
+                    f.settings.stencilSettings.zFailOperation = StencilOp.Keep;
+                }
                 f.Create();
                 AssetDatabase.AddObjectToAsset(f, renderer);
                 return f;
             }
             var features = new[]
             {
-                Feature("Player x-ray", RenderPassEvent.AfterRenderingOpaques, RenderQueueType.Opaque, 1 << playerLayer, xray, CompareFunction.Greater),
+                Feature(StencilFeature, RenderPassEvent.AfterRenderingOpaques, RenderQueueType.Opaque, 1 << playerLayer, null, CompareFunction.LessEqual, CompareFunction.Always, StencilOp.Replace),
+                Feature("Player x-ray", RenderPassEvent.AfterRenderingOpaques, RenderQueueType.Opaque, 1 << playerLayer, xray, CompareFunction.Greater, CompareFunction.NotEqual),
                 Feature("Name tag plates", RenderPassEvent.AfterRenderingTransparents, RenderQueueType.Opaque, 1 << labelsLayer, null, CompareFunction.Always),
                 Feature("Name tag text", RenderPassEvent.AfterRenderingTransparents, RenderQueueType.Transparent, 1 << labelsLayer, null, CompareFunction.Always),
             };
@@ -274,6 +291,16 @@ namespace Porchlight.EditorTools
                 // Only the library: the rest of the setup is committed, and Run() would
                 // replace the open scene.
                 if (AssetDatabase.LoadAssetAtPath<ModelLibrary>(Library.LibraryPath) == null) Library.Build();
+                // A renderer from before a change to its passes: bring them up to date.
+                var renderer = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(SettingsDir + "/Renderer.asset");
+                if (renderer != null && !renderer.rendererFeatures.Any(f => f != null && f.name == StencilFeature))
+                {
+                    Layers();
+                    Features(renderer);
+                    EditorUtility.SetDirty(renderer);
+                    AssetDatabase.SaveAssets();
+                    Debug.Log("Porchlight: renderer passes updated");
+                }
             };
         }
 
