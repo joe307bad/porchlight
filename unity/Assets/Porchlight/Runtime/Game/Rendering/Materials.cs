@@ -88,6 +88,48 @@ namespace Porchlight.Rendering
             r.SetPropertyBlock(block);
         }
 
+        static Texture2D soft;
+
+        /// <summary>
+        /// A soft round patch of light on the ground (under a street lamp): additive, so
+        /// it brightens whatever it lies on. Its brightness is set per lamp with SetTint.
+        /// </summary>
+        public static Material LightPool()
+        {
+            if (soft == null)
+            {
+                const int n = 64;
+                soft = new Texture2D(n, n, TextureFormat.RGBA32, false) { name = "soft light", wrapMode = TextureWrapMode.Clamp };
+                var px = new Color32[n * n];
+                for (int y = 0; y < n; y++)
+                    for (int x = 0; x < n; x++)
+                    {
+                        float dx = (x + 0.5f) / n * 2 - 1, dy = (y + 0.5f) / n * 2 - 1;
+                        float t = Mathf.Clamp01(1 - Mathf.Sqrt(dx * dx + dy * dy));
+                        byte v = (byte)(t * t * 255);
+                        px[y * n + x] = new Color32(v, v, v, v);
+                    }
+                soft.SetPixels32(px);
+                soft.Apply(false);
+            }
+            var m = new Material(Library.particles) { name = "light pool", enableInstancing = true };
+            m.SetTexture(BaseMap, soft);
+            m.SetColor(BaseColor, Color.black);
+            m.SetFloat("_Blend", 2);
+            m.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+            m.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.One);
+            return m;
+        }
+
+        /// <summary>One renderer's colour (a light pool's brightness).</summary>
+        public static void SetTint(Renderer r, Color color)
+        {
+            block ??= new MaterialPropertyBlock();
+            r.GetPropertyBlock(block);
+            block.SetColor(BaseColor, color);
+            r.SetPropertyBlock(block);
+        }
+
         public static Material Particles(Color color)
         {
             var m = new Material(Library.particles) { name = "particles", enableInstancing = true };

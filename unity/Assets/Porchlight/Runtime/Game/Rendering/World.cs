@@ -23,8 +23,8 @@ namespace Porchlight.Rendering
     {
         public double x, y, h, phase;
         public bool faulty;
-        /// <summary>The bulb, which glows at night.</summary>
-        public Renderer bulb;
+        /// <summary>The bulb, which glows at night, and the pool of light it throws on the ground.</summary>
+        public Renderer bulb, pool;
     }
 
     public sealed class DoorState

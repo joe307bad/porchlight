@@ -525,6 +525,7 @@ namespace Porchlight.Rendering
             var placed = new List<Vec2>();
             var post = Materials.Lit(C.lampPost);
             var bulbMaterial = Materials.Glowing(Coords.Hex(0xfff6e0));
+            var poolMaterial = Materials.LightPool();
             var lampsRoot = new GameObject("lamps").transform;
             lampsRoot.SetParent(root.transform, false);
             for (int n = 0; n < layout.sidewalks.paths.Count; n++)
@@ -561,7 +562,10 @@ namespace Porchlight.Rendering
                     Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.02f, R), new Vector3(0.09f, 0.04f, 0.12f), post);
                     // The bulb moves with nothing but glows per lamp, so it stays out of the static batch.
                     var bulb = Shape(PrimitiveType.Sphere, lampsRoot, Coords.Map(basePt.x - normal.x * LAMP_REACH, basePt.y - normal.y * LAMP_REACH, LAMP_HEIGHT - 0.05), Vector3.one * 0.1f, bulbMaterial, false, "bulb");
-                    lamps.Add(new Lamp { x = basePt.x - normal.x * LAMP_REACH, y = basePt.y - normal.y * LAMP_REACH, h = LAMP_HEIGHT - 0.05, phase = rng.Range(0, 100), faulty = rng.Chance(0.12), bulb = bulb.GetComponent<Renderer>() });
+                    double lx = basePt.x - normal.x * LAMP_REACH, ly = basePt.y - normal.y * LAMP_REACH;
+                    var pool = Shape(PrimitiveType.Quad, lampsRoot, Coords.Map(lx, ly, 0.045), new Vector3(2.4f, 2.4f, 1), poolMaterial, false, "light pool");
+                    pool.transform.localRotation = Quaternion.Euler(90, 0, 0);
+                    lamps.Add(new Lamp { x = lx, y = ly, h = LAMP_HEIGHT - 0.05, phase = rng.Range(0, 100), faulty = rng.Chance(0.12), bulb = bulb.GetComponent<Renderer>(), pool = pool.GetComponent<Renderer>() });
                 }
             }
         }

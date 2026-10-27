@@ -1,8 +1,8 @@
 // The town's light, all Unity's own: a directional sun casting URP's soft
 // shadows, a three-colour ambient (sky, horizon, ground), linear fog for the
 // close-up camera, bloom and tonemapping on a global volume, and at night
-// the street lamps: every bulb glows, and a few real point lights follow the
-// lamps nearest the camera. Day and night blend by `dusk` (0 day, 1 night).
+// the street lamps: every bulb glows and lights the ground under it. Day and
+// night blend by `dusk` (0 day, 1 night).
 
 using System;
 using System.Collections.Generic;
@@ -16,7 +16,6 @@ namespace Porchlight.Rendering
     {
         /// <summary>Where the sun is, as a direction from the ground (map x, up, map y).</summary>
         static readonly Vector3 SunFrom = Coords.Map(-0.5, -0.3, 1.15).normalized;
-        const int LAMP_LIGHTS = 6;
 
         static readonly Color DaySky = Coords.Hex(0x87b7d8), NightSky = Coords.Hex(0x101828);
         static readonly Color DaySun = Coords.Hex(0xfff1d8), NightSun = Coords.Hex(0x9fb0e0);
@@ -29,7 +28,6 @@ namespace Porchlight.Rendering
         readonly GameObject root;
         readonly Light sun;
         readonly Light room;
-        readonly Light[] lampLights = new Light[LAMP_LIGHTS];
         readonly Volume volume;
 
         public Sky(Camera camera)
@@ -45,7 +43,6 @@ namespace Porchlight.Rendering
             RenderSettings.sun = sun;
 
             room = Point("room light", 6);
-            for (int i = 0; i < LAMP_LIGHTS; i++) lampLights[i] = Point("lamp light", 2.4f);
 
             RenderSettings.ambientMode = AmbientMode.Trilight;
             RenderSettings.fogMode = FogMode.Linear;
@@ -110,29 +107,14 @@ namespace Porchlight.Rendering
                 room.intensity = 0.8f + d * 2.2f;
             }
 
-            for (int i = 0; i < lamps.Count; i++) Materials.SetGlow(lamps[i].bulb, Warm, (float)(levels[i] * 3));
-            // The lamps nearest what the camera's on light the street for real.
-            var near = new List<int>();
-            if (d > 0.05f)
+            // Every lamp in town at once: its bulb glows (and blooms), and it throws a pool of
+            // warm light on the ground below, both following its own level (faulty ones flicker).
+            for (int i = 0; i < lamps.Count; i++)
             {
-                for (int i = 0; i < lamps.Count; i++) if (levels[i] > 0.2) near.Add(i);
-                near.Sort((a, b) => Dist(lamps[a], focus).CompareTo(Dist(lamps[b], focus)));
+                float level = (float)levels[i];
+                Materials.SetGlow(lamps[i].bulb, Warm, level * 3);
+                Materials.SetTint(lamps[i].pool, Warm * (level * 0.55f));
             }
-            for (int k = 0; k < LAMP_LIGHTS; k++)
-            {
-                var l = lampLights[k];
-                l.enabled = k < near.Count;
-                if (!l.enabled) continue;
-                var lamp = lamps[near[k]];
-                l.transform.position = Coords.Map(lamp.x, lamp.y, lamp.h - 0.08);
-                l.intensity = (float)(levels[near[k]] * 1.6);
-            }
-        }
-
-        static float Dist(Lamp l, Vector3 focus)
-        {
-            float dx = (float)l.x - focus.x, dz = (float)-l.y - focus.z;
-            return dx * dx + dz * dz;
         }
 
         public void Dispose() => UnityEngine.Object.Destroy(root);
