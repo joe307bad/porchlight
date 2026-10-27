@@ -20,6 +20,7 @@ static class Program
     {
         if (args.Length > 1 && args[0] == "math") return MathCheck.Run(args[1]);
         if (args.Length > 1 && args[0] == "sim") return SimCheck.Run(args[1]);
+        if (args.Length > 2 && args[0] == "models") return ModelCheck.Run(args[1], args[2]);
         var path = args.Length > 0 ? args[0] : "parity.json";
         var only = args.Length > 1 ? args[1] : null;
         var towns = JsonNode.Parse(File.ReadAllText(path)).AsArray();
