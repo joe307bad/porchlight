@@ -1,7 +1,7 @@
 // The right-hand sidebar, the app's one menu in both modes: Regenerate and
 // Explore / Back to map, the seed and the handful of params most people want
 // (native range inputs). On the map it adds layers and view/export actions;
-// while exploring, the minimap and the explore controls. Every other tunable
+// while exploring, the explore controls. Every other tunable
 // lives in the debug panel.
 
 import { PARAM_SPECS, type GenParams, type ParamSpec } from '../model/params';
@@ -76,7 +76,7 @@ export class Sidebar {
     initial: GenParams,
     visible: ReadonlySet<string>,
     handlers: SidebarHandlers,
-    /** The explore-mode controls (minimap host, buttons, help), moved in from the page. */
+    /** The explore-mode controls (buttons, help), moved in from the page. */
     exploreControls: HTMLElement,
   ) {
     this.params = { ...initial };
@@ -212,6 +212,31 @@ export class Sidebar {
   }
 
   /** Who's signed in, with a way out; pinned to the bottom of the sidebar. */
+  private characterRow: HTMLElement | null = null;
+
+  private characterName: HTMLElement | null = null;
+  private playingAs: string | null = null;
+
+  /** Who you're playing online as (null: playing alone), with the way to switch. */
+  setCharacter(name: string | null, onSwitch: () => void): void {
+    this.characterRow?.remove();
+    const button = el('button', { type: 'button', className: 'sb-link', textContent: name ? 'Switch' : 'Play online' });
+    button.addEventListener('click', onSwitch);
+    this.playingAs = name;
+    this.characterName = el('span', { className: 'sb-account-name', textContent: name ? `Playing as ${name}` : 'Playing alone' });
+    this.characterRow = el('div', { className: 'sb-account' }, this.characterName, button);
+    this.body.append(this.characterRow);
+  }
+
+  /** How it's going online: how many are in this town, or why you're on your own. */
+  setOnline(status: { state: 'joining' } | { state: 'online'; here: number } | { state: 'offline'; why: string }): void {
+    if (!this.characterName || !this.playingAs) return;
+    const detail =
+      status.state === 'joining' ? 'joining…' : status.state === 'online' ? (status.here === 1 ? 'just you here' : `${status.here} here`) : `offline: ${status.why}`;
+    this.characterName.textContent = `Playing as ${this.playingAs} · ${detail}`;
+    this.characterName.title = this.characterName.textContent;
+  }
+
   setAccount(user: { name: string; email: string | null }, onSignOut: () => void): void {
     const out = el('button', { type: 'button', className: 'sb-link', textContent: 'Sign out' });
     out.addEventListener('click', onSignOut);

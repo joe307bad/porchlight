@@ -15,6 +15,10 @@ export class Walker {
   heading = 0;
   /** How fast they moved over the last step (tiles per second; 0 = standing). */
   speed = 0;
+  /** Height of their feet off the ground (tiles; above 0 mid-jump). */
+  lift = 0;
+  /** Upward speed mid-jump (tiles per second; negative coming down). */
+  rise = 0;
 
   constructor(
     readonly look: Look,
@@ -33,15 +37,64 @@ export class Walker {
 }
 
 const PLAYER_SPEED = 3.4; // tiles per second
+/** How much faster the player goes sprinting (Shift, or the right trigger). */
+const SPRINT = 1.8;
 /** How close to the map edge the player may walk (tiles). */
 const EDGE = 0.2;
 const PLAYER_RADIUS = 0.1;
 
 const AUTO_SPEED = 1.8; // tiles per second
+/**
+ * Momentum (tiles per second²): on the ground they get up to speed in about a
+ * quarter of a second and stop in under a fifth; in the air they mostly keep
+ * the way they jumped, with a little steering.
+ */
+const ACCEL = 14;
+const BRAKE = 22;
+const AIR_ACCEL = 4;
+/**
+ * A jump: take-off speed (tiles per second, a little more at a run) and
+ * gravity (tiles per second²). Held, it rises about 0.2 tiles (about half
+ * their height); let go early and it's cut short. It comes down faster
+ * than it went up, for a snappy landing.
+ */
+const JUMP_SPEED = 1.5;
+const RUN_JUMP = 0.06;
+const GRAVITY = 5.5;
+const FALL_GRAVITY = 8.5;
+const RELEASE_GRAVITY = 14;
+/** A jump pressed this long (seconds) before landing still happens on landing. */
+const JUMP_BUFFER = 0.15;
 
 export class Player extends Walker {
   /** Set while auto-walking the sidewalks. */
   private auto: SidewalkWalk | null = null;
+  /** Set while the sprint key or trigger is held. */
+  sprinting = false;
+  /** Set while the jump key or button is held: letting go cuts a jump short. */
+  jumpHeld = false;
+  /** Their velocity over the ground (tiles per second). */
+  private vx = 0;
+  private vy = 0;
+  /** Seconds left in which a jump pressed in the air happens on landing. */
+  private buffered = 0;
+
+  /** Jump if their feet are on the ground; in the air, jump again as soon as they land. */
+  jump(): void {
+    if (this.lift > 0) {
+      this.buffered = JUMP_BUFFER;
+      return;
+    }
+    this.rise = JUMP_SPEED + RUN_JUMP * Math.hypot(this.vx, this.vy);
+    this.lift = 1e-6;
+    this.jumpHeld = true;
+  }
+
+  /** Stop dead (on being put somewhere new, or getting out of a car). */
+  halt(): void {
+    this.vx = 0;
+    this.vy = 0;
+  }
 
   get isAuto(): boolean {
     return this.auto !== null;
@@ -50,6 +103,7 @@ export class Player extends Walker {
   /** Head for the nearest sidewalk, then keep walking to far-off parts of town. */
   startAuto(net: SidewalkNetwork, rng: Rng): void {
     if (!net.paths.length) return;
+    this.halt();
     this.auto = SidewalkWalk.join(net, rng, { x: this.x, y: this.y });
     this.auto.roam();
   }
@@ -76,6 +130,7 @@ export class Player extends Walker {
 
   stopAuto(): void {
     this.auto = null;
+    this.halt();
   }
 
   /**
@@ -96,6 +151,20 @@ export class Player extends Walker {
    * furniture), sliding along them.
    */
   update(dir: Vec2 | null, dt: number, model: TownModel, open: Uint8Array, solids?: Solids): void {
+    this.buffered = Math.max(0, this.buffered - dt);
+    if (this.lift > 0) {
+      const g = this.rise < 0 ? FALL_GRAVITY : this.jumpHeld ? GRAVITY : RELEASE_GRAVITY;
+      this.rise -= g * dt;
+      this.lift += this.rise * dt;
+      if (this.lift <= 0) {
+        this.lift = 0;
+        this.rise = 0;
+        if (this.buffered > 0) {
+          this.buffered = 0;
+          this.jump();
+        }
+      }
+    }
     if (this.auto) {
       const next = this.auto.advance(AUTO_SPEED * dt);
       this.moved(next.x - this.x, next.y - this.y, dt);
@@ -103,22 +172,48 @@ export class Player extends Walker {
       this.y = next.y;
       return;
     }
+    // Steer the velocity toward where they're asked to go: briskly on the
+    // ground (harder when stopping or turning back), gently in the air.
+    const top = PLAYER_SPEED * (this.sprinting ? SPRINT : 1);
+    const tx = dir ? dir.x * top : 0;
+    const ty = dir ? dir.y * top : 0;
+    const air = this.lift > 0;
+    const slowing = tx * this.vx + ty * this.vy < this.vx * this.vx + this.vy * this.vy;
+    const rate = (air ? AIR_ACCEL : slowing ? BRAKE : ACCEL) * dt;
+    const ex = tx - this.vx;
+    const ey = ty - this.vy;
+    const gap = Math.hypot(ex, ey);
+    if (gap <= rate) {
+      this.vx = tx;
+      this.vy = ty;
+    } else {
+      this.vx += (ex / gap) * rate;
+      this.vy += (ey / gap) * rate;
+    }
     let dx = 0;
     let dy = 0;
-    if (dir) {
-      const step = PLAYER_SPEED * dt;
+    if (this.vx || this.vy) {
       const clampX = (v: number) => Math.min(model.width - EDGE, Math.max(EDGE, v));
       const clampY = (v: number) => Math.min(model.height - EDGE, Math.max(EDGE, v));
-      // Try the full move, then each axis alone, so the player slides along edges.
-      for (const [mx, my] of [[dir.x, dir.y], [dir.x, 0], [0, dir.y]]) {
-        const nx = clampX(this.x + mx * step);
-        const ny = clampY(this.y + my * step);
+      // Try the full move, then each axis alone, so the player slides along
+      // edges (losing the speed that ran into them).
+      const sx = this.vx * dt;
+      const sy = this.vy * dt;
+      let moved = false;
+      for (const [mx, my] of [[sx, sy], [sx, 0], [0, sy]]) {
+        if (!mx && !my) continue;
+        const nx = clampX(this.x + mx);
+        const ny = clampY(this.y + my);
         if (canStand(nx, ny, open, model) && !solids?.hits(nx, ny, PLAYER_RADIUS)) {
           dx = nx - this.x;
           dy = ny - this.y;
+          if (!mx) this.vx = 0;
+          if (!my) this.vy = 0;
+          moved = true;
           break;
         }
       }
+      if (!moved) this.halt();
       this.x += dx;
       this.y += dy;
     }
@@ -146,6 +241,8 @@ export class Pedestrian extends Walker {
   private readonly walk: SidewalkWalk;
   private pause = 0;
   private readonly pace: number;
+  /** How fast they're going now, easing to their pace (or to a stop for a chat). */
+  private going = 0;
 
   constructor(
     look: Look,
@@ -161,16 +258,19 @@ export class Pedestrian extends Walker {
   }
 
   update(dt: number): void {
-    if (this.pause > 0) {
-      this.pause -= dt;
-      this.moved(0, 0, dt);
-      return;
-    }
-    if (!this.walk.isCrossing) {
+    if (this.pause > 0) this.pause -= dt;
+    else if (!this.walk.isCrossing) {
       if (this.rng.chance(dt * 0.01)) this.pause = this.rng.range(1, 4); // stop for a chat now and then
       else if (this.rng.chance(dt * 0.02)) this.walk.crossStreet();
     }
-    const next = this.walk.advance(this.pace * dt);
+    // Slow to a stop and set off again over about half a second, rather than freeze and lurch.
+    const want = this.pause > 0 ? 0 : this.pace;
+    this.going += Math.sign(want - this.going) * Math.min(Math.abs(want - this.going), 3 * dt);
+    if (this.going < 1e-3) {
+      this.moved(0, 0, dt);
+      return;
+    }
+    const next = this.walk.advance(this.going * dt);
     this.moved(next.x - this.x, next.y - this.y, dt);
     this.x = next.x;
     this.y = next.y;

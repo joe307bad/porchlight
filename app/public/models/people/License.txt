@@ -1,0 +1,13 @@
+Cartoon City Massive Pack: Characters (free version)
+
+Created/distributed by RG Poly (https://rg-poly.itch.io/cartoon-city-massive-pack-characters)
+
+License: (Creative Commons Zero, CC0)
+http://creativecommons.org/publicdomain/zero/1.0/
+
+Free for personal and commercial use; attribution not required.
+
+Repacked for Porchlight: the shared texture atlas (atlas.png) is referenced by
+every character rather than embedded in each, the two zombie characters are
+left out, and animations.glb keeps only the idle, walk, run, jump and looking
+around clips.

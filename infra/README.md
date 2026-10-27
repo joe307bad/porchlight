@@ -5,7 +5,8 @@ Sign-in works the way it does in topspin: Keycloak sits in front of Google but t
 ```
 browser ──https──> Caddy ──┬── /            static app (app/dist, built in CI)
                            ├── /auth/*      auth service (server/) ──back channel──┐
-                           └── auth.<domain> Keycloak ── Postgres                  │
+                           ├── /mp/*        the same service: multiplayer ──┐      │
+                           └── auth.<domain> Keycloak ── Postgres ◄─────────┘      │
                                                ▲──────────────────────────────────┘
 ```
 
@@ -22,6 +23,19 @@ browser ──https──> Caddy ──┬── /            static app (app/di
    - `pl_session` holds the user and their id token, HMAC-signed. It lasts as long as Keycloak's session: 14 days idle, 30 days at most.
 5. **Sign out** POSTs to `/auth/logout`. The service clears the cookie and ends the Keycloak session using `id_token_hint`, so it goes straight back to the app with no "are you sure?" page.
 
+## How multiplayer works
+
+The auth service is also the game server: Colyseus on the same port, under `/mp`.
+
+- **Rooms:** everyone exploring the same town (seed and params) shares a room, up to 100 players. Past that, a second copy of the town opens.
+- **Characters:** one account (one Google sign-in) has up to 8 characters. Several of them can be played at once from different tabs or devices, so two people can share an account. After sign-in, explore mode asks **Who's playing?** (`/mp/characters`). The choice is remembered for that tab only.
+- **Auth:** joining checks the same `pl_session` cookie. It goes along because `/mp` is same-origin. The room also checks the character belongs to that account. Nothing new is stored in the page.
+- **Live state** is in memory only. Clients send moves about 20 times a second. The server checks each one (well-formed, inside the town, in order, no faster than a boosted car) and snaps back any that fail. It sends each client only the players within a cell or two of them (16-tile cells), as delta patches 20 times a second. Everyone else in the room shows as a minimap dot, updated once a second.
+- **Saved state** goes to Postgres, through Drizzle (tables in `server/src/multiplayer/tables.ts`; migrations generated into `server/drizzle` by `npm run db:generate`, and applied by the server on start): accounts, characters, each character's last position (per town) and look, play time, and sessions. Writes are batched every 30 s, plus on leave and on shutdown. A failed write is retried later and never holds up the game. If the database is down, joins are refused.
+- **Edge cases:** a dropped connection has 20 s to reconnect, and its character stands still meanwhile. Opening the same character again elsewhere signs out the older session ("newest wins"). Spamming messages or repeated bad moves gets a client kicked. On SIGTERM every room saves before the process exits.
+
+The server migrates its database on start and retries until the database is reachable. Sign-in works whether or not the database is up.
+
 The realm is provisioned by `keycloak/init-keycloak.sh`, an idempotent `kcadm` script that runs on every deploy. Like topspin's, it is used instead of a one-shot realm import.
 
 ## Development
@@ -30,10 +44,13 @@ The realm is provisioned by `keycloak/init-keycloak.sh`, an idempotent `kcadm` s
 ./dev.sh
 ```
 
-`dev.sh` starts three things:
+`dev.sh` starts four things:
 - **Keycloak** (Docker) on http://localhost:8080, with the realm provisioned in `dev` mode.
-- **The auth service** on :3017.
-- **Vite** on http://localhost:5173, which proxies `/auth` to the auth service.
+- **The game database** (Docker, Postgres 17) on localhost:5434 (`game` / `devpassword`, database `city`).
+- **The auth + game server** on :3017.
+- **Vite** on http://localhost:5173, which proxies `/auth` and `/mp` (WebSockets too) to the server.
+
+To try multiplayer, sign in in two windows (a private one works), or open two tabs on one account and pick a different character in each. Then explore the same town: copy the URL, which carries the seed. To load-test, run `npm run bots -- 100 60` in `server/` (100 bots for 60 s; the server logs tick times every minute). Run `npm run test:db` in `server/` to also test the Postgres code against the dev database.
 
 There are two dev accounts:
 
@@ -56,13 +73,13 @@ Without Docker, `dev.sh` turns sign-in off (`VITE_AUTH_ENABLED=false`).
   | --- | --- |
   | Keycloak | ~490 MB |
   | Postgres | ~50 MB |
-  | Auth service | ~45 MB |
+  | Auth + game server | ~110 MB idle, ~125 MB with 30 players (heap capped at 160 MB) |
 
   Caddy and the OS take the rest.
 - Nothing is built from the app on the box. The only image builds there are the Keycloak and auth-service images.
 - If Keycloak ever struggles, set `instance_type = "t4g.small"`. That replaces the box, but the data volume survives.
 
-**Persistent data** lives on a separate 4 GB EBS volume mounted at `/data`: Keycloak's Postgres and Caddy's certificates. The volume has `prevent_destroy`, and AWS takes a daily snapshot and keeps 7.
+**Persistent data** lives on a separate 4 GB EBS volume mounted at `/data`: the Postgres server and Caddy's certificates. To keep one Postgres on the small box, that server holds two databases: `keycloak`, and `porchlight` for the game. Each has its own role. `deploy.sh` creates the game's database and role, and resets that role's password (`GAME_DB_PASSWORD`) from Secrets Manager on every deploy. The volume has `prevent_destroy`, and AWS takes a daily snapshot and keeps 7.
 
 ### One-time setup
 
@@ -96,6 +113,7 @@ Every push to `main` that touches `app/`, `server/`, `infra/` or the workflow de
 4. Runs `infra/docker/deploy.sh` on the box. That script:
    - generates any missing secrets (database and admin passwords, client and session secrets) and stores them in Secrets Manager under `porchlight/prod`;
    - starts the stack;
+   - waits for Postgres, then creates the game's database and role if they're missing;
    - waits for Keycloak, then runs `init-keycloak.sh prod`.
 
 ### On the box

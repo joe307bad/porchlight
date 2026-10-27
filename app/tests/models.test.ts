@@ -6,10 +6,10 @@ import type { Group } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { describe, expect, it } from 'vitest';
 import { Walker } from '../src/render/iso/actors';
-import { BUSHES, CARS, CHARACTERS, CROPS, FLOWERS, FURNISHINGS, HOUSES, PROPS, SHOPS, TOWERS, TREES, flatten } from '../src/render/iso/assets';
+import { BUSHES, CARS, CHARACTERS, PEOPLE_CLIPS, CROPS, FLOWERS, FURNISHINGS, HOUSES, PROPS, SHOPS, TOWERS, TREES, flatten } from '../src/render/iso/assets';
 import { lightWindows } from '../src/render/iso/windows';
-import { MeshStandardMaterial, ShaderLib } from 'three';
-import { Avatar } from '../src/render/iso/characters';
+import { MeshStandardMaterial, ShaderLib, Vector3 } from 'three';
+import { Avatar, peopleClips, prepareCharacter } from '../src/render/iso/characters';
 
 /** Every model file, as a base64 data URL. */
 const files = import.meta.glob('../public/models/**/*.glb', { query: '?inline', import: 'default', eager: true }) as Record<string, string>;
@@ -74,18 +74,48 @@ describe('Kenney models', () => {
     }
   });
 
-  it('rig every character with walk and idle clips, scaled to height, with an x-ray copy', async () => {
+  it('rig every character with walk, run, jump and fall clips, lit, scaled to height, with an x-ray copy', async () => {
+    const clips = peopleClips((await parse(PEOPLE_CLIPS)).animations);
     for (const name of CHARACTERS) {
-      const gltf = await parse(`characters/${name}`);
+      const gltf = await parse(name);
+      prepareCharacter(gltf, clips);
+      // Every track drives a bone this person has.
+      for (const clip of gltf.animations) {
+        for (const t of clip.tracks) expect(gltf.scene.getObjectByName(t.name.slice(0, t.name.lastIndexOf('.'))), `${name} ${t.name}`).toBeTruthy();
+      }
       const names = gltf.animations.map((a) => a.name);
-      expect(names, name).toContain('walk');
-      expect(names, name).toContain('idle');
+      for (const clip of ['idle', 'walk', 'sprint', 'jump', 'fall', 'crouch']) expect(names, name).toContain(clip);
+      gltf.scene.traverse((o) => {
+        const m = (o as { material?: { isMeshStandardMaterial?: boolean } }).material;
+        if (m) expect(m.isMeshStandardMaterial, `${name} is lit`).toBe(true);
+      });
+      // Standing at heading 0, they face +Z (toes ahead of the feet) with their left hand on +X.
+      const still = new Avatar(gltf, 0.36, 0);
+      still.update(new Walker({ model: name }, 0, 0), 0.016);
+      still.root.updateMatrixWorld(true);
+      const at = (bone: string) => still.root.getObjectByName(bone)!.getWorldPosition(new Vector3());
+      expect(at('ToesL').z - at('FootL').z, `${name} faces +Z`).toBeGreaterThan(0.005);
+      expect(at('HandL').x - at('HandR').x, `${name} left hand on +X`).toBeGreaterThan(0.05);
+      expect(at('Head').y, `${name} head height`).toBeCloseTo(0.36 * 0.71, 1);
       const a = new Avatar(gltf, 0.62, 0.3);
       const w = new Walker({ model: name }, 5, 7);
       w.moved(0.1, 0, 0.05);
       a.update(w, 0.05);
       expect(a.root.position.x).toBeCloseTo(5);
       expect(a.root.position.z).toBeCloseTo(7);
+      // Run, jump and land: every pose stays finite and they end back on their feet.
+      for (let t = 0; t < 1.2; t += 1 / 60) {
+        w.x += 0.05;
+        w.speed = 3;
+        w.rise = t < 0.6 ? 1.2 - 4 * t : 0;
+        w.lift = t < 0.6 ? Math.max(0, 0.5 * t - t * t) : 0;
+        a.update(w, 1 / 60);
+      }
+      a.root.updateMatrixWorld(true);
+      a.root.traverse((o) => {
+        for (const v of o.matrixWorld.elements) expect(Number.isFinite(v), name).toBe(true);
+      });
+      expect(a.root.position.y).toBeLessThan(0.05);
       let meshes = 0;
       a.root.traverse((o) => {
         if ((o as { isMesh?: boolean }).isMesh) meshes++;

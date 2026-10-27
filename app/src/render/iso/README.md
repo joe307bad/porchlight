@@ -15,10 +15,37 @@ before, but the town is real geometry, so the camera can turn.
   destination. While auto-walking, a direction key pointing back turns you
   round and one pointing at the road crosses it. Scroll zooms, `N` toggles day
   and night, `C` swaps to a new random character, `Esc` returns to the
-  blueprint. The minimap (bottom left) shows where you are and what the camera
+  blueprint. The minimap (bottom left of the 3D view) shows where you are and what the camera
   sees; click it to jump there.
+- **Controller (`gamepad.ts`):** an Xbox-style pad, read with the Gamepad
+  API's standard mapping. Chrome 156 on macOS reads Xbox pads through
+  Apple's GameController framework (feature
+  `XboxUseGameControllerDataFetcherMac`, on by default), which never
+  exposes a Bluetooth Xbox One S pad; start Chrome with
+  `--disable-features=XboxUseGameControllerDataFetcherMac` (from fully
+  quit) and it reads the pad over HID with the standard mapping, as 155
+  did. Safari doesn't see that pad either. Firefox does but numbers its
+  buttons its own way, so `gamepad.ts` remaps that pad (by its Firefox id
+  `045e-02fd-…`). Firefox gives Y and LB, RB and View, and Menu and the
+  right stick click the same numbers, so on it only Y, View and Menu work of
+  those, and it has no triggers. Left stick walks screen-relative (slower
+  when only part pushed; in close-up it walks and turns like W/S/A/D), and
+  while auto-walking a flick of it is a turn-round / cross request. On foot
+  RT sprints (Shift on the keyboard; the characters' sprint clip takes over
+  from the walk), and at the wheel RT / LT
+  accelerate and brake, RT (or Shift) boosting the car to 1.7× its top
+  speed (the stick's up / down does too, for
+  Firefox), and the stick steers. Right stick flicks turn the camera a stop
+  and tilt it (in close-up it swings the camera smoothly); d-pad left /
+  right turn it too; LB / RB or d-pad up / down zoom; right stick click
+  looks ahead. A jumps (Space on the keyboard; the characters' own jump clip
+  plays mid-air), B gets in / out of a car, X auto walk / drive, Y close-up,
+  left stick click day / night, View a new character, Menu back to the map
+  (and into explore mode again from the map). Prompts name the pad's
+  buttons once one's connected (browsers show it only after its first
+  button press).
 - **Driving (`driving.ts`):** walk up to a car, parked or passing in the
-  traffic (a prompt shows when one's in reach), and press `G` (or **Get in
+  traffic (a prompt shows when one's in reach), and press `G` or `B` (or **Get in
   car**) to get in. Take one from the traffic and its driver gets out and
   walks off to the sidewalk.
   `W` / `S` (or the arrows) are the accelerator and the brake, holding the
@@ -28,8 +55,12 @@ before, but the town is real geometry, so the camera can turn.
   buildings, sheds, open water and the map's edge (roads, bridges, lawns and
   plazas are all fine). The camera follows the car round as it turns, and the
   close-up camera pulls back. `G` again gets you out beside the driver's door
-  (or wherever's clear), and the car stays where you left it, to get back
-  into later. A car taken from the traffic leaves it for good. The traffic
+  (or wherever's clear round the car, or failing that the nearest spot you
+  can stand), and the car stays where you left it, to get back into later.
+  Online, `G` by another player's car makes you their passenger (up to three
+  to a car, the server counts the seats): you ride wherever they drive, out
+  of sight in the car with your name tag over it, until `G` gets you out
+  beside it (or they get out, or leave). A car taken from the traffic leaves it for good. The traffic
   stops for you when you're in the road, and for any car you've driven, and
   turns round (swinging into the other lane) if it's held up for a few
   seconds.
@@ -57,8 +88,9 @@ before, but the town is real geometry, so the camera can turn.
   or Mews and a winding one a Crescent or Drive; footpaths are Walks. One
   street by the church is Church …, one by the plaza Market …, one over a
   bridge Bridge …. Small green signposts stand on a corner of each junction
-  where differently named streets meet, one blade per street, each running
-  along its street and lettered on both sides (all names drawn once into one
+  where differently named streets meet, one blade per street, each sticking
+  out from the post along its street (clear of the post, like a fingerpost)
+  and lettered on both sides (all names drawn once into one
   texture atlas, `signAtlas` in `textures.ts`; all blades are one mesh). The
   panel top right says which street you're on.
 - **Directions (`directions.ts`):** while auto-walking, the panel lists
@@ -88,7 +120,9 @@ before, but the town is real geometry, so the camera can turn.
   third-person camera just behind and above the player, turning with them
   (`chaseYaw`). `W` / `S` walk forward and back, `A` / `D` turn, `Q` / `E`
   swing the camera 30° round them (`F` puts it back behind), scroll moves it
-  nearer or further. If a building is between the player and the camera, the
+  nearer or further. Walking forward always heads the way the camera looks:
+  if it's been swung round, the player turns to face that way and the camera
+  is behind them again. If a building is between the player and the camera, the
   camera comes in closer rather than sit inside it. Fog fades the town into
   the sky. Auto walk works here too, with the camera following from behind.
 - **Ground floors (`interiors.ts`):** every building piece has a room behind
@@ -185,10 +219,38 @@ before, but the town is real geometry, so the camera can turn.
 - **Traffic (`traffic.ts`, `fleet.ts`):** cars drive every through road in the
   right-hand lane, turn at junctions and queue; dead-end side streets have
   parked cars.
-- **People (`actors.ts`, `characters.ts`):** Kenney mini characters with their
-  idle and walk clips blended by speed, the walk sped up to match the pace.
-  Townsfolk are about 1.6 m tall beside the cars (`PERSON_HEIGHT`); the
-  player is a touch taller (`PLAYER_SCALE`).
+- **People (`actors.ts`, `characters.ts`):** RG Poly's Cartoon City people
+  (14 townsfolk, a police officer among them). They share one skeleton, and
+  their clips live apart in `people/animations.glb`. On load,
+  `peopleClips` renames the kit's clips to the ones the avatars play
+  (`Idle_A` → idle, `Walk_A` → walk, `Runing_A` → sprint, `Jump_A_Start` →
+  jump, `Jump_A_InAir` → fall, `Jump_A_Landing` → crouch). It keeps only
+  bone rotations and the hips' height. The jump and landing start at their
+  lowest point, since the game takes off and lands instantly, and the hips
+  never rise above standing, since the game lifts the body itself.
+  `prepareCharacter` gives every person matte materials, one shared texture
+  atlas, and the clips' tracks for bones they have. Avatars are sized by
+  where the head bone starts (`HEAD_SHARE`), so hats and hair don't make
+  anyone smaller, and turned to face +Z (`MODEL_TURN`). Townsfolk are
+  about 1.6 m tall beside the cars (`PERSON_HEIGHT`); the player is a touch
+  taller (`PLAYER_SCALE`).
+- **Footwork:** idle, walk and run (the kits' sprint clip) blend by speed:
+  all walk below 1.7 tiles a second, all run above 2.5. The walk and run share
+  one stride phase, so they blend without the legs swapping, and above a
+  clip's natural pace the stride lengthens as well as quickens (cadence goes
+  with speed^0.55), so a sprint is long strides, not a blur. The body leans
+  into the run and into speeding up (back when stopping) and banks into turns.
+  The player has momentum: up to speed in about a quarter second, stopped in
+  under a fifth, a skid of speed lost against walls, and only a little
+  steering in the air. Townsfolk slow to a stop for a chat and set off again
+  rather than freeze.
+- **Jumping:** Space / A. Held, a jump rises about 0.2 tiles (half their
+  height); let go early and it's cut short to a hop. A running jump goes a
+  little higher, comes down faster than it went up, and keeps its momentum.
+  A jump pressed just before landing (0.15 s) happens on landing. The jump
+  clip plays going up, the fall clip coming down, and landing squashes them
+  and dips into the crouch pose, harder the faster they came down; take-off
+  stretches them.
 - **Day and night:** the sky, the hemisphere light and the sun ease to
   moonlight. At night the lamps' bulbs light, each with a halo (screen-space
   points) and a pool of light on the pavement; a few faulty ones flicker hard.
@@ -197,6 +259,21 @@ before, but the town is real geometry, so the camera can turn.
   each with a halo, and throws a pool of warm light on the road ahead.
   Parked cars, and cars you've left, stay dark. They fade with the dusk like
   the street lamps.
+- **Multiplayer (`remotes.ts`, `src/net/`):** when signed in, explore mode
+  is shared with everyone exploring the same town (seed and params). First
+  it asks **Who's playing?**: one sign-in can have several characters, and
+  each tab or device can play a different one at the same time. Other
+  players are drawn as their characters (or as their car while they drive),
+  with a name tag that shows through buildings, and as blue dots on the
+  minimap. They move smoothly: each is drawn 100 ms behind the server's
+  clock, between the two patches either side (`net/interp.ts`). Your own
+  character moves the instant you press a key. The server only corrects
+  you, with a snap back after a move it won't accept. A minimap jump goes
+  through the server first. Each character comes back where they left off
+  in this town, looking as they did (`C` changes the look and saves it).
+  Without the server, the town works offline as before. Set
+  `VITE_MULTIPLAYER=false` to stay offline when signed in. Protocol and
+  edge cases: `infra/README.md`, under "How multiplayer works".
 - **Animation:** water shimmers in a small shader, pale streaks run down the
   rivers, and the plaza fountain sprays.
 
@@ -224,7 +301,8 @@ before, but the town is real geometry, so the camera can turn.
 | `hud.ts` | The street panel: the street you're on, and the directions |
 | `windows.ts` | Night-time lit and flickering windows (a shader patch on the building materials) |
 | `streets.ts` | Tiles allowed in streets-only walking |
-| `minimap.ts` | Corner map with player marker and camera outline |
+| `minimap.ts` | Corner map with player marker, other players' dots and camera outline |
+| `remotes.ts` | Other players: their characters or cars, interpolated from the server's patches, with name tags |
 | `textures.ts` | The glow texture for lamp halos and light pools, and the street sign atlas |
 | `view.ts` | Renderer, lights, camera, input, sight-keeping, day/night and animation loop |
 
@@ -234,10 +312,12 @@ Models are Kenney's CC0 3D kits (www.kenney.nl), served from `public/models`,
 each kit in its own folder with its licence and `Textures/colormap.png`:
 **City Kit Suburban** (houses, fences, planters, plus three colour
 variations), **City Kit Commercial** (shops, offices, skyscrapers, plus two
-colour variations), **Car Kit**, **Mini Characters** (rigged, with animation
-clips), **Furniture Kit** (room furniture and counters, facing +Z) and **Nature Kit** (trees, bushes, flowers, crops, rocks).
+colour variations), **Car Kit**, **Furniture Kit** (room furniture and counters, facing +Z) and **Nature Kit** (trees, bushes, flowers, crops, rocks).
+The people are RG Poly's CC0 **Cartoon City Massive Pack: Characters** (free
+version), in `public/models/people`: rigged models sharing `atlas.png`, and
+their clips in `animations.glb`.
 
-Orientation: Kenney's cars and characters face +Z, but the city-kit buildings
+Orientation: Kenney's cars face +Z (and the people are turned to), but the city-kit buildings
 have their fronts on -Z, so the world turns them half round (`BUILDING_TURN`;
 `tests/models.test.ts` checks this from which side each model's detail is on).
 The nature kit's materials are marked fully metallic, which renders near-black

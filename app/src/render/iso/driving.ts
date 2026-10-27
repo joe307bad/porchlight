@@ -17,6 +17,9 @@ import { Use, type IsoLayout, type RoadStroke } from './layout';
 /** Top speed forward and in reverse (tiles per second). */
 export const TOP_SPEED = 5.2;
 const REVERSE_SPEED = 1.6;
+/** Boost (the right trigger, or Shift): how much higher the top speed goes, and how much harder it pulls. */
+const BOOST_SPEED = 1.7;
+const BOOST_ACCEL = 1.6;
 /** Acceleration, braking and coasting drag (tiles per second, per second). */
 const ACCEL = 3.2;
 const BRAKE = 7;
@@ -51,11 +54,16 @@ export class Vehicle {
    * reverse) or 0 (coast); `steer` is -1 (left) to +1 (right) as seen from
    * the driver's seat. `open` says where the car may be.
    */
-  drive(throttle: number, steer: number, dt: number, open: (x: number, y: number) => boolean): void {
-    if (throttle > 0) this.speed += (this.speed < 0 ? BRAKE : ACCEL) * dt;
-    else if (throttle < 0) this.speed -= (this.speed > 0 ? BRAKE : ACCEL * 0.6) * dt;
+  drive(throttle: number, steer: number, dt: number, open: (x: number, y: number) => boolean, boost = false): void {
+    // Part throttle (a controller trigger) pulls less hard, and only up to its share of top speed.
+    // Boosting raises the top speed; let go and the car coasts back down to the normal one.
+    const top = TOP_SPEED * (boost ? BOOST_SPEED : 1);
+    if (throttle > 0 && this.speed <= top * throttle) {
+      this.speed += (this.speed < 0 ? BRAKE : ACCEL * (boost ? BOOST_ACCEL : 1)) * throttle * dt;
+      this.speed = Math.min(top, this.speed);
+    } else if (throttle < 0) this.speed -= (this.speed > 0 ? BRAKE : ACCEL * 0.6) * -throttle * dt;
     else this.speed -= Math.sign(this.speed) * Math.min(Math.abs(this.speed), DRAG * dt);
-    this.speed = Math.max(-REVERSE_SPEED, Math.min(TOP_SPEED, this.speed));
+    this.speed = Math.max(-REVERSE_SPEED, this.speed);
     // Map y runs south, so turning right is a growing heading. Reversing steers the back round.
     const bite = Math.min(1, Math.abs(this.speed) / FULL_STEER_SPEED) * Math.sign(this.speed);
     const heading = this.heading + steer * STEER_RATE * bite * dt;

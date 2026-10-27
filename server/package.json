@@ -3,19 +3,33 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Sign-in for Porchlight: the OIDC handshake with Keycloak, kept off the page. Sessions live in an HttpOnly, SameSite=Lax cookie.",
-  "engines": { "node": ">=23.6" },
+  "description": "Porchlight's server: sign-in (the OIDC handshake with Keycloak, kept off the page; sessions in an HttpOnly, SameSite=Lax cookie) and the multiplayer game (Colyseus, with Postgres for what's saved).",
+  "engines": {
+    "node": ">=23.6"
+  },
   "scripts": {
     "start": "node src/main.ts",
     "dev": "node --watch --env-file-if-exists=.env.development src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts"
+    "test": "node --test test/*.test.ts",
+    "test:db": "TEST_DATABASE_URL=postgres://game:devpassword@localhost:5434/city node --test test/*.test.ts",
+    "bots": "node --env-file-if-exists=.env.development scripts/bots.ts",
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "jose": "^6.1.0"
+    "@colyseus/core": "^0.17.55",
+    "@colyseus/schema": "^4.0.31",
+    "@colyseus/ws-transport": "^0.17.13",
+    "drizzle-orm": "^0.45.4",
+    "express": "^5.3.0",
+    "jose": "^6.1.0",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
+    "@colyseus/sdk": "^0.17.43",
     "@types/node": "^22.10.0",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "^0.31.11",
     "typescript": "^5.9.3"
   }
 }

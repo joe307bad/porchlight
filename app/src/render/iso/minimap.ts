@@ -1,7 +1,7 @@
-// A small top-down map of the whole town, shown in the sidebar while exploring,
+// A small top-down map of the whole town, in the bottom-left corner of the 3D view,
 // drawn the same way up as the blueprint. It marks the player (and auto-walk's
-// destination) and outlines what the camera can see; clicking it moves the
-// player there.
+// destination), other players in blue, and outlines what the camera can see;
+// clicking it moves the player there.
 
 import type { TownModel, Vec2 } from '../../model/types';
 import { TILE_BUILDING, TILE_OVERLAY, TILE_TERRAIN } from '../blueprint/style';
@@ -15,6 +15,8 @@ export class Minimap {
   private base: HTMLCanvasElement | null = null;
   private model: TownModel | null = null;
   private scale = 1;
+  /** Other players in the room (map tiles). */
+  private others: Vec2[] = [];
 
   constructor(host: HTMLElement, onPick: (at: Vec2) => void) {
     this.canvas.className = 'minimap';
@@ -55,6 +57,11 @@ export class Minimap {
     this.canvas.style.height = `${h * this.scale}px`;
     this.canvas.width = Math.round(w * this.scale * dpr);
     this.canvas.height = Math.round(h * this.scale * dpr);
+  }
+
+  /** Where the other players are, drawn on every redraw. */
+  setOthers(others: Vec2[]): void {
+    this.others = others;
   }
 
   /** Redraw with the player at `player`, the camera's view as a world-space quad, and auto-walk's goal. */
@@ -99,6 +106,16 @@ export class Minimap {
       ctx.lineTo(goal.x, goal.y - 5 / k);
       ctx.closePath();
       ctx.fill();
+    }
+
+    for (const o of this.others) {
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, 3 / k, 0, Math.PI * 2);
+      ctx.fillStyle = '#3b82c4';
+      ctx.fill();
+      ctx.lineWidth = 1.5 / k;
+      ctx.strokeStyle = '#fff8e8';
+      ctx.stroke();
     }
 
     if (player) {

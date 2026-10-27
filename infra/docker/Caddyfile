@@ -9,6 +9,13 @@
 		reverse_proxy auth:3017
 	}
 
+	# Multiplayer (the same service): characters, matchmaking and the game's
+	# WebSockets, which Caddy proxies as they are. Same origin, so the session
+	# cookie goes along.
+	handle /mp/* {
+		reverse_proxy auth:3017
+	}
+
 	# The app: Vite's static build, copied here by the deploy.
 	handle {
 		root * /srv/site

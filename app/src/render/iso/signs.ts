@@ -1,6 +1,6 @@
 // Street name signs: a slim post on a corner of every junction where
 // differently named streets meet, with a green blade per street, each
-// running along its street and lettered on both sides. Every name is drawn
+// sticking out from the post along its street and lettered on both sides. Every name is drawn
 // once into one texture atlas (textures.ts), and all the blades are one mesh,
 // so the signs cost two draw calls however many there are.
 //
@@ -34,6 +34,8 @@ const BLADE_THICK = 0.012;
 const BLADE_Y = 0.6;
 const BLADE_STEP = 0.1;
 const POST_RADIUS = 0.014;
+/** Space between the post and a blade's near end (tiles). */
+const BLADE_GAP = 0.004;
 /** No two signposts closer than this (tiles). */
 const SIGN_SPACING = 1.6;
 
@@ -135,9 +137,10 @@ export function addStreetSigns(root: Group, signs: readonly Signpost[], names: S
 }
 
 /**
- * One blade: a thin board centred on the post, its long side along `along`,
- * lettered on both faces so the name reads left to right from either side,
- * with plain green edges.
+ * One blade: a thin board sticking out from the post along `along` (its near
+ * end just clear of the post, like a fingerpost, so the post never runs
+ * through the lettering), lettered on both faces so the name reads left to
+ * right from either side, with plain green edges.
  */
 function blade(pos: number[], nor: number[], uv: number[], at: Vec2, along: Vec2, y: number, cell: { u0: number; u1: number; v0: number; v1: number }): void {
   const d = along;
@@ -145,8 +148,10 @@ function blade(pos: number[], nor: number[], uv: number[], at: Vec2, along: Vec2
   const hl = BLADE_LENGTH / 2;
   const hh = BLADE_HEIGHT / 2;
   const ht = BLADE_THICK / 2;
-  // Corner in three space: centre + d*a + n*b, height y + c.
-  const P = (a: number, b: number, c: number) => [at.x + d.x * a + n.x * b, y + c, at.y + d.y * a + n.y * b];
+  // The blade's middle: out from the post's centre by its radius, a hair's gap and half the blade.
+  const out = POST_RADIUS + BLADE_GAP + hl;
+  // Corner in three space: middle + d*a + n*b, height y + c.
+  const P = (a: number, b: number, c: number) => [at.x + d.x * (out + a) + n.x * b, y + c, at.y + d.y * (out + a) + n.y * b];
   const quad = (p: number[][], normal: number[], uvs: number[][]) => {
     for (const k of [0, 1, 2, 0, 2, 3]) {
       pos.push(...p[k]);

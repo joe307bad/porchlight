@@ -1,13 +1,15 @@
 // Kenney's CC0 3D kits (www.kenney.nl), served from public/models: City Kit
 // Suburban (houses, fences), City Kit Commercial (shops, offices, towers), Car
-// Kit, Mini Characters (rigged, with walk and idle clips) and Nature Kit (trees,
-// bushes, crops) and Furniture Kit (room furniture and counters). Static models are flattened into one geometry per material so
+// Kit, Nature Kit (trees, bushes, crops) and Furniture Kit (room furniture and
+// counters); and RG Poly's CC0 Cartoon City people (rigged, one skeleton, the
+// clips in people/animations.glb). Static models are flattened into one geometry per material so
 // the world can draw every copy of a model as a single InstancedMesh.
 
 import { Box3, Material, Plane, Mesh, MeshStandardMaterial, SRGBColorSpace, Texture, TextureLoader, Vector3, type BufferGeometry, type Object3D } from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { BuildingKind } from '../../model/types';
+import { peopleClips, prepareCharacter } from './characters';
 
 const BASE = `${import.meta.env.BASE_URL}models`;
 
@@ -31,7 +33,27 @@ export const TOWERS = range('abcde', (c) => `commercial/building-skyscraper-${c}
 export const CARS = ['sedan', 'hatchback-sports', 'suv', 'van', 'taxi', 'delivery', 'truck', 'police'].map((c) => `cars/${c}`);
 /** How often each car model turns up (police and trucks are rare). */
 export const CAR_WEIGHTS = [5, 3, 4, 2, 1, 1, 1, 0.4];
-export const CHARACTERS = [...range('abcdef', (c) => `character-female-${c}`), ...range('abcdef', (c) => `character-male-${c}`)];
+/**
+ * Townsfolk and players: RG Poly's Cartoon City people (public/models/people).
+ * They share one skeleton, so one set of clips (PEOPLE_CLIPS) moves them all.
+ */
+export const CHARACTERS = [
+  'character-1-2-2',
+  'character-2-1-3',
+  'character-3-2-3',
+  'character-4-1-1',
+  'character-5-2-3',
+  'character-5-3-1',
+  'character-6-2-2',
+  'character-8-3-1',
+  'character-9-3-4',
+  'character-9-5-7',
+  'character-10-4-3',
+  'character-11-3-1',
+  'character-b-1',
+  'policeman-a-4-1',
+].map((n) => `people/${n}`);
+export const PEOPLE_CLIPS = 'people/animations';
 export const TREES = ['tree_default', 'tree_oak', 'tree_detailed', 'tree_fat', 'tree_pineRoundA', 'tree_pineRoundC', 'tree_cone', 'tree_simple', 'tree_small'].map(
   (n) => `nature/${n}`,
 );
@@ -72,9 +94,10 @@ export interface TownAssets {
 export async function loadTownAssets(): Promise<TownAssets> {
   const loader = new GLTFLoader();
   const statics = [...HOUSES, ...SHOPS, ...TOWERS, ...CARS, ...TREES, ...BUSHES, ...FLOWERS, ...CROPS, ...PROPS, ...FURNISHINGS];
-  const [prefabs, characters, variations] = await Promise.all([
+  const [prefabs, characters, clipFile, variations] = await Promise.all([
     Promise.all(statics.map(async (name) => flatten(name, (await loader.loadAsync(`${BASE}/${name}.glb`)).scene))),
-    Promise.all(CHARACTERS.map((name) => loader.loadAsync(`${BASE}/characters/${name}.glb`))),
+    Promise.all(CHARACTERS.map((name) => loader.loadAsync(`${BASE}/${name}.glb`))),
+    loader.loadAsync(`${BASE}/${PEOPLE_CLIPS}.glb`),
     loadVariations(),
   ]);
   const byName = new Map(prefabs.map((p) => [p.name, p]));
@@ -89,6 +112,9 @@ export async function loadTownAssets(): Promise<TownAssets> {
       lightWindows(part.material);
     }
   }
+  const clips = peopleClips(clipFile.animations);
+  const shared = {};
+  for (const c of characters) prepareCharacter(c, clips, shared);
   const charByName = new Map(CHARACTERS.map((n, i) => [n, characters[i]]));
   const variants = new Map<string, Prefab>();
   const recoloured = new Map<string, Material>();

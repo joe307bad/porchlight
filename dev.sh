@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs Porchlight locally: Keycloak (Docker) with a seeded user, the auth
-# service, and the Vite dev server at http://localhost:5173/.
+# Runs Porchlight locally: Keycloak and the game database (Docker) with a
+# seeded user, the auth + game server, and the Vite dev server at
+# http://localhost:5173/.
 #
 # Sign in as dev / dev. Without Docker, sign-in is switched off and the app
 # opens straight away.
@@ -22,7 +23,8 @@ done
 
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   export COMPOSE="docker compose -f $ROOT/infra/dev/docker-compose.yml"
-  echo "Starting Keycloak at http://localhost:8080/ ..."
+  echo "Starting Keycloak at http://localhost:8080/ and the game database ..."
+  $COMPOSE up -d --wait db
   $COMPOSE up -d
   "$ROOT/infra/keycloak/init-keycloak.sh" dev
 
@@ -30,7 +32,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   AUTH_PID=$!
   trap 'kill $AUTH_PID 2>/dev/null || true' EXIT
 else
-  echo "warning: Docker isn't running, so there's no Keycloak; sign-in is off for this run." >&2
+  echo "warning: Docker isn't running, so there's no Keycloak; sign-in (and so multiplayer) is off for this run." >&2
   # Process env beats app/.env.development.
   export VITE_AUTH_ENABLED=false
 fi

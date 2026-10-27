@@ -3,10 +3,14 @@
 #   caddy     the only thing listening publicly: TLS for both names, the static
 #             app off disk, /auth/* to the auth service, auth.<domain> to Keycloak
 #   auth      the OIDC handshake, kept off the page (server/); sessions are
-#             HttpOnly SameSite=Lax cookies
+#             HttpOnly SameSite=Lax cookies. Also the multiplayer game server
+#             (Colyseus, at /mp/*), which keeps characters in the `porchlight`
+#             database
 #   keycloak  the identity provider at auth.<domain>; brokers Google, and the
 #             user never sees it (kc_idp_hint + a browser flow that only redirects)
-#   postgres  Keycloak's database, on the persistent data volume
+#   postgres  Keycloak's database and the game's (one server, two databases
+#             and roles, so the small box runs one Postgres), on the
+#             persistent data volume
 #
 # Sized for a t4g.micro (1 GB + 2 GB swap): every memory knob below is turned
 # down from its default. Nothing is built from the app here; CI builds it and
@@ -50,6 +54,9 @@ services:
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
       KEYCLOAK_IDP_HINT: google
       SESSION_SECRET: ${SESSION_SECRET}
+      # Created by deploy.sh; the server migrates it on start (and retries
+      # until it's there, so sign-in never waits on it).
+      DATABASE_URL: postgres://porchlight:${GAME_DB_PASSWORD}@postgres:5432/porchlight
 
   keycloak:
     build:
@@ -100,7 +107,7 @@ services:
     command: >
       postgres
       -c shared_buffers=32MB
-      -c max_connections=20
+      -c max_connections=30
       -c work_mem=2MB
       -c maintenance_work_mem=16MB
     volumes:

@@ -16,6 +16,8 @@
     "vitest": "^3.2.7"
   },
   "dependencies": {
+    "@colyseus/schema": "^4.0.31",
+    "@colyseus/sdk": "^0.17.43",
     "lil-gui": "^0.21.0",
     "simplex-noise": "^4.0.3",
     "three": "^0.186.1"

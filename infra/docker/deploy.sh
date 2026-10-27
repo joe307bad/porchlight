@@ -20,7 +20,7 @@ SECRET=$(aws secretsmanager get-secret-value --secret-id "$SECRET_ID" --region "
 get() { jq -r --arg k "$1" '.[$k] // empty' <<<"$SECRET"; }
 
 generated=0
-for key in POSTGRES_PASSWORD KEYCLOAK_ADMIN_PASSWORD KEYCLOAK_CLIENT_SECRET SESSION_SECRET; do
+for key in POSTGRES_PASSWORD GAME_DB_PASSWORD KEYCLOAK_ADMIN_PASSWORD KEYCLOAK_CLIENT_SECRET SESSION_SECRET; do
   if [ -z "$(get "$key")" ]; then
     SECRET=$(jq --arg k "$key" --arg v "$(openssl rand -hex 32)" '.[$k] = $v' <<<"$SECRET")
     generated=1
@@ -36,6 +36,7 @@ umask 077
 cat > .env <<EOF
 DOMAIN=$DOMAIN
 POSTGRES_PASSWORD=$(get POSTGRES_PASSWORD)
+GAME_DB_PASSWORD=$(get GAME_DB_PASSWORD)
 KEYCLOAK_ADMIN_PASSWORD=$(get KEYCLOAK_ADMIN_PASSWORD)
 KEYCLOAK_CLIENT_SECRET=$(get KEYCLOAK_CLIENT_SECRET)
 SESSION_SECRET=$(get SESSION_SECRET)
@@ -47,6 +48,25 @@ mkdir -p /data/caddy/data /data/caddy/config /data/postgres
 echo "building images..."
 docker compose build --pull
 docker compose up -d --remove-orphans
+
+echo "waiting for Postgres..."
+for i in $(seq 1 60); do
+  status=$(docker inspect --format '{{.State.Health.Status}}' porchlight-postgres 2>/dev/null || echo starting)
+  [ "$status" = healthy ] && break
+  [ "$i" = 60 ] && { echo "Postgres did not become healthy" >&2; docker compose logs --tail 40 postgres >&2; exit 1; }
+  sleep 2
+done
+
+# The game's database and role, beside Keycloak's. Idempotent; the password is
+# reset every deploy so it always matches Secrets Manager. (The volume was
+# initialised long ago, so the image's init scripts would never run.) The game
+# server creates its own tables on start (Drizzle migrations, server/drizzle).
+docker exec -i porchlight-postgres psql -v ON_ERROR_STOP=1 -U keycloak -d keycloak \
+  -v pw="$(get GAME_DB_PASSWORD)" >/dev/null <<'SQL'
+SELECT 'CREATE ROLE porchlight LOGIN' WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'porchlight')\gexec
+ALTER ROLE porchlight WITH LOGIN PASSWORD :'pw';
+SELECT 'CREATE DATABASE porchlight OWNER porchlight' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'porchlight')\gexec
+SQL
 
 echo "waiting for Keycloak..."
 for i in $(seq 1 80); do

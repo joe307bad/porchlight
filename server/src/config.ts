@@ -1,4 +1,4 @@
-// Everything the auth service needs, from the environment. In production
+// Everything the service needs, from the environment. In production
 // infra/docker/deploy.sh writes these into .env from Secrets Manager; in dev
 // they come from server/.env.development.
 
@@ -18,6 +18,8 @@ export interface Config {
   /** Exactly as registered on the Keycloak client. */
   redirectUri: string;
   secureCookies: boolean;
+  /** The game database (src/multiplayer). Unset: multiplayer still runs, but nothing is saved. */
+  databaseUrl: string | null;
 }
 
 const trim = (url: string) => url.replace(/\/+$/, '');
@@ -43,5 +45,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionSecret,
     redirectUri: `${appUrl}/auth/callback`,
     secureCookies: appUrl.startsWith('https://'),
+    databaseUrl: env.DATABASE_URL || null,
   };
 }

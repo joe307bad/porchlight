@@ -11,7 +11,9 @@ import { describeTile } from './ui/hover';
 import { Panel } from './ui/panel';
 import { randomSeed } from './ui/seed';
 import { Sidebar } from './ui/sidebar';
-import { readUrlState, writeUrlState } from './ui/urlState';
+import { encodeUrlState, readUrlState, writeUrlState } from './ui/urlState';
+import { forgetCharacter, pickCharacter, rememberedCharacter } from './ui/characterPicker';
+import type { Multiplayer } from './net/multiplayer';
 import { attachViewport } from './ui/viewport';
 import './style.css';
 
@@ -25,7 +27,6 @@ const isoHost = document.querySelector<HTMLDivElement>('#iso')!;
 const dayNightButton = document.querySelector<HTMLButtonElement>('#daynight')!;
 const newCharButton = document.querySelector<HTMLButtonElement>('#newchar')!;
 const exploreControls = document.querySelector<HTMLElement>('#explore-controls')!;
-const minimapHost = document.querySelector<HTMLElement>('#minimap-host')!;
 const walkModeButton = document.querySelector<HTMLButtonElement>('#walkmode')!;
 const autoWalkButton = document.querySelector<HTMLButtonElement>('#autowalk')!;
 const carButton = document.querySelector<HTMLButtonElement>('#car')!;
@@ -47,6 +48,11 @@ let autoFit = true;
 let iso: IsoView | null = null;
 let exploring = false;
 let isoTown: TownModel | null = null;
+/** Explore mode is shared with everyone in the same town when signed in (src/net/multiplayer.ts). */
+const online = user !== null && import.meta.env.VITE_MULTIPLAYER !== 'false';
+let net: Multiplayer | null = null;
+/** Asked who's playing (choosing to play alone counts). */
+let asked = false;
 
 let frame = 0;
 function requestDraw(): void {
@@ -84,7 +90,7 @@ function regenerate(nextSeed: string, nextParams: GenParams): void {
     // A new town: drop the old walk and start afresh at the new town's spawn point.
     iso.setTown(model);
     isoTown = model;
-    void spawnCharacter();
+    void spawnCharacter().then(enterTown);
   } else if (iso?.isAuto) {
     // Regenerated from the map: stop the old town's auto-walk running behind it.
     iso.setAuto(false);
@@ -100,6 +106,42 @@ async function spawnCharacter(): Promise<void> {
   syncAutoWalkButton();
 }
 
+/** A new look for your character (C): online, it's saved with them. */
+async function newLook(): Promise<void> {
+  await spawnCharacter();
+  const look = iso?.lookModel;
+  if (look) net?.lookChanged(look);
+}
+
+/** Online: ask (once) who's playing, then join their town's room. */
+async function connect(): Promise<void> {
+  if (!online || asked || !iso) return;
+  asked = true;
+  const { lookFrom } = await import('./render/iso/view');
+  const character = (await rememberedCharacter()) ?? (await pickCharacter(() => lookFrom(createRng(randomSeed())).model));
+  sidebar.setCharacter(character?.name ?? null, () => void switchCharacter());
+  if (!character || !iso) return;
+  const { Multiplayer } = await import('./net/multiplayer');
+  net = new Multiplayer(iso, character);
+  net.onStatus = (status) => sidebar.setOnline(status);
+  iso.teleportHook = (x, z) => net?.teleport(x, z) ?? false;
+}
+
+/** Play the town on screen with everyone else in it (no-op when it's already the one). */
+function enterTown(): void {
+  if (isoTown === model) net?.enter({ key: encodeUrlState(seed, params), width: model.width, height: model.height });
+}
+
+async function switchCharacter(): Promise<void> {
+  await net?.close();
+  net = null;
+  if (iso) iso.teleportHook = null;
+  forgetCharacter();
+  asked = false;
+  await connect();
+  enterTown();
+}
+
 function syncAutoWalkButton(): void {
   const on = iso?.isAuto ?? false;
   const what = iso?.isDriving ? 'auto drive' : 'auto walk';
@@ -113,9 +155,22 @@ async function explore(): Promise<void> {
     if (!iso) {
       isoHost.hidden = false;
       const { IsoView } = await import('./render/iso/view');
-      iso = await IsoView.create(isoHost, minimapHost);
+      iso = await IsoView.create(isoHost);
       iso.onCarChange = syncCarButton;
       iso.onAutoChange = syncAutoWalkButton;
+      iso.onPadAction = (action) => {
+        if (action === 'menu') {
+          if (exploring) leaveExplore();
+          else void explore();
+          return;
+        }
+        if (!exploring) return;
+        if (action === 'car') toggleCar();
+        if (action === 'auto') toggleAutoWalk();
+        if (action === 'closeUp') toggleCloseUp();
+        if (action === 'night') toggleNight();
+        if (action === 'newCharacter') void newLook();
+      };
     }
     exploring = true;
     document.body.classList.add('exploring');
@@ -130,6 +185,10 @@ async function explore(): Promise<void> {
       await spawnCharacter();
     }
     // Same town as last time: carry on as the same character, where you left off.
+    // Online: who's playing (asked once), then into this town's room.
+    void connect()
+      .then(enterTown)
+      .catch((err) => console.error('multiplayer:', err));
   } catch (err) {
     console.error(err);
     statusEl.textContent = `couldn't start explore mode: ${(err as Error).message}`;
@@ -201,7 +260,7 @@ function toggleWalkMode(): void {
 
 // Dev-only handle for poking at explore mode from the console or test tooling.
 if (import.meta.env.DEV) {
-  (window as unknown as { porchlight: object }).porchlight = { iso: () => iso, model: () => model };
+  (window as unknown as { porchlight: object }).porchlight = { iso: () => iso, model: () => model, net: () => net?.debug() ?? 'not online' };
 }
 
 /**
@@ -232,7 +291,7 @@ walkModeButton.addEventListener('click', toggleWalkMode);
 autoWalkButton.addEventListener('click', toggleAutoWalk);
 carButton.addEventListener('click', toggleCar);
 dayNightButton.addEventListener('click', toggleNight);
-newCharButton.addEventListener('click', () => void spawnCharacter());
+newCharButton.addEventListener('click', () => void newLook());
 turnLeftButton.addEventListener('click', () => iso?.rotate(-1));
 turnRightButton.addEventListener('click', () => iso?.rotate(1));
 lookAheadButton.addEventListener('click', () => iso?.lookAlongWalk());
@@ -245,7 +304,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') toggleWalkMode();
   if (e.code === 'KeyT') toggleAutoWalk();
   if (e.code === 'KeyV' && !e.repeat) toggleCloseUp();
-  if (e.code === 'KeyC') void spawnCharacter();
+  if (e.code === 'KeyC') void newLook();
   if (e.code === 'Escape') leaveExplore();
 });
 
