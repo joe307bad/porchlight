@@ -49,6 +49,15 @@ echo "building images..."
 docker compose build --pull
 docker compose up -d --remove-orphans
 
+# Caddy's Caddyfile is bind-mounted as a single file, and rsync replaces the
+# file rather than editing it, so a running Caddy keeps the old one (and
+# `up -d` sees no change to recreate it for). Restart it when they differ.
+running=$(docker exec porchlight-caddy cat /etc/caddy/Caddyfile 2>/dev/null | sha256sum || true)
+if [ "$running" != "$(sha256sum < Caddyfile)" ]; then
+  echo "Caddyfile changed: restarting Caddy"
+  docker compose up -d --force-recreate caddy
+fi
+
 echo "waiting for Postgres..."
 for i in $(seq 1 60); do
   status=$(docker inspect --format '{{.State.Health.Status}}' porchlight-postgres 2>/dev/null || echo starting)
