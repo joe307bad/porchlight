@@ -331,7 +331,7 @@ namespace Porchlight.Rendering
         {
             int w = model.width, h = model.height;
             var crops = Catalog.CROPS.Select(c => library.Get(c)).ToArray();
-            var props = new[] { library.Get("nature/log_stack"), library.Get("nature/pot_large") };
+            var extras = new[] { library.Get("nature/log_stack"), library.Get("nature/pot_large") };
             for (int y = 0; y < h; y++)
             {
                 for (int x = 0; x < w; x++)
@@ -342,7 +342,7 @@ namespace Porchlight.Rendering
                         double roll = rng.Next();
                         if (use == Use.COMMUNITY_GARDEN && roll < 0.15)
                         {
-                            var p = props[(int)Math.Floor(rng.Next() * props.Length)];
+                            var p = extras[(int)Math.Floor(rng.Next() * extras.Length)];
                             double s = 0.7 / Math.Max(p.size.x, p.size.z);
                             Props.Place(p, props, x + 0.5, y + 0.5, rng.Range(0, Math.PI * 2), s, s, s);
                             continue;
