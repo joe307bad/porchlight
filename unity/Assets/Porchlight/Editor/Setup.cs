@@ -264,14 +264,16 @@ namespace Porchlight.EditorTools
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
         }
 
-        /// <summary>A fresh checkout has no library (it's generated): make it when the editor opens.</summary>
+        /// <summary>A fresh checkout has no model library (it's generated): make it when the editor opens.</summary>
         [InitializeOnLoadMethod]
         static void EnsureLibrary()
         {
             if (Application.isBatchMode) return;
             EditorApplication.delayCall += () =>
             {
-                if (AssetDatabase.LoadAssetAtPath<ModelLibrary>(Library.LibraryPath) == null) Run();
+                // Only the library: the rest of the setup is committed, and Run() would
+                // replace the open scene.
+                if (AssetDatabase.LoadAssetAtPath<ModelLibrary>(Library.LibraryPath) == null) Library.Build();
             };
         }
 
