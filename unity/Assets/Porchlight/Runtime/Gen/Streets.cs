@@ -103,7 +103,7 @@ namespace Porchlight.Gen
             }
             bool AngleClash(int node, Vec2 dir)
             {
-                foreach (var d in IncidentDirs(node)) if (Math.Acos(Clamp(Geo.Dot(d, dir), -1, 1)) < MIN_ANGLE) return true;
+                foreach (var d in IncidentDirs(node)) if (JsMath.Acos(Clamp(Geo.Dot(d, dir), -1, 1)) < MIN_ANGLE) return true;
                 return false;
             }
             bool Connected(int a, int b)
@@ -249,7 +249,7 @@ namespace Porchlight.Gen
                 }
                 if (host == null) continue;
                 int node = RoadGraphOps.SplitEdgeAt(g, host.id, seed.at);
-                double baseAngle = Math.Atan2(seed.tangent.y, seed.tangent.x);
+                double baseAngle = JsMath.Atan2(seed.tangent.y, seed.tangent.x);
                 foreach (int side in new[] { 1, -1 })
                 {
                     if (rng.Chance(0.9)) queue.Add(new Proposal { from = node, angle = SnapToGrid(baseAngle + (side * Math.PI) / 2), depth = 0, since = 0, tries = 0 });
@@ -575,7 +575,7 @@ namespace Porchlight.Gen
 
         static bool OnGrid(Vec2 d)
         {
-            double a = Math.Atan2(d.y, d.x);
+            double a = JsMath.Atan2(d.y, d.x);
             return Math.Abs(a - SnapToGrid(a)) <= GRID_TOLERANCE;
         }
 

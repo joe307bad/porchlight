@@ -44,7 +44,7 @@ namespace Porchlight.Gen
                         amp *= PERSISTENCE;
                         freq *= 2;
                     }
-                    hm[y * w + x] = (float)(0.5 + 0.5 * Math.Tanh((sum / norm) * relief * 2));
+                    hm[y * w + x] = (float)(0.5 + 0.5 * JsMath.Tanh((sum / norm) * relief * 2));
                 }
             }
 
