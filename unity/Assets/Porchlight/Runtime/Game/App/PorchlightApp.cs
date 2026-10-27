@@ -225,12 +225,6 @@ namespace Porchlight.App
             isoHost = new VisualElement { name = "iso" };
             isoHost.pickingMode = PickingMode.Ignore;
             isoHost.style.display = DisplayStyle.None;
-            isoHost.RegisterCallback<WheelEvent>(e =>
-            {
-                if (!exploring || iso == null) return;
-                iso.Wheel(input.WheelDeltaY, input.CtrlHeld);
-                e.StopPropagation();
-            });
             root.Add(isoHost);
 
             footer = new VisualElement { name = "footer" };
@@ -304,10 +298,28 @@ namespace Porchlight.App
             if (iso != null)
             {
                 iso.viewport = ScreenRect(isoHost);
+                if (exploring) ZoomWithWheel();
                 iso.Update();
             }
             Follow();
             CheckHash();
+        }
+
+        /// <summary>
+        /// The mouse wheel zooms the 3D view, unless the pointer is over the UI (the
+        /// sidebar, the minimap). The view's own element lets the pointer through to the
+        /// town, so the wheel is read here rather than as a UI event.
+        /// </summary>
+        void ZoomWithWheel()
+        {
+            double delta = input.WheelDeltaY;
+            var mouse = UnityEngine.InputSystem.Mouse.current;
+            if (delta == 0 || mouse == null || root.panel == null) return;
+            var screen = mouse.position.ReadValue();
+            var at = RuntimePanelUtils.ScreenToPanel(root.panel, new Vector2(screen.x, Screen.height - screen.y));
+            var over = root.panel.Pick(at);
+            if (over != null && over != root && over != isoHost) return;
+            iso.Wheel(delta, input.CtrlHeld);
         }
 
         void OnApplicationFocus(bool focus)

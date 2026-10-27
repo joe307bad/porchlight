@@ -1,7 +1,7 @@
 // The town's materials: URP Lit and Unlit, copied from the library's
 // templates and shared by everything that looks the same. A model's own
 // materials can be swapped for one of its kit's colour variations, and a
-// building's for a copy whose windows glow at night (WindowGlow sets how
+// building's window glass for a copy that glows at night (WindowGlow sets how
 // brightly, on every one at once).
 
 using System.Collections.Generic;
@@ -138,26 +138,27 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>
-        /// A model's material in one of its kit's colour variations (0: as made), with
-        /// its windows able to glow if `windows`.
+        /// A model's material in one of its kit's colour variations (0: as made). The
+        /// kit's window glass becomes a copy that glows at night (WindowGlow), if `windows`.
         /// </summary>
         public static Material ForModel(Material source, ModelLibrary.Kit kit, int variation, bool windows)
         {
             if (kit == null || source == null) return source;
+            bool glass = source == kit.windows;
             bool recolour = variation > 0 && variation < kit.maps.Length;
-            Texture2D glow = windows && kit.windows != null && variation < kit.windows.Length ? kit.windows[variation] : null;
-            if (!recolour && glow == null) return source;
-            var key = (source, variation, glow != null);
+            if (!recolour && !(glass && windows)) return source;
+            var key = (source, variation, glass && windows);
             if (models.TryGetValue(key, out var m)) return m;
-            var map = recolour ? kit.maps[variation] : source.GetTexture(BaseMap);
-            if (map == null || source.GetTexture(BaseMap) != kit.maps[0])
+            if (!glass && source.GetTexture(BaseMap) != kit.maps[0])
             {
                 // Not drawn from the kit's colour map (a plain colour): leave it.
                 models[key] = source;
                 return source;
             }
-            m = Textured(map, glow, $"{source.name} v{variation}{(glow != null ? " lit" : "")}");
+            var map = recolour ? kit.maps[variation] : kit.maps[0];
+            m = Textured(map, glass && windows ? Texture2D.whiteTexture : null, $"{source.name} v{variation}{(glass ? " windows" : "")}");
             m.SetColor(BaseColor, source.GetColor(BaseColor));
+            m.SetFloat(Smoothness, source.GetFloat(Smoothness));
             models[key] = m;
             return m;
         }

@@ -122,6 +122,8 @@ namespace Porchlight.EditorTools
             Set("m_AdditionalLightsRenderingMode", p => p.intValue = (int)LightRenderingMode.PerPixel);
             Set("m_AdditionalLightsPerObjectLimit", p => p.intValue = 8);
             Set("m_RequireDepthTexture", p => p.boolValue = false);
+            // GPU instancing for the town's many copies of each model (the SRP batcher would take over from it).
+            Set("m_UseSRPBatcher", p => p.boolValue = false);
             Set("m_RequireOpaqueTexture", p => p.boolValue = false);
             so.ApplyModifiedPropertiesWithoutUndo();
             EditorUtility.SetDirty(pipeline);
@@ -243,7 +245,7 @@ namespace Porchlight.EditorTools
             PlayerSettings.WebGL.dataCaching = true;
             PlayerSettings.WebGL.nameFilesAsHashes = false;
             PlayerSettings.WebGL.initialMemorySize = 256;
-            PlayerSettings.WebGL.maximumMemorySize = 2048;
+            PlayerSettings.WebGL.maximumMemorySize = 4096;
             PlayerSettings.WebGL.powerPreference = WebGLPowerPreference.HighPerformance;
             PlayerSettings.SetUseDefaultGraphicsAPIs(BuildTarget.WebGL, false);
             PlayerSettings.SetGraphicsAPIs(BuildTarget.WebGL, new[] { GraphicsDeviceType.OpenGLES3 });

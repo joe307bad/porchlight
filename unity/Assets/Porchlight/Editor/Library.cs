@@ -1,7 +1,7 @@
 // Builds the model library (Resources/Porchlight/Library.asset) from the glTF
 // files in Models/, which glTFast imports: each model becomes a prefab drawn
-// with URP Lit materials, the building kits get masks of their window glass
-// (lit at night), and the people share one Animator controller whose clips
+// with URP Lit materials, each building's window glass becomes a part of its
+// own (lit at night), and the people share one Animator controller whose clips
 // are the kit's animations (people/animations.glb) bound to their armature.
 // Everything it makes goes in Assets/Porchlight/Generated; run again to
 // rebuild (Porchlight ▸ Set Up Project does).
@@ -38,9 +38,11 @@ namespace Porchlight.EditorTools
             ("Jump_A_Landing", "land", false),
         };
 
+        static List<ModelLibrary.Kit> kits;
+
         public static void Build()
         {
-            foreach (var dir in new[] { Out, Out + "/Materials", Out + "/Prefabs", Out + "/Textures", Out + "/Animation", Out + "/Fonts" })
+            foreach (var dir in new[] { Out, Out + "/Materials", Out + "/Prefabs", Out + "/Meshes", Out + "/Animation", Out + "/Fonts" })
                 Directory.CreateDirectory(dir);
             AssetDatabase.Refresh();
 
@@ -58,7 +60,7 @@ namespace Porchlight.EditorTools
 
             var converted = new Dictionary<Material, Material>();
             var looks = new Dictionary<string, Material>();
-            lib.kits = Kits();
+            lib.kits = kits = Kits();
             lib.models = Catalog.Statics.Select(name => StaticModel(name, converted, looks)).ToList();
             lib.peopleController = PeopleController();
             lib.people = Catalog.CHARACTERS.Select(name => PersonModel(name, converted, looks, lib.peopleController)).ToList();
@@ -171,41 +173,114 @@ namespace Porchlight.EditorTools
                 if (Catalog.VARIATIONS.TryGetValue(kit, out var variations))
                     foreach (var v in variations) maps.Add(AssetDatabase.LoadAssetAtPath<Texture2D>($"{Models}/{kit}/Textures/{v}.png"));
                 if (maps[0] == null) continue;
-                kits.Add(new ModelLibrary.Kit { name = kit, maps = maps.ToArray(), windows = maps.Select(m => WindowMask(kit, m)).ToArray() });
+                kits.Add(new ModelLibrary.Kit { name = kit, maps = maps.ToArray(), windows = WindowMaterial(kit, maps[0]) });
             }
-            // The other kits only need their own colour map (kept for KitOf).
             return kits;
         }
 
-        /// <summary>Glass-blue pixels of a colour map, white on black: what lights up at night.</summary>
-        static Texture2D WindowMask(string kit, Texture2D map)
+        /// <summary>A kit's window glass: its colour map, glowing all over (how brightly is set at night).</summary>
+        static Material WindowMaterial(string kit, Texture2D map)
         {
-            if (map == null) return null;
-            string src = AssetDatabase.GetAssetPath(map);
-            var read = new Texture2D(2, 2);
-            read.LoadImage(File.ReadAllBytes(src));
-            var px = read.GetPixels32();
-            var mask = new Texture2D(read.width, read.height, TextureFormat.RGBA32, false);
-            var o = new Color32[px.Length];
-            for (int i = 0; i < px.Length; i++)
+            string path = $"{Out}/Materials/{kit}-windows.mat";
+            var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m == null)
             {
-                var c = px[i];
-                bool glass = c.b >= 200 && c.b - c.r >= 40 && c.g - c.r >= 20 && c.g - c.r <= 45 && c.b - c.g >= 15;
-                o[i] = glass ? new Color32(255, 255, 255, 255) : new Color32(0, 0, 0, 255);
+                m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+                AssetDatabase.CreateAsset(m, path);
             }
-            mask.SetPixels32(o);
-            string path = $"{Out}/Textures/{kit}-{Path.GetFileNameWithoutExtension(src)}-windows.png";
-            File.WriteAllBytes(path, mask.EncodeToPNG());
-            UnityEngine.Object.DestroyImmediate(read);
-            UnityEngine.Object.DestroyImmediate(mask);
-            AssetDatabase.ImportAsset(path);
-            var importer = (TextureImporter)AssetImporter.GetAtPath(path);
-            var srcImporter = AssetImporter.GetAtPath(src) as TextureImporter;
-            importer.sRGBTexture = true;
-            importer.filterMode = srcImporter != null ? srcImporter.filterMode : FilterMode.Point;
-            importer.mipmapEnabled = srcImporter == null || srcImporter.mipmapEnabled;
-            importer.SaveAndReimport();
-            return AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            m.SetTexture("_BaseMap", map);
+            m.SetColor("_BaseColor", Color.white);
+            m.SetFloat("_Metallic", 0);
+            m.SetFloat("_Smoothness", 0.5f);
+            m.EnableKeyword("_EMISSION");
+            m.SetColor("_EmissionColor", Color.black);
+            m.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
+            m.enableInstancing = true;
+            EditorUtility.SetDirty(m);
+            return m;
+        }
+
+        static readonly Dictionary<string, Color32[]> pixels = new Dictionary<string, Color32[]>();
+        static readonly Dictionary<string, Vector2Int> pixelSize = new Dictionary<string, Vector2Int>();
+
+        /// <summary>Whether a colour-map pixel is window glass (the kits' glass blue).</summary>
+        static bool IsGlass(Texture2D map, Vector2 uv)
+        {
+            string path = AssetDatabase.GetAssetPath(map);
+            if (!pixels.TryGetValue(path, out var px))
+            {
+                var read = new Texture2D(2, 2);
+                read.LoadImage(File.ReadAllBytes(path));
+                pixels[path] = px = read.GetPixels32();
+                pixelSize[path] = new Vector2Int(read.width, read.height);
+                UnityEngine.Object.DestroyImmediate(read);
+            }
+            var size = pixelSize[path];
+            int x = Mathf.Clamp(Mathf.FloorToInt(Mathf.Repeat(uv.x, 1) * size.x), 0, size.x - 1);
+            int y = Mathf.Clamp(Mathf.FloorToInt(Mathf.Repeat(uv.y, 1) * size.y), 0, size.y - 1);
+            var c = px[y * size.x + x];
+            return c.b >= 200 && c.b - c.r >= 40 && c.g - c.r >= 20 && c.g - c.r <= 45 && c.b - c.g >= 15;
+        }
+
+        /// <summary>
+        /// Split a building's windows off into their own part, drawn with the kit's
+        /// glowing window material: the glass-coloured faces that stand upright. Roofs
+        /// can be the same blue as the glass; facing up, they stay as they are.
+        /// </summary>
+        static void SplitWindows(GameObject go, string name, ModelLibrary.Kit kit)
+        {
+            int part = 0;
+            foreach (var f in go.GetComponentsInChildren<MeshFilter>())
+            {
+                var src = f.sharedMesh;
+                var r = f.GetComponent<MeshRenderer>();
+                if (src == null || r == null || !src.isReadable) continue;
+                var pos = src.vertices;
+                var uv = src.uv;
+                if (uv.Length != pos.Length) continue;
+                var mesh = UnityEngine.Object.Instantiate(src);
+                mesh.name = src.name + " (windows)";
+                var glass = new List<int>();
+                var kept = new List<int[]>();
+                for (int s = 0; s < src.subMeshCount; s++)
+                {
+                    var tris = src.GetTriangles(s);
+                    var keep = new List<int>();
+                    for (int t = 0; t + 2 < tris.Length; t += 3)
+                    {
+                        int a = tris[t], b = tris[t + 1], c = tris[t + 2];
+                        var normal = f.transform.TransformDirection(Vector3.Cross(pos[b] - pos[a], pos[c] - pos[a])).normalized;
+                        bool upright = Mathf.Abs(normal.y) < 0.35f;
+                        if (upright && IsGlass(kit.maps[0], (uv[a] + uv[b] + uv[c]) / 3))
+                        {
+                            glass.Add(a);
+                            glass.Add(b);
+                            glass.Add(c);
+                        }
+                        else
+                        {
+                            keep.Add(a);
+                            keep.Add(b);
+                            keep.Add(c);
+                        }
+                    }
+                    kept.Add(keep.ToArray());
+                }
+                if (glass.Count == 0)
+                {
+                    UnityEngine.Object.DestroyImmediate(mesh);
+                    continue;
+                }
+                mesh.subMeshCount = kept.Count + 1;
+                for (int s = 0; s < kept.Count; s++) mesh.SetTriangles(kept[s], s, false);
+                mesh.SetTriangles(glass, kept.Count, false);
+                mesh.RecalculateBounds();
+                string path = $"{Out}/Meshes/{name.Replace('/', '-')}-{part++}.asset";
+                AssetDatabase.DeleteAsset(path);
+                AssetDatabase.CreateAsset(mesh, path);
+                f.sharedMesh = mesh;
+                r.sharedMaterials = r.sharedMaterials.Take(kept.Count).Concat(new[] { kit.windows }).ToArray();
+            }
         }
 
         // Prefabs -------------------------------------------------------------------------------
@@ -220,6 +295,8 @@ namespace Porchlight.EditorTools
                 r.sharedMaterials = r.sharedMaterials.Select(m => Convert(m, converted, looks, kit)).ToArray();
                 r.shadowCastingMode = ShadowCastingMode.On;
             }
+            var withWindows = IsBuilding(name) ? kits.Find(k => k.name == kit) : null;
+            if (withWindows != null) SplitWindows(go, name, withWindows);
             var bounds = BoundsOf(go);
             var prefab = Save(go, name);
             return new ModelLibrary.Model { name = name, prefab = prefab, min = bounds.min, size = bounds.size };

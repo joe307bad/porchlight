@@ -1,7 +1,7 @@
 // Every model the town uses, as prefabs built from the glTF files in Models/
 // (Editor/Library.cs makes them: glTFast imports each .glb, its materials
 // become URP Lit ones, people get an Animator). The library also holds each
-// model's bounds, the kits' colour variations and night-window masks, the
+// model's bounds, the kits' colour variations and window glass, the
 // people's animator controller, the font, and the material templates every
 // runtime material is copied from (so their shader variants are in the build).
 
@@ -38,8 +38,8 @@ namespace Porchlight.Rendering
             public string name;
             /// <summary>The kit's colour maps: [0] its own, then its variations.</summary>
             public Texture2D[] maps;
-            /// <summary>Per map: the windows' glass, white, to light at night (null where none).</summary>
-            public Texture2D[] windows;
+            /// <summary>The kit's buildings' window glass (their upright glass faces), which glows at night.</summary>
+            public Material windows;
         }
 
         public List<Model> models = new List<Model>();

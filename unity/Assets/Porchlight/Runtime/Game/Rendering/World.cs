@@ -4,7 +4,8 @@
 // street fronts split into rows) standing on built ground floors with doors
 // and furnished rooms, fenced yards with sheds and vegetable beds, trees,
 // street lamps, street name signs, parked cars and the plaza fountain.
-// Everything that never moves is combined by Unity's static batching. The
+// One-of-a-kind geometry is combined by static batching; the many copies of
+// the same models are drawn with GPU instancing. The
 // map's (x, y) is Coords.Map's (x, -z).
 
 using System;
@@ -72,8 +73,17 @@ namespace Porchlight.Rendering
         static readonly int[] DOOR_COLOURS = { 0x8a3b2e, 0x2f5d50, 0x2e4a7a, 0x6b4a2f, 0xb08a3e, 0x5b3b5e, 0xe8e2d0 };
 
         public readonly GameObject root;
-        /// <summary>Everything that never moves (static-batched once built).</summary>
+        /// <summary>
+        /// What never moves and is one of a kind (ground, roads, facades, the cut-down
+        /// building shells): combined by static batching once built.
+        /// </summary>
         readonly Transform still;
+        /// <summary>
+        /// Copies of the same models (trees, crops, fences, lamps, parked cars): drawn
+        /// with GPU instancing, which shares one copy of each mesh. Static batching
+        /// them would copy every one's geometry, more than a big town fits in memory.
+        /// </summary>
+        readonly Transform props;
         public readonly TownModel model;
         public readonly IsoLayout layout;
         public SidewalkNetwork sidewalks => layout.sidewalks;
@@ -106,6 +116,8 @@ namespace Porchlight.Rendering
             root = new GameObject("town");
             still = new GameObject("still").transform;
             still.SetParent(root.transform, false);
+            props = new GameObject("props").transform;
+            props.SetParent(root.transform, false);
             var rng = new Rng($"{model.seed}::iso");
 
             BuildGround(rng).Build("ground", still);

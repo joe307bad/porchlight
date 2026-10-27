@@ -344,7 +344,7 @@ namespace Porchlight.Rendering
                         {
                             var p = props[(int)Math.Floor(rng.Next() * props.Length)];
                             double s = 0.7 / Math.Max(p.size.x, p.size.z);
-                            Props.Place(p, still, x + 0.5, y + 0.5, rng.Range(0, Math.PI * 2), s, s, s);
+                            Props.Place(p, props, x + 0.5, y + 0.5, rng.Range(0, Math.PI * 2), s, s, s);
                             continue;
                         }
                         var crop = crops[(int)Math.Floor(rng.Next() * crops.Length)];
@@ -353,7 +353,7 @@ namespace Porchlight.Rendering
                         {
                             double r = rng.Range(0, Math.PI * 2);
                             double sy = cs * rng.Range(0.85, 1.15);
-                            Props.Place(crop, still, x + ox, y + oy, r, cs, sy, cs, castShadows: false);
+                            Props.Place(crop, props, x + ox, y + oy, r, cs, sy, cs, castShadows: false);
                         }
                     }
                     else if (use == Use.SHED) AddShed(sheds, x + 0.5, y + 0.5, rng.Chance(0.5));
@@ -372,7 +372,7 @@ namespace Porchlight.Rendering
                     _ => new Vec2(f.x + 1 - inset, f.y + 0.5),
                 };
                 double rot = f.side == Facing.N || f.side == Facing.S ? 0 : Math.PI / 2;
-                Props.Place(fence, still, at.x, at.y, rot, fsx, 1.3, 1.3);
+                Props.Place(fence, props, at.x, at.y, rot, fsx, 1.3, 1.3);
             }
         }
 
@@ -427,7 +427,7 @@ namespace Porchlight.Rendering
                             double s = rng.Range(1.2, 2.4);
                             double ax = x + rng.Range(0.25, 0.75);
                             double ay = y + rng.Range(0.25, 0.75);
-                            Props.Place(rock, still, ax, ay, rng.Range(0, 6.3), s, s, s);
+                            Props.Place(rock, props, ax, ay, rng.Range(0, 6.3), s, s, s);
                         }
                         continue;
                     }
@@ -452,13 +452,13 @@ namespace Porchlight.Rendering
                         var t = pool[(int)Math.Floor(rng.Next() * pool.Length)];
                         double s = rng.Range(1.3, 2.1) / t.size.y;
                         double sy = s * rng.Range(0.9, 1.1);
-                        Props.Place(t, still, atX, atY, spin, s, sy, s);
+                        Props.Place(t, props, atX, atY, spin, s, sy, s);
                     }
                     else if (roll < chance + (use == Use.YARD || use == Use.GREEN ? 0.08 : 0.03))
                     {
                         var b = bushes[(int)Math.Floor(rng.Next() * bushes.Length)];
                         double s = rng.Range(0.4, 0.65) / Math.Max(b.size.x, b.size.z);
-                        Props.Place(b, still, atX, atY, spin, s, s, s, castShadows: false);
+                        Props.Place(b, props, atX, atY, spin, s, s, s, castShadows: false);
                     }
                     else if (roll < chance + 0.14 && (use == Use.YARD || use == Use.GREEN))
                     {
@@ -468,7 +468,7 @@ namespace Porchlight.Rendering
                             const double s = 1.2;
                             double fx = atX + rng.Range(-0.25, 0.25);
                             double fy = atY + rng.Range(-0.25, 0.25);
-                            Props.Place(f, still, fx, fy, rng.Range(0, 6.3), s, s, s, castShadows: false);
+                            Props.Place(f, props, fx, fy, rng.Range(0, 6.3), s, s, s, castShadows: false);
                         }
                     }
                 }
@@ -496,12 +496,12 @@ namespace Porchlight.Rendering
                     if (roll < 0.2)
                     {
                         double s = 0.8 / Math.Max(planter.size.x, planter.size.z);
-                        Props.Place(planter, still, ax, ay, DetMath.Atan2(dx, dy), s, s, s);
+                        Props.Place(planter, props, ax, ay, DetMath.Atan2(dx, dy), s, s, s);
                     }
                     else
                     {
                         double s = 1.4 / tree.size.y;
-                        Props.Place(tree, still, ax, ay, rng.Range(0, 6.3), s, s, s);
+                        Props.Place(tree, props, ax, ay, rng.Range(0, 6.3), s, s, s);
                     }
                 }
             }
@@ -516,7 +516,7 @@ namespace Porchlight.Rendering
                 var p = library.Get(Catalog.CARS[m]);
                 double s = Props.CarScale(p);
                 parked.Add(new ParkedPose { x = car.x, y = car.y, heading = heading, model = m });
-                parkedCars.Add(Props.Place(p, still, car.x, car.y, DetMath.Atan2(Math.Cos(heading), Math.Sin(heading)), s, s, s));
+                parkedCars.Add(Props.Place(p, props, car.x, car.y, DetMath.Atan2(Math.Cos(heading), Math.Sin(heading)), s, s, s));
             }
         }
 
@@ -553,7 +553,7 @@ namespace Porchlight.Rendering
                     double rot = DetMath.Atan2(-normal.x, -normal.y);
                     // A post, an arm reaching out over the street (+z), and the lamp's head.
                     var lamp = new GameObject("lamp").transform;
-                    lamp.SetParent(still, false);
+                    lamp.SetParent(props, false);
                     lamp.localPosition = Coords.Map(basePt.x, basePt.y);
                     lamp.localRotation = Coords.Yaw(rot);
                     float H = (float)LAMP_HEIGHT, R = (float)LAMP_REACH;
@@ -584,7 +584,7 @@ namespace Porchlight.Rendering
             foreach (var s in signs)
             {
                 var at = Coords.Map(s.at.x, s.at.y);
-                Shape(PrimitiveType.Cylinder, still, at + new Vector3(0, postHeight / 2, 0), new Vector3(r * 2.2f, postHeight / 2, r * 2.2f), postMaterial, true, "sign post");
+                Shape(PrimitiveType.Cylinder, props, at + new Vector3(0, postHeight / 2, 0), new Vector3(r * 2.2f, postHeight / 2, r * 2.2f), postMaterial, true, "sign post");
                 for (int k = 0; k < s.blades.Count; k++)
                 {
                     var blade = s.blades[k];

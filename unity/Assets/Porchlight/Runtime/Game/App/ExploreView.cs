@@ -59,7 +59,6 @@ namespace Porchlight.App
         const double CAMERA_DISTANCE = 60;
         const double SIGHT_HEIGHT = 0.26;
         const double HEADING_SMOOTHING = 1.2;
-        const double MANUAL_HOLD = 5;
         const double CHASE_DISTANCE = 2.4;
         const double CHASE_MIN = 1.1;
         const double CHASE_MAX = 8;
@@ -74,7 +73,6 @@ namespace Porchlight.App
         static readonly double ROOM_PITCH = (55 * Math.PI) / 180;
         const double ROOM_MARGIN = 1.35;
         const double CHASE_TILT_GUESS = 0.3;
-        const double AUTO_TURN_MIN_ZOOM = 0.7;
         const double PLAYER_SCALE = 1.05;
         const double CAR_REACH = 1.0;
         const double DRIVING_CHASE = 1.7;
@@ -147,7 +145,6 @@ namespace Porchlight.App
         bool hidden;
         double sightTimer;
         Vec2? walkDir;
-        double manualHold;
         GameObject route;
         double routeTimer;
         bool background;
@@ -611,7 +608,6 @@ namespace Porchlight.App
                 return;
             }
             SetStop(CameraStop + step);
-            manualHold = MANUAL_HOLD;
         }
 
         public void Tilt(int step)
@@ -652,7 +648,6 @@ namespace Porchlight.App
             var dir = p.AutoHeading() ?? new Vec2(Math.Sin(p.heading), Math.Cos(p.heading));
             if (Numbers.Hypot(dir.x, dir.y) < 1e-6) return;
             SetStop(Orbit.StopLookingAlong(dir));
-            manualHold = MANUAL_HOLD;
         }
 
         public int CameraStop => Orbit.NearestStop(targetYaw);
@@ -907,7 +902,6 @@ namespace Porchlight.App
             if (left != null && now == null && mode == CameraMode.Iso)
             {
                 SetStop(Orbit.NearestStop(yaw));
-                manualHold = MANUAL_HOLD;
             }
             if (left != null && now == null && mode == CameraMode.Close && p != null)
             {
@@ -950,7 +944,6 @@ namespace Porchlight.App
         void KeepInSight(double dt)
         {
             var p = player;
-            manualHold -= dt;
             sightTimer -= dt;
             if (p == null)
             {
@@ -975,10 +968,6 @@ namespace Porchlight.App
                 double k = Math.Min(1, dt * HEADING_SMOOTHING);
                 walkDir = new Vec2(walkDir.Value.x + (h.Value.x - walkDir.Value.x) * k, walkDir.Value.y + (h.Value.y - walkDir.Value.y) * k);
             }
-            if (walkDir == null || manualHold > 0 || room != null) return;
-            if (mode == CameraMode.Iso && zoom < AUTO_TURN_MIN_ZOOM) return;
-            int next = Orbit.StopBehind(CameraStop, walkDir.Value);
-            if (next != CameraStop) SetStop(next);
         }
 
         bool Blocked(Vec2 at, double yawAt)
