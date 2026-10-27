@@ -228,6 +228,7 @@ namespace Porchlight.UI
             header.Add(El.Text("Town generator", "sb-subtitle"));
             body.Add(header);
             var actions = El.Box("sb-actions");
+            regen.AddToClassList("first");
             actions.Add(regen);
             actions.Add(exploreButton);
             body.Add(actions);
@@ -338,6 +339,7 @@ namespace Porchlight.UI
             c.turnRight = El.Btn("Turn ⟳", "Turn the camera round the player (E)", null);
             c.tiltDown = El.Btn("Tilt ↓", "Tilt the camera down toward the horizon (Z)", null);
             c.tiltUp = El.Btn("Tilt ↑", "Tilt the camera up toward looking straight down (X)", null);
+            c.tiltUp.AddToClassList("last");
             foreach (var b in new[] { c.turnLeft, c.turnRight, c.tiltDown, c.tiltUp }) grid4.Add(b);
             c.root.Add(grid4);
             var grid2 = El.Box("grid2");

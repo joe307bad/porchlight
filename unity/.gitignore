@@ -36,3 +36,6 @@ mono_crash.*
 Tools~/**/bin/
 Tools~/**/obj/
 .vscode/
+/[Aa]ssets/StreamingAssets/
+/[Aa]ssets/StreamingAssets.meta
+/Data/

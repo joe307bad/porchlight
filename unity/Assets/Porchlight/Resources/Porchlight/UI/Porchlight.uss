@@ -46,7 +46,6 @@ Label {
 #map {
     background-color: #2b2a27;
     overflow: hidden;
-    cursor: pointer;
 }
 
 /* Buttons. */
@@ -195,7 +194,7 @@ Label {
     font-size: 14px;
 }
 
-.sb-actions > .btn:first-child {
+.sb-actions > .btn.first {
     margin-right: 8px;
 }
 
@@ -366,7 +365,7 @@ Label {
     margin-right: 6px;
 }
 
-.grid4 > .btn:last-child {
+.grid4 > .btn.last {
     margin-right: 0;
 }
 
@@ -802,4 +801,9 @@ Label {
 
 .hidden {
     display: none;
+}
+
+/* A button that couldn't do what it says (no car near enough): a little shake. */
+.btn.nudge {
+    translate: 3px 0;
 }

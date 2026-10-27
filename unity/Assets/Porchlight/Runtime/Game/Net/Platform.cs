@@ -29,6 +29,35 @@ namespace Porchlight.App
 
         public double Now() => Time.realtimeSinceStartupAsDouble * 1000;
 
+        /// <summary>
+        /// Off the web there are no browser cookies: a session to send instead
+        /// (PORCHLIGHT_COOKIE, e.g. "pl_session=…"), or null to play offline.
+        /// </summary>
+        public static string Cookie
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return null;
+#else
+                return Environment.GetEnvironmentVariable("PORCHLIGHT_COOKIE");
+#endif
+            }
+        }
+
+        /// <summary>Whether this platform can sign in at all (a browser, or a session handed over).</summary>
+        public static bool CanSignIn
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return true;
+#else
+                return !string.IsNullOrEmpty(Cookie);
+#endif
+            }
+        }
+
         public IWebSocket NewSocket()
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -56,6 +85,7 @@ namespace Porchlight.App
                 req.SetRequestHeader("Content-Type", "application/json");
             }
             req.SetRequestHeader("Accept", "application/json");
+            if (!string.IsNullOrEmpty(Cookie)) req.SetRequestHeader("Cookie", Cookie);
             var op = req.SendWebRequest();
             op.completed += _ =>
             {
@@ -301,6 +331,7 @@ namespace Porchlight.App
             {
                 try
                 {
+                    if (!string.IsNullOrEmpty(Cookie)) ws.Options.SetRequestHeader("Cookie", Cookie);
                     await ws.ConnectAsync(new Uri(url), System.Threading.CancellationToken.None);
                     opened = true;
                     var buf = new byte[1 << 16];

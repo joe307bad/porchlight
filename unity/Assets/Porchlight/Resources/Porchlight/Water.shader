@@ -48,6 +48,12 @@ Shader "Porchlight/Water"
                 return o;
             }
 
+            // three.js wrote this material's colour as raw sRGB: decode it to linear (sRGBToLinear).
+            float3 ToLinear(float3 c)
+            {
+                return lerp(c / 12.92, pow((c + 0.055) / 1.055, 2.4), step(0.04045, c));
+            }
+
             float4 frag(Varyings i) : SV_Target
             {
                 float wave = 0.5 + 0.5 * sin(_PL_Time * 1.6 + i.xz.x * 0.55 + i.xz.y * 0.35);
@@ -55,7 +61,7 @@ Shader "Porchlight/Water"
                 float3 c = lerp(float3(0.42, 0.70, 0.88), float3(0.25, 0.50, 0.76), i.deep);
                 c += 0.05 * wave + 0.03 * ripple;
                 c = lerp(c, c * float3(0.28, 0.34, 0.55), _PL_Night);
-                return float4(SRGBToLinear(saturate(c)), 1.0);
+                return float4(ToLinear(saturate(c)), 1.0);
             }
             ENDHLSL
         }

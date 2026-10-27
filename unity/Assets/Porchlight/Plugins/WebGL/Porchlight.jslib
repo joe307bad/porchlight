@@ -149,6 +149,10 @@ mergeInto(LibraryManager.library, {
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   },
 
+  PL_Dpr: function () {
+    return window.devicePixelRatio || 1;
+  },
+
   PL_Hidden: function () {
     return document.visibilityState === 'hidden' ? 1 : 0;
   },
