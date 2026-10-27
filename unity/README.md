@@ -75,3 +75,11 @@ dotnet run --project "unity/Tools~/parity/GenCheck" -- net '<that line>'
 ```
 
 `Tools~/check.sh` compile-checks every assembly with `dotnet`. It needs no Unity, but it does need the `.csproj` files Unity generates when it opens the project.
+
+A whole-app smoke run, with no window: build macOS (**Porchlight ▸ Build macOS**), then
+
+```
+PORCHLIGHT_SMOKE=1 Builds/macOS/Porchlight.app/Contents/MacOS/Porchlight -batchmode -logFile -
+```
+
+This grows a town, enters explore mode, auto-walks for 8 s, goes back to the map, regenerates and quits, logging `smoke:` lines along the way. Leave out `-nographics`: without a GPU device, text and instanced drawing throw.

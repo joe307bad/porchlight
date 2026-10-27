@@ -176,6 +176,24 @@ namespace Porchlight.App
             online = user != null;
             BuildApp();
             started = true;
+            if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE") == "1") _ = Smoke();
+        }
+
+        /// <summary>A headless run through the app (PORCHLIGHT_SMOKE=1): explore, walk a while, back to the map, quit.</summary>
+        async Task Smoke()
+        {
+            Debug.Log($"smoke: town {seed}: {statusLabel.text}");
+            await Explore();
+            Debug.Log($"smoke: exploring={exploring} player={iso?.PlayerPosition}");
+            iso?.SetAuto(true);
+            double until = platform.Now() + 8000;
+            while (platform.Now() < until) await Task.Yield();
+            Debug.Log($"smoke: after auto walk player={iso?.PlayerPosition} auto={iso?.IsAuto}");
+            LeaveExplore();
+            Regenerate(RandomSeed(), @params);
+            Debug.Log($"smoke: regenerated {seed}: {statusLabel.text}");
+            Debug.Log("smoke: done");
+            Application.Quit(0);
         }
 
         void BuildApp()
