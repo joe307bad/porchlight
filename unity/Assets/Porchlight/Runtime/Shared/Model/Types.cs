@@ -1,6 +1,6 @@
 // TownModel: the single contract between generation and every renderer.
 // Plain data only — entities refer to each other by integer id, never by
-// reference. A port of model/types.ts.
+// reference.
 
 using System.Collections.Generic;
 using Porchlight.Core;
@@ -242,7 +242,7 @@ namespace Porchlight.Model
             };
         }
 
-        /// <summary>A shallow copy, as `{ ...model }` makes in the TypeScript stages.</summary>
+        /// <summary>A shallow copy, for a stage that replaces some layers.</summary>
         public TownModel With() => (TownModel)MemberwiseClone();
     }
 }

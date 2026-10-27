@@ -2,7 +2,7 @@
 // where they carry straight on through a junction, and each street gets a name
 // from the town's seed: the High Street, Roads and Avenues, side streets after
 // trees and flowers, Closes and Courts, Crescents and Drives, Walks; Church,
-// Market and Bridge streets where they pass those. A port of render/iso/names.ts.
+// Market and Bridge streets where they pass those.
 
 using System;
 using System.Collections.Generic;
@@ -117,7 +117,7 @@ namespace Porchlight.Explore
                         if (dot < STRAIGHT) pairs.Add((a, b, dot));
                     }
                 }
-                Js.StableSort(pairs, (p, q) => p.dot - q.dot);
+                Numbers.StableSort(pairs, (p, q) => p.dot - q.dot);
                 var used = new HashSet<int>();
                 foreach (var p in pairs)
                 {
@@ -190,7 +190,7 @@ namespace Porchlight.Explore
                 return true;
             }
             var order = new List<Street>(streets);
-            Js.StableSort(order, (a, b) => Length(b) - Length(a));
+            Numbers.StableSort(order, (a, b) => Length(b) - Length(a));
             foreach (var s in order)
             {
                 if (s == high && Claim(s, "High Street")) continue;
@@ -236,8 +236,8 @@ namespace Porchlight.Explore
                 double own = 0;
                 for (int k = 1; k < pts.Count - 1; k++)
                 {
-                    double a = JsMath.Atan2(pts[k].y - pts[k - 1].y, pts[k].x - pts[k - 1].x);
-                    double b = JsMath.Atan2(pts[k + 1].y - pts[k].y, pts[k + 1].x - pts[k].x);
+                    double a = DetMath.Atan2(pts[k].y - pts[k - 1].y, pts[k].x - pts[k - 1].x);
+                    double b = DetMath.Atan2(pts[k + 1].y - pts[k].y, pts[k + 1].x - pts[k].x);
                     double d = b - a;
                     while (d > Math.PI) d -= Math.PI * 2;
                     while (d < -Math.PI) d += Math.PI * 2;

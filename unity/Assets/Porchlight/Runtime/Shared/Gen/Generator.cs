@@ -1,6 +1,5 @@
 // Runs the generation pipeline. Pure: no engine, no rendering, no
 // System.Random, so it runs the same in Unity, on a console, or in a .NET test.
-// A port of gen/index.ts.
 
 using System;
 using System.Collections.Generic;

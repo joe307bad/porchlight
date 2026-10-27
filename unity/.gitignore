@@ -39,3 +39,9 @@ Tools~/**/obj/
 /[Aa]ssets/StreamingAssets/
 /[Aa]ssets/StreamingAssets.meta
 /Data/
+# Made by Porchlight ▸ Set Up Project (Editor/Library.cs)
+/Assets/Porchlight/Generated/
+/Assets/Porchlight/Generated.meta
+/Assets/Porchlight/Resources/Porchlight/Library.asset
+/Assets/Porchlight/Resources/Porchlight/Library.asset.meta
+!Tools~/Checks/Checks.csproj

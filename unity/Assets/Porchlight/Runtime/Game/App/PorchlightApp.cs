@@ -1,4 +1,4 @@
-// The whole app, as main.ts runs it in the browser: sign in (when the page is
+// The whole app: sign in (when the page is
 // served by the auth service), grow a town from the seed in the URL, show its
 // blueprint with the sidebar, and on Explore walk it in 3D with everyone else
 // in the same town. One of these sits in the only scene (Boot.unity).
@@ -17,10 +17,10 @@ using Porchlight.Net;
 using Porchlight.Rendering;
 using Porchlight.UI;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 using Debug = UnityEngine.Debug;
 using Rect = UnityEngine.Rect;
-using Space = Porchlight.Rendering.Space;
 
 namespace Porchlight.App
 {
@@ -60,7 +60,6 @@ namespace Porchlight.App
         Camera clearCamera;
         ExploreView iso;
         ExploreOverlay overlay;
-        Task<bool> isoLoading;
         bool exploring;
         TownModel isoTown;
         /// <summary>Explore mode is shared with everyone in the same town when signed in.</summary>
@@ -100,13 +99,13 @@ namespace Porchlight.App
             var c = new GameObject("Clear").AddComponent<Camera>();
             c.cullingMask = 0;
             c.clearFlags = CameraClearFlags.SolidColor;
-            c.backgroundColor = Space.CssHex(0x2b2a27).gamma;
+            c.backgroundColor = Coords.Hex(0x2b2a27);
             c.depth = -100;
             c.orthographic = true;
             clearCamera = c;
             camera3d = new GameObject("Explore Camera").AddComponent<Camera>();
             camera3d.clearFlags = CameraClearFlags.SolidColor;
-            camera3d.cullingMask = ~0; // the Stage draws on layer 0, and the people are renderers in the scene
+            camera3d.tag = "MainCamera";
             camera3d.depth = 0;
             camera3d.allowMSAA = true;
             camera3d.enabled = false;
@@ -127,7 +126,7 @@ namespace Porchlight.App
             root.pickingMode = PickingMode.Ignore;
         }
 
-        // Sign-in (auth/gate.ts): nothing starts until someone is signed in, when the
+        // Sign-in: nothing starts until someone is signed in, when the
         // page is served by the auth service.
 
         void BeginSignIn()
@@ -156,7 +155,7 @@ namespace Porchlight.App
                     return;
                 }
                 // No sign-in service here (the editor without a server, a static
-                // host): play alone, as the web app does with sign-in off.
+                // host): play alone.
                 if (err != null && provider == null && error == null && !err.Contains("(5"))
                 {
                     Debug.Log("porchlight: no sign-in service (" + err + "); playing offline");
@@ -186,8 +185,15 @@ namespace Porchlight.App
             await Explore();
             Debug.Log($"smoke: exploring={exploring} player={iso?.PlayerPosition}");
             iso?.SetAuto(true);
-            double until = platform.Now() + 8000;
-            while (platform.Now() < until) await Task.Yield();
+            double start = platform.Now(), until = start + 8000;
+            int frames = 0;
+            while (platform.Now() < until)
+            {
+                await Task.Yield();
+                frames++;
+            }
+            var renderers = FindObjectsByType<Renderer>();
+            Debug.Log($"smoke: {frames / ((platform.Now() - start) / 1000):0} fps, {renderers.Length} renderers ({renderers.Count(r => r.isPartOfStaticBatch)} static-batched)");
             Debug.Log($"smoke: after auto walk player={iso?.PlayerPosition} auto={iso?.IsAuto}");
             LeaveExplore();
             Regenerate(RandomSeed(), @params);
@@ -398,14 +404,10 @@ namespace Porchlight.App
 
         // Explore mode: the 3D town, loaded on first use.
 
-        async Task<bool> LoadIso()
+        void LoadIso()
         {
-            var assets = await TownAssets.Load();
-            var fonts = Fonts.Load();
-            var textRoot = new GameObject("Text");
-            var text = new UiText(panelSettings, fonts, textRoot.transform);
             overlay = new ExploreOverlay(isoHost) { Dpr = dpr };
-            iso = new ExploreView(camera3d, assets, new Stage(), overlay, text, input);
+            iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
             iso.OnCarChange = SyncCarButton;
             iso.OnAutoChange = SyncAutoWalkButton;
             iso.OnPadAction = action =>
@@ -423,7 +425,6 @@ namespace Porchlight.App
                 if (action == PadAction.Night) ToggleNight();
                 if (action == PadAction.NewCharacter) NewLook();
             };
-            return true;
         }
 
         void SpawnCharacter()
@@ -445,11 +446,12 @@ namespace Porchlight.App
             sidebar.SetLoading(true);
             try
             {
+                // Let "Loading…" show before the town is built (a frame's work).
+                await Task.Yield();
                 if (iso == null)
                 {
                     isoHost.style.display = DisplayStyle.Flex;
-                    isoLoading ??= LoadIso();
-                    await isoLoading;
+                    LoadIso();
                 }
                 exploring = true;
                 Unfocus();
@@ -608,22 +610,22 @@ namespace Porchlight.App
             controls.walkMode.text = iso.IsStreetsOnly ? "Walk: streets only" : "Walk: anywhere";
         }
 
-        void OnKeyDown(string code, bool repeat)
+        void OnKeyDown(Key code, bool repeat)
         {
             if (!started) return;
             if (exploring)
             {
                 if (Typing()) return;
-                if (code == "KeyN") ToggleNight();
-                if (code == "KeyR") ToggleWalkMode();
-                if (code == "KeyT") ToggleAutoWalk();
-                if (code == "KeyV" && !repeat) ToggleCloseUp();
-                if (code == "KeyC") NewLook();
-                if (code == "Escape") LeaveExplore();
+                if (code == Key.N) ToggleNight();
+                if (code == Key.R) ToggleWalkMode();
+                if (code == Key.T) ToggleAutoWalk();
+                if (code == Key.V && !repeat) ToggleCloseUp();
+                if (code == Key.C) NewLook();
+                if (code == Key.Escape) LeaveExplore();
                 return;
             }
             if (Typing()) return;
-            if (code == "Backquote") SetDebugOpen(!panel.IsOpen);
+            if (code == Key.Backquote) SetDebugOpen(!panel.IsOpen);
         }
 
         /// <summary>
@@ -650,7 +652,7 @@ namespace Porchlight.App
             map.Redraw();
         }
 
-        // The URL hash holds the seed and the params that differ from their defaults (ui/urlState.ts).
+        // The URL hash holds the seed and the params that differ from their defaults.
 
         struct UrlState
         {
@@ -663,7 +665,7 @@ namespace Porchlight.App
             var hash = ParseQuery(platform.Hash.TrimStart('#'));
             var partial = new Dictionary<string, double>();
             foreach (var spec in ParamSpec.All)
-                if (hash.TryGetValue(spec.key, out var raw)) partial[spec.key] = Js.ParseNumber(raw);
+                if (hash.TryGetValue(spec.key, out var raw)) partial[spec.key] = Numbers.ParseNumber(raw);
             hash.TryGetValue("seed", out var s);
             s = s?.Trim();
             return new UrlState { seed = string.IsNullOrEmpty(s) ? null : s, @params = GenParams.Normalize(partial) };
@@ -674,7 +676,7 @@ namespace Porchlight.App
             var d = GenParams.Defaults;
             var pairs = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("seed", seed) };
             foreach (var spec in ParamSpec.All)
-                if (p[spec.key] != d[spec.key]) pairs.Add(new KeyValuePair<string, string>(spec.key, Js.NumberToString(p[spec.key])));
+                if (p[spec.key] != d[spec.key]) pairs.Add(new KeyValuePair<string, string>(spec.key, Numbers.NumberToString(p[spec.key])));
             return EncodeQuery(pairs);
         }
 
@@ -746,7 +748,7 @@ namespace Porchlight.App
             return sb.ToString();
         }
 
-        /// <summary>Readout for the tile under the cursor (ui/hover.ts).</summary>
+        /// <summary>Readout for the tile under the cursor.</summary>
         static string DescribeTile(TownModel model, Vec2? world)
         {
             if (model == null || world == null) return "";

@@ -1,6 +1,6 @@
 // Who's signed in and which characters they play: the auth service's /auth/me
 // (server/: the session is an HttpOnly cookie, never seen here) and the game
-// server's /mp/characters. Ports of auth/session.ts and net/characters.ts.
+// server's /mp/characters.
 // One account plays as any of its characters, and more than one at once.
 
 using System;

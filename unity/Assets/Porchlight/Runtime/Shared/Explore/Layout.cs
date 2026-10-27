@@ -1,7 +1,7 @@
 // Turns the blueprint into a street scene for the 3D explore view: smoothed
 // roads with sidewalks, every building on its footprint facing its street,
 // yards with fences, sheds and gardens, community gardens, parked cars, and
-// the sidewalk network townsfolk walk. Pure. A port of render/iso/layout.ts.
+// the sidewalk network townsfolk walk. Pure.
 
 using System;
 using System.Collections.Generic;
@@ -205,7 +205,7 @@ namespace Porchlight.Explore
                         cx = cx + t.x + 0.5;
                         cy = cy + t.y + 0.5;
                     }
-                    bool nearCentre = Js.Hypot(cx / footprint.Count - C.x, cy / footprint.Count - C.y) < model.townRadius * 0.3;
+                    bool nearCentre = Numbers.Hypot(cx / footprint.Count - C.x, cy / footprint.Count - C.y) < model.townRadius * 0.3;
                     var style = b.kind == BuildingKind.Shop && nearCentre && b.floors >= 2 ? HouseStyle.Office : StyleOf(b.kind);
                     int floors = style == HouseStyle.Office ? Math.Min(5, b.floors + 2) : b.floors;
                     var house = new House { x = footprint[0].x, y = footprint[0].y, tiles = footprint, facing = b.facing, kind = b.kind, style = style, floors = floors, buildingId = b.id, blockId = block.id };
@@ -287,7 +287,7 @@ namespace Porchlight.Explore
             return o;
         }
 
-        /// <summary>A small deterministic hash-based random in 0..1 (hash(seed)(k) in layout.ts).</summary>
+        /// <summary>A small deterministic hash-based random in 0..1.</summary>
         public static double Hash(int seed, int k)
         {
             unchecked
@@ -327,7 +327,7 @@ namespace Porchlight.Explore
                     double off = r.width / 2 - 0.24;
                     var p = new Vec2(a.x + ty * off * side, a.y - tx * off * side);
                     if (IsWaterTile(model, p) || IsWaterTile(model, a)) continue;
-                    cars.Add(new ParkedCar { x = p.x, y = p.y, angle = JsMath.Atan2(ty, tx), variant = (int)Math.Floor(Hash(seed, k++) * 1000) });
+                    cars.Add(new ParkedCar { x = p.x, y = p.y, angle = DetMath.Atan2(ty, tx), variant = (int)Math.Floor(Hash(seed, k++) * 1000) });
                 }
             }
             return cars;
@@ -374,7 +374,7 @@ namespace Porchlight.Explore
                 var b = pts[Math.Min(pts.Count - 1, i + 1)];
                 double tx = b.x - a.x;
                 double ty = b.y - a.y;
-                double len = Js.Hypot(tx, ty);
+                double len = Numbers.Hypot(tx, ty);
                 if (len == 0 || double.IsNaN(len)) len = 1;
                 tx /= len;
                 ty /= len;

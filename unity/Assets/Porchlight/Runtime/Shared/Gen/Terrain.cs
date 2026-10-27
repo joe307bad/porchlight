@@ -1,6 +1,5 @@
 // Stage 1: heightmap from seeded fractal simplex noise, flattened toward the
 // map edges so hills aren't cut off, with the water level set as a percentile.
-// A port of gen/terrain.ts.
 
 using System;
 using System.Collections.Generic;
@@ -44,7 +43,7 @@ namespace Porchlight.Gen
                         amp *= PERSISTENCE;
                         freq *= 2;
                     }
-                    hm[y * w + x] = (float)(0.5 + 0.5 * JsMath.Tanh((sum / norm) * relief * 2));
+                    hm[y * w + x] = (float)(0.5 + 0.5 * DetMath.Tanh((sum / norm) * relief * 2));
                 }
             }
 
@@ -87,7 +86,7 @@ namespace Porchlight.Gen
             }
             double fraction = (double)water / model.heightmap.Length;
             if (Math.Abs(fraction - model.@params.waterFraction) > 0.02)
-                errors.Add($"water fraction {Js.ToFixed(fraction, 3)} far from target {model.@params.waterFraction}");
+                errors.Add($"water fraction {Numbers.ToFixed(fraction, 3)} far from target {model.@params.waterFraction}");
             return errors;
         }
 
@@ -95,7 +94,7 @@ namespace Porchlight.Gen
         public static double Percentile(float[] values, double q)
         {
             var sorted = (float[])values.Clone();
-            Js.SortNumeric(sorted);
+            Numbers.SortNumeric(sorted);
             return sorted[Math.Min(sorted.Length - 1, (int)Math.Floor(q * sorted.Length))];
         }
     }

@@ -2,7 +2,6 @@
 // (lake or map edge), flow accumulation sizes the channels, and each river
 // walks steepest descent from a high source until it reaches water, the map
 // edge, or another river. The channel is then carved so it never runs uphill.
-// A port of gen/rivers.ts.
 
 using System;
 using System.Collections.Generic;
@@ -211,7 +210,7 @@ namespace Porchlight.Gen
                     double v = hm[Grid.Index((int)Math.Floor(pt.x), (int)Math.Floor(pt.y), w)];
                     if (v > prev + 1e-6)
                     {
-                        errors.Add($"river {river.id} flows uphill near {Js.ToFixed(pt.x, 1)},{Js.ToFixed(pt.y, 1)}");
+                        errors.Add($"river {river.id} flows uphill near {Numbers.ToFixed(pt.x, 1)},{Numbers.ToFixed(pt.y, 1)}");
                         break;
                     }
                     prev = v;

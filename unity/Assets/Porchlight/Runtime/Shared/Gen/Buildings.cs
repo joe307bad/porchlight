@@ -3,7 +3,7 @@
 // front edge looks onto the road across a front yard, set back a little from
 // the rear and sides when there's room. The building faces the road it fronts.
 // The biggest lot near the center gets the church, and the building nearest
-// the plaza becomes the hall. A port of gen/buildings.ts.
+// the plaza becomes the hall.
 
 using System;
 using System.Collections.Generic;

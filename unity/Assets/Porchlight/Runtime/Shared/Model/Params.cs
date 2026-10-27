@@ -1,7 +1,6 @@
 // Every generator tunable lives here with a default. The UI builds its sliders
 // from ParamSpecs, and the URL hash stores any value that differs from
-// default. Heights are 0..1; slopes are height change per tile. A port of
-// model/params.ts.
+// default. Heights are 0..1; slopes are height change per tile.
 
 using System;
 using System.Collections.Generic;
@@ -125,9 +124,9 @@ namespace Porchlight.Model
             var o = new GenParams();
             foreach (var spec in ParamSpec.All)
             {
-                if (partial == null || !partial.TryGetValue(spec.key, out var v) || !Js.IsFinite(v)) continue;
-                double stepped = Js.Round((v - spec.min) / spec.step) * spec.step + spec.min;
-                double fixedV = double.Parse(Js.ToFixed(stepped, 6), CultureInfo.InvariantCulture);
+                if (partial == null || !partial.TryGetValue(spec.key, out var v) || !Numbers.IsFinite(v)) continue;
+                double stepped = Numbers.Round((v - spec.min) / spec.step) * spec.step + spec.min;
+                double fixedV = double.Parse(Numbers.ToFixed(stepped, 6), CultureInfo.InvariantCulture);
                 o[spec.key] = Math.Min(spec.max, Math.Max(spec.min, fixedV));
             }
             if (o.lotMaxSize < o.lotMinSize * 2) o.lotMaxSize = o.lotMinSize * 2;

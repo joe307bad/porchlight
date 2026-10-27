@@ -1,6 +1,5 @@
 // Turn-by-turn directions for auto walk and auto drive: the planned route read
-// out as steps on named streets, the way a map app would. Pure. A port of
-// render/iso/directions.ts.
+// out as steps on named streets, the way a map app would. Pure.
 
 using System;
 using System.Collections.Generic;
@@ -136,7 +135,7 @@ namespace Porchlight.Explore
             double s = start ? st.s0 : st.s1;
             var a = SidewalkWalk.PointAlong(p, Math.Max(0, Math.Min(total, s - 0.4 * sign)));
             var b = SidewalkWalk.PointAlong(p, Math.Max(0, Math.Min(total, s + 0.4 * sign)));
-            double l = Js.Hypot(b.x - a.x, b.y - a.y);
+            double l = Numbers.Hypot(b.x - a.x, b.y - a.y);
             if (l == 0 || double.IsNaN(l)) l = 1;
             return new Vec2((b.x - a.x) / l, (b.y - a.y) / l);
         }
@@ -144,7 +143,7 @@ namespace Porchlight.Explore
         /// <summary>What kind of turn takes you from heading a to heading b (map y runs south, so clockwise is right).</summary>
         public static StepKind TurnKind(Vec2 a, Vec2 b)
         {
-            double angle = (JsMath.Atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y) * 180) / Math.PI;
+            double angle = (DetMath.Atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y) * 180) / Math.PI;
             double m = Math.Abs(angle);
             if (m < 30) return StepKind.Straight;
             if (m > 150) return StepKind.Uturn;
@@ -157,8 +156,8 @@ namespace Porchlight.Explore
         public static string Compass(Vec2 d)
         {
             string[] points = { "north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west" };
-            double deg = (JsMath.Atan2(d.x, -d.y) * 180) / Math.PI;
-            return points[(int)((Js.Round(deg / 45) + 8) % 8)];
+            double deg = (DetMath.Atan2(d.x, -d.y) * 180) / Math.PI;
+            return points[(int)((Numbers.Round(deg / 45) + 8) % 8)];
         }
 
         /// <summary>A walking distance in tiles as shown to the player: metres, rounded like a map app would.</summary>
@@ -166,9 +165,9 @@ namespace Porchlight.Explore
         {
             double m = tiles * METRES_PER_TILE;
             if (m < 10) return "";
-            if (m < 100) return $"{Js.NumberToString(Js.Round(m / 5) * 5)} m";
-            if (m < 1000) return $"{Js.NumberToString(Js.Round(m / 10) * 10)} m";
-            return $"{Js.ToFixed(m / 1000, 1)} km";
+            if (m < 100) return $"{Numbers.NumberToString(Numbers.Round(m / 5) * 5)} m";
+            if (m < 1000) return $"{Numbers.NumberToString(Numbers.Round(m / 10) * 10)} m";
+            return $"{Numbers.ToFixed(m / 1000, 1)} km";
         }
 
         /// <summary>Auto drive's route as steps.</summary>

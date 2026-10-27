@@ -1,7 +1,7 @@
 // Moving traffic on every through road: cars keep to the right-hand lane,
 // follow the road graph through junctions (U-turning at the map edge) and slow
 // down behind the car ahead, or for the player in their lane, turning round
-// if held up too long. Pure state. A port of render/iso/traffic.ts.
+// if held up too long. Pure state.
 
 using System;
 using System.Collections.Generic;
@@ -107,7 +107,7 @@ namespace Porchlight.Explore
             for (int i = 0; i < cars.Count; i++)
             {
                 var c = cars[i];
-                double d = Js.Hypot(c.x - p.x, c.y - p.y);
+                double d = Numbers.Hypot(c.x - p.x, c.y - p.y);
                 if (!c.taken && d < bestD)
                 {
                     bestD = d;
@@ -139,7 +139,7 @@ namespace Porchlight.Explore
                     car.dir = -car.dir;
                     car.wait = 0;
                 }
-                car.side += Js.Sign(car.dir - car.side) * Math.Min(Math.Abs(car.dir - car.side), dt * 2);
+                car.side += Numbers.Sign(car.dir - car.side) * Math.Min(Math.Abs(car.dir - car.side), dt * 2);
                 car.s += car.dir * car.speed * dt;
                 if (car.s < 0 || car.s > lengths[car.road]) TurnAtJunction(car);
                 Place(car, dt);
@@ -183,12 +183,12 @@ namespace Porchlight.Explore
             var p = AutoDrive.PointAt(r.points, at[car.road], car.s);
             var q = AutoDrive.PointAt(r.points, at[car.road], Math.Max(0, Math.Min(lengths[car.road], car.s + 0.25 * car.dir)));
             double tx = q.x - p.x, ty = q.y - p.y;
-            double l = Js.Hypot(tx, ty);
+            double l = Numbers.Hypot(tx, ty);
             if (l > 1e-6)
             {
                 tx /= l;
                 ty /= l;
-                double want = JsMath.Atan2(ty, tx);
+                double want = DetMath.Atan2(ty, tx);
                 car.heading += dt != 0 ? Orbit.ShortestTurn(car.heading, want) * Math.Min(1, dt * 4) : Orbit.ShortestTurn(car.heading, want);
             }
             else

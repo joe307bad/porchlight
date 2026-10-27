@@ -1,5 +1,4 @@
-// Row-major grid helpers, a binary min-heap, and grid A* (ports of
-// core/grid.ts, core/heap.ts and core/astar.ts).
+// Row-major grid helpers, a binary min-heap, and grid A*.
 
 using System;
 using System.Collections.Generic;
@@ -184,7 +183,7 @@ namespace Porchlight.Core
                     int next = ny * width + nx;
                     if (closed[next] != 0) continue;
                     double step = search.StepCost(cur, next);
-                    if (!Js.IsFinite(step)) continue;
+                    if (!Numbers.IsFinite(step)) continue;
                     double cost = g[cur] + step;
                     if (cost < g[next])
                     {
@@ -247,7 +246,7 @@ namespace Porchlight.Core
                     int ns = next * 5 + d;
                     if (closed[ns] != 0) continue;
                     double step = search.StepCost(cell, next);
-                    if (!Js.IsFinite(step)) continue;
+                    if (!Numbers.IsFinite(step)) continue;
                     double cost = g[state] + step + (heading != 4 && heading != d ? search.TurnCost : 0);
                     if (cost < g[ns])
                     {

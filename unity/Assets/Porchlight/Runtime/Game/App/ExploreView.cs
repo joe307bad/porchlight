@@ -1,4 +1,4 @@
-// The explorable 3D town, as render/iso/view.ts draws it: an orthographic
+// The explorable 3D town: an orthographic
 // camera at an isometric-style pitch orbiting the player between 12 fixed
 // headings (Q / E), tilted through fixed stops (Z / X), turned to look down the
 // street (F), and a close-up chase camera (V). WASD or the arrows walk (or
@@ -16,8 +16,8 @@ using Porchlight.Model;
 using Porchlight.Net;
 using Porchlight.Rendering;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using Grid = Porchlight.Core.Grid;
-using Space = Porchlight.Rendering.Space;
 using Rect = Porchlight.Explore.Rect;
 using Avatar = Porchlight.Rendering.Avatar;
 
@@ -51,14 +51,12 @@ namespace Porchlight.App
 
     public sealed class ExploreView : INetHost
     {
-        static readonly Color DAY_SKY = Space.Hex(0x87b7d8);
-        static readonly Color NIGHT_SKY = Space.Hex(0x101828);
         const double VIEW_HEIGHT = 20;
         const double MIN_ZOOM = 0.35;
         const double MAX_ZOOM = 2.5;
         const int MAX_PEDESTRIANS = 70;
-        const double CAMERA_DISTANCE = 150;
-        static readonly double[] SUN = Normalize(-0.5, 1.15, -0.3);
+        /// <summary>How far back the orthographic camera sits (the view doesn't change with it; URP's shadows reach this far and more).</summary>
+        const double CAMERA_DISTANCE = 60;
         const double SIGHT_HEIGHT = 0.26;
         const double HEADING_SMOOTHING = 1.2;
         const double MANUAL_HOLD = 5;
@@ -80,30 +78,22 @@ namespace Porchlight.App
         const double PLAYER_SCALE = 1.05;
         const double CAR_REACH = 1.0;
         const double DRIVING_CHASE = 1.7;
-        const double CAR_LIFT = 0.035;
         const double PAD_SWING_RATE = 2.4;
         const double PAD_ZOOM_RATE = 1.4;
 
-        static double[] Normalize(double x, double y, double z)
+        static readonly Dictionary<Key, (int x, int y)> KEYS = new Dictionary<Key, (int, int)>
         {
-            double l = Math.Sqrt(x * x + y * y + z * z);
-            return new[] { x / l, y / l, z / l };
-        }
-
-        static readonly Dictionary<string, (int x, int y)> KEYS = new Dictionary<string, (int, int)>
-        {
-            ["KeyW"] = (0, -1), ["ArrowUp"] = (0, -1),
-            ["KeyS"] = (0, 1), ["ArrowDown"] = (0, 1),
-            ["KeyA"] = (-1, 0), ["ArrowLeft"] = (-1, 0),
-            ["KeyD"] = (1, 0), ["ArrowRight"] = (1, 0),
+            [Key.W] = (0, -1), [Key.UpArrow] = (0, -1),
+            [Key.S] = (0, 1), [Key.DownArrow] = (0, 1),
+            [Key.A] = (-1, 0), [Key.LeftArrow] = (-1, 0),
+            [Key.D] = (1, 0), [Key.RightArrow] = (1, 0),
         };
 
         sealed class OwnCar
         {
             public Vehicle car;
-            public Prefab prefab;
-            public List<Drawable> parts = new List<Drawable>();
-            public List<Drawable> xray = new List<Drawable>();
+            public CarView view;
+            public bool seeThrough;
         }
 
         sealed class Keeper
@@ -113,11 +103,9 @@ namespace Porchlight.App
         }
 
         readonly Camera camera;
-        readonly TownAssets assets;
-        readonly Stage stage;
-        readonly Lighting lighting = new Lighting();
+        readonly ModelLibrary library;
+        readonly Sky sky;
         readonly IExploreOverlay overlay;
-        readonly ITextMaker text;
         readonly GameInput input;
 
         public TownWorld world;
@@ -130,8 +118,6 @@ namespace Porchlight.App
         readonly List<Avatar> avatars = new List<Avatar>();
         Traffic traffic;
         Fleet fleet;
-        Headlights headlights;
-        CarShape[] carShapes = new CarShape[0];
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
         double chaseSwing;
@@ -162,16 +148,14 @@ namespace Porchlight.App
         double sightTimer;
         Vec2? walkDir;
         double manualHold;
-        Drawable routeMesh;
-        Mesh routeGeometry;
-        readonly Material routeMaterial = Mats.Basic(Color.white, vertexColors: true, renderOrder: 4);
+        GameObject route;
         double routeTimer;
         bool background;
         double dusk;
         double time;
         double[] lampLevels = new double[0];
         bool snap = true;
-        readonly List<string> held = new List<string>();
+        readonly List<Key> held = new List<Key>();
         PadState padState = PadState.Idle;
         readonly Flick lookFlickX = new Flick();
         readonly Flick lookFlickY = new Flick();
@@ -181,7 +165,6 @@ namespace Porchlight.App
         bool steering;
         public Action<PadAction> OnPadAction;
         readonly List<OwnCar> cars = new List<OwnCar>();
-        readonly Material carXray;
         int? driving;
         AutoDrive autoDrive;
         public Action OnAutoChange;
@@ -197,15 +180,13 @@ namespace Porchlight.App
         /// <summary>The part of the screen the view draws in (pixels, origin bottom left).</summary>
         public UnityEngine.Rect viewport;
 
-        public ExploreView(Camera camera, TownAssets assets, Stage stage, IExploreOverlay overlay, ITextMaker text, GameInput input)
+        public ExploreView(Camera camera, ModelLibrary library, IExploreOverlay overlay, GameInput input)
         {
             this.camera = camera;
-            this.assets = assets;
-            this.stage = stage;
+            this.library = library;
             this.overlay = overlay;
-            this.text = text;
             this.input = input;
-            carXray = Mats.Basic(Space.Hex(0xff6a00), Blending.Opaque, false, UnityEngine.Rendering.CompareFunction.Greater, renderOrder: Avatar.XRAY_ORDER);
+            sky = new Sky(camera);
             overlay.OnMinimapPick = Teleport;
             input.KeyDown += OnKeyDown;
             input.KeyUp += OnKeyUp;
@@ -226,7 +207,6 @@ namespace Porchlight.App
             remotes?.Clear();
             world?.Dispose();
             fleet?.Dispose();
-            headlights?.Dispose();
             foreach (var a in avatars) a.Dispose();
             playerAvatar?.Dispose();
             foreach (var k in keepers.Values) k.avatar.Dispose();
@@ -243,8 +223,8 @@ namespace Porchlight.App
             people.Clear();
             player = null;
             playerAvatar = null;
-            world = new TownWorld(model, assets, stage, text);
-            remotes = new RemotePlayers(world.root.transform, assets, stage, text);
+            world = new TownWorld(model, library);
+            remotes = new RemotePlayers(world.root.transform, library);
             snap = true;
             open = WalkMask();
             canDrive = Vehicle.Drivable(model, world.layout);
@@ -252,13 +232,7 @@ namespace Porchlight.App
             LeaveCarAtSpawn();
 
             traffic = new Traffic(world.layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
-            fleet = new Fleet(traffic, assets, stage);
-            headlights = new Headlights(stage);
-            carShapes = Catalog.CARS.Select(name =>
-            {
-                var p = assets.Get(name);
-                return CarLamps.Shape(p.sizeX, p.sizeY, p.sizeZ, TownWorld.CarScale(p));
-            }).ToArray();
+            fleet = new Fleet(traffic, library, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
@@ -266,7 +240,7 @@ namespace Porchlight.App
             for (int k = 0; k < count; k++)
             {
                 var p = Pedestrian.Create(Catalog.RandomLook(rng), world.sidewalks, rng);
-                var a = new Avatar(assets.Character(p.look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform, stage);
+                var a = new Avatar(library.Character(p.look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform);
                 people.Add(p);
                 avatars.Add(a);
             }
@@ -283,8 +257,8 @@ namespace Porchlight.App
             playerAvatar?.Dispose();
             player = new Player(look, at.x, at.y, PLAYER_SCALE);
             if (keep != null) player.heading = keep.heading;
-            playerAvatar = new Avatar(assets.Character(look), Avatar.PERSON_HEIGHT, 0, world.root.transform, stage);
-            playerAvatar.AddXray(carXray);
+            playerAvatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, 0, world.root.transform);
+            playerAvatar.SeeThrough();
             playerAvatar.SnapYaw(player.heading);
             if (wasAuto) player.StartAuto(world.sidewalks, autoRng);
             if (keep == null) snap = true;
@@ -311,7 +285,7 @@ namespace Porchlight.App
                 for (int i = 0; i < open.Length; i++)
                 {
                     if (open[i] == 0 || !Player.Standable((i % w) + 0.5, i / w + 0.5, open, model, solids)) continue;
-                    double d = Js.Hypot((i % w) + 0.5 - x, i / w + 0.5 - y);
+                    double d = Numbers.Hypot((i % w) + 0.5 - x, i / w + 0.5 - y);
                     if (d < bestD)
                     {
                         bestD = d;
@@ -439,7 +413,7 @@ namespace Porchlight.App
             double bestD = CAR_REACH;
             void Consider(PickKind kind, int i, double x, double y, RemoteDriver? driver = null)
             {
-                double d = Js.Hypot(x - p.x, y - p.y);
+                double d = Numbers.Hypot(x - p.x, y - p.y);
                 if (d < bestD)
                 {
                     bestD = d;
@@ -510,32 +484,18 @@ namespace Porchlight.App
             var look = Catalog.RandomLook(rng);
             var door = new Vec2(x + Math.Sin(heading) * 0.45, y - Math.Cos(heading) * 0.45);
             var driver = Pedestrian.Create(look, world.sidewalks, rng, door);
-            var avatar = new Avatar(assets.Character(look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform, stage);
+            var avatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform);
             people.Add(driver);
             avatars.Add(avatar);
         }
 
         int AddCar(Vehicle car)
         {
-            var prefab = assets.Get(Catalog.CARS[car.model]);
-            var own = new OwnCar { car = car, prefab = prefab };
-            foreach (var part in prefab.parts)
-            {
-                // Drawn after its x-ray copy, so the car never x-rays itself (as for the player).
-                var m = new Material(part.material) { renderQueue = (int)UnityEngine.Rendering.RenderQueue.Geometry + Avatar.PLAYER_ORDER };
-                own.parts.Add(stage.Add(new Drawable(part.mesh, m, Matrix4x4.identity, true)));
-                var x = stage.Add(new Drawable(part.mesh, carXray, Matrix4x4.identity, false) { visible = false });
-                own.xray.Add(x);
-            }
-            cars.Add(own);
+            cars.Add(new OwnCar { car = car, view = new CarView(library.Get(Catalog.CARS[car.model]), world.root.transform) });
             return cars.Count - 1;
         }
 
-        void RemoveCar(OwnCar c)
-        {
-            foreach (var d in c.parts) stage.Remove(d);
-            foreach (var d in c.xray) stage.Remove(d);
-        }
+        void RemoveCar(OwnCar c) => c.view.Dispose();
 
         void LeaveCarAtSpawn()
         {
@@ -563,7 +523,7 @@ namespace Porchlight.App
             p.y = spot.y;
             p.Halt();
             var f = car.Forward;
-            p.heading = JsMath.Atan2(f.x, f.y);
+            p.heading = DetMath.Atan2(f.x, f.y);
             p.speed = 0;
             OnCarChange?.Invoke(false);
         }
@@ -612,7 +572,7 @@ namespace Porchlight.App
             player.y = car.y;
             player.Halt();
             var f = car.Forward;
-            player.heading = JsMath.Atan2(f.x, f.y);
+            player.heading = DetMath.Atan2(f.x, f.y);
             player.speed = 0;
         }
 
@@ -690,7 +650,7 @@ namespace Porchlight.App
                 return;
             }
             var dir = p.AutoHeading() ?? new Vec2(Math.Sin(p.heading), Math.Cos(p.heading));
-            if (Js.Hypot(dir.x, dir.y) < 1e-6) return;
+            if (Numbers.Hypot(dir.x, dir.y) < 1e-6) return;
             SetStop(Orbit.StopLookingAlong(dir));
             manualHold = MANUAL_HOLD;
         }
@@ -705,31 +665,31 @@ namespace Porchlight.App
 
         // Input ----------------------------------------------------------------------------------
 
-        void OnKeyDown(string code, bool repeat)
+        void OnKeyDown(Key code, bool repeat)
         {
             if (background) return;
-            if (code == "ShiftLeft" || code == "ShiftRight") shift = true;
-            if (code == "KeyQ" || code == "KeyE")
+            if (code == Key.LeftShift || code == Key.RightShift) shift = true;
+            if (code == Key.Q || code == Key.E)
             {
-                if (!repeat) Rotate(code == "KeyQ" ? -1 : 1);
+                if (!repeat) Rotate(code == Key.Q ? -1 : 1);
                 return;
             }
-            if (code == "KeyZ" || code == "KeyX" || code == "PageUp" || code == "PageDown")
+            if (code == Key.Z || code == Key.X || code == Key.PageUp || code == Key.PageDown)
             {
-                if (!repeat) Tilt(code == "KeyX" || code == "PageUp" ? 1 : -1);
+                if (!repeat) Tilt(code == Key.X || code == Key.PageUp ? 1 : -1);
                 return;
             }
-            if (code == "KeyF")
+            if (code == Key.F)
             {
                 if (!repeat) LookAlongWalk();
                 return;
             }
-            if (code == "KeyG" || code == "KeyB")
+            if (code == Key.G || code == Key.B)
             {
                 if (!repeat) ToggleCar();
                 return;
             }
-            if (code == "Space")
+            if (code == Key.Space)
             {
                 space = true;
                 if (!repeat) Jump();
@@ -751,11 +711,11 @@ namespace Porchlight.App
             if (!held.Contains(code)) held.Add(code);
         }
 
-        void OnKeyUp(string code)
+        void OnKeyUp(Key code)
         {
             held.Remove(code);
-            if (code == "ShiftLeft" || code == "ShiftRight") shift = input.ShiftHeld;
-            if (code == "Space") space = false;
+            if (code == Key.LeftShift || code == Key.RightShift) shift = input.ShiftHeld;
+            if (code == Key.Space) space = false;
         }
 
         /// <summary>The mouse wheel over the view.</summary>
@@ -797,7 +757,7 @@ namespace Porchlight.App
                 if (mode == CameraMode.Close) chaseDistance = Math.Min(CHASE_MAX, Math.Max(CHASE_MIN, chaseDistance / k));
                 else zoom = Math.Min(MAX_ZOOM, Math.Max(MIN_ZOOM, zoom * k));
             }
-            int flick = moveFlick.Update(Js.Hypot(s.move.x, s.move.y));
+            int flick = moveFlick.Update(Numbers.Hypot(s.move.x, s.move.y));
             if (autoDrive != null)
             {
                 if (flick != 0 || s.Pressed(Button.RT) || s.Pressed(Button.LT))
@@ -867,7 +827,7 @@ namespace Porchlight.App
                 else
                 {
                     double triggers = pad.rt - pad.lt;
-                    double throttle = Clamp1(-Js.Sign(ky) + (triggers != 0 ? triggers : -pad.move.y));
+                    double throttle = Clamp1(-Numbers.Sign(ky) + (triggers != 0 ? triggers : -pad.move.y));
                     car.Drive(throttle, Clamp1(inputV.x), dt, canDrive, shift || pad.rt > 0.3);
                 }
                 SyncDriver();
@@ -888,7 +848,7 @@ namespace Porchlight.App
             else
             {
                 var d = Orbit.ScreenToWorld(inputV, inputYaw);
-                double k = Math.Min(1, Js.Hypot(inputV.x, inputV.y));
+                double k = Math.Min(1, Numbers.Hypot(inputV.x, inputV.y));
                 p?.Update(d != null ? new Vec2(d.Value.x * k, d.Value.y * k) : (Vec2?)null, dt, world.model, open, world.solids);
             }
             UpdateDoors(dt);
@@ -908,7 +868,7 @@ namespace Porchlight.App
             {
                 var d = world.doors[i];
                 var at = Interiors.DoorOf(world.rooms[i]).at;
-                bool near = p != null && !InCar && Math.Abs(p.x - at.x) < DOOR_REACH && Math.Abs(p.y - at.y) < DOOR_REACH && Js.Hypot(p.x - at.x, p.y - at.y) < DOOR_REACH;
+                bool near = p != null && !InCar && Math.Abs(p.x - at.x) < DOOR_REACH && Math.Abs(p.y - at.y) < DOOR_REACH && Numbers.Hypot(p.x - at.x, p.y - at.y) < DOOR_REACH;
                 double target = near ? 1 : 0;
                 if (d.open == target) continue;
                 double was = d.open;
@@ -952,9 +912,9 @@ namespace Porchlight.App
             if (left != null && now == null && mode == CameraMode.Close && p != null)
             {
                 if (steering) screenKeys = true;
-                var cp = ThreeOf(chasePos);
-                chaseYawNow = JsMath.Atan2(cp.x - p.x, cp.z - p.y);
-                shownChaseDistance = Math.Min(CHASE_MAX, Js.Hypot(cp.x - p.x, cp.z - p.y) / Math.Cos(CHASE_TILT_GUESS));
+                var cp = MapOf(chasePos);
+                chaseYawNow = DetMath.Atan2(cp.x - p.x, cp.z - p.y);
+                shownChaseDistance = Math.Min(CHASE_MAX, Numbers.Hypot(cp.x - p.x, cp.z - p.y) / Math.Cos(CHASE_TILT_GUESS));
             }
             if (now != null)
             {
@@ -979,7 +939,7 @@ namespace Porchlight.App
                 var rng = new Rng($"{world.model.seed}::keeper::{id}");
                 var look = Catalog.RandomLook(rng);
                 var walker = new Walker(look, spot.Value.x, spot.Value.y) { heading = spot.Value.rot };
-                var avatar = new Avatar(assets.Character(look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform, stage);
+                var avatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform);
                 avatar.SnapYaw(spot.Value.rot);
                 k = new Keeper { walker = walker, avatar = avatar };
                 keepers[id] = k;
@@ -1009,7 +969,7 @@ namespace Porchlight.App
                 return;
             }
             Vec2? h = car != null ? (Math.Abs(car.speed) > 0.4 ? car.Forward : (Vec2?)null) : p.AutoHeading();
-            if (h != null && Js.Hypot(h.Value.x, h.Value.y) > 1e-6)
+            if (h != null && Numbers.Hypot(h.Value.x, h.Value.y) > 1e-6)
             {
                 if (walkDir == null) walkDir = h;
                 double k = Math.Min(1, dt * HEADING_SMOOTHING);
@@ -1033,7 +993,7 @@ namespace Porchlight.App
         struct Fixed
         {
             public double yaw, pitch, zoom, half;
-            public Vector3 focus; // Three space
+            public Vector3 focus; // map terms: (x, height, map y)
         }
 
         void Frame(double dt)
@@ -1050,22 +1010,25 @@ namespace Porchlight.App
             {
                 playerAvatar.Visible = !InCar;
                 playerAvatar.Update(p, dt);
-                playerAvatar.XrayVisible = true;
             }
             for (int i = 0; i < cars.Count; i++)
             {
                 var c = cars[i];
-                foreach (var x in c.xray) x.visible = i == driving;
-                double s = TownWorld.CarScale(c.prefab);
+                // The car you're driving shows through buildings, as you do on foot.
+                bool through = i == driving;
+                if (c.seeThrough != through)
+                {
+                    c.seeThrough = through;
+                    c.view.SetLayer(through ? LayerMask.NameToLayer(Avatar.PLAYER_LAYER) : 0);
+                }
                 var f = c.car.Forward;
-                var m = Space.M(TownWorld.Placement(c.prefab, c.car.x, c.car.y, JsMath.Atan2(f.x, f.y), s, s, s, CAR_LIFT));
-                foreach (var d in c.parts) d.Matrix = m;
-                foreach (var d in c.xray) d.Matrix = m;
+                c.view.Place(c.car.x, c.car.y, DetMath.Atan2(f.x, f.y));
+                c.view.Lights(dusk);
             }
             for (int k = 0; k < people.Count; k++) avatars[k].Update(people[k], dt);
-            remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null);
+            remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
             if (riding != null) FollowRide();
-            fleet?.Update();
+            fleet?.Update(dusk);
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);
 
             Fixed? fixedView = room != null ? RoomView(room.Value) : (Fixed?)null;
@@ -1081,18 +1044,11 @@ namespace Porchlight.App
             if (mode == CameraMode.Close && p != null && fixedView == null) PlaceChase(p, dt);
             if (mode == CameraMode.Close && fixedView != null) PlaceChaseInRoom(fixedView.Value, dt);
             if (room != null) CutWalls(room.Value, dt);
-            if (fixedView != null)
-            {
-                lighting.pointPosition = new Vector3(fixedView.Value.focus.x, (float)(Interiors.WALL_HEIGHT * 0.9), fixedView.Value.focus.z);
-                lighting.pointIntensity = (float)(0.8 + dusk * 2.6);
-            }
-            else lighting.pointIntensity = 0;
+            Vector3? roomLight = fixedView != null ? Coords.Map(fixedView.Value.focus.x, fixedView.Value.focus.z, Interiors.WALL_HEIGHT * 0.9) : (Vector3?)null;
             snap = false;
             PlaceCamera();
-            PlaceSun();
 
-            AnimateDayNight();
-            AnimateWater(dt);
+            AnimateDayNight(roomLight);
             routeTimer -= dt;
             if (routeTimer <= 0)
             {
@@ -1106,8 +1062,6 @@ namespace Porchlight.App
                 UpdateHud();
                 hudTimer = 0.25;
             }
-            lighting.Apply(stage);
-            stage.Draw(camera);
         }
 
         void UpdateHud()
@@ -1124,7 +1078,7 @@ namespace Porchlight.App
             bool pad = input.Connected;
             if (driving != null)
             {
-                int kmh = Js.RoundInt((Math.Abs(cars[driving.Value].car.speed) / Vehicle.TOP_SPEED) * 50);
+                int kmh = Numbers.RoundInt((Math.Abs(cars[driving.Value].car.speed) / Vehicle.TOP_SPEED) * 50);
                 overlay.SetPrompt(autoDrive != null
                     ? pad ? $"Auto drive · {kmh} km/h · stick or triggers take the wheel · X stop · B to get out" : $"Auto drive · {kmh} km/h · arrows take the wheel · T stop · G to get out"
                     : pad ? $"Driving · {kmh} km/h · RT boost, LT brake, stick steers · X auto drive · B to get out" : $"Driving · {kmh} km/h · W/S speed and brake, Shift boost, A/D steer · T auto drive · G to get out");
@@ -1160,8 +1114,11 @@ namespace Porchlight.App
             return best >= 0 && bestD < Layout.SIDEWALK + 0.35 ? world.names.ofRoad[best] : (int?)null;
         }
 
-        /// <summary>A Unity position in Three's terms.</summary>
-        static Vector3 ThreeOf(Vector3 u) => new Vector3(u.x, u.y, -u.z);
+        /// <summary>A world position in map terms: (x, height, map y), as `focus` is kept.</summary>
+        static Vector3 MapOf(Vector3 u) => new Vector3(u.x, u.y, -u.z);
+
+        /// <summary>A point in map terms (x, height, map y) as a world position.</summary>
+        static Vector3 WorldOf(double x, double h, double y) => Coords.Map(x, y, h);
 
         double Aspect => Math.Max(1, viewport.width) / Math.Max(1, viewport.height);
 
@@ -1171,15 +1128,15 @@ namespace Porchlight.App
             double d = (f.half / Math.Tan(((CHASE_FOV / 2) * Math.PI) / 180)) * 1.05;
             var at = new Vector3((float)(f.focus.x + o.x * d), (float)(f.focus.y + o.up * d), (float)(f.focus.z + o.y * d));
             float k = (float)(snap ? 1 : Math.Min(1, dt * 4));
-            chasePos = Vector3.Lerp(chasePos, Space.P(at.x, at.y, at.z), k);
-            chaseLook = Vector3.Lerp(chaseLook, Space.P(f.focus.x, f.focus.y, f.focus.z), k);
-            var cl = ThreeOf(chaseLook);
+            chasePos = Vector3.Lerp(chasePos, WorldOf(at.x, at.y, at.z), k);
+            chaseLook = Vector3.Lerp(chaseLook, WorldOf(f.focus.x, f.focus.y, f.focus.z), k);
+            var cl = MapOf(chaseLook);
             lookFollow.Update(cl.x, cl.y, cl.z, dt, true);
         }
 
         void CutWalls(int id, double dt)
         {
-            var cam = ThreeOf(mode == CameraMode.Close ? chasePos : camera.transform.position);
+            var cam = MapOf(mode == CameraMode.Close ? chasePos : camera.transform.position);
             var r = world.rooms[id];
             var dir = new Vec2(cam.x - (r.x0 + r.x1) / 2, cam.z - (r.y0 + r.y1) / 2);
             double low = 0.12 / Interiors.WALL_HEIGHT;
@@ -1224,11 +1181,11 @@ namespace Porchlight.App
             double dist = shownChaseDistance;
             var at = new Vec2(p.x, p.y);
             foreach (var b in world.boxes) dist = Math.Min(dist, Math.Max(0.5, Orbit.RayBoxDistance(at, CHASE_LOOK_HEIGHT, o, b) - 0.2));
-            double flat = Js.Hypot(o.x, o.y);
+            double flat = Numbers.Hypot(o.x, o.y);
             var ahead = new Vec2(-o.x / flat, -o.y / flat);
             lookFollow.Update(p.x + ahead.x * CHASE_LOOK_AHEAD, CHASE_LOOK_HEIGHT, p.y + ahead.y * CHASE_LOOK_AHEAD, dt, snap);
-            chaseLook = Space.P(lookFollow.ax, lookFollow.ay, lookFollow.az);
-            chasePos = Space.P(p.x + o.x * dist, CHASE_LOOK_HEIGHT + o.up * dist, p.y + o.y * dist);
+            chaseLook = WorldOf(lookFollow.ax, lookFollow.ay, lookFollow.az);
+            chasePos = WorldOf(p.x + o.x * dist, CHASE_LOOK_HEIGHT + o.up * dist, p.y + o.y * dist);
         }
 
         void PlaceCamera()
@@ -1250,21 +1207,10 @@ namespace Porchlight.App
             camera.nearClipPlane = 0.1f;
             camera.farClipPlane = (float)(CAMERA_DISTANCE * 3);
             var o = Orbit.CameraOffset(yaw, pitch);
-            var pos = Space.P(focus.x + o.x * CAMERA_DISTANCE, focus.y + o.up * CAMERA_DISTANCE, focus.z + o.y * CAMERA_DISTANCE);
-            var f = Space.P(focus.x, focus.y, focus.z);
+            var pos = WorldOf(focus.x + o.x * CAMERA_DISTANCE, focus.y + o.up * CAMERA_DISTANCE, focus.z + o.y * CAMERA_DISTANCE);
+            var f = WorldOf(focus.x, focus.y, focus.z);
             camera.transform.position = pos;
             camera.transform.rotation = Quaternion.LookRotation(f - pos, Vector3.up);
-        }
-
-        void PlaceSun()
-        {
-            double half = mode == CameraMode.Close ? 30 : Math.Min(90, Math.Max(20, (VIEW_HEIGHT / shownZoom) * 1.25));
-            lighting.shadowHalf = (float)half;
-            double texel = (half * 2) / Lighting.ShadowMapSize;
-            double fx = Js.Round(focus.x / texel) * texel;
-            double fz = Js.Round(focus.z / texel) * texel;
-            lighting.sunTarget = new Vector3((float)fx, 0, (float)fz);
-            lighting.sunPosition = new Vector3((float)(fx + SUN[0] * 100), (float)(SUN[1] * 100), (float)(fz + SUN[2] * 100));
         }
 
         /// <summary>What the camera sees, as a quad on the ground (map tiles); rays above the horizon stop at the fog.</summary>
@@ -1280,7 +1226,7 @@ namespace Porchlight.App
                 double t = dir.y < -1e-4 ? -near.y / dir.y : double.PositiveInfinity;
                 if (mode == CameraMode.Close)
                 {
-                    double flat = Js.Hypot(dir.x, dir.z);
+                    double flat = Numbers.Hypot(dir.x, dir.z);
                     if (flat == 0) flat = 1;
                     t = Math.Min(t, FOG_FAR / flat);
                 }
@@ -1291,54 +1237,53 @@ namespace Porchlight.App
 
         void ClearRoute()
         {
-            if (routeMesh == null) return;
-            stage.Remove(routeMesh);
-            UnityEngine.Object.Destroy(routeGeometry);
-            routeMesh = null;
+            if (route == null) return;
+            UnityEngine.Object.Destroy(route);
+            route = null;
         }
 
+        static Material routeMaterial;
+
+        /// <summary>Where auto-walk or auto-drive is headed: an orange line along the way, and a flag at the end.</summary>
         void DrawRoute()
         {
             ClearRoute();
             var pts = Route;
             var goal = Goal;
             if (pts.Count < 2 || goal == null) return;
-            var b = new MeshBuilder();
-            const int orange = 0xff6a00;
-            bool on = true;
-            double left = 0.35;
-            var dash = new List<Vec2> { pts[0] };
-            for (int k = 1; k < pts.Count; k++)
-            {
-                var a = pts[k - 1];
-                var end = pts[k];
-                double seg = Js.Hypot(end.x - a.x, end.y - a.y);
-                while (seg > 1e-6)
-                {
-                    double step = Math.Min(left, seg);
-                    double t = step / seg;
-                    var c = new Vec2(a.x + (end.x - a.x) * t, a.y + (end.y - a.y) * t);
-                    if (on) dash.Add(c);
-                    seg -= step;
-                    left -= step;
-                    a = c;
-                    if (left <= 1e-6)
-                    {
-                        if (on && dash.Count > 1) b.Ribbon(dash, 0.12, 0.034, orange);
-                        on = !on;
-                        left = 0.35;
-                        dash = new List<Vec2> { c };
-                    }
-                }
-            }
-            if (on && dash.Count > 1) b.Ribbon(dash, 0.12, 0.034, orange);
+            routeMaterial ??= Materials.Unlit(Coords.Hex(0xff6a00));
+            route = new GameObject("route");
+            route.transform.SetParent(world.root.transform, false);
+            // The line lies flat: it faces its transform's z, turned to point up.
+            var lineGo = new GameObject("line");
+            lineGo.transform.SetParent(route.transform, false);
+            lineGo.transform.rotation = Quaternion.Euler(90, 0, 0);
+            var line = lineGo.AddComponent<LineRenderer>();
+            line.sharedMaterial = routeMaterial;
+            line.useWorldSpace = true;
+            line.alignment = LineAlignment.TransformZ;
+            line.widthMultiplier = 0.12f;
+            line.numCornerVertices = 2;
+            line.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            line.positionCount = pts.Count;
+            for (int k = 0; k < pts.Count; k++) line.SetPosition(k, Coords.Map(pts[k].x, pts[k].y, 0.034));
             var g = goal.Value;
-            b.Disc(g, 0.45, 0.032, 0xffc89a);
-            b.Disc(g, 0.18, 0.036, orange);
-            b.Box(g.x - 0.02, g.y - 0.02, g.x + 0.02, g.y + 0.02, 0, 0.9, 0xfff8e8);
-            b.Quad(MeshBuilder.v(g.x, 0.9, g.y), MeshBuilder.v(g.x + 0.35, 0.8, g.y), MeshBuilder.v(g.x + 0.35, 0.8, g.y), MeshBuilder.v(g.x, 0.68, g.y), orange, new V3(0, 0, 1));
-            routeGeometry = b.Build("route");
-            routeMesh = stage.Add(new Drawable(routeGeometry, routeMaterial, Matrix4x4.identity, false));
+            var at = Coords.Map(g.x, g.y);
+            Marker(PrimitiveType.Cylinder, at + new Vector3(0, 0.02f, 0), new Vector3(0.36f, 0.01f, 0.36f), routeMaterial);
+            Marker(PrimitiveType.Cylinder, at + new Vector3(0, 0.45f, 0), new Vector3(0.03f, 0.45f, 0.03f), Materials.Unlit(Coords.Hex(0xfff8e8)));
+            Marker(PrimitiveType.Cube, at + new Vector3(0.17f, 0.8f, 0), new Vector3(0.33f, 0.2f, 0.01f), routeMaterial);
+        }
+
+        void Marker(PrimitiveType type, Vector3 at, Vector3 size, Material material)
+        {
+            var go = GameObject.CreatePrimitive(type);
+            UnityEngine.Object.Destroy(go.GetComponent<Collider>());
+            go.transform.SetParent(route.transform, false);
+            go.transform.localPosition = at;
+            go.transform.localScale = size;
+            var r = go.GetComponent<Renderer>();
+            r.sharedMaterial = material;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         }
 
         static double Noise(double t)
@@ -1354,27 +1299,10 @@ namespace Porchlight.App
             return H(i) * (1 - u) + H(i + 1) * u;
         }
 
-        void AnimateDayNight()
+        /// <summary>The street lamps' flicker, then the sky's light for this time of day.</summary>
+        void AnimateDayNight(Vector3? roomLight)
         {
-            float d = (float)dusk;
-            var sky = Space.Lerp(DAY_SKY, NIGHT_SKY, d);
-            camera.clearFlags = CameraClearFlags.SolidColor;
-            camera.backgroundColor = sky.gamma;
-            lighting.fog = mode == CameraMode.Close;
-            lighting.fogNear = (float)FOG_NEAR;
-            lighting.fogFar = (float)FOG_FAR;
-            lighting.fogColor = sky;
-            lighting.hemiIntensity = 1.2f - d * 0.95f;
-            lighting.hemiSky = Space.Lerp(Space.Hex(0xe2efff), Space.Hex(0x6f7fb0), d);
-            lighting.hemiGround = Space.Lerp(Space.Hex(0x7d8a5a), Space.Hex(0x232a3a), d);
-            lighting.sunIntensity = 2.6f - d * 2.25f;
-            lighting.sunColor = Space.Lerp(Space.Hex(0xfff1d8), Space.Hex(0x9fb0e0), d);
-            lighting.night = d;
-            lighting.time = (float)time;
-
             double t = time;
-            var off = Space.Hex(0x8a8a80);
-            var warm = Space.Hex(0xffd890);
             if (lampLevels.Length != world.lamps.Count) lampLevels = new double[world.lamps.Count];
             for (int i = 0; i < world.lamps.Count; i++)
             {
@@ -1382,56 +1310,9 @@ namespace Porchlight.App
                 double flicker = lamp.faulty
                     ? Noise(t * 9 + lamp.phase) > 0.35 ? 0.15 + 0.2 * Noise(t * 30 + lamp.phase) : 1
                     : 0.9 + 0.1 * Math.Sin(t * 11 + lamp.phase) * Math.Sin(t * 3.7 + lamp.phase * 2);
-                double level = dusk * flicker;
-                lampLevels[i] = level;
-                var bc = Space.Lerp(off, warm, (float)level);
-                world.bulbs.colors[i] = new Vector4(bc.r, bc.g, bc.b, 1);
-                float pl = (float)(level * 0.55);
-                world.pools.colors[i] = new Vector4(1 * pl, 0.78f * pl, 0.44f * pl, 1);
-                world.halos.Set(i, Space.Map(lamp.x, lamp.y, lamp.h), (float)level, (float)(level * 0.85), (float)(level * 0.55));
+                lampLevels[i] = dusk * flicker;
             }
-            world.halos.Commit(world.lamps.Count);
-
-            var lit = new List<LitCar>();
-            if (traffic != null) foreach (var c in traffic.cars) if (!c.taken) lit.Add(new LitCar { x = c.x, y = c.y, heading = c.heading, shape = carShapes[c.model] });
-            if (driving != null)
-            {
-                var car = cars[driving.Value].car;
-                lit.Add(new LitCar { x = car.x, y = car.y, heading = car.heading, shape = carShapes[car.model] });
-            }
-            headlights?.Update(lit, dusk);
-        }
-
-        void AnimateWater(double dt)
-        {
-            double fade = 0.55 * (1 - dusk * 0.5);
-            for (int i = 0; i < world.streaks.Count; i++)
-            {
-                var s = world.streaks[i];
-                double total = s.at[s.at.Count - 1];
-                s.s = (s.s + s.speed * dt) % total;
-                int k = 1;
-                while (k < s.at.Count - 1 && s.at[k] < s.s) k++;
-                var a = s.path[k - 1];
-                var b = s.path[k];
-                double f = (s.s - s.at[k - 1]) / Math.Max(1e-6, s.at[k] - s.at[k - 1]);
-                var m = Mat4.Compose(a.x + (b.x - a.x) * f, TownWorld.WATER_Y + 0.01, a.y + (b.y - a.y) * f, Quat.AboutY(JsMath.Atan2(-(b.y - a.y), b.x - a.x)), 1, 1, 1);
-                world.streaksDrawable.matrices[i] = Space.M(m);
-                double sn = Math.Sin((s.s / total) * Math.PI * 12 + s.speed);
-                float alpha = (float)((0.25 + 0.35 * sn * sn) * fade);
-                world.streaksDrawable.colors[i] = new Vector4(alpha, alpha, alpha, 1);
-            }
-            if (world.drops != null)
-            {
-                var at = world.fountainAt;
-                for (int i = 0; i < world.droplets.Count; i++)
-                {
-                    var d = world.droplets[i];
-                    d.t = (d.t + dt * 0.9) % 1;
-                    double u = d.t;
-                    world.drops.matrices[i] = Matrix4x4.Translate(Space.Map(at.x + d.vx * u * 1.2, at.y + d.vy * u * 1.2, 0.52 + 0.9 * u - 1.25 * u * u));
-                }
-            }
+            sky.Update(dusk, mode == CameraMode.Close, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, roomLight);
         }
     }
 }

@@ -5,7 +5,7 @@
 // stops, and once a second at rest), each position stamped with when it was
 // taken so others can play it back evenly; it hands the room's patches about
 // everyone nearby to the view, and does what the room says (start where you
-// left off, snap back after a bad move). A port of net/multiplayer.ts.
+// left off, snap back after a bad move).
 //
 // Movement is predicted: your character moves the moment you press a key, and
 // the server only ever corrects it. If the server can't be reached the town
@@ -327,7 +327,7 @@ namespace Porchlight.App
             // Stamped with when the position was worked out (the last frame), not
             // when this timer fired, up to a frame later. A stale frame (a hidden
             // tab, where nothing moves) is stamped now.
-            double t = (double)(uint)(long)Js.Round(now - s.at < 100 ? s.at : now);
+            double t = (double)(uint)(long)Numbers.Round(now - s.at < 100 ? s.at : now);
             r.Send(Protocol.MSG_MOVE, new Dictionary<string, object>
             {
                 ["seq"] = seq, ["t"] = t, ["epoch"] = epoch, ["x"] = s.x, ["y"] = s.y, ["z"] = s.z,

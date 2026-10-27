@@ -1,6 +1,6 @@
 // 2D simplex noise, ported line for line from simplex-noise 4.0.3 (Jonas
 // Wagner, MIT; after Stefan Gustavson's Java), so a seeded stream builds the
-// same permutation table and the same field as the TypeScript generator.
+// same permutation table and the same field on every platform.
 
 using System;
 

@@ -1,6 +1,6 @@
 // Where the street name signs stand: a slim post on a corner of every
 // junction where differently named streets meet, with a blade per street. The
-// planning half of render/iso/signs.ts (the meshes are built in Rendering).
+// signs themselves are built in Rendering/WorldParts.cs.
 
 using System;
 using System.Collections.Generic;
@@ -87,9 +87,9 @@ namespace Porchlight.Explore
 
         static Vec2? CornerSpot(TownModel model, IsoLayout layout, Vec2 centre, List<End> here)
         {
-            double Angle(Vec2 d) => JsMath.Atan2(d.y, d.x);
+            double Angle(Vec2 d) => DetMath.Atan2(d.y, d.x);
             var sorted = new List<End>(here);
-            Js.StableSort(sorted, (a, b) => Angle(a.dir) - Angle(b.dir));
+            Numbers.StableSort(sorted, (a, b) => Angle(a.dir) - Angle(b.dir));
             double width = double.NegativeInfinity;
             foreach (var e in here) width = Math.Max(width, layout.roads[e.road].width);
             double reach = width / 2 + Layout.SIDEWALK * 0.75;
@@ -102,7 +102,7 @@ namespace Porchlight.Explore
                 if (gap <= 0) gap += Math.PI * 2;
                 wedges.Add((Angle(e.dir), gap));
             }
-            Js.StableSort(wedges, (a, b) => a.gap - b.gap);
+            Numbers.StableSort(wedges, (a, b) => a.gap - b.gap);
             foreach (var w in wedges)
             {
                 double mid = w.from + w.gap / 2;

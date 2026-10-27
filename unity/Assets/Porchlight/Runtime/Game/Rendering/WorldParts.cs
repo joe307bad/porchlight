@@ -1,6 +1,6 @@
-// The rest of the town (world.ts): buildings on their footprints, ground
-// floors and their rooms, doors, yards, trees, plaza decor, parked cars,
-// lamps, street signs, river streaks and the fountain.
+// The rest of the town: buildings on their footprints, ground floors and
+// their rooms, doors, yards, trees, plaza decor, parked cars, lamps, street
+// signs and the fountain.
 
 using System;
 using System.Collections.Generic;
@@ -8,53 +8,41 @@ using System.Linq;
 using Porchlight.Core;
 using Porchlight.Explore;
 using Porchlight.Model;
+using TMPro;
 using UnityEngine;
+using UnityEngine.Rendering;
 using Grid = Porchlight.Core.Grid;
 using Rect = Porchlight.Explore.Rect;
 
 namespace Porchlight.Rendering
 {
-    /// <summary>Draws the street-sign atlas and the players' name tags (UiText.cs).</summary>
-    public interface ITextMaker
-    {
-        /// <summary>Every name on a green blade, one cell each in a two-column atlas; cell(i) gives (u0, u1, v0, v1).</summary>
-        Texture SignAtlas(IReadOnlyList<string> names, out Func<int, Vector4> cell);
-        /// <summary>A name tag (pill and text) and its size in pixels.</summary>
-        Texture NameTag(string text, out int width, out int height);
-        void Release(Texture t);
-    }
-
     /// <summary>A room's furnished ground floor: built the first time it's needed, kept, shown and hidden.</summary>
     public sealed class Interior
     {
-        public readonly List<Drawable> parts = new List<Drawable>();
-        /// <summary>The wall meshes by side, and how tall each is drawn (0..1, cut down facing the camera).</summary>
-        public readonly Dictionary<Facing, Drawable> walls = new Dictionary<Facing, Drawable>();
+        public readonly GameObject root;
+        /// <summary>The walls by side, and how tall each is drawn (0..1, cut down facing the camera).</summary>
+        public readonly Dictionary<Facing, Transform> walls = new Dictionary<Facing, Transform>();
         public readonly Dictionary<Facing, double> wallScale = new Dictionary<Facing, double>();
-        public readonly List<Mesh> meshes = new List<Mesh>();
-        bool visible = true;
+
+        public Interior(Transform parent, string name)
+        {
+            root = new GameObject(name);
+            root.transform.SetParent(parent, false);
+        }
 
         public bool Visible
         {
-            get => visible;
-            set
-            {
-                visible = value;
-                foreach (var d in parts) d.visible = value;
-            }
+            get => root.activeSelf;
+            set => root.SetActive(value);
         }
 
         public void SetWallScale(Facing side, double s)
         {
             wallScale[side] = s;
-            if (walls.TryGetValue(side, out var d)) d.Matrix = Matrix4x4.Scale(new Vector3(1, (float)s, 1));
+            if (walls.TryGetValue(side, out var t)) t.localScale = new Vector3(1, (float)s, 1);
         }
 
-        public void Dispose(Stage stage)
-        {
-            foreach (var d in parts) stage.Remove(d);
-            foreach (var m in meshes) UnityEngine.Object.Destroy(m);
-        }
+        public void Dispose() => UnityEngine.Object.Destroy(root);
     }
 
     public sealed partial class TownWorld
@@ -69,7 +57,7 @@ namespace Porchlight.Rendering
                 int x0 = house.tiles.Min(t => t.x), y0 = house.tiles.Min(t => t.y);
                 int x1 = house.tiles.Max(t => t.x) + 1, y1 = house.tiles.Max(t => t.y) + 1;
                 var front = Front(house.facing);
-                double rot = JsMath.Atan2(front.x, front.y) + BUILDING_TURN;
+                double rot = DetMath.Atan2(front.x, front.y) + BUILDING_TURN;
                 bool alongX = house.facing == Facing.N || house.facing == Facing.S;
                 double frontage = alongX ? x1 - x0 : y1 - y0;
                 double depth = alongX ? y1 - y0 : x1 - x0;
@@ -77,23 +65,24 @@ namespace Porchlight.Rendering
                 bool splittable = house.style == HouseStyle.House || house.style == HouseStyle.Shop || house.style == HouseStyle.Workshop || house.style == HouseStyle.Office;
                 int pieces = splittable ? BestSplit(candidates, frontage, depth) : 1;
                 double len = frontage / pieces;
-                int colours = assets.VariationCount(candidates[0]);
+                int colours = Catalog.VariationCount(candidates[0]);
                 int variation = rng.Int(0, colours - 1);
                 for (int k = 0; k < pieces; k++)
                 {
-                    string name = PickModel(candidates, len / depth, house, rng);
-                    var prefab = assets.Variant(name, variation);
+                    var m = library.Get(PickModel(candidates, len / depth, house, rng));
                     const double gap = 0.04;
-                    double sx = (len - gap * 2) / prefab.sizeX;
-                    double sz = (depth - gap * 2) / prefab.sizeZ;
-                    double sy = Math.Sqrt(sx * sz) * HeightFactor(prefab, Math.Sqrt(sx * sz), house);
+                    double sx = (len - gap * 2) / m.size.x;
+                    double sz = (depth - gap * 2) / m.size.z;
+                    double sy = Math.Sqrt(sx * sz) * HeightFactor(m, Math.Sqrt(sx * sz), house);
                     double along = (alongX ? x0 : y0) + (k + 0.5) * len;
                     var at = alongX ? new Vec2(along, (y0 + y1) / 2.0) : new Vec2((x0 + x1) / 2.0, along);
-                    int index = instancer.Add(prefab, Placement(prefab, at.x, at.y, rot, sx, sy, sz));
+                    var shell = Props.Place(m, still, at.x, at.y, rot, sx, sy, sz, variation: variation, windows: true);
+                    // The building's own ground floor gives way to the one built below (doors, rooms).
+                    Slice.Above(shell, (float)GROUND_FLOOR);
                     double halfX = alongX ? len / 2 : depth / 2;
                     double halfY = alongX ? depth / 2 : len / 2;
-                    boxes.Add(new Box { x0 = at.x - halfX, y0 = at.y - halfY, x1 = at.x + halfX, y1 = at.y + halfY, top = prefab.sizeY * sy });
-                    shells.Add((prefab, index));
+                    boxes.Add(new Box { x0 = at.x - halfX, y0 = at.y - halfY, x1 = at.x + halfX, y1 = at.y + halfY, top = m.size.y * sy });
+                    shells.Add(shell);
                     roomBuilding.Add(hi);
                     rooms.Add(new Room { id = rooms.Count, x0 = at.x - halfX + gap, y0 = at.y - halfY + gap, x1 = at.x + halfX - gap, y1 = at.y + halfY - gap, facing = house.facing, style = house.style });
                 }
@@ -112,7 +101,7 @@ namespace Porchlight.Rendering
                 double len = frontage / n;
                 if (n > 1 && len < 1.8) break;
                 double fit = double.PositiveInfinity;
-                foreach (var c in candidates) fit = Math.Min(fit, AspectMiss(assets.Get(c), len / depth));
+                foreach (var c in candidates) fit = Math.Min(fit, AspectMiss(library.Get(c), len / depth));
                 double cost = fit + (n - 1) * 0.12;
                 if (cost < bestCost)
                 {
@@ -123,25 +112,25 @@ namespace Porchlight.Rendering
             return best;
         }
 
-        static double AspectMiss(Prefab p, double wanted) => Math.Abs(Math.Log(p.sizeX / p.sizeZ / wanted));
+        static double AspectMiss(ModelLibrary.Model m, double wanted) => Math.Abs(Math.Log(m.size.x / m.size.z / wanted));
 
         string PickModel(string[] candidates, double aspect, House house, Rng rng)
         {
             var scored = candidates.Select(c =>
             {
-                var p = assets.Get(c);
-                double tall = p.sizeY / Math.Sqrt(p.sizeX * p.sizeZ);
-                return (c, cost: AspectMiss(p, aspect) + Math.Abs(tall - StoreyRatio(house)) * 0.3);
+                var m = library.Get(c);
+                double tall = m.size.y / Math.Sqrt(m.size.x * m.size.z);
+                return (c, cost: AspectMiss(m, aspect) + Math.Abs(tall - StoreyRatio(house)) * 0.3);
             }).ToList();
-            Js.StableSort(scored, (a, b) => a.cost - b.cost);
+            Numbers.StableSort(scored, (a, b) => a.cost - b.cost);
             return rng.Pick(scored.GetRange(0, Math.Min(4, scored.Count))).c;
         }
 
         static double StoreyRatio(House house) => 0.45 + house.floors * 0.22;
 
-        static double HeightFactor(Prefab p, double scale, House house)
+        static double HeightFactor(ModelLibrary.Model m, double scale, House house)
         {
-            double natural = p.sizeY * scale;
+            double natural = m.size.y * scale;
             double wanted = house.floors * FLOOR_H + (house.style == HouseStyle.House ? 0.9 : 0.4);
             return Math.Min(1.35, Math.Max(0.75, wanted / natural));
         }
@@ -150,8 +139,8 @@ namespace Porchlight.Rendering
         {
             FurnitureSize Size(string name)
             {
-                var p = assets.Get("furniture/" + name);
-                return new FurnitureSize { w = p.sizeX * Interiors.FURNITURE_SCALE, d = p.sizeZ * Interiors.FURNITURE_SCALE, h = p.sizeY * Interiors.FURNITURE_SCALE };
+                var m = library.Get("furniture/" + name);
+                return new FurnitureSize { w = m.size.x * Interiors.FURNITURE_SCALE, d = m.size.z * Interiors.FURNITURE_SCALE, h = m.size.y * Interiors.FURNITURE_SCALE };
             }
             var solid = new List<Rect>();
             foreach (var room in rooms)
@@ -164,9 +153,9 @@ namespace Porchlight.Rendering
             solids = new Solids(solid, model.width);
         }
 
+        /// <summary>Each room's outside walls: the building's ground floor, its door opening, windows and trim.</summary>
         void AddFacades(Rng rng)
         {
-            var material = Mats.Standard(Color.white, null, 0.9, vertexColors: true, windows: true);
             int lastBuilding = -1;
             int colour = FACADES[0];
             for (int i = 0; i < rooms.Count; i++)
@@ -177,7 +166,7 @@ namespace Porchlight.Rendering
                     lastBuilding = roomBuilding[i];
                     colour = FACADES[(int)Math.Floor(rng.Next() * FACADES.Length)];
                 }
-                var b = new MeshBuilder();
+                var b = new MeshBuilder(palette);
                 double H = GROUND_FLOOR;
                 int shade = Darker(colour, 0.78);
                 var door = Interiors.DoorOf(room);
@@ -219,32 +208,27 @@ namespace Porchlight.Rendering
                         double tt = start + k * spacing;
                         double cx = origin.x + alongV.x * tt;
                         double cy = origin.y + alongV.y * tt;
-                        if (isFront && Js.Hypot(cx - door.at.x, cy - door.at.y) < half + width / 2 + 0.08) continue;
+                        if (isFront && Numbers.Hypot(cx - door.at.x, cy - door.at.y) < half + width / 2 + 0.08) continue;
                         WindowPane(b, new Vec2(cx, cy), alongV, n, width, sill, top);
                     }
                 }
-                var mesh = b.Build("facade");
-                meshes.Add(mesh);
-                var d = stage.Add(new Drawable(mesh, material, Matrix4x4.identity, true));
-                owned.Add(d);
-                facades.Add(d);
+                facades.Add(b.Build("facade", still));
             }
         }
 
         static void WindowPane(MeshBuilder b, Vec2 c, Vec2 along, Vec2 n, double width, double y0, double y1)
         {
             var face = new V3(n.x, 0, n.y);
-            double seed = 1 + WindowTags.PaneHash(++paneCount);
-            void Quad(double half, double lo, double hi, double outD, int color, bool glass)
+            void Quad(double half, double lo, double hi, double outD, int color, int glow)
             {
                 double ox = c.x + n.x * outD;
                 double oy = c.y + n.y * outD;
                 b.Quad(v(ox - along.x * half, lo, oy - along.y * half), v(ox + along.x * half, lo, oy + along.y * half),
-                    v(ox + along.x * half, hi, oy + along.y * half), v(ox - along.x * half, hi, oy - along.y * half), color, face, glass ? seed : 0);
+                    v(ox + along.x * half, hi, oy + along.y * half), v(ox - along.x * half, hi, oy - along.y * half), color, face, glow);
             }
-            Quad(width / 2 + 0.03, y0 - 0.03, y1 + 0.03, 0.004, TRIM, false);
-            Quad(width / 2, y0, y1, 0.008, GLASS, true);
-            Quad(width / 2 + 0.05, y0 - 0.05, y0 - 0.02, 0.012, 0xdcd8cf, false);
+            Quad(width / 2 + 0.03, y0 - 0.03, y1 + 0.03, 0.004, TRIM, 0);
+            Quad(width / 2, y0, y1, 0.008, GLASS, WINDOW_LIGHT);
+            Quad(width / 2 + 0.05, y0 - 0.05, y0 - 0.02, 0.012, 0xdcd8cf, 0);
         }
 
         static readonly Dictionary<HouseStyle, int> FLOORS = new Dictionary<HouseStyle, int>
@@ -261,14 +245,12 @@ namespace Porchlight.Rendering
         public Interior InteriorOf(int id)
         {
             if (interiors.TryGetValue(id, out var it)) return it;
-            it = new Interior();
+            it = new Interior(root.transform, "room " + id);
             var room = rooms[id];
-            var floor = new MeshBuilder();
+            var floor = new MeshBuilder(palette);
             var inner = Interiors.InnerRect(room);
             floor.Rect(inner.x0, inner.y0, inner.x1, inner.y1, 0.012, FLOORS[room.style]);
-            var floorMesh = floor.Build("floor");
-            it.meshes.Add(floorMesh);
-            it.parts.Add(stage.Add(new Drawable(floorMesh, interiorMaterial, Matrix4x4.identity, false)));
+            floor.Build("floor", it.root.transform, false);
             var sides = new Dictionary<Facing, MeshBuilder>();
             var sideOrder = new List<Facing>();
             foreach (var wl in Interiors.RoomWalls(room))
@@ -276,7 +258,7 @@ namespace Porchlight.Rendering
                 var side = Interiors.WallSide(room, wl);
                 if (!sides.TryGetValue(side, out var b))
                 {
-                    sides[side] = b = new MeshBuilder();
+                    sides[side] = b = new MeshBuilder(palette);
                     sideOrder.Add(side);
                 }
                 const double e = 0.006;
@@ -284,34 +266,20 @@ namespace Porchlight.Rendering
             }
             foreach (var side in sideOrder)
             {
-                var mesh = sides[side].Build("wall");
-                it.meshes.Add(mesh);
-                var d = stage.Add(new Drawable(mesh, interiorMaterial, Matrix4x4.identity, true));
-                it.parts.Add(d);
-                it.walls[side] = d;
+                it.walls[side] = sides[side].Build("wall " + side, it.root.transform).transform;
                 it.wallScale[side] = 1;
             }
             foreach (var p in plans[id].furniture)
-            {
-                var prefab = assets.Get("furniture/" + p.name);
-                var m = Space.M(Placement(prefab, p.x, p.y, p.rot, Interiors.FURNITURE_SCALE, Interiors.FURNITURE_SCALE, Interiors.FURNITURE_SCALE, p.lift + 0.012));
-                foreach (var part in prefab.parts) it.parts.Add(stage.Add(new Drawable(part.mesh, part.material, m, !p.flat)));
-            }
+                Props.Place(library.Get("furniture/" + p.name), it.root.transform, p.x, p.y, p.rot, Interiors.FURNITURE_SCALE, Interiors.FURNITURE_SCALE, Interiors.FURNITURE_SCALE, p.lift + 0.012, castShadows: !p.flat);
             interiors[id] = it;
             return it;
         }
 
         void AddDoors(Rng rng)
         {
-            var frames = new MeshBuilder();
-            int count = Math.Max(1, rooms.Count);
-            var panel = Primitives.Translate(Primitives.Box(Interiors.DOOR_WIDTH - 0.03, Interiors.DOOR_HEIGHT - 0.02, 0.035), (Interiors.DOOR_WIDTH - 0.03) / 2, (Interiors.DOOR_HEIGHT - 0.02) / 2, 0);
-            var panelMesh = Primitives.ToMesh(panel, "door");
-            meshes.Add(panelMesh);
-            var panelMat = Mats.Lambert(Color.white, instanceColors: true);
-            Mats.SetReceiveShadow(panelMat, false);
-            var colors = new Vector4[count];
-            var matrices = new Matrix4x4[count];
+            var frames = new MeshBuilder(palette);
+            var doorsRoot = new GameObject("doors").transform;
+            doorsRoot.SetParent(root.transform, false);
             for (int i = 0; i < rooms.Count; i++)
             {
                 var room = rooms[i];
@@ -333,18 +301,19 @@ namespace Porchlight.Rendering
                 double ly = Math.Abs(along.y) * (Interiors.DOOR_WIDTH / 2 + post) + Math.Abs(outward.y) * depth / 2;
                 frames.Box(lc.x - lx, lc.y - ly, lc.x + lx, lc.y + ly, Interiors.DOOR_HEIGHT - 0.01, Interiors.DOOR_HEIGHT + 0.06, 0xf2eee4);
                 var hinge = new Vec2(at.x - along.x * (Interiors.DOOR_WIDTH / 2 - 0.01) - outward.x * (Interiors.WALL / 2), at.y - along.y * (Interiors.DOOR_WIDTH / 2 - 0.01) - outward.y * (Interiors.WALL / 2));
-                double shut = JsMath.Atan2(-along.y, along.x);
+                double shut = DetMath.Atan2(-along.y, along.x);
                 int swing = -Math.Sin(shut) * -outward.x + -Math.Cos(shut) * -outward.y > 0 ? 1 : -1;
-                doors.Add(new DoorState { hinge = hinge, shut = shut, swing = swing, open = 0 });
-                var col = Space.Hex(DOOR_COLOURS[(int)Math.Floor(rng.Next() * DOOR_COLOURS.Length)]);
-                colors[i] = new Vector4(col.r, col.g, col.b, 1);
+                // A hinge to turn, and the panel off to one side of it.
+                var hingeT = new GameObject("door").transform;
+                hingeT.SetParent(doorsRoot, false);
+                hingeT.localPosition = Coords.Map(hinge.x, hinge.y, 0.01);
+                double w = Interiors.DOOR_WIDTH - 0.03, h = Interiors.DOOR_HEIGHT - 0.02;
+                var colour = DOOR_COLOURS[(int)Math.Floor(rng.Next() * DOOR_COLOURS.Length)];
+                Shape(PrimitiveType.Cube, hingeT, new Vector3((float)(w / 2), (float)(h / 2), 0), new Vector3((float)w, (float)h, 0.035f), Materials.Lit(colour), true, "panel");
+                doors.Add(new DoorState { hinge = hinge, shut = shut, swing = swing, open = 0, panel = hingeT });
             }
-            doorPanels = stage.Add(new Drawable(panelMesh, panelMat, matrices, rooms.Count, true, colors));
-            owned.Add(doorPanels);
             for (int i = 0; i < rooms.Count; i++) SwingDoor(i);
-            var frameMesh = frames.Build("door frames");
-            meshes.Add(frameMesh);
-            owned.Add(stage.Add(new Drawable(frameMesh, lambert, Matrix4x4.identity, true)));
+            frames.Build("door frames", still);
         }
 
         /// <summary>Set door i's panel to its current opening.</summary>
@@ -352,15 +321,17 @@ namespace Porchlight.Rendering
         {
             var d = doors[i];
             double eased = d.open * d.open * (3 - 2 * d.open);
-            var m = Mat4.Compose(d.hinge.x, 0.01, d.hinge.y, Quat.AboutY(d.shut + d.swing * eased * DOOR_SWING), 1, 1, 1);
-            doorPanels.matrices[i] = Space.M(m);
+            // The panel runs along local +x from the hinge, which points along map (cos a, -sin a):
+            // Unity turns +x towards -z (map +y) as the angle grows, hence the minus.
+            double angle = d.shut + d.swing * eased * DOOR_SWING;
+            d.panel.localRotation = Quaternion.Euler(0, (float)(-angle * Mathf.Rad2Deg), 0);
         }
 
         void AddYards(MeshBuilder sheds, Rng rng)
         {
             int w = model.width, h = model.height;
-            var crops = Catalog.CROPS.Select(c => assets.Get(c)).ToArray();
-            var props = new[] { assets.Get("nature/log_stack"), assets.Get("nature/pot_large") };
+            var crops = Catalog.CROPS.Select(c => library.Get(c)).ToArray();
+            var props = new[] { library.Get("nature/log_stack"), library.Get("nature/pot_large") };
             for (int y = 0; y < h; y++)
             {
                 for (int x = 0; x < w; x++)
@@ -372,24 +343,24 @@ namespace Porchlight.Rendering
                         if (use == Use.COMMUNITY_GARDEN && roll < 0.15)
                         {
                             var p = props[(int)Math.Floor(rng.Next() * props.Length)];
-                            double s = 0.7 / Math.Max(p.sizeX, p.sizeZ);
-                            instancer.Add(p, Placement(p, x + 0.5, y + 0.5, rng.Range(0, Math.PI * 2), s, s, s));
+                            double s = 0.7 / Math.Max(p.size.x, p.size.z);
+                            Props.Place(p, still, x + 0.5, y + 0.5, rng.Range(0, Math.PI * 2), s, s, s);
                             continue;
                         }
                         var crop = crops[(int)Math.Floor(rng.Next() * crops.Length)];
-                        double cs = 0.42 / Math.Max(crop.sizeX, crop.sizeZ);
+                        double cs = 0.42 / Math.Max(crop.size.x, crop.size.z);
                         foreach (var (ox, oy) in new[] { (0.27, 0.27), (0.73, 0.27), (0.27, 0.73), (0.73, 0.73) })
                         {
                             double r = rng.Range(0, Math.PI * 2);
                             double sy = cs * rng.Range(0.85, 1.15);
-                            instancer.Add(crop, Placement(crop, x + ox, y + oy, r, cs, sy, cs), false);
+                            Props.Place(crop, still, x + ox, y + oy, r, cs, sy, cs, castShadows: false);
                         }
                     }
                     else if (use == Use.SHED) AddShed(sheds, x + 0.5, y + 0.5, rng.Chance(0.5));
                 }
             }
-            var fence = assets.Get("suburban/fence");
-            double fsx = 1 / fence.sizeX;
+            var fence = library.Get("suburban/fence");
+            double fsx = 1 / fence.size.x;
             foreach (var f in layout.fences)
             {
                 const double inset = 0.05;
@@ -401,7 +372,7 @@ namespace Porchlight.Rendering
                     _ => new Vec2(f.x + 1 - inset, f.y + 0.5),
                 };
                 double rot = f.side == Facing.N || f.side == Facing.S ? 0 : Math.PI / 2;
-                instancer.Add(fence, Placement(fence, at.x, at.y, rot, fsx, 1.3, 1.3));
+                Props.Place(fence, still, at.x, at.y, rot, fsx, 1.3, 1.3);
             }
         }
 
@@ -436,10 +407,10 @@ namespace Porchlight.Rendering
         {
             var tiles = model.tiles;
             int w = model.width, h = model.height;
-            var trees = Catalog.TREES.Select(t => assets.Get(t)).ToArray();
-            var bushes = Catalog.BUSHES.Select(t => assets.Get(t)).ToArray();
-            var flowers = Catalog.FLOWERS.Select(t => assets.Get(t)).ToArray();
-            var rock = assets.Get("nature/rock_smallA");
+            var trees = Catalog.TREES.Select(t => library.Get(t)).ToArray();
+            var bushes = Catalog.BUSHES.Select(t => library.Get(t)).ToArray();
+            var flowers = Catalog.FLOWERS.Select(t => library.Get(t)).ToArray();
+            var rock = library.Get("nature/rock_smallA");
             for (int y = 0; y < h; y++)
             {
                 for (int x = 0; x < w; x++)
@@ -456,7 +427,7 @@ namespace Porchlight.Rendering
                             double s = rng.Range(1.2, 2.4);
                             double ax = x + rng.Range(0.25, 0.75);
                             double ay = y + rng.Range(0.25, 0.75);
-                            instancer.Add(rock, Placement(rock, ax, ay, rng.Range(0, 6.3), s, s, s));
+                            Props.Place(rock, still, ax, ay, rng.Range(0, 6.3), s, s, s);
                         }
                         continue;
                     }
@@ -469,7 +440,7 @@ namespace Porchlight.Rendering
                         int j = Grid.Index(nx, ny, w);
                         if (tiles.overlay[j] != Overlay.NONE || IsWaterTerrain(tiles.terrain[j]) || layout.use[j] == Use.HOUSE) nearStreet = true;
                     }
-                    bool inTown = Js.Hypot(x + 0.5 - model.center.x, y + 0.5 - model.center.y) < model.townRadius;
+                    bool inTown = Numbers.Hypot(x + 0.5 - model.center.x, y + 0.5 - model.center.y) < model.townRadius;
                     double chance = use == Use.YARD ? (nearStreet ? 0.04 : 0.14) : use == Use.GREEN ? 0.28 : nearStreet ? 0.03 : inTown ? 0.1 : 0.22;
                     double roll = rng.Next();
                     double atX = x + 0.5 + rng.Range(-0.25, 0.25);
@@ -479,15 +450,15 @@ namespace Porchlight.Rendering
                     {
                         var pool = inTown ? trees.Where((_, k) => k < 4 || k > 6).ToArray() : trees;
                         var t = pool[(int)Math.Floor(rng.Next() * pool.Length)];
-                        double s = rng.Range(1.3, 2.1) / t.sizeY;
+                        double s = rng.Range(1.3, 2.1) / t.size.y;
                         double sy = s * rng.Range(0.9, 1.1);
-                        instancer.Add(t, Placement(t, atX, atY, spin, s, sy, s));
+                        Props.Place(t, still, atX, atY, spin, s, sy, s);
                     }
                     else if (roll < chance + (use == Use.YARD || use == Use.GREEN ? 0.08 : 0.03))
                     {
                         var b = bushes[(int)Math.Floor(rng.Next() * bushes.Length)];
-                        double s = rng.Range(0.4, 0.65) / Math.Max(b.sizeX, b.sizeZ);
-                        instancer.Add(b, Placement(b, atX, atY, spin, s, s, s), false);
+                        double s = rng.Range(0.4, 0.65) / Math.Max(b.size.x, b.size.z);
+                        Props.Place(b, still, atX, atY, spin, s, s, s, castShadows: false);
                     }
                     else if (roll < chance + 0.14 && (use == Use.YARD || use == Use.GREEN))
                     {
@@ -497,7 +468,7 @@ namespace Porchlight.Rendering
                             const double s = 1.2;
                             double fx = atX + rng.Range(-0.25, 0.25);
                             double fy = atY + rng.Range(-0.25, 0.25);
-                            instancer.Add(f, Placement(f, fx, fy, rng.Range(0, 6.3), s, s, s), false);
+                            Props.Place(f, still, fx, fy, rng.Range(0, 6.3), s, s, s, castShadows: false);
                         }
                     }
                 }
@@ -508,8 +479,8 @@ namespace Porchlight.Rendering
         {
             var tiles = model.tiles;
             int w = model.width, h = model.height;
-            var planter = assets.Get("suburban/planter");
-            var tree = assets.Get("nature/tree_small");
+            var planter = library.Get("suburban/planter");
+            var tree = library.Get("nature/tree_small");
             var well = model.landmarks.Find(l => l.kind == LandmarkKind.Well);
             for (int y = 0; y < h; y++)
             {
@@ -524,13 +495,13 @@ namespace Porchlight.Rendering
                     double ax = x + 0.5 + dx * 0.3, ay = y + 0.5 + dy * 0.3;
                     if (roll < 0.2)
                     {
-                        double s = 0.8 / Math.Max(planter.sizeX, planter.sizeZ);
-                        instancer.Add(planter, Placement(planter, ax, ay, JsMath.Atan2(dx, dy), s, s, s));
+                        double s = 0.8 / Math.Max(planter.size.x, planter.size.z);
+                        Props.Place(planter, still, ax, ay, DetMath.Atan2(dx, dy), s, s, s);
                     }
                     else
                     {
-                        double s = 1.4 / tree.sizeY;
-                        instancer.Add(tree, Placement(tree, ax, ay, rng.Range(0, 6.3), s, s, s));
+                        double s = 1.4 / tree.size.y;
+                        Props.Place(tree, still, ax, ay, rng.Range(0, 6.3), s, s, s);
                     }
                 }
             }
@@ -542,17 +513,20 @@ namespace Porchlight.Rendering
             {
                 double heading = car.angle + (car.variant % 2 != 0 ? Math.PI : 0);
                 int m = car.variant % 6;
-                var p = assets.Get(Catalog.CARS[m]);
-                double s = CarScale(p);
+                var p = library.Get(Catalog.CARS[m]);
+                double s = Props.CarScale(p);
                 parked.Add(new ParkedPose { x = car.x, y = car.y, heading = heading, model = m });
-                parkedCopies.Add((p, instancer.Add(p, Placement(p, car.x, car.y, JsMath.Atan2(Math.Cos(heading), Math.Sin(heading)), s, s, s))));
+                parkedCars.Add(Props.Place(p, still, car.x, car.y, DetMath.Atan2(Math.Cos(heading), Math.Sin(heading)), s, s, s));
             }
         }
 
         void AddLamps(Rng rng)
         {
             var placed = new List<Vec2>();
-            var posts = new List<Matrix4x4>();
+            var post = Materials.Lit(C.lampPost);
+            var bulbMaterial = Materials.Glowing(Coords.Hex(0xfff6e0));
+            var lampsRoot = new GameObject("lamps").transform;
+            lampsRoot.SetParent(root.transform, false);
             for (int n = 0; n < layout.sidewalks.paths.Count; n++)
             {
                 var path = layout.sidewalks.paths[n];
@@ -571,176 +545,119 @@ namespace Porchlight.Rendering
                     if (layout.use[Grid.Index(tx, ty, model.width)] == Use.HOUSE) continue;
                     placed.Add(on);
                     double tgx = b.x - a.x, tgy = b.y - a.y;
-                    double tl = Js.Hypot(tgx, tgy);
+                    double tl = Numbers.Hypot(tgx, tgy);
                     if (tl == 0) tl = 1;
                     var normal = new Vec2((tgy / tl) * path.side, (-tgx / tl) * path.side);
                     var basePt = new Vec2(on.x + normal.x * (Layout.SIDEWALK / 2 - 0.08), on.y + normal.y * (Layout.SIDEWALK / 2 - 0.08));
-                    double rot = JsMath.Atan2(-normal.x, -normal.y);
-                    posts.Add(Space.M(Mat4.Compose(basePt.x, 0, basePt.y, Quat.AboutY(rot), 1, 1, 1)));
-                    lamps.Add(new Lamp { x = basePt.x - normal.x * LAMP_REACH, y = basePt.y - normal.y * LAMP_REACH, h = LAMP_HEIGHT - 0.05, phase = rng.Range(0, 100), faulty = rng.Chance(0.12) });
+                    double rot = DetMath.Atan2(-normal.x, -normal.y);
+                    // A post, an arm reaching out over the street (+z), and the lamp's head.
+                    var lamp = new GameObject("lamp").transform;
+                    lamp.SetParent(still, false);
+                    lamp.localPosition = Coords.Map(basePt.x, basePt.y);
+                    lamp.localRotation = Coords.Yaw(rot);
+                    float H = (float)LAMP_HEIGHT, R = (float)LAMP_REACH;
+                    Shape(PrimitiveType.Cylinder, lamp, new Vector3(0, H / 2, 0), new Vector3(0.052f, H / 2, 0.052f), post);
+                    Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.01f, R / 2), new Vector3(0.03f, 0.03f, R), post);
+                    Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.02f, R), new Vector3(0.09f, 0.04f, 0.12f), post);
+                    // The bulb moves with nothing but glows per lamp, so it stays out of the static batch.
+                    var bulb = Shape(PrimitiveType.Sphere, lampsRoot, Coords.Map(basePt.x - normal.x * LAMP_REACH, basePt.y - normal.y * LAMP_REACH, LAMP_HEIGHT - 0.05), Vector3.one * 0.1f, bulbMaterial, false, "bulb");
+                    lamps.Add(new Lamp { x = basePt.x - normal.x * LAMP_REACH, y = basePt.y - normal.y * LAMP_REACH, h = LAMP_HEIGHT - 0.05, phase = rng.Range(0, 100), faulty = rng.Chance(0.12), bulb = bulb.GetComponent<Renderer>() });
                 }
             }
-
-            var postMesh = Primitives.ToMesh(LampGeometry(), "lamp post");
-            meshes.Add(postMesh);
-            var postMat = Mats.Lambert(Space.Hex(C.lampPost));
-            Mats.SetReceiveShadow(postMat, false);
-            owned.Add(stage.Add(new Drawable(postMesh, postMat, posts.ToArray(), posts.Count, true)));
-
-            int count = Math.Max(1, lamps.Count);
-            var bulbMesh = Primitives.ToMesh(Primitives.Sphere(0.05, 10, 6), "bulb");
-            meshes.Add(bulbMesh);
-            var bulbMat = Mats.Basic(Color.white, instanceColors: true);
-            var bulbMatrices = new Matrix4x4[count];
-            var poolMatrices = new Matrix4x4[count];
-            for (int i = 0; i < lamps.Count; i++)
-            {
-                var l = lamps[i];
-                bulbMatrices[i] = Matrix4x4.Translate(Space.Map(l.x, l.y, l.h));
-                poolMatrices[i] = Matrix4x4.Translate(Space.Map(l.x, l.y, 0.04));
-            }
-            var off = Space.Hex(0x8a8a80);
-            var bulbColors = Enumerable.Repeat(new Vector4(off.r, off.g, off.b, 1), count).ToArray();
-            bulbs = stage.Add(new Drawable(bulbMesh, bulbMat, bulbMatrices, lamps.Count, false, bulbColors));
-            owned.Add(bulbs);
-            var poolMesh = Primitives.ToMesh(Primitives.RotateX(Primitives.Plane(2.2, 2.2), -Math.PI / 2), "pool");
-            meshes.Add(poolMesh);
-            var poolMat = Mats.Basic(Color.white, Blending.Additive, false, map: Primitives.Glow, instanceColors: true, renderOrder: 6);
-            pools = stage.Add(new Drawable(poolMesh, poolMat, poolMatrices, lamps.Count, false, new Vector4[count]));
-            owned.Add(pools);
-            halos = new Halos(lamps.Count, 0.9, 7, stage);
-            owned.Add(halos.drawable);
-            for (int i = 0; i < lamps.Count; i++) halos.Set(i, Space.Map(lamps[i].x, lamps[i].y, lamps[i].h), 0, 0, 0);
-            halos.Commit(lamps.Count);
         }
 
-        /// <summary>A street lamp: a post, an arm reaching out along +Z, and a lamp head.</summary>
-        static ModelPart LampGeometry()
+        /// <summary>A signpost at each named corner, with a blade per street, its name on both faces.</summary>
+        void AddStreetSigns()
         {
-            var post = Primitives.Translate(Primitives.Cylinder(0.022, 0.03, LAMP_HEIGHT, 6), 0, LAMP_HEIGHT / 2, 0).NonIndexed();
-            var arm = Primitives.Translate(Primitives.Box(0.03, 0.03, LAMP_REACH), 0, LAMP_HEIGHT - 0.01, LAMP_REACH / 2).NonIndexed();
-            var head = Primitives.Translate(Primitives.Box(0.09, 0.04, 0.12), 0, LAMP_HEIGHT - 0.02, LAMP_REACH).NonIndexed();
-            return Primitives.Merge(post, arm, head);
-        }
-
-        void AddStreetSigns(ITextMaker text)
-        {
-            if (signs.Count == 0 || text == null) return;
-            var atlas = text.SignAtlas(names.streets.Select(s => s.name).ToList(), out var cell);
+            if (signs.Count == 0) return;
             int tallest = signs.Max(s => s.blades.Count);
-            double postHeight = Signs.BLADE_Y + (tallest - 1) * Signs.BLADE_STEP + Signs.BLADE_HEIGHT / 2 + 0.03;
-            var postMesh = Primitives.ToMesh(Primitives.Translate(Primitives.Cylinder(Signs.POST_RADIUS, Signs.POST_RADIUS * 1.2, postHeight, 6), 0, postHeight / 2, 0), "sign post");
-            meshes.Add(postMesh);
-            var postMat = Mats.Lambert(Space.Hex(0x5b6067));
-            Mats.SetReceiveShadow(postMat, false);
-            var postMatrices = signs.Select(s => Matrix4x4.Translate(Space.Map(s.at.x, s.at.y, 0))).ToArray();
-            owned.Add(stage.Add(new Drawable(postMesh, postMat, postMatrices, postMatrices.Length, true)));
-
-            var pos = new List<float>();
-            var nor = new List<float>();
-            var uv = new List<float>();
+            float postHeight = (float)(Signs.BLADE_Y + (tallest - 1) * Signs.BLADE_STEP + Signs.BLADE_HEIGHT / 2 + 0.03);
+            var postMaterial = Materials.Lit(0x5b6067);
+            var bladeMaterial = Materials.Lit(0x24603f);
+            var signsRoot = new GameObject("signs").transform;
+            signsRoot.SetParent(root.transform, false);
+            float r = (float)Signs.POST_RADIUS;
             foreach (var s in signs)
             {
+                var at = Coords.Map(s.at.x, s.at.y);
+                Shape(PrimitiveType.Cylinder, still, at + new Vector3(0, postHeight / 2, 0), new Vector3(r * 2.2f, postHeight / 2, r * 2.2f), postMaterial, true, "sign post");
                 for (int k = 0; k < s.blades.Count; k++)
                 {
-                    var c = cell(s.blades[k].street);
-                    Blade(pos, nor, uv, s.at, s.blades[k].along, Signs.BLADE_Y + k * Signs.BLADE_STEP, c);
+                    var blade = s.blades[k];
+                    var d = blade.along;
+                    double outD = Signs.POST_RADIUS + Signs.BLADE_GAP + Signs.BLADE_LENGTH / 2;
+                    var centre = Coords.Map(s.at.x + d.x * outD, s.at.y + d.y * outD, Signs.BLADE_Y + k * Signs.BLADE_STEP);
+                    var t = new GameObject("blade").transform;
+                    t.SetParent(signsRoot, false);
+                    t.localPosition = centre;
+                    // Local x along the blade (map direction d), z across it.
+                    t.localRotation = Quaternion.LookRotation(Coords.Map(-d.y, d.x) - Coords.Map(0, 0), Vector3.up);
+                    Shape(PrimitiveType.Cube, t, Vector3.zero, new Vector3((float)Signs.BLADE_LENGTH, (float)Signs.BLADE_HEIGHT, (float)Signs.BLADE_THICK), bladeMaterial, true, "board");
+                    string name = names.streets[blade.street].name.ToUpperInvariant();
+                    foreach (int face in new[] { 1, -1 }) SignText(t, name, face);
                 }
             }
-            var part = new ModelPart { pos = pos.ToArray(), normal = nor.ToArray(), uv = uv.ToArray() };
-            // Blade UVs are already in the atlas's terms (v up), so skip ToMesh's glTF flip.
-            for (int i = 1; i < part.uv.Length; i += 2) part.uv[i] = 1 - part.uv[i];
-            var bladeMesh = Primitives.ToMesh(part, "sign blades");
-            meshes.Add(bladeMesh);
-            var bladeMat = Mats.Lambert(Color.white, map: atlas);
-            Mats.SetReceiveShadow(bladeMat, false);
-            owned.Add(stage.Add(new Drawable(bladeMesh, bladeMat, Matrix4x4.identity, true)));
         }
 
-        static void Blade(List<float> pos, List<float> nor, List<float> uv, Vec2 at, Vec2 d, double y, Vector4 cell)
+        /// <summary>A street name on one face of a blade (white on green, as street signs are).</summary>
+        void SignText(Transform blade, string name, int face)
         {
-            var n = new Vec2(-d.y, d.x);
-            double hl = Signs.BLADE_LENGTH / 2;
-            double hh = Signs.BLADE_HEIGHT / 2;
-            double ht = Signs.BLADE_THICK / 2;
-            double outD = Signs.POST_RADIUS + Signs.BLADE_GAP + hl;
-            double[] P(double a, double b, double c) => new[] { at.x + d.x * (outD + a) + n.x * b, y + c, at.y + d.y * (outD + a) + n.y * b };
-            void Quad(double[][] p, double[] normal, double[][] uvs)
-            {
-                foreach (int k in new[] { 0, 1, 2, 0, 2, 3 })
-                {
-                    pos.Add((float)p[k][0]);
-                    pos.Add((float)p[k][1]);
-                    pos.Add((float)p[k][2]);
-                    nor.Add((float)normal[0]);
-                    nor.Add((float)normal[1]);
-                    nor.Add((float)normal[2]);
-                    uv.Add((float)uvs[k][0]);
-                    uv.Add((float)uvs[k][1]);
-                }
-            }
-            double u0 = cell.x, u1 = cell.y, v0 = cell.z, v1 = cell.w;
-            var nn = new[] { n.x, 0, n.y };
-            var nb = new[] { -n.x, 0, -n.y };
-            var faceUv = new[] { new[] { u0, v0 }, new[] { u1, v0 }, new[] { u1, v1 }, new[] { u0, v1 } };
-            Quad(new[] { P(-hl, ht, -hh), P(hl, ht, -hh), P(hl, ht, hh), P(-hl, ht, hh) }, nn, faceUv);
-            Quad(new[] { P(hl, -ht, -hh), P(-hl, -ht, -hh), P(-hl, -ht, hh), P(hl, -ht, hh) }, nb, faceUv);
-            var e = new[] { u0 + 0.001, v1 - 0.001 };
-            var edge = new[] { e, e, e, e };
-            Quad(new[] { P(-hl, -ht, hh), P(-hl, ht, hh), P(hl, ht, hh), P(hl, -ht, hh) }, new double[] { 0, 1, 0 }, edge);
-            Quad(new[] { P(-hl, ht, -hh), P(-hl, -ht, -hh), P(hl, -ht, -hh), P(hl, ht, -hh) }, new double[] { 0, -1, 0 }, edge);
-            Quad(new[] { P(hl, ht, -hh), P(hl, -ht, -hh), P(hl, -ht, hh), P(hl, ht, hh) }, new[] { d.x, 0, d.y }, edge);
-            Quad(new[] { P(-hl, -ht, -hh), P(-hl, ht, -hh), P(-hl, ht, hh), P(-hl, -ht, hh) }, new[] { -d.x, 0, -d.y }, edge);
+            var go = new GameObject("name");
+            go.transform.SetParent(blade, false);
+            go.transform.localPosition = new Vector3(0, 0, (float)(face * (Signs.BLADE_THICK / 2 + 0.002)));
+            go.transform.localRotation = face > 0 ? Quaternion.Euler(0, 180, 0) : Quaternion.identity;
+            var text = go.AddComponent<TextMeshPro>();
+            text.font = library.font;
+            text.text = name;
+            text.color = Color.white;
+            text.alignment = TextAlignmentOptions.Center;
+            text.enableAutoSizing = true;
+            text.fontSizeMin = 0.1f;
+            text.fontSizeMax = 1.2f;
+            text.textWrappingMode = TextWrappingModes.NoWrap;
+            text.overflowMode = TextOverflowModes.Ellipsis;
+            text.rectTransform.sizeDelta = new Vector2((float)(Signs.BLADE_LENGTH * 0.9), (float)(Signs.BLADE_HEIGHT * 0.8));
+            go.GetComponent<MeshRenderer>().shadowCastingMode = ShadowCastingMode.Off;
         }
 
-        void AddStreaks()
-        {
-            bool Wet(Vec2 p) => IsWaterTerrain(model.tiles.terrain[(int)Math.Floor(p.y) * model.width + (int)Math.Floor(p.x)]);
-            foreach (var river in model.rivers)
-            {
-                var path = river.points.Where(Wet).ToList();
-                if (path.Count < 2) continue;
-                var at = new List<double> { 0 };
-                for (int k = 1; k < path.Count; k++) at.Add(at[k - 1] + Js.Hypot(path[k].x - path[k - 1].x, path[k].y - path[k - 1].y));
-                double total = at[at.Count - 1];
-                int count = (int)Math.Floor(total / 1.6);
-                for (int k = 0; k < count; k++) streaks.Add(new Streak { path = path, at = at, s = ((double)k / count) * total + (k % 3) * 0.37, speed = 1.1 + (k % 5) * 0.15 });
-            }
-            var mesh = Primitives.ToMesh(Primitives.RotateX(Primitives.Plane(0.55, 0.05), -Math.PI / 2), "streak");
-            meshes.Add(mesh);
-            var mat = Mats.Basic(Color.white, Blending.Additive, false, renderOrder: 5, instanceColors: true);
-            int n = Math.Max(1, streaks.Count);
-            streaksDrawable = stage.Add(new Drawable(mesh, mat, new Matrix4x4[n], streaks.Count, false, new Vector4[n]));
-            owned.Add(streaksDrawable);
-        }
-
+        /// <summary>The plaza fountain: a stone basin and spout, water, and spray (a particle system).</summary>
         void AddFountain()
         {
             var well = model.landmarks.Find(l => l.kind == LandmarkKind.Well);
             if (well == null) return;
             fountainAt = new Vec2(Math.Floor(well.at.x) + 0.5, Math.Floor(well.at.y) + 0.5);
-            var stone = Primitives.Translate(Primitives.Merge(
-                Primitives.Translate(Primitives.Cylinder(0.44, 0.47, 0.2, 20), 0, 0.1, 0),
-                Primitives.Translate(Primitives.Cylinder(0.06, 0.08, 0.5, 8), 0, 0.25, 0),
-                Primitives.Translate(Primitives.Cylinder(0.17, 0.1, 0.06, 12), 0, 0.5, 0)), fountainAt.x, 0, fountainAt.y);
-            var waterPart = Primitives.Translate(Primitives.Cylinder(0.39, 0.39, 0.02, 20), fountainAt.x, 0.19, fountainAt.y);
-            var stoneMesh = Primitives.ToMesh(stone, "fountain");
-            var waterMesh = Primitives.ToMesh(waterPart, "fountain water");
-            meshes.Add(stoneMesh);
-            meshes.Add(waterMesh);
-            owned.Add(stage.Add(new Drawable(stoneMesh, Mats.Lambert(Space.Hex(C.stone)), Matrix4x4.identity, true)));
-            var waterMat = Mats.Lambert(Space.Hex(0x7fbde3));
-            waterMat.SetColor("_Emissive", Space.Hex(0x1d3f5c));
-            Mats.SetReceiveShadow(waterMat, false);
-            owned.Add(stage.Add(new Drawable(waterMesh, waterMat, Matrix4x4.identity, false)));
-            var dropMesh = Primitives.ToMesh(Primitives.Sphere(0.025, 6, 4), "drop");
-            meshes.Add(dropMesh);
-            var dropColor = Space.Hex(0xd8f0ff);
-            dropColor.a = 0.85f;
-            var dropMat = Mats.Basic(dropColor, Blending.Normal, true);
-            for (int k = 0; k < 24; k++) droplets.Add(new Droplet { t = k / 24.0, vx = Math.Cos(k * 2.4) * 0.3, vy = Math.Sin(k * 2.4) * 0.3 });
-            drops = stage.Add(new Drawable(dropMesh, dropMat, new Matrix4x4[24], 24, false));
-            owned.Add(drops);
+            var at = Coords.Map(fountainAt.x, fountainAt.y);
+            var stone = Materials.Lit(C.stone);
+            Shape(PrimitiveType.Cylinder, still, at + new Vector3(0, 0.1f, 0), new Vector3(0.92f, 0.1f, 0.92f), stone, true, "basin");
+            Shape(PrimitiveType.Cylinder, still, at + new Vector3(0, 0.25f, 0), new Vector3(0.14f, 0.25f, 0.14f), stone, true, "spout");
+            Shape(PrimitiveType.Cylinder, still, at + new Vector3(0, 0.5f, 0), new Vector3(0.3f, 0.03f, 0.3f), stone, true, "bowl");
+            Shape(PrimitiveType.Cylinder, still, at + new Vector3(0, 0.19f, 0), new Vector3(0.78f, 0.011f, 0.78f), Materials.Lit(0x7fbde3, 0.9f), false, "pool");
+
+            var spray = new GameObject("spray");
+            spray.transform.SetParent(root.transform, false);
+            spray.transform.localPosition = at + new Vector3(0, 0.52f, 0);
+            spray.transform.localRotation = Quaternion.Euler(-90, 0, 0);
+            var ps = spray.AddComponent<ParticleSystem>();
+            ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            var main = ps.main;
+            main.duration = 1;
+            main.loop = true;
+            main.startLifetime = 0.75f;
+            main.startSpeed = 1.1f;
+            main.startSize = 0.05f;
+            main.gravityModifier = 0.32f;
+            main.maxParticles = 200;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.startColor = new Color(0.85f, 0.94f, 1f, 0.85f);
+            var emission = ps.emission;
+            emission.rateOverTime = 60;
+            var shape = ps.shape;
+            shape.shapeType = ParticleSystemShapeType.Cone;
+            shape.angle = 18;
+            shape.radius = 0.02f;
+            var renderer = spray.GetComponent<ParticleSystemRenderer>();
+            renderer.sharedMaterial = Materials.Particles(Color.white);
+            ps.Play();
         }
     }
 }

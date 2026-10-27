@@ -1,5 +1,5 @@
 // Seeded randomness. Every random number in the generator comes from here;
-// System.Random is never used. Bit-for-bit the same stream as core/rng.ts.
+// System.Random is never used. The same stream on every platform, so everyone in a room grows the same town.
 
 using System;
 using System.Collections.Generic;

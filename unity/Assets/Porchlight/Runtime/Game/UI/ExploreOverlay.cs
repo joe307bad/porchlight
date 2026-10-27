@@ -3,8 +3,7 @@
 // player, auto-walk's route and flag, other players in blue; click to jump
 // there), the street panel top right (the street you're on and, while
 // auto-walking, the turn-by-turn directions), a one-line prompt bottom centre,
-// and a notice about the connection top centre. Ports of minimap.ts, hud.ts and
-// view.ts's notice.
+// and a notice about the connection top centre.
 
 using System;
 using System.Collections.Generic;
@@ -15,7 +14,6 @@ using Porchlight.Explore;
 using Porchlight.Model;
 using Porchlight.Rendering;
 using UnityEngine;
-using Space = Porchlight.Rendering.Space;
 using UnityEngine.UIElements;
 
 namespace Porchlight.UI
@@ -42,7 +40,7 @@ namespace Porchlight.UI
         List<Vec2> route = new List<Vec2>();
         string shownHud = null;
         Action<Vec2> onPick;
-        /// <summary>Device pixels per CSS pixel: the minimap's lines and marks are sized in device pixels, as on a canvas.</summary>
+        /// <summary>Device pixels per CSS pixel: the minimap's lines and marks are sized in device pixels.</summary>
         public float Dpr = 1;
 
         public Action<Vec2> OnMinimapPick
@@ -191,7 +189,7 @@ namespace Porchlight.UI
                 painter.BeginPath();
                 painter.MoveTo(P(route[0]));
                 for (int i = 1; i < route.Count; i++) painter.LineTo(P(route[i]));
-                painter.strokeColor = Space.CssHex(0xff6a00);
+                painter.strokeColor = Coords.Hex(0xff6a00);
                 painter.lineWidth = 1.5f * dev;
                 painter.lineJoin = LineJoin.Miter;
                 painter.lineCap = LineCap.Butt;
@@ -200,13 +198,13 @@ namespace Porchlight.UI
             if (goal != null)
             {
                 var gp = P(goal.Value);
-                painter.strokeColor = Space.CssHex(0xfff8e8);
+                painter.strokeColor = Coords.Hex(0xfff8e8);
                 painter.lineWidth = 1.5f * dev;
                 painter.BeginPath();
                 painter.MoveTo(gp);
                 painter.LineTo(gp + new Vector2(0, -9 * dev));
                 painter.Stroke();
-                painter.fillColor = Space.CssHex(0xff6a00);
+                painter.fillColor = Coords.Hex(0xff6a00);
                 painter.BeginPath();
                 painter.MoveTo(gp + new Vector2(0, -9 * dev));
                 painter.LineTo(gp + new Vector2(6 * dev, -7 * dev));
@@ -218,20 +216,20 @@ namespace Porchlight.UI
             {
                 painter.BeginPath();
                 painter.Arc(P(o), 3 * dev, 0, 360);
-                painter.fillColor = Space.CssHex(0x3b82c4);
+                painter.fillColor = Coords.Hex(0x3b82c4);
                 painter.Fill();
                 painter.lineWidth = 1.5f * dev;
-                painter.strokeColor = Space.CssHex(0xfff8e8);
+                painter.strokeColor = Coords.Hex(0xfff8e8);
                 painter.Stroke();
             }
             if (player != null)
             {
                 painter.BeginPath();
                 painter.Arc(P(player.Value), 4 * dev, 0, 360);
-                painter.fillColor = Space.CssHex(0xc2412d);
+                painter.fillColor = Coords.Hex(0xc2412d);
                 painter.Fill();
                 painter.lineWidth = 2 * dev;
-                painter.strokeColor = Space.CssHex(0xfff8e8);
+                painter.strokeColor = Coords.Hex(0xfff8e8);
                 painter.Stroke();
             }
         }

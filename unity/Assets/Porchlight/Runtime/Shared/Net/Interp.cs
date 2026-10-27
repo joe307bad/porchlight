@@ -1,8 +1,7 @@
 // Smooth motion for other players. Each sends its position about 30 times a
 // second, stamped with when it took it on its own clock; we keep them by that
 // stamp and draw each player a little in the past on their own clock, between
-// the two moves either side, so they glide rather than step. Pure. A port of
-// app/src/net/interp.ts.
+// the two moves either side, so they glide rather than step. Pure.
 
 using System;
 using System.Collections.Generic;

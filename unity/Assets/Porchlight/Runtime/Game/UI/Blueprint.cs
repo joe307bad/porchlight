@@ -1,5 +1,4 @@
-// The blueprint: the town drawn as a map, layer by layer, as
-// render/blueprint/ draws it on a canvas. Rasters (terrain shading, water, the
+// The blueprint: the town drawn as a map, layer by layer. Rasters (terrain shading, water, the
 // tile view, debug views) are images placed and scaled under the camera;
 // every vector layer is stroked and filled with Painter2D in screen pixels.
 // Pan by dragging, zoom with the wheel about the cursor, double-click to fit.
@@ -12,48 +11,47 @@ using Porchlight.Gen;
 using Porchlight.Model;
 using Porchlight.Rendering;
 using UnityEngine;
-using Space = Porchlight.Rendering.Space;
 using UnityEngine.UIElements;
 
 namespace Porchlight.UI
 {
     public static class BlueprintStyle
     {
-        public static readonly Color Background = Space.CssHex(0x2b2a27);
+        public static readonly Color Background = Coords.Hex(0x2b2a27);
         public static readonly int[] Parchment = { 239, 230, 207 };
         public static readonly int[] ParchmentShadow = { 196, 180, 146 };
-        public static readonly Color Border = Space.CssHex(0x6b5d45);
-        public static readonly Color ContourMajor = Space.Css(120, 98, 64, 0.55f);
-        public static readonly Color ContourMinor = Space.Css(120, 98, 64, 0.2f);
+        public static readonly Color Border = Coords.Hex(0x6b5d45);
+        public static readonly Color ContourMajor = Coords.Rgb(120, 98, 64, 0.55f);
+        public static readonly Color ContourMinor = Coords.Rgb(120, 98, 64, 0.2f);
         public static readonly int[] Water = { 156, 195, 217 };
         public static readonly int[] WaterDeep = { 112, 160, 196 };
-        public static readonly Color Shore = Space.CssHex(0x5d88a8);
-        public static readonly Color River = Space.CssHex(0x8fbad6);
-        public static readonly Color RiverEdge = Space.CssHex(0x5d88a8);
-        public static readonly Color Block = Space.Css(214, 199, 160, 0.35f);
-        public static readonly Color BlockEdge = Space.Css(140, 118, 80, 0.45f);
-        public static readonly Color LotEdge = Space.Css(120, 100, 70, 0.55f);
-        public static Color Road(RoadKind k) => k == RoadKind.Main ? Space.CssHex(0x3d342b) : k == RoadKind.Street ? Space.CssHex(0x6a5b4b) : Space.CssHex(0x8d7556);
-        public static readonly Color Sidewalk = Space.CssHex(0xd9cfb4);
-        public static readonly Color BridgeDeck = Space.CssHex(0xc49a6c);
-        public static readonly Color BridgeRail = Space.CssHex(0x5b3a1e);
+        public static readonly Color Shore = Coords.Hex(0x5d88a8);
+        public static readonly Color River = Coords.Hex(0x8fbad6);
+        public static readonly Color RiverEdge = Coords.Hex(0x5d88a8);
+        public static readonly Color Block = Coords.Rgb(214, 199, 160, 0.35f);
+        public static readonly Color BlockEdge = Coords.Rgb(140, 118, 80, 0.45f);
+        public static readonly Color LotEdge = Coords.Rgb(120, 100, 70, 0.55f);
+        public static Color Road(RoadKind k) => k == RoadKind.Main ? Coords.Hex(0x3d342b) : k == RoadKind.Street ? Coords.Hex(0x6a5b4b) : Coords.Hex(0x8d7556);
+        public static readonly Color Sidewalk = Coords.Hex(0xd9cfb4);
+        public static readonly Color BridgeDeck = Coords.Hex(0xc49a6c);
+        public static readonly Color BridgeRail = Coords.Hex(0x5b3a1e);
         public static Color Building(BuildingKind k) => k switch
         {
-            BuildingKind.House => Space.CssHex(0x7a5c4a),
-            BuildingKind.Shop => Space.CssHex(0xa0583c),
-            BuildingKind.Workshop => Space.CssHex(0x6e6a5e),
-            BuildingKind.Church => Space.CssHex(0x7d2e3e),
-            _ => Space.CssHex(0x3e5a7d),
+            BuildingKind.House => Coords.Hex(0x7a5c4a),
+            BuildingKind.Shop => Coords.Hex(0xa0583c),
+            BuildingKind.Workshop => Coords.Hex(0x6e6a5e),
+            BuildingKind.Church => Coords.Hex(0x7d2e3e),
+            _ => Coords.Hex(0x3e5a7d),
         };
-        public static readonly Color BuildingEdge = Space.CssHex(0x2e241d);
-        public static readonly Color Door = Space.CssHex(0xf4e9cf);
-        public static readonly Color Plaza = Space.CssHex(0xe8d9b0);
-        public static readonly Color PlazaEdge = Space.CssHex(0xa48b5c);
-        public static readonly Color Landmark = Space.CssHex(0x2e241d);
-        public static readonly Color Gate = Space.CssHex(0x3d342b);
-        public static readonly Color GridColor = Space.Css(90, 76, 52, 0.22f);
-        public static readonly Color Spawn = Space.CssHex(0xc2412d);
-        public static readonly Color SpawnRing = Space.CssHex(0xfff8e8);
+        public static readonly Color BuildingEdge = Coords.Hex(0x2e241d);
+        public static readonly Color Door = Coords.Hex(0xf4e9cf);
+        public static readonly Color Plaza = Coords.Hex(0xe8d9b0);
+        public static readonly Color PlazaEdge = Coords.Hex(0xa48b5c);
+        public static readonly Color Landmark = Coords.Hex(0x2e241d);
+        public static readonly Color Gate = Coords.Hex(0x3d342b);
+        public static readonly Color GridColor = Coords.Rgb(90, 76, 52, 0.22f);
+        public static readonly Color Spawn = Coords.Hex(0xc2412d);
+        public static readonly Color SpawnRing = Coords.Hex(0xfff8e8);
 
         static readonly Color32[] Terrain =
         {
@@ -195,7 +193,7 @@ namespace Porchlight.UI
             pinLabel.style.position = Position.Absolute;
             pinLabel.style.fontSize = 12;
             pinLabel.style.color = BlueprintStyle.SpawnRing;
-            pinLabel.style.backgroundColor = Space.Css(28, 27, 24, 0.85f);
+            pinLabel.style.backgroundColor = Coords.Rgb(28, 27, 24, 0.85f);
             pinLabel.style.borderTopLeftRadius = pinLabel.style.borderTopRightRadius = pinLabel.style.borderBottomLeftRadius = pinLabel.style.borderBottomRightRadius = 4;
             pinLabel.style.paddingLeft = pinLabel.style.paddingRight = 6;
             pinLabel.style.height = 18;
@@ -316,7 +314,7 @@ namespace Porchlight.UI
             else pinLabel.style.display = DisplayStyle.None;
         }
 
-        // Rasters (cache.ts) ------------------------------------------------------------------
+        // Rasters -------------------------------------------------------------------------------
 
         const int DETAIL = 4;
         const int MINOR_PER_STEP = 3;
@@ -349,7 +347,7 @@ namespace Porchlight.UI
             return a * (1 - ty) + b * ty;
         }
 
-        /// <summary>An image whose rows are given top first, as a canvas fills them.</summary>
+        /// <summary>An image whose rows are given top first, as images are usually stored.</summary>
         static Texture2D Image(int w, int h, Color32[] topFirst, bool smooth)
         {
             var px = new Color32[w * h];
@@ -431,7 +429,7 @@ namespace Porchlight.UI
                 case "debugHeight":
                     for (int i = 0; i < n; i++)
                     {
-                        byte v = U8(Js.Round(model.heightmap[i] * 255));
+                        byte v = U8(Numbers.Round(model.heightmap[i] * 255));
                         px[i] = new Color32(v, v, v, 255);
                     }
                     break;
@@ -443,7 +441,7 @@ namespace Porchlight.UI
                     {
                         double f = model.fields.flow[i];
                         double t = Math.Log(f == 0 ? 1 : f) / Math.Log(max);
-                        px[i] = new Color32(20, U8(60 + 120 * t), U8(120 + 135 * t), U8(Js.Round(60 + 195 * t)));
+                        px[i] = new Color32(20, U8(60 + 120 * t), U8(120 + 135 * t), U8(Numbers.Round(60 + 195 * t)));
                     }
                     break;
                 }
@@ -526,7 +524,7 @@ namespace Porchlight.UI
             }
         }
 
-        // Vector layers (layers.ts) -------------------------------------------------------------
+        // Vector layers --------------------------------------------------------------------------
 
         Vector2 S(Vec2 p) => new Vector2((float)(p.x * camera.scale + camera.ox), (float)(p.y * camera.scale + camera.oy));
         Vector2 S(double x, double y) => new Vector2((float)(x * camera.scale + camera.ox), (float)(y * camera.scale + camera.oy));
@@ -547,7 +545,7 @@ namespace Porchlight.UI
             for (int i = 1; i < pts.Count; i++) p.LineTo(S(pts[i]));
         }
 
-        /// <summary>A dashed polyline (screen pixels), the dash pattern restarting at the line's start as a canvas subpath does.</summary>
+        /// <summary>A dashed polyline (screen pixels), the dash pattern restarting at the line's start.</summary>
         static void Dashed(Painter2D p, IReadOnlyList<Vector2> pts, float on, float off)
         {
             bool drawing = true;
@@ -886,7 +884,7 @@ namespace Porchlight.UI
             var p = ctx.painter2D;
             if (route.Count > 1)
             {
-                p.strokeColor = Space.CssHex(0xff6a00);
+                p.strokeColor = Coords.Hex(0xff6a00);
                 p.lineWidth = 3;
                 p.lineCap = LineCap.Round;
                 p.lineJoin = LineJoin.Round;
@@ -896,14 +894,14 @@ namespace Porchlight.UI
                 if (goal != null)
                 {
                     var g = S(goal.Value);
-                    p.strokeColor = Space.CssHex(0x2e241d);
+                    p.strokeColor = Coords.Hex(0x2e241d);
                     p.lineWidth = 2;
                     p.lineCap = LineCap.Butt;
                     p.BeginPath();
                     p.MoveTo(g);
                     p.LineTo(g + new Vector2(0, -22));
                     p.Stroke();
-                    p.fillColor = Space.CssHex(0xff6a00);
+                    p.fillColor = Coords.Hex(0xff6a00);
                     p.BeginPath();
                     p.MoveTo(g + new Vector2(0, -22));
                     p.LineTo(g + new Vector2(14, -17));
@@ -917,7 +915,7 @@ namespace Porchlight.UI
                 var at = S(marker.Value);
                 p.BeginPath();
                 p.Arc(at, 14, 0, 360);
-                p.fillColor = Space.Css(194, 65, 45, 0.22f);
+                p.fillColor = Coords.Rgb(194, 65, 45, 0.22f);
                 p.Fill();
                 const float r = 9;
                 float cy = at.y - 22;

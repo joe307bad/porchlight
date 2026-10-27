@@ -1,7 +1,7 @@
-// Moving cars and their lights: the traffic drawn instanced per car-model
-// part (fleet.ts), and at night two headlights and two tail lights on every
-// moving car, each with a halo, and a pool of light on the road ahead
-// (headlights.ts).
+// Cars in the scene: each an instance of its Kenney model, with two
+// headlights and two tail lights that glow at night (and bloom, through the
+// camera's post-processing). The Fleet keeps the traffic's cars where the
+// simulation says.
 
 using System;
 using System.Collections.Generic;
@@ -11,127 +11,109 @@ using UnityEngine;
 
 namespace Porchlight.Rendering
 {
+    /// <summary>One drawn car: a model with its lamps.</summary>
+    public sealed class CarView
+    {
+        public const double LIFT = 0.035;
+        static readonly Color Head = Coords.Hex(0xfff4dc);
+        static readonly Color Tail = Coords.Hex(0xff2a1a);
+        static Material headMaterial, tailMaterial;
+
+        public readonly GameObject root;
+        readonly double scale;
+        readonly List<Renderer> heads = new List<Renderer>();
+        readonly List<Renderer> tails = new List<Renderer>();
+
+        public CarView(ModelLibrary.Model model, Transform parent)
+        {
+            scale = Props.CarScale(model);
+            root = Props.Place(model, parent, 0, 0, 0, scale, scale, scale, LIFT);
+            headMaterial ??= Materials.Glowing(Head);
+            tailMaterial ??= Materials.Glowing(Tail);
+            float halfLength = model.size.z / 2, halfWidth = model.size.x / 2, height = model.size.y * 0.36f;
+            float side = Math.Max(0.05f / (float)scale, halfWidth - 0.084f / (float)scale);
+            var size = Vector3.one * (float)(0.056 / scale);
+            foreach (float s in new[] { side, -side })
+            {
+                heads.Add(Lamp(new Vector3(s, height, halfLength - 0.012f / (float)scale), size, headMaterial));
+                tails.Add(Lamp(new Vector3(s, height, -halfLength + 0.012f / (float)scale), size, tailMaterial));
+            }
+        }
+
+        Renderer Lamp(Vector3 at, Vector3 size, Material material)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            UnityEngine.Object.Destroy(go.GetComponent<Collider>());
+            go.name = "lamp";
+            go.transform.SetParent(root.transform, false);
+            go.transform.localPosition = at;
+            go.transform.localScale = size;
+            var r = go.GetComponent<Renderer>();
+            r.sharedMaterial = material;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            return r;
+        }
+
+        /// <summary>Put the car at map (x, y) facing heading `rot` (Coords.Yaw).</summary>
+        public void Place(double x, double y, double rot)
+        {
+            root.transform.localPosition = Coords.Map(x, y, LIFT);
+            root.transform.localRotation = Coords.Yaw(rot);
+        }
+
+        public bool Visible
+        {
+            get => root.activeSelf;
+            set => root.SetActive(value);
+        }
+
+        /// <summary>How brightly its lamps shine (0 by day, 1 at night).</summary>
+        public void Lights(double dusk)
+        {
+            float d = (float)dusk;
+            foreach (var r in heads) Materials.SetGlow(r, Head, d * 2.5f);
+            foreach (var r in tails) Materials.SetGlow(r, Tail, d * 1.8f);
+        }
+
+        public void SetLayer(int layer)
+        {
+            foreach (var t in root.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
+        }
+
+        public void Dispose() => UnityEngine.Object.Destroy(root);
+
+        /// <summary>A traffic car's heading (map angle, facing (cos h, sin h)) as Coords.Yaw's.</summary>
+        public static double RotOf(double heading) => DetMath.Atan2(Math.Cos(heading), Math.Sin(heading));
+    }
+
     public sealed class Fleet
     {
-        sealed class Group
-        {
-            public Prefab prefab;
-            public List<Drawable> drawables = new List<Drawable>();
-            public List<int> cars = new List<int>();
-        }
-
-        static readonly Matrix4x4 Gone = Matrix4x4.Scale(Vector3.zero);
         readonly Traffic traffic;
-        readonly Stage stage;
-        readonly List<Group> groups = new List<Group>();
+        readonly List<CarView> views = new List<CarView>();
+        readonly GameObject root;
 
-        public Fleet(Traffic traffic, TownAssets assets, Stage stage)
+        public Fleet(Traffic traffic, ModelLibrary library, Transform parent)
         {
             this.traffic = traffic;
-            this.stage = stage;
-            for (int model = 0; model < Catalog.CARS.Length; model++)
-            {
-                var g = new Group();
-                for (int i = 0; i < traffic.cars.Count; i++) if (traffic.cars[i].model == model) g.cars.Add(i);
-                if (g.cars.Count == 0) continue;
-                g.prefab = assets.Get(Catalog.CARS[model]);
-                foreach (var part in g.prefab.parts) g.drawables.Add(stage.Add(new Drawable(part.mesh, part.material, new Matrix4x4[g.cars.Count], g.cars.Count, true)));
-                groups.Add(g);
-            }
-            Update();
+            root = new GameObject("traffic");
+            root.transform.SetParent(parent, false);
+            foreach (var c in traffic.cars) views.Add(new CarView(library.Get(Catalog.CARS[c.model]), root.transform));
+            Update(0);
         }
 
-        public void Update()
+        public void Update(double dusk)
         {
-            foreach (var g in groups)
+            for (int i = 0; i < views.Count; i++)
             {
-                double s = TownWorld.CarScale(g.prefab);
-                for (int k = 0; k < g.cars.Count; k++)
-                {
-                    var c = traffic.cars[g.cars[k]];
-                    var m = c.taken ? Gone : Space.M(TownWorld.Placement(g.prefab, c.x, c.y, JsMath.Atan2(Math.Cos(c.heading), Math.Sin(c.heading)), s, s, s));
-                    foreach (var d in g.drawables) d.matrices[k] = m;
-                }
+                var c = traffic.cars[i];
+                var v = views[i];
+                v.Visible = !c.taken;
+                if (c.taken) continue;
+                v.Place(c.x, c.y, CarView.RotOf(c.heading));
+                v.Lights(dusk);
             }
         }
 
-        public void Dispose()
-        {
-            foreach (var g in groups) foreach (var d in g.drawables) stage.Remove(d);
-        }
-    }
-
-    public struct LitCar
-    {
-        public double x, y, heading;
-        public CarShape shape;
-    }
-
-    public sealed class Headlights
-    {
-        const int MAX_LIGHTS = 80;
-        readonly Drawable lamps;
-        readonly Drawable beams;
-        readonly Halos halos;
-        readonly Stage stage;
-        readonly Mesh lampMesh, beamMesh;
-
-        public Headlights(Stage stage)
-        {
-            this.stage = stage;
-            lampMesh = Primitives.ToMesh(Primitives.Sphere(0.028, 8, 5), "car lamp");
-            // After the cars, so the lamps on the driven car don't count as hiding it from the x-ray.
-            var lampMat = Mats.Basic(Color.white, instanceColors: true, renderOrder: 21);
-            lamps = stage.Add(new Drawable(lampMesh, lampMat, new Matrix4x4[MAX_LIGHTS * 4], 0, false, new Vector4[MAX_LIGHTS * 4]));
-            beamMesh = Primitives.ToMesh(Primitives.RotateX(Primitives.Plane(CarLamps.BEAM_WIDTH, CarLamps.BEAM_LENGTH), -Math.PI / 2), "beam");
-            var beamMat = Mats.Basic(Color.white, Blending.Additive, false, map: Primitives.Glow, instanceColors: true, renderOrder: 6);
-            beams = stage.Add(new Drawable(beamMesh, beamMat, new Matrix4x4[MAX_LIGHTS], 0, false, new Vector4[MAX_LIGHTS]));
-            halos = new Halos(MAX_LIGHTS * 4, 0.32, 7, stage);
-        }
-
-        public void Update(IReadOnlyList<LitCar> cars, double dusk)
-        {
-            bool on = dusk > 0.02;
-            lamps.visible = beams.visible = halos.drawable.visible = on;
-            if (!on) return;
-            int n = Math.Min(cars.Count, MAX_LIGHTS);
-            var head = Space.Hex(0xfff4dc) * (float)(0.25 + dusk * 0.75);
-            var tail = Space.Hex(0xff2a1a) * (float)(0.3 + dusk * 0.7);
-            float poolK = (float)(dusk * 0.5);
-            var pool = new Vector4(1 * poolK, 0.93f * poolK, 0.78f * poolK, 1);
-            for (int i = 0; i < n; i++)
-            {
-                var c = cars[i];
-                var l = CarLamps.Of(c.x, c.y, c.heading, c.shape);
-                var all = new[] { l.front0, l.front1, l.back0, l.back1 };
-                for (int k = 0; k < 4; k++)
-                {
-                    int j = i * 4 + k;
-                    var p = all[k];
-                    var at = Space.Map(p.x, p.y, p.h);
-                    lamps.matrices[j] = Matrix4x4.Translate(at);
-                    var col = k < 2 ? head : tail;
-                    lamps.colors[j] = new Vector4(col.r, col.g, col.b, 1);
-                    float d = (float)dusk;
-                    if (k < 2) halos.Set(j, at, d, d * 0.95f, d * 0.82f);
-                    else halos.Set(j, at, d * 0.7f, d * 0.08f, d * 0.04f);
-                }
-                var m = Mat4.Compose(l.beam.x, 0.045, l.beam.y, Quat.AboutY(JsMath.Atan2(-l.forward.x, -l.forward.y)), 1, 1, 1);
-                beams.matrices[i] = Space.M(m);
-                beams.colors[i] = pool;
-            }
-            lamps.count = n * 4;
-            beams.count = n;
-            halos.Commit(n * 4);
-        }
-
-        public void Dispose()
-        {
-            stage.Remove(lamps);
-            stage.Remove(beams);
-            stage.Remove(halos.drawable);
-            UnityEngine.Object.Destroy(lampMesh);
-            UnityEngine.Object.Destroy(beamMesh);
-        }
+        public void Dispose() => UnityEngine.Object.Destroy(root);
     }
 }

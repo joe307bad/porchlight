@@ -5,7 +5,7 @@
 // road carries straight on to meet it, and one that hits water, steep ground,
 // the town edge or crowds a parallel road is dropped. Afterwards dead ends get
 // short connectors where one fits, and land the roads never reach gets a
-// footpath back to the network. A port of gen/streets.ts.
+// footpath back to the network.
 
 using System;
 using System.Collections.Generic;
@@ -103,7 +103,7 @@ namespace Porchlight.Gen
             }
             bool AngleClash(int node, Vec2 dir)
             {
-                foreach (var d in IncidentDirs(node)) if (JsMath.Acos(Clamp(Geo.Dot(d, dir), -1, 1)) < MIN_ANGLE) return true;
+                foreach (var d in IncidentDirs(node)) if (DetMath.Acos(Clamp(Geo.Dot(d, dir), -1, 1)) < MIN_ANGLE) return true;
                 return false;
             }
             bool Connected(int a, int b)
@@ -249,7 +249,7 @@ namespace Porchlight.Gen
                 }
                 if (host == null) continue;
                 int node = RoadGraphOps.SplitEdgeAt(g, host.id, seed.at);
-                double baseAngle = JsMath.Atan2(seed.tangent.y, seed.tangent.x);
+                double baseAngle = DetMath.Atan2(seed.tangent.y, seed.tangent.x);
                 foreach (int side in new[] { 1, -1 })
                 {
                     if (rng.Chance(0.9)) queue.Add(new Proposal { from = node, angle = SnapToGrid(baseAngle + (side * Math.PI) / 2), depth = 0, since = 0, tries = 0 });
@@ -421,7 +421,7 @@ namespace Porchlight.Gen
                 {
                     if (nd.id == node || !inc.TryGetValue(nd.id, out var l) || l.Count == 0) continue;
                     var v = Geo.Sub(nd.at, a);
-                    double d = Js.Hypot(v.x, v.y);
+                    double d = Numbers.Hypot(v.x, v.y);
                     if (d < MIN_SEGMENT || d >= bestD) continue;
                     if (!OnGrid(Unit(v)) || Geo.Dot(Unit(v), dir) < Math.Cos((50 * Math.PI) / 180)) continue;
                     best = nd.id;
@@ -501,7 +501,7 @@ namespace Porchlight.Gen
                                 if ((n == B.from || n == B.to) && Geo.Dist(graph.nodes[n].at, x.point) < 1e-6) sharedHere = true;
                             if (sharedHere) continue;
                             if (i == j && A.from == A.to && Geo.Dist(graph.nodes[A.from].at, x.point) < 1e-6) continue;
-                            return new List<string> { $"roads {A.id} and {B.id} cross at {Js.ToFixed(x.point.x, 1)},{Js.ToFixed(x.point.y, 1)} without a junction" };
+                            return new List<string> { $"roads {A.id} and {B.id} cross at {Numbers.ToFixed(x.point.x, 1)},{Numbers.ToFixed(x.point.y, 1)} without a junction" };
                         }
                     }
                 }
@@ -513,7 +513,7 @@ namespace Porchlight.Gen
         {
             var dup = FindDuplicate(graph);
             return dup != null
-                ? new List<string> { $"roads {dup.Value.a} and {dup.Value.b} run alongside each other near {Js.ToFixed(dup.Value.at.x, 1)},{Js.ToFixed(dup.Value.at.y, 1)}" }
+                ? new List<string> { $"roads {dup.Value.a} and {dup.Value.b} run alongside each other near {Numbers.ToFixed(dup.Value.at.x, 1)},{Numbers.ToFixed(dup.Value.at.y, 1)}" }
                 : new List<string>();
         }
 
@@ -571,17 +571,17 @@ namespace Porchlight.Gen
         }
 
         /// <summary>Nearest of the four grid directions to an angle.</summary>
-        static double SnapToGrid(double angle) => Js.Round(angle / (Math.PI / 2)) * (Math.PI / 2);
+        static double SnapToGrid(double angle) => Numbers.Round(angle / (Math.PI / 2)) * (Math.PI / 2);
 
         static bool OnGrid(Vec2 d)
         {
-            double a = JsMath.Atan2(d.y, d.x);
+            double a = DetMath.Atan2(d.y, d.x);
             return Math.Abs(a - SnapToGrid(a)) <= GRID_TOLERANCE;
         }
 
         static Vec2 Unit(Vec2 v)
         {
-            double len = Js.Hypot(v.x, v.y);
+            double len = Numbers.Hypot(v.x, v.y);
             if (len == 0 || double.IsNaN(len)) len = 1;
             return new Vec2(v.x / len, v.y / len);
         }

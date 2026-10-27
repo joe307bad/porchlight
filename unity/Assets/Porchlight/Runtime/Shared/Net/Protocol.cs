@@ -1,5 +1,5 @@
 // What the game client and the city room say to each other: a copy of
-// server/src/multiplayer/protocol.ts (and app/src/net/protocol.ts). Change
+// server/src/multiplayer/protocol.ts. Change
 // them together. Units are the town's: 1 unit = 1 tile; the ground is x (east)
 // and z (south: the map's y); y is height off the ground.
 

@@ -1,11 +1,11 @@
-// Builds the 3D town for a TownModel from its layout: tiled ground with sunken
-// rivers, flat vector roads with sidewalks and kerbs, stone bridges, Kenney
-// houses, shops and towers fitted to every blueprint footprint (long street
-// fronts split into rows), modelled ground floors with doors and furnished
-// rooms, fenced yards with sheds and vegetable beds, trees, street lamps,
-// street name signs, parked cars and the plaza fountain. Every copy of a
-// Kenney model is drawn instanced, one batch per model part. A port of
-// render/iso/world.ts (map (x, y) is Three's (x, z); see Space.cs).
+// The 3D town for a TownModel, built as GameObjects from its layout: tiled
+// ground with sunken rivers, roads with sidewalks and kerbs, stone bridges,
+// Kenney houses, shops and towers fitted to every blueprint footprint (long
+// street fronts split into rows) standing on built ground floors with doors
+// and furnished rooms, fenced yards with sheds and vegetable beds, trees,
+// street lamps, street name signs, parked cars and the plaza fountain.
+// Everything that never moves is combined by Unity's static batching. The
+// map's (x, y) is Coords.Map's (x, -z).
 
 using System;
 using System.Collections.Generic;
@@ -14,9 +14,8 @@ using Porchlight.Core;
 using Porchlight.Explore;
 using Porchlight.Model;
 using UnityEngine;
-using Grid = Porchlight.Core.Grid;
 using UnityEngine.Rendering;
-using Rect = Porchlight.Explore.Rect;
+using Grid = Porchlight.Core.Grid;
 
 namespace Porchlight.Rendering
 {
@@ -24,18 +23,8 @@ namespace Porchlight.Rendering
     {
         public double x, y, h, phase;
         public bool faulty;
-    }
-
-    public sealed class Streak
-    {
-        public List<Vec2> path;
-        public List<double> at;
-        public double s, speed;
-    }
-
-    public sealed class Droplet
-    {
-        public double t, vx, vy;
+        /// <summary>The bulb, which glows at night.</summary>
+        public Renderer bulb;
     }
 
     public sealed class DoorState
@@ -44,122 +33,13 @@ namespace Porchlight.Rendering
         public double shut;
         public int swing;
         public double open;
+        public Transform panel;
     }
 
     public struct ParkedPose
     {
         public double x, y, heading;
         public int model;
-    }
-
-    /// <summary>The camera-facing glow squares (lamp halos, car-light halos), one quad per light.</summary>
-    public sealed class Halos
-    {
-        public readonly Mesh mesh;
-        readonly Vector3[] centres;
-        readonly Color[] colors;
-        readonly Vector2[] sizes;
-        readonly int capacity;
-        public readonly Drawable drawable;
-        public readonly Material material;
-
-        public Halos(int capacity, double size, int renderOrder, Stage stage)
-        {
-            this.capacity = Math.Max(1, capacity);
-            mesh = new Mesh { name = "halos" };
-            int n = this.capacity * 4;
-            centres = new Vector3[n];
-            colors = new Color[n];
-            sizes = new Vector2[n];
-            var corners = new Vector2[n];
-            var tris = new int[this.capacity * 6];
-            for (int i = 0; i < this.capacity; i++)
-            {
-                corners[i * 4] = new Vector2(0, 0);
-                corners[i * 4 + 1] = new Vector2(1, 0);
-                corners[i * 4 + 2] = new Vector2(1, 1);
-                corners[i * 4 + 3] = new Vector2(0, 1);
-                for (int k = 0; k < 4; k++) sizes[i * 4 + k] = new Vector2((float)size, (float)size);
-                tris[i * 6] = i * 4;
-                tris[i * 6 + 1] = i * 4 + 2;
-                tris[i * 6 + 2] = i * 4 + 1;
-                tris[i * 6 + 3] = i * 4;
-                tris[i * 6 + 4] = i * 4 + 3;
-                tris[i * 6 + 5] = i * 4 + 2;
-            }
-            mesh.SetVertices(centres);
-            mesh.SetUVs(0, corners);
-            mesh.SetUVs(1, sizes);
-            mesh.SetColors(colors);
-            mesh.SetTriangles(tris, 0, false);
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 100000);
-            material = Mats.BillboardMaterial(Primitives.Glow, Blending.Additive, true, renderOrder);
-            drawable = stage.Add(new Drawable(mesh, material, Matrix4x4.identity, false));
-        }
-
-        public void Set(int i, Vector3 at, float r, float g, float b)
-        {
-            for (int k = 0; k < 4; k++)
-            {
-                centres[i * 4 + k] = at;
-                colors[i * 4 + k] = new Color(r, g, b, 1);
-            }
-        }
-
-        /// <summary>Show only the first `count` halos (the rest collapse to nothing).</summary>
-        public void Commit(int count)
-        {
-            for (int i = count; i < capacity; i++)
-                for (int k = 0; k < 4; k++) colors[i * 4 + k] = new Color(0, 0, 0, 0);
-            mesh.SetVertices(centres);
-            mesh.SetColors(colors);
-        }
-    }
-
-    /// <summary>Collects every placement of each prefab, then draws them instanced.</summary>
-    public sealed class Instancer
-    {
-        readonly Dictionary<Prefab, List<Matrix4x4>> items = new Dictionary<Prefab, List<Matrix4x4>>();
-        readonly List<Prefab> order = new List<Prefab>();
-        readonly HashSet<Prefab> noShadow = new HashSet<Prefab>();
-        readonly Dictionary<Prefab, List<Drawable>> drawables = new Dictionary<Prefab, List<Drawable>>();
-        static readonly Matrix4x4 Zero = Matrix4x4.Scale(Vector3.zero);
-
-        /// <summary>Add a copy; returns its index among this prefab's copies.</summary>
-        public int Add(Prefab p, Mat4 m, bool castShadow = true)
-        {
-            if (!castShadow) noShadow.Add(p);
-            if (!items.TryGetValue(p, out var list))
-            {
-                items[p] = list = new List<Matrix4x4>();
-                order.Add(p);
-            }
-            list.Add(Space.M(m));
-            return list.Count - 1;
-        }
-
-        public void SetVisible(Prefab p, int index, bool visible)
-        {
-            if (!drawables.TryGetValue(p, out var ds)) return;
-            var m = visible ? items[p][index] : Zero;
-            foreach (var d in ds) d.matrices[index] = m;
-        }
-
-        public void Build(Stage stage, List<Drawable> owned)
-        {
-            foreach (var prefab in order)
-            {
-                var matrices = items[prefab].ToArray();
-                var list = new List<Drawable>();
-                foreach (var part in prefab.parts)
-                {
-                    var d = stage.Add(new Drawable(part.mesh, part.material, (Matrix4x4[])matrices.Clone(), matrices.Length, !noShadow.Contains(prefab)));
-                    list.Add(d);
-                    owned.Add(d);
-                }
-                drawables[prefab] = list;
-            }
-        }
     }
 
     public sealed partial class TownWorld
@@ -181,18 +61,19 @@ namespace Porchlight.Rendering
             public const int grass = 0x86bd5b, lawn = 0x95c964, sand = 0xe6d49a, rock = 0x9c968c, soil = 0x7a5638, paving = 0xbdb6a4;
             public const int plazaA = 0xddd2b6, plazaB = 0xcdc1a2, bed = 0x6f8a86, bank = 0x8f7656, slab = 0x6b5238, asphalt = 0x6b6b6b;
             public const int sidewalk = 0xd8d3bf, curb = 0xb3ad98, lane = 0xece7d2, path = 0xc9a46e, stone = 0xa39d8a, stoneShade = 0x7d7768;
-            public const int shedWall = 0xb07a4a, shedRoof = 0x5b4636, lampPost = 0x3b3f47;
+            public const int shedWall = 0xb07a4a, shedRoof = 0x5b4636, lampPost = 0x3b3f47, water = 0x5d9bc8;
         }
 
         static readonly int[] FACADES = { 0xb5563f, 0xe9dcc0, 0xf1efe9, 0xa9b99a, 0x9aa8b5, 0xd8bf8f, 0xc9c4b8, 0xc98a5a, 0x8fa6a0 };
         const int GLASS = 0x8fb8e8;
+        /// <summary>What a window looks like lit from inside.</summary>
+        public const int WINDOW_LIGHT = 0xffd28a;
         const int TRIM = 0xf4f1ea;
         static readonly int[] DOOR_COLOURS = { 0x8a3b2e, 0x2f5d50, 0x2e4a7a, 0x6b4a2f, 0xb08a3e, 0x5b3b5e, 0xe8e2d0 };
 
-        /// <summary>Window panes numbered across the session, as windows.ts's module-level counter.</summary>
-        static int paneCount;
-
         public readonly GameObject root;
+        /// <summary>Everything that never moves (static-batched once built).</summary>
+        readonly Transform still;
         public readonly TownModel model;
         public readonly IsoLayout layout;
         public SidewalkNetwork sidewalks => layout.sidewalks;
@@ -200,51 +81,37 @@ namespace Porchlight.Rendering
         public List<Signpost> signs = new List<Signpost>();
         public readonly List<Box> boxes = new List<Box>();
         public readonly List<Lamp> lamps = new List<Lamp>();
-        public Drawable bulbs;
-        public Halos halos;
-        public Drawable pools;
-        public Material water;
-        public Drawable streaksDrawable;
-        public readonly List<Streak> streaks = new List<Streak>();
         public Vec2 fountainAt;
-        public Drawable drops;
-        public readonly List<Droplet> droplets = new List<Droplet>();
         public readonly List<Room> rooms = new List<Room>();
         public readonly List<int> roomBuilding = new List<int>();
         public readonly List<RoomPlan> plans = new List<RoomPlan>();
         public readonly List<DoorState> doors = new List<DoorState>();
-        public Drawable doorPanels;
         public Solids solids;
         public readonly List<ParkedPose> parked = new List<ParkedPose>();
-        public readonly Stage stage;
 
-        readonly TownAssets assets;
-        readonly Instancer instancer = new Instancer();
-        readonly List<Drawable> owned = new List<Drawable>();
-        readonly List<Mesh> meshes = new List<Mesh>();
-        readonly List<(Prefab prefab, int index)> shells = new List<(Prefab, int)>();
-        readonly List<(Prefab prefab, int index)> parkedCopies = new List<(Prefab, int)>();
-        readonly List<Drawable> facades = new List<Drawable>();
+        readonly ModelLibrary library;
+        readonly Palette palette;
+        readonly List<GameObject> shells = new List<GameObject>();
+        readonly List<GameObject> facades = new List<GameObject>();
+        readonly List<GameObject> parkedCars = new List<GameObject>();
         readonly Dictionary<int, Interior> interiors = new Dictionary<int, Interior>();
-        Material interiorMaterial;
-        Material lambert;
 
-        public TownWorld(TownModel model, TownAssets assets, Stage stage, ITextMaker text)
+        public TownWorld(TownModel model, ModelLibrary library)
         {
             this.model = model;
-            this.assets = assets;
-            this.stage = stage;
+            this.library = library;
+            palette = new Palette();
             layout = Layout.Build(model);
             names = StreetNaming.Name(model, layout.roads);
             root = new GameObject("town");
+            still = new GameObject("still").transform;
+            still.SetParent(root.transform, false);
             var rng = new Rng($"{model.seed}::iso");
 
-            lambert = Mats.Lambert(Color.white, vertexColors: true);
-            AddStatic(BuildGround(rng), lambert, false, true);
-            water = AddWater();
-            AddStatic(BuildRoads(), lambert, true, true);
-
-            var sheds = new MeshBuilder();
+            BuildGround(rng).Build("ground", still);
+            AddWater();
+            BuildRoads().Build("roads", still);
+            var sheds = new MeshBuilder(palette);
             AddHouses(rng);
             Furnish(rng);
             AddFacades(rng);
@@ -253,91 +120,71 @@ namespace Porchlight.Rendering
             AddTrees(rng);
             AddPlazaDecor(rng);
             AddParkedCars();
-            if (!sheds.Empty) AddStatic(sheds.Build("sheds"), lambert, true, true);
+            if (!sheds.Empty) sheds.Build("sheds", still);
             AddLamps(rng);
             signs = Signs.Plan(model, layout, names);
-            AddStreetSigns(text);
-            AddStreaks();
+            AddStreetSigns();
             AddFountain();
-            instancer.Build(stage, owned);
-            interiorMaterial = Mats.Lambert(Color.white, vertexColors: true);
+            _ = palette.Material;
+            StaticBatchingUtility.Combine(still.gameObject);
         }
 
-        Drawable AddStatic(Mesh mesh, Material material, bool cast, bool receive)
-        {
-            meshes.Add(mesh);
-            var m = receive ? material : NoReceive(material);
-            var d = stage.Add(new Drawable(mesh, m, Matrix4x4.identity, cast));
-            owned.Add(d);
-            return d;
-        }
-
-        readonly Dictionary<Material, Material> noReceive = new Dictionary<Material, Material>();
-
-        Material NoReceive(Material m)
-        {
-            if (!noReceive.TryGetValue(m, out var o))
-            {
-                o = new Material(m);
-                Mats.SetReceiveShadow(o, false);
-                noReceive[m] = o;
-            }
-            return o;
-        }
-
-        public void SetParkedVisible(int i, bool visible) => instancer.SetVisible(parkedCopies[i].prefab, parkedCopies[i].index, visible);
+        public void SetParkedVisible(int i, bool visible) => Show(parkedCars[i], visible);
 
         public void SetShellVisible(int room, bool visible)
         {
-            instancer.SetVisible(shells[room].prefab, shells[room].index, visible);
-            facades[room].visible = visible;
+            Show(shells[room], visible);
+            Show(facades[room], visible);
+        }
+
+        /// <summary>Shown or hidden without moving anything (static-batched objects can't be switched off whole).</summary>
+        static void Show(GameObject go, bool visible)
+        {
+            foreach (var r in go.GetComponentsInChildren<Renderer>(true)) r.enabled = visible;
         }
 
         public void Dispose()
         {
-            foreach (var d in owned) stage.Remove(d);
-            foreach (var i in interiors.Values) i.Dispose(stage);
-            foreach (var m in meshes) UnityEngine.Object.Destroy(m);
+            foreach (var i in interiors.Values) i.Dispose();
             UnityEngine.Object.Destroy(root);
         }
 
         static int Darker(int c, double k) =>
-            (Js.RoundInt(((c >> 16) & 255) * k) << 16) | (Js.RoundInt(((c >> 8) & 255) * k) << 8) | Js.RoundInt((c & 255) * k);
+            (Numbers.RoundInt(((c >> 16) & 255) * k) << 16) | (Numbers.RoundInt(((c >> 8) & 255) * k) << 8) | Numbers.RoundInt((c & 255) * k);
 
         static V3 v(double x, double h, double y) => new V3(x, h, y);
 
-        static readonly Quat Identity = Quat.Identity;
-
-        /// <summary>
-        /// Where to draw a prefab: its footprint centred on map point `at`, turned by
-        /// `rot` about the vertical (its front, +Z, then faces (sin rot, cos rot)), scaled
-        /// by (sx, sy, sz) in its own axes. Three space.
-        /// </summary>
-        public static Mat4 Placement(Prefab p, double atX, double atY, double rot, double sx, double sy, double sz, double lift = 0)
-        {
-            var centre = Mat4.Translation(-(p.minX + p.sizeX / 2), -p.minY, -(p.minZ + p.sizeZ / 2));
-            var m = Mat4.Compose(atX, lift, atY, Quat.AboutY(rot), sx, sy, sz);
-            return m.Multiply(centre);
-        }
-
-        public static double CarScale(Prefab p) => CAR_LENGTH / p.sizeZ;
-
         static bool IsWaterTerrain(byte t) => Terrain.IsWater(t);
+
+        /// <summary>A Unity primitive mesh (cube, cylinder, sphere) for simple shapes.</summary>
+        static GameObject Shape(PrimitiveType type, Transform parent, Vector3 at, Vector3 size, Material material, bool shadows = true, string name = null)
+        {
+            var go = GameObject.CreatePrimitive(type);
+            UnityEngine.Object.Destroy(go.GetComponent<Collider>());
+            go.name = name ?? type.ToString().ToLowerInvariant();
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = at;
+            go.transform.localScale = size;
+            var r = go.GetComponent<MeshRenderer>();
+            r.sharedMaterial = material;
+            r.shadowCastingMode = shadows ? ShadowCastingMode.On : ShadowCastingMode.Off;
+            return go;
+        }
 
         // Ground --------------------------------------------------------------------------------
 
-        Mesh BuildGround(Rng rng)
+        MeshBuilder BuildGround(Rng rng)
         {
             var tiles = model.tiles;
             int w = model.width, h = model.height;
-            var b = new MeshBuilder();
+            var b = new MeshBuilder(palette);
             bool Wet(int x, int y) => Grid.InBounds(x, y, w, h) && IsWaterTerrain(tiles.terrain[Grid.Index(x, y, w)]);
             int Jitter(int c, double amount)
             {
                 double k = 1 - rng.Next() * amount;
-                int r = Js.RoundInt(((c >> 16) & 255) * k);
-                int g = Js.RoundInt(((c >> 8) & 255) * (1 - (1 - k) * 0.5));
-                int bl = Js.RoundInt((c & 255) * k);
+                int r = Numbers.RoundInt(((c >> 16) & 255) * k);
+                int g = Numbers.RoundInt(((c >> 8) & 255) * (1 - (1 - k) * 0.5));
+                int bl = Numbers.RoundInt((c & 255) * k);
                 return (r << 16) | (g << 8) | bl;
             }
             for (int y = 0; y < h; y++)
@@ -373,47 +220,35 @@ namespace Porchlight.Rendering
             b.Quad(v(0, 0, h), v(w, 0, h), v(w, -SLAB, h), v(0, -SLAB, h), C.slab, new V3(0, 0, 1));
             b.Quad(v(0, 0, 0), v(0, 0, h), v(0, -SLAB, h), v(0, -SLAB, 0), C.slab, new V3(-1, 0, 0));
             b.Quad(v(w, 0, 0), v(w, 0, h), v(w, -SLAB, h), v(w, -SLAB, 0), C.slab, new V3(1, 0, 0));
-            return b.Build("ground");
+            return b;
         }
 
-        Material AddWater()
+        /// <summary>The water's surface: glossy, so it catches the sky and the sun.</summary>
+        void AddWater()
         {
             var tiles = model.tiles;
             int w = model.width, h = model.height;
-            var pos = new List<Vector3>();
-            var deep = new List<Vector2>();
-            var idx = new List<int>();
+            var b = new MeshBuilder(palette);
             for (int y = 0; y < h; y++)
-            {
                 for (int x = 0; x < w; x++)
                 {
                     byte t = tiles.terrain[Grid.Index(x, y, w)];
-                    if (!IsWaterTerrain(t)) continue;
-                    int start = pos.Count;
-                    pos.Add(Space.P(x, WATER_Y, y));
-                    pos.Add(Space.P(x, WATER_Y, y + 1));
-                    pos.Add(Space.P(x + 1, WATER_Y, y + 1));
-                    pos.Add(Space.P(x + 1, WATER_Y, y));
-                    float d = t == Terrain.WATER_DEEP ? 1 : 0;
-                    for (int k = 0; k < 4; k++) deep.Add(new Vector2(d, 0));
-                    // Three's (0, 1, 2), (0, 2, 3), wound the other way for Unity.
-                    idx.AddRange(new[] { start, start + 2, start + 1, start, start + 3, start + 2 });
+                    if (IsWaterTerrain(t)) b.Rect(x, y, x + 1, y + 1, WATER_Y, t == Terrain.WATER_DEEP ? 0x4b86b8 : C.water);
                 }
-            }
-            var material = Mats.WaterMaterial();
-            if (idx.Count == 0) return material;
-            var mesh = new Mesh { name = "water", indexFormat = pos.Count > 65000 ? IndexFormat.UInt32 : IndexFormat.UInt16 };
-            mesh.SetVertices(pos);
-            mesh.SetUVs(0, deep);
-            mesh.SetTriangles(idx, 0, true);
-            meshes.Add(mesh);
-            owned.Add(stage.Add(new Drawable(mesh, material, Matrix4x4.identity, false)));
-            return material;
+            if (b.Empty) return;
+            var go = new GameObject("water");
+            go.transform.SetParent(still, false);
+            go.AddComponent<MeshFilter>().sharedMesh = b.Build("water");
+            var r = go.AddComponent<MeshRenderer>();
+            var m = new Material(palette.Material) { name = "water" };
+            m.SetFloat("_Smoothness", 0.85f);
+            r.sharedMaterial = m;
+            r.shadowCastingMode = ShadowCastingMode.Off;
         }
 
-        Mesh BuildRoads()
+        MeshBuilder BuildRoads()
         {
-            var b = new MeshBuilder();
+            var b = new MeshBuilder(palette);
             var streets = layout.roads.Where(r => r.kind != RoadKind.Path).ToList();
             bool InMap(Vec2 p) => p.x > 0.01 && p.y > 0.01 && p.x < model.width - 0.01 && p.y < model.height - 0.01;
             void Layer(double y, double extra, int color)
@@ -467,7 +302,7 @@ namespace Porchlight.Rendering
                 }
                 Flush();
             }
-            return b.Build("roads");
+            return b;
         }
     }
 }

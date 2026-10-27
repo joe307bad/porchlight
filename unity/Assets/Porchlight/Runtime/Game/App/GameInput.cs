@@ -1,8 +1,7 @@
-// Keyboard, mouse wheel and controller through the Input System, presented
-// the way the browser presented them to the TypeScript game: key-down events
-// (with the operating system's auto-repeat: a held key repeats after half a
-// second), key-ups, and a controller polled once a frame with its own
-// deadzones (gamepad.ts). Consoles and the web read the same pads.
+// Keyboard, mouse wheel and controller through the Input System: key-down
+// events for the keys the game uses (a held key repeats after half a second,
+// as typing does), key-ups, and a controller polled once a frame with its own
+// deadzones. Consoles and the web read the same pads.
 
 using System;
 using System.Collections.Generic;
@@ -13,7 +12,7 @@ using UnityEngine.InputSystem.Controls;
 
 namespace Porchlight.App
 {
-    /// <summary>Standard-mapping controller buttons (gamepad.ts Button).</summary>
+    /// <summary>Controller buttons, in the standard gamepad layout's order.</summary>
     public static class Button
     {
         public const int A = 0, B = 1, X = 2, Y = 3, LB = 4, RB = 5, LT = 6, RT = 7, View = 8, Menu = 9;
@@ -64,24 +63,21 @@ namespace Porchlight.App
         const double REPEAT_DELAY = 0.5;
         const double REPEAT_RATE = 1 / 30.0;
 
-        /// <summary>The keys the game listens for, by the browser's KeyboardEvent.code.</summary>
-        static readonly (string code, Key key)[] Keys =
+        /// <summary>The keys the game listens for.</summary>
+        static readonly Key[] Keys =
         {
-            ("KeyW", Key.W), ("KeyA", Key.A), ("KeyS", Key.S), ("KeyD", Key.D),
-            ("ArrowUp", Key.UpArrow), ("ArrowDown", Key.DownArrow), ("ArrowLeft", Key.LeftArrow), ("ArrowRight", Key.RightArrow),
-            ("KeyQ", Key.Q), ("KeyE", Key.E), ("KeyZ", Key.Z), ("KeyX", Key.X), ("PageUp", Key.PageUp), ("PageDown", Key.PageDown),
-            ("KeyF", Key.F), ("KeyG", Key.G), ("KeyB", Key.B), ("Space", Key.Space), ("KeyN", Key.N), ("KeyR", Key.R),
-            ("KeyT", Key.T), ("KeyV", Key.V), ("KeyC", Key.C), ("Escape", Key.Escape), ("Backquote", Key.Backquote),
-            ("ShiftLeft", Key.LeftShift), ("ShiftRight", Key.RightShift), ("Enter", Key.Enter),
+            Key.W, Key.A, Key.S, Key.D, Key.UpArrow, Key.DownArrow, Key.LeftArrow, Key.RightArrow,
+            Key.Q, Key.E, Key.Z, Key.X, Key.PageUp, Key.PageDown, Key.F, Key.G, Key.B, Key.Space,
+            Key.N, Key.R, Key.T, Key.V, Key.C, Key.Escape, Key.Backquote, Key.LeftShift, Key.RightShift, Key.Enter,
         };
 
-        readonly Dictionary<string, double> repeatAt = new Dictionary<string, double>();
+        readonly Dictionary<Key, double> repeatAt = new Dictionary<Key, double>();
         PadState pad = PadState.Idle;
         bool[] padWas = new bool[Button.Count];
 
-        /// <summary>Told of each key going down: (code, repeat).</summary>
-        public event Action<string, bool> KeyDown;
-        public event Action<string> KeyUp;
+        /// <summary>Told of each key going down: (key, repeat).</summary>
+        public event Action<Key, bool> KeyDown;
+        public event Action<Key> KeyUp;
         /// <summary>The window lost focus: let go of everything.</summary>
         public event Action Blur;
 
@@ -106,13 +102,13 @@ namespace Porchlight.App
             if (kb != null)
             {
                 bool typing = Typing();
-                foreach (var (code, key) in Keys)
+                foreach (var code in Keys)
                 {
-                    var k = kb[key];
+                    var k = kb[code];
                     if (k.wasPressedThisFrame)
                     {
                         repeatAt[code] = now + REPEAT_DELAY;
-                        if (!typing || code == "Escape") KeyDown?.Invoke(code, false);
+                        if (!typing || code == Key.Escape) KeyDown?.Invoke(code, false);
                     }
                     else if (k.isPressed && repeatAt.TryGetValue(code, out double at) && now >= at)
                     {
@@ -192,7 +188,7 @@ namespace Porchlight.App
         static Vec2 Stick(Vector2 v)
         {
             double x = v.x, y = -v.y;
-            double len = Js.Hypot(x, y);
+            double len = Numbers.Hypot(x, y);
             if (len < DEADZONE) return new Vec2(0, 0);
             double k = Math.Min(1, (len - DEADZONE) / (1 - DEADZONE)) / len;
             return new Vec2(x * k, y * k);

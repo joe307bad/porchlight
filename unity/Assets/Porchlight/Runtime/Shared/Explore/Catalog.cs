@@ -1,6 +1,5 @@
-// The model catalog (which Kenney and RG Poly models the town uses, by name),
-// as in render/iso/assets.ts and interiors.ts. Names are paths under
-// models/ without the .glb.
+// The model catalog (which Kenney and RG Poly models the town uses, by name).
+// Names are paths under Models/ without the .glb.
 
 using System.Collections.Generic;
 using System.Linq;

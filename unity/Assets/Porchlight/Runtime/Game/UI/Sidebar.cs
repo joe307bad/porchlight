@@ -1,8 +1,7 @@
 // The right-hand sidebar, the app's one menu in both modes: Regenerate and
 // Explore / Back to map, the seed and the handful of params most people want.
 // On the map it adds layers and view/export actions; while exploring, the
-// explore controls. Every other tunable lives in the debug panel. A port of
-// ui/sidebar.ts (and the explore controls from index.html).
+// explore controls. Every other tunable lives in the debug panel.
 
 using System;
 using System.Collections.Generic;
@@ -128,16 +127,16 @@ namespace Porchlight.UI
             public Func<double, string> format;
         }
 
-        static string Percent(double v) => $"{Js.RoundInt(v * 100)}%";
+        static string Percent(double v) => $"{Numbers.RoundInt(v * 100)}%";
 
         static readonly MainSlider[] MAIN_SLIDERS =
         {
-            new MainSlider { id = "size", label = "Map size", hint = "Tiles per side", spec = ParamSpec.Get("width"), keys = new[] { "width", "height" }, format = v => $"{Js.NumberToString(v)} × {Js.NumberToString(v)}" },
+            new MainSlider { id = "size", label = "Map size", hint = "Tiles per side", spec = ParamSpec.Get("width"), keys = new[] { "width", "height" }, format = v => $"{Numbers.NumberToString(v)} × {Numbers.NumberToString(v)}" },
             new MainSlider { id = "town", label = "Town size", hint = "How far the town spreads", spec = ParamSpec.Get("townRadius"), keys = new[] { "townRadius" }, format = Percent },
             new MainSlider { id = "streets", label = "Street density", hint = "How often streets branch", spec = ParamSpec.Get("roadDensity"), keys = new[] { "roadDensity" }, format = Percent },
             new MainSlider { id = "buildings", label = "Building density", hint = "Share of lots built on", spec = ParamSpec.Get("buildingDensity"), keys = new[] { "buildingDensity" }, format = Percent },
             new MainSlider { id = "water", label = "Water", hint = "Lakes and low ground", spec = ParamSpec.Get("waterFraction"), keys = new[] { "waterFraction" }, format = Percent },
-            new MainSlider { id = "rivers", label = "Rivers", hint = "Number of rivers", spec = ParamSpec.Get("riverCount"), keys = new[] { "riverCount" }, format = v => Js.NumberToString(v) },
+            new MainSlider { id = "rivers", label = "Rivers", hint = "Number of rivers", spec = ParamSpec.Get("riverCount"), keys = new[] { "riverCount" }, format = v => Numbers.NumberToString(v) },
         };
 
         public readonly VisualElement root;
@@ -268,7 +267,7 @@ namespace Porchlight.UI
             root.RegisterCallback<GeometryChangedEvent>(_ => collapse.text = root.parent != null && root.parent.ClassListContains("sidebar-closed") ? "‹" : "›");
         }
 
-        static double Snap(double v, ParamSpec spec) => Math.Min(spec.max, Math.Max(spec.min, Js.Round((v - spec.min) / spec.step) * spec.step + spec.min));
+        static double Snap(double v, ParamSpec spec) => Math.Min(spec.max, Math.Max(spec.min, Numbers.Round((v - spec.min) / spec.step) * spec.step + spec.min));
 
         double lastCommitted = double.NaN;
 
@@ -439,12 +438,12 @@ namespace Porchlight.UI
                 var s = spec;
                 slider.RegisterValueChangedCallback(e =>
                 {
-                    double v = Math.Min(s.max, Math.Max(s.min, Js.Round((e.newValue - s.min) / s.step) * s.step + s.min));
-                    value.text = Js.NumberToString(Math.Round(v, 6));
+                    double v = Math.Min(s.max, Math.Max(s.min, Numbers.Round((e.newValue - s.min) / s.step) * s.step + s.min));
+                    value.text = Numbers.NumberToString(Math.Round(v, 6));
                 });
                 void Finish()
                 {
-                    double v = Math.Min(s.max, Math.Max(s.min, Js.Round((slider.value - s.min) / s.step) * s.step + s.min));
+                    double v = Math.Min(s.max, Math.Max(s.min, Numbers.Round((slider.value - s.min) / s.step) * s.step + s.min));
                     if (v == parameters[s.key]) return;
                     parameters[s.key] = v;
                     onParamsChange?.Invoke(parameters.Clone());
@@ -498,7 +497,7 @@ namespace Porchlight.UI
             foreach (var (slider, value, spec) in sliders)
             {
                 slider.SetValueWithoutNotify((float)p[spec.key]);
-                value.text = Js.NumberToString(p[spec.key]);
+                value.text = Numbers.NumberToString(p[spec.key]);
             }
         }
     }

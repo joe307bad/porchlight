@@ -3,7 +3,7 @@
 // their own clock a little in the past (Interp), with their name floating
 // over them through buildings. At the wheel they're drawn as their car, and a
 // passenger is out of sight inside it, their tag stacked over the car with
-// the driver's. A port of render/iso/remotes.ts.
+// the driver's. Their cars are drawn as yours is (CarView).
 
 using System;
 using System.Collections.Generic;
@@ -11,6 +11,7 @@ using System.Linq;
 using Porchlight.Core;
 using Porchlight.Explore;
 using Porchlight.Net;
+using TMPro;
 using UnityEngine;
 
 namespace Porchlight.Rendering
@@ -39,46 +40,58 @@ namespace Porchlight.Rendering
         public int riders;
     }
 
-    /// <summary>A name tag: a camera-facing pill with the name on it, drawn over everything.</summary>
+    /// <summary>
+    /// A name tag over someone: their name in cream on a dark plate, turned to face
+    /// the camera, on the Labels layer (which the renderer draws over everything).
+    /// </summary>
     public sealed class NameTag
     {
-        const double TAG_WIDTH = 0.9;
-        const int TAG_ORDER = 30;
-        readonly Mesh mesh;
-        readonly Material material;
-        public readonly Drawable drawable;
-        readonly Texture texture;
-        readonly ITextMaker text;
-        readonly Stage stage;
+        public const string LABELS_LAYER = "Labels";
+        const float FONT_SIZE = 1.1f;
+        static Material plate;
 
-        public NameTag(string label, ITextMaker text, Stage stage)
+        readonly GameObject root;
+        readonly TextMeshPro text;
+
+        public NameTag(string label, Transform parent)
         {
-            this.text = text;
-            this.stage = stage;
-            texture = text.NameTag(label, out int w, out int h);
-            double width = TAG_WIDTH * Math.Min(1.6, w / 200.0);
-            double height = width * h / w;
-            mesh = new Mesh { name = "tag" };
-            mesh.SetVertices(new[] { Vector3.zero, Vector3.zero, Vector3.zero, Vector3.zero });
-            mesh.SetUVs(0, new[] { new Vector2(0, 0), new Vector2(1, 0), new Vector2(1, 1), new Vector2(0, 1) });
-            var size = new Vector2((float)width, (float)height);
-            mesh.SetUVs(1, new[] { size, size, size, size });
-            mesh.SetColors(new[] { Color.white, Color.white, Color.white, Color.white });
-            mesh.SetTriangles(new[] { 0, 2, 1, 0, 3, 2 }, 0, false);
-            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 100000);
-            material = Mats.BillboardMaterial(texture, Blending.Normal, false, TAG_ORDER);
-            drawable = stage.Add(new Drawable(mesh, material, Matrix4x4.identity, false));
+            root = new GameObject("tag " + label);
+            root.transform.SetParent(parent, false);
+            var textGo = new GameObject("name");
+            textGo.transform.SetParent(root.transform, false);
+            text = textGo.AddComponent<TextMeshPro>();
+            text.font = ModelLibrary.Instance.font;
+            text.text = label;
+            text.fontSize = FONT_SIZE;
+            text.color = Coords.Hex(0xf4f1ea);
+            text.alignment = TextAlignmentOptions.Center;
+            text.textWrappingMode = TextWrappingModes.NoWrap;
+            text.rectTransform.sizeDelta = new Vector2(4, 0.4f);
+            var size = text.GetPreferredValues(label);
+            plate ??= Materials.Unlit(Coords.Hex(0x1c1b18));
+            var back = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            UnityEngine.Object.Destroy(back.GetComponent<Collider>());
+            back.name = "plate";
+            back.transform.SetParent(root.transform, false);
+            back.transform.localPosition = new Vector3(0, 0, 0.01f);
+            back.transform.localScale = new Vector3(size.x + 0.14f, size.y + 0.06f, 1);
+            var r = back.GetComponent<Renderer>();
+            r.sharedMaterial = plate;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            text.sortingOrder = 1;
+            int layer = LayerMask.NameToLayer(LABELS_LAYER);
+            if (layer >= 0) foreach (var t in root.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
+            root.transform.localScale = Vector3.one * 0.32f;
         }
 
-        public void Place(double x, double h, double y) => drawable.Matrix = Matrix4x4.Translate(Space.Map(x, y, h));
-
-        public void Dispose()
+        public void Place(double x, double h, double y)
         {
-            stage.Remove(drawable);
-            UnityEngine.Object.Destroy(mesh);
-            UnityEngine.Object.Destroy(material);
-            text.Release(texture);
+            root.transform.localPosition = Coords.Map(x, y, h);
+            var cam = Camera.main;
+            if (cam != null) root.transform.rotation = cam.transform.rotation;
         }
+
+        public void Dispose() => UnityEngine.Object.Destroy(root);
     }
 
     public sealed class RemotePlayers
@@ -100,7 +113,7 @@ namespace Porchlight.Rendering
             public NameTag tag;
             public string tagText;
             public int carModel = -1;
-            public List<Drawable> car;
+            public CarView car;
             public RemoteState state;
         }
 
@@ -108,16 +121,13 @@ namespace Porchlight.Rendering
         readonly List<string> order = new List<string>();
         string me = "";
         readonly Transform root;
-        readonly TownAssets assets;
-        readonly Stage stage;
-        readonly ITextMaker text;
+        readonly ModelLibrary library;
+        double dusk;
 
-        public RemotePlayers(Transform root, TownAssets assets, Stage stage, ITextMaker text)
+        public RemotePlayers(Transform root, ModelLibrary library)
         {
             this.root = root;
-            this.assets = assets;
-            this.stage = stage;
-            this.text = text;
+            this.library = library;
         }
 
         static double Now => Time.realtimeSinceStartupAsDouble * 1000;
@@ -151,8 +161,9 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>Pose everyone for this frame. `myCar`: where your car is, while you're driving.</summary>
-        public void Update(double dt, Vec2? myCar)
+        public void Update(double dt, Vec2? myCar, double dusk)
         {
+            this.dusk = dusk;
             double now = Now;
             var seat = new Dictionary<string, int>();
             var taken = new Dictionary<string, int>();
@@ -173,7 +184,7 @@ namespace Porchlight.Rendering
                 var p = sample.Value;
                 var w = r.walker;
                 double k = Math.Max(1e-3, dt);
-                double moved = Js.Hypot(p.x - w.x, p.z - w.y);
+                double moved = Numbers.Hypot(p.x - w.x, p.z - w.y);
                 w.speed += (moved / k - w.speed) * Math.Min(1, dt * 10);
                 w.rise = (p.y - w.lift) / k;
                 w.x = p.x;
@@ -191,7 +202,7 @@ namespace Porchlight.Rendering
                 if (label != r.tagText)
                 {
                     r.tag.Dispose();
-                    r.tag = new NameTag(label, text, stage);
+                    r.tag = new NameTag(label, root);
                     r.tagText = label;
                     r.tag.Place(w.x, height + w.lift, w.y);
                 }
@@ -231,7 +242,7 @@ namespace Porchlight.Rendering
         Remote Spawn(RemoteState s, string look)
         {
             var walker = new Walker(look, s.x, s.z, PLAYER_SCALE) { heading = Protocol.YawFromWire(s.rotY) };
-            var avatar = new Avatar(assets.Character(look), Avatar.PERSON_HEIGHT, new Rng(s.key).Next(), root, stage);
+            var avatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, new Rng(s.key).Next(), root);
             avatar.SnapYaw(walker.heading);
             var r = new Remote
             {
@@ -241,7 +252,7 @@ namespace Porchlight.Rendering
                 buffer = new Interp.SnapshotBuffer(),
                 clock = new Interp.PlaybackClock(),
                 lastT = double.NaN,
-                tag = new NameTag(s.name, text, stage),
+                tag = new NameTag(s.name, root),
                 tagText = s.name,
                 state = s,
             };
@@ -255,7 +266,7 @@ namespace Porchlight.Rendering
             if (!remotes.TryGetValue(key, out var r)) return;
             r.avatar.Dispose();
             r.tag.Dispose();
-            if (r.car != null) foreach (var d in r.car) stage.Remove(d);
+            r.car?.Dispose();
             remotes.Remove(key);
             order.Remove(key);
         }
@@ -265,19 +276,17 @@ namespace Porchlight.Rendering
             int model = driving ? r.state.car - 1 : -1;
             if (r.car != null && r.carModel != model)
             {
-                foreach (var d in r.car) stage.Remove(d);
+                r.car.Dispose();
                 r.car = null;
             }
             if (model < 0 || model >= Catalog.CARS.Length) return;
-            var prefab = assets.Get(Catalog.CARS[model]);
             if (r.car == null)
             {
-                r.car = prefab.parts.Select(part => stage.Add(new Drawable(part.mesh, part.material, Matrix4x4.identity, true))).ToList();
+                r.car = new CarView(library.Get(Catalog.CARS[model]), root);
                 r.carModel = model;
             }
-            double s = TownWorld.CarScale(prefab);
-            var m = Space.M(TownWorld.Placement(prefab, r.walker.x, r.walker.y, r.walker.heading, s, s, s, CAR_LIFT));
-            foreach (var d in r.car) d.Matrix = m;
+            r.car.Place(r.walker.x, r.walker.y, r.walker.heading);
+            r.car.Lights(dusk);
         }
     }
 }

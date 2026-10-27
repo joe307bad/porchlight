@@ -1,8 +1,7 @@
 // People: the player (keyboard- or pad-driven, or auto-walking) and townsfolk
 // walking the sidewalk graph. Pure state (position, heading, speed); the view
 // poses a rigged character to match each one. Also the solid rectangles they
-// can't walk through, and the streets-only mask. Ports of render/iso/actors.ts,
-// collide.ts and streets.ts.
+// can't walk through, and the streets-only mask.
 
 using System;
 using System.Collections.Generic;
@@ -38,8 +37,8 @@ namespace Porchlight.Explore
         /// <summary>Record a move of (dx, dy) tiles over dt seconds: face the way walked.</summary>
         public void Moved(double dx, double dy, double dt)
         {
-            double d = Js.Hypot(dx, dy);
-            if (d > 1e-6) heading = JsMath.Atan2(dx, dy);
+            double d = Numbers.Hypot(dx, dy);
+            if (d > 1e-6) heading = DetMath.Atan2(dx, dy);
             speed = dt > 0 ? d / dt : 0;
         }
     }
@@ -77,7 +76,7 @@ namespace Porchlight.Explore
                 buffered = JUMP_BUFFER;
                 return;
             }
-            rise = JUMP_SPEED + RUN_JUMP * Js.Hypot(vx, vy);
+            rise = JUMP_SPEED + RUN_JUMP * Numbers.Hypot(vx, vy);
             lift = 1e-6;
             jumpHeld = true;
         }
@@ -158,7 +157,7 @@ namespace Porchlight.Explore
             double rate = (air ? AIR_ACCEL : slowing ? BRAKE : ACCEL) * dt;
             double ex = tx - vx;
             double ey = ty - vy;
-            double gap = Js.Hypot(ex, ey);
+            double gap = Numbers.Hypot(ex, ey);
             if (gap <= rate)
             {
                 vx = tx;
@@ -254,7 +253,7 @@ namespace Porchlight.Explore
                 else if (rng.Chance(dt * 0.02)) walk.CrossStreet();
             }
             double want = pause > 0 ? 0 : pace;
-            going += Js.Sign(want - going) * Math.Min(Math.Abs(want - going), 3 * dt);
+            going += Numbers.Sign(want - going) * Math.Min(Math.Abs(want - going), 3 * dt);
             if (going < 1e-3)
             {
                 Moved(0, 0, dt);

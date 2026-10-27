@@ -1,4 +1,4 @@
-// A reflection-driven port of @colyseus/schema's decoder (v4): the room sends
+// A reflection-driven @colyseus/schema decoder (v4): the room sends
 // its type definitions in the join handshake, then the full state and patches
 // to it. Nothing here knows the server's classes: a struct is a SchemaObj with
 // values by field index, a map a SchemaMap (insertion ordered, like a JS Map),
@@ -529,7 +529,7 @@ namespace Porchlight.Net
 
         public static SchemaDecoder Decode(byte[] b, int offset)
         {
-            // The bootstrap types (Reflection.ts): Reflection { types: [ReflectionType], rootType }.
+            // The bootstrap types (@colyseus/schema's Reflection): Reflection { types: [ReflectionType], rootType }.
             var rField = new SchemaType { name = "ReflectionField" };
             rField.fields.Add(F("name", "string"));
             rField.fields.Add(F("type", "string"));

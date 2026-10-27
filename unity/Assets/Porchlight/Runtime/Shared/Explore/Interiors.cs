@@ -1,7 +1,6 @@
 // Ground-floor rooms: every building piece has one room behind its street
 // front, with walls you can't walk through, a door in the middle of the front
-// wall, and furniture picked for the kind of building. Pure. A port of
-// render/iso/interiors.ts. Room-local frame: u runs along the street front
+// wall, and furniture picked for the kind of building. Pure. Room-local frame: u runs along the street front
 // (0..width), v from the front wall (0) to the back wall (depth). Furniture
 // models face +Z.
 
@@ -59,7 +58,7 @@ namespace Porchlight.Explore
         {
             double dx = along.x * du - outward.x * dv;
             double dy = along.y * du - outward.y * dv;
-            return JsMath.Atan2(dx, dy);
+            return DetMath.Atan2(dx, dy);
         }
     }
 
@@ -123,13 +122,13 @@ namespace Porchlight.Explore
         public static double RoomCameraYaw(Room room, int turn)
         {
             var o = Outward(room.facing);
-            return JsMath.Atan2(o.x, o.y) + (turn * Math.PI) / 2;
+            return DetMath.Atan2(o.x, o.y) + (turn * Math.PI) / 2;
         }
 
         public static bool WallFacesCamera(Facing side, Vec2 camera)
         {
             var n = Outward(side);
-            double len = Js.Hypot(camera.x, camera.y);
+            double len = Numbers.Hypot(camera.x, camera.y);
             if (len == 0 || double.IsNaN(len)) len = 1;
             return (n.x * camera.x + n.y * camera.y) / len > 0.25;
         }

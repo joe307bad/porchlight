@@ -1,7 +1,7 @@
 // Stage 7a: lots. Each block is split recursively across its longer side until
 // the pieces are no bigger than lotMaxSize. Pieces smaller than lotMinSize, or
 // with no road along any side, are dropped. The lots nearest the center become
-// the plaza, with a well in the middle. A port of gen/lots.ts.
+// the plaza, with a well in the middle.
 
 using System;
 using System.Collections.Generic;
@@ -43,7 +43,7 @@ namespace Porchlight.Gen
                 o.Add(tiles);
                 return;
             }
-            double cut = Math.Max(lo + 1, Math.Min(hi, Js.Round(lo + (hi - lo + 1) * (0.5 + rng.Range(-SPLIT_JITTER, SPLIT_JITTER)))));
+            double cut = Math.Max(lo + 1, Math.Min(hi, Numbers.Round(lo + (hi - lo + 1) * (0.5 + rng.Range(-SPLIT_JITTER, SPLIT_JITTER)))));
             var a = new List<int>();
             var b = new List<int>();
             foreach (int t in tiles)
@@ -93,7 +93,7 @@ namespace Porchlight.Gen
             {
                 Vec2 Centroid(Lot l) => Geo.PolygonCentroid(l.polygon);
                 var byDistance = new List<Lot>(list);
-                Js.StableSort(byDistance, (a, b) => Dist2(Centroid(a), model.center) - Dist2(Centroid(b), model.center));
+                Numbers.StableSort(byDistance, (a, b) => Dist2(Centroid(a), model.center) - Dist2(Centroid(b), model.center));
                 var first = byDistance[0];
                 var plaza = new List<Lot> { first };
                 for (int k = 1; k < byDistance.Count; k++)

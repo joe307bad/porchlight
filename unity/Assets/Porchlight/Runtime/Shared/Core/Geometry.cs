@@ -1,5 +1,5 @@
 // Small, readable 2D geometry helpers. Polygons are Vec2 rings without a
-// repeated closing point. A port of core/geometry.ts.
+// repeated closing point.
 
 using System;
 using System.Collections.Generic;
@@ -60,7 +60,7 @@ namespace Porchlight.Core
         public static Vec2 Add(Vec2 a, Vec2 b) => new Vec2(a.x + b.x, a.y + b.y);
         public static Vec2 Scale(Vec2 a, double s) => new Vec2(a.x * s, a.y * s);
         public static Vec2 Lerp(Vec2 a, Vec2 b, double t) => new Vec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
-        public static double Dist(Vec2 a, Vec2 b) => Js.Hypot(a.x - b.x, a.y - b.y);
+        public static double Dist(Vec2 a, Vec2 b) => Numbers.Hypot(a.x - b.x, a.y - b.y);
         public static double Cross(Vec2 a, Vec2 b) => a.x * b.y - a.y * b.x;
         public static double Dot(Vec2 a, Vec2 b) => a.x * b.x + a.y * b.y;
 
@@ -377,7 +377,7 @@ namespace Porchlight.Core
                 var simplified = RemoveCollinear(ring);
                 if (simplified.Count >= 3) rings.Add(simplified);
             }
-            Js.StableSort(rings, (a, b) => Math.Abs(PolygonArea(b)) - Math.Abs(PolygonArea(a)));
+            Numbers.StableSort(rings, (a, b) => Math.Abs(PolygonArea(b)) - Math.Abs(PolygonArea(a)));
             return rings;
         }
     }

@@ -1,6 +1,6 @@
 // Walking the sidewalk network: follow a sidewalk, take a turning at its end,
 // turn around, or cross the road to the sidewalk opposite. Used by the
-// townsfolk and by the player's auto-walk. Pure. A port of render/iso/walking.ts.
+// townsfolk and by the player's auto-walk. Pure.
 
 using System;
 using System.Collections.Generic;
@@ -83,7 +83,7 @@ namespace Porchlight.Explore
                 var p = net.paths[i];
                 double s = Geo.ArcPosition(from, p.points);
                 var q = PointAlong(p, s);
-                double d = Js.Hypot(q.x - from.x, q.y - from.y);
+                double d = Numbers.Hypot(q.x - from.x, q.y - from.y);
                 if (d < bestD)
                 {
                     bestPath = i;
@@ -171,7 +171,7 @@ namespace Porchlight.Explore
                 int i = rng.Int(0, net.paths.Count - 1);
                 var p = net.paths[i];
                 var m = PointAlong(p, p.Length / 2);
-                double d = Js.Hypot(m.x - here.x, m.y - here.y);
+                double d = Numbers.Hypot(m.x - here.x, m.y - here.y);
                 if (d > bestD)
                 {
                     bestD = d;
@@ -272,7 +272,7 @@ namespace Porchlight.Explore
             var p = net.paths[path];
             var a = PointAlong(p, s);
             var b = PointAlong(p, Math.Max(0, Math.Min(p.Length, s + 0.3 * dir)));
-            double l = Js.Hypot(b.x - a.x, b.y - a.y);
+            double l = Numbers.Hypot(b.x - a.x, b.y - a.y);
             if (l < 1e-6) return new Vec2(0, 0);
             return new Vec2((b.x - a.x) / l, (b.y - a.y) / l);
         }
@@ -284,7 +284,7 @@ namespace Porchlight.Explore
             var a = PointAlong(p, Math.Max(0, s - 0.15));
             var b = PointAlong(p, Math.Min(p.Length, s + 0.15));
             double tx = b.x - a.x, ty = b.y - a.y;
-            double l = Js.Hypot(tx, ty);
+            double l = Numbers.Hypot(tx, ty);
             if (l == 0 || double.IsNaN(l)) l = 1;
             return new Vec2((-ty / l) * p.side, (tx / l) * p.side);
         }
@@ -298,7 +298,7 @@ namespace Porchlight.Explore
                 if (crossing != null)
                 {
                     var c = crossing;
-                    double len = Math.Max(0.05, Js.Hypot(c.to.x - c.from.x, c.to.y - c.from.y));
+                    double len = Math.Max(0.05, Numbers.Hypot(c.to.x - c.from.x, c.to.y - c.from.y));
                     double need = (1 - c.t) * len;
                     if (left < need)
                     {

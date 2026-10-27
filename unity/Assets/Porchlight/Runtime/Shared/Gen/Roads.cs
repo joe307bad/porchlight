@@ -2,7 +2,7 @@
 // along the tile grid with a penalty per turn, so roads run straight. Cells
 // already on a road are cheap and cells beside one are penalised, so later
 // roads merge into earlier ones. Each stretch of new road becomes a graph edge;
-// joins split the existing edge. A port of gen/roads.ts.
+// joins split the existing edge.
 
 using System;
 using System.Collections.Generic;
@@ -101,7 +101,7 @@ namespace Porchlight.Gen
             NewNode(centerCell);
             var gates = new List<int>();
             foreach (var g in model.gates) gates.Add(Grid.Index((int)Math.Floor(g.x), (int)Math.Floor(g.y), w));
-            Js.StableSort(gates, (a, b) => AStar.Octile(a, centerCell, w) - AStar.Octile(b, centerCell, w));
+            Numbers.StableSort(gates, (a, b) => AStar.Octile(a, centerCell, w) - AStar.Octile(b, centerCell, w));
 
             foreach (int gate in gates)
             {
@@ -170,7 +170,7 @@ namespace Porchlight.Gen
             foreach (var g in model.gates)
             {
                 int n = RoadGraphOps.NearestNode(graph, g);
-                if (n < 0 || Js.Hypot(graph.nodes[n].at.x - g.x, graph.nodes[n].at.y - g.y) > 0.01 || !reached.Contains(n))
+                if (n < 0 || Numbers.Hypot(graph.nodes[n].at.x - g.x, graph.nodes[n].at.y - g.y) > 0.01 || !reached.Contains(n))
                     errors.Add($"gate {g.x},{g.y} is not connected to the center");
             }
             errors.AddRange(CheckRoadSlopes(model, RoadKind.Main));
@@ -190,7 +190,7 @@ namespace Porchlight.Gen
                 {
                     int i = Grid.Index((int)Math.Floor(p.x), (int)Math.Floor(p.y), w);
                     if (t.water[i] == 0 && t.slope[i] > model.@params.maxRoadSlope + 1e-6)
-                        return new List<string> { $"{Names.Of(kind)} road {e.id} climbs a {Js.ToFixed(t.slope[i], 3)} slope at {Js.ToFixed(p.x, 1)},{Js.ToFixed(p.y, 1)}" };
+                        return new List<string> { $"{Names.Of(kind)} road {e.id} climbs a {Numbers.ToFixed(t.slope[i], 3)} slope at {Numbers.ToFixed(p.x, 1)},{Numbers.ToFixed(p.y, 1)}" };
                 }
             }
             return new List<string>();

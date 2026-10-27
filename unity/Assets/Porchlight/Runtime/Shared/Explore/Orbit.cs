@@ -1,7 +1,7 @@
 // The explore camera's geometry. The camera looks down on the player from one
 // of 12 fixed headings around them, 30° apart; tilt stops; screen to world
 // directions; the sight-line box test; and Follow, which tracks a moving
-// target without lag but eases over jumps. Pure. A port of render/iso/orbit.ts.
+// target without lag but eases over jumps. Pure.
 // World space: x right, y down the map; yaw is measured from +y toward +x.
 
 using System;
@@ -39,7 +39,7 @@ namespace Porchlight.Explore
 
         public static double StopYaw(int k) => OFFSET + Mod(k, CAMERA_STOPS) * STEP;
 
-        public static int NearestStop(double yaw) => (int)Mod(Js.Round((yaw - OFFSET) / STEP), CAMERA_STOPS);
+        public static int NearestStop(double yaw) => (int)Mod(Numbers.Round((yaw - OFFSET) / STEP), CAMERA_STOPS);
 
         /// <summary>The signed turn (radians, in -π..π) that takes `from` to `to` the short way round.</summary>
         public static double ShortestTurn(double from, double to)
@@ -60,19 +60,19 @@ namespace Porchlight.Explore
         /// <summary>A screen-space direction (right, down) as a unit world direction on the ground, or null.</summary>
         public static Vec2? ScreenToWorld(Vec2 input, double yaw)
         {
-            double len = Js.Hypot(input.x, input.y);
+            double len = Numbers.Hypot(input.x, input.y);
             if (len < 1e-9) return null;
             ScreenAxes(yaw, out var right, out var up);
             double ix = input.x / len, iy = input.y / len;
             return new Vec2(right.x * ix - up.x * iy, right.y * ix - up.y * iy);
         }
 
-        public static int StopLookingAlong(Vec2 dir) => NearestStop(JsMath.Atan2(-dir.x, -dir.y));
+        public static int StopLookingAlong(Vec2 dir) => NearestStop(DetMath.Atan2(-dir.x, -dir.y));
 
         public static int StopBehind(int current, Vec2 dir, double margin = Math.PI / 36)
         {
-            if (Js.Hypot(dir.x, dir.y) < 1e-6) return current;
-            double ideal = JsMath.Atan2(-dir.x, -dir.y);
+            if (Numbers.Hypot(dir.x, dir.y) < 1e-6) return current;
+            double ideal = DetMath.Atan2(-dir.x, -dir.y);
             double off = Math.Abs(ShortestTurn(StopYaw(current), ideal));
             return off > STEP / 2 + margin ? NearestStop(ideal) : current;
         }
@@ -132,7 +132,7 @@ namespace Porchlight.Explore
             else
             {
                 double dx = tx - lx, dy = ty - ly, dz = tz - lz;
-                if (Js.Hypot(dx, dy, dz) > maxSpeed * Math.Max(dt, 1.0 / 240) + 0.02)
+                if (Numbers.Hypot(dx, dy, dz) > maxSpeed * Math.Max(dt, 1.0 / 240) + 0.02)
                 {
                     gx -= dx;
                     gy -= dy;

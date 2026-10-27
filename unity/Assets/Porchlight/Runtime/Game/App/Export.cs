@@ -1,5 +1,5 @@
-// Downloads (ui/export.ts): the TownModel as JSON, typed arrays as
-// { $typed, base64 } like model/serialize.ts, and the whole blueprint as a PNG
+// Downloads: the TownModel as JSON, typed arrays as
+// { $typed, base64 }, and the whole blueprint as a PNG
 // drawn off screen at up to 2048 pixels on its longer side.
 
 using System;
@@ -116,7 +116,7 @@ namespace Porchlight.App
             return sb.ToString();
         }
 
-        static string N(double v) => double.IsFinite(v) ? Js.NumberToString(v) : "null";
+        static string N(double v) => double.IsFinite(v) ? Numbers.NumberToString(v) : "null";
 
         static string V(Vec2 v) => $"{{\"x\":{N(v.x)},\"y\":{N(v.y)}}}";
 

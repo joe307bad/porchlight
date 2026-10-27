@@ -1,7 +1,7 @@
 // Stage 3: pick the town center and the gates where main roads leave the map.
 // The center scores well when the ground is flat, dry, near (not on) a river,
 // and not too far from the middle of the map. Gates are spread around the map
-// edge on dry tiles a road can reach from the center. A port of gen/site.ts.
+// edge on dry tiles a road can reach from the center.
 
 using System;
 using System.Collections.Generic;
@@ -57,7 +57,7 @@ namespace Porchlight.Gen
             double townRadius = p.townRadius * Math.Min(w, h);
 
             var flat = BoxMean(i => slope[i], w, h, FLAT_RADIUS);
-            var wet = BoxMean(i => water[i], w, h, Js.RoundInt(townRadius / 2));
+            var wet = BoxMean(i => water[i], w, h, Numbers.RoundInt(townRadius / 2));
             var rivers = Raster.RiverMask(model);
             var riverDist = model.rivers.Count > 0 ? Raster.DistanceFrom(rivers, w, h) : null;
             double margin = Math.Min(townRadius * 0.6, Math.Min(w, h) / 4.0);
@@ -71,9 +71,9 @@ namespace Porchlight.Gen
                 {
                     int i = Grid.Index(x, y, w);
                     double jitter = rng.Next() * 0.15; // drawn for every cell so the stream stays aligned
-                    if (water[i] != 0 || !Js.IsFinite(cost[i])) continue;
+                    if (water[i] != 0 || !Numbers.IsFinite(cost[i])) continue;
                     if (x < margin || y < margin || x >= w - margin || y >= h - margin) continue;
-                    double score = -flat[i] / p.maxRoadSlope - 2 * wet[i] - (2 * Js.Hypot(x + 0.5 - w / 2.0, y + 0.5 - h / 2.0)) / half;
+                    double score = -flat[i] / p.maxRoadSlope - 2 * wet[i] - (2 * Numbers.Hypot(x + 0.5 - w / 2.0, y + 0.5 - h / 2.0)) / half;
                     if (riverDist != null) score -= Math.Min(1, Math.Abs(riverDist[i] - IDEAL_RIVER_DISTANCE) / 12);
                     score += jitter;
                     if (score > bestScore)
@@ -99,7 +99,7 @@ namespace Porchlight.Gen
                     int nx = cx + dx, ny = cy + dy;
                     if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
                     int j = Grid.Index(nx, ny, w);
-                    if (reach[j] == 0 && Js.IsFinite(cost[j]))
+                    if (reach[j] == 0 && Numbers.IsFinite(cost[j]))
                     {
                         reach[j] = 1;
                         queue.Add(j);
@@ -135,14 +135,14 @@ namespace Porchlight.Gen
                     bool tooClose = false;
                     foreach (var q in gates)
                     {
-                        if (Js.Hypot(q.x - pt.x, q.y - pt.y) < minSpacing)
+                        if (Numbers.Hypot(q.x - pt.x, q.y - pt.y) < minSpacing)
                         {
                             tooClose = true;
                             break;
                         }
                     }
                     if (tooClose) continue;
-                    double d = Js.Hypot(pt.x - ideal.x, pt.y - ideal.y);
+                    double d = Numbers.Hypot(pt.x - ideal.x, pt.y - ideal.y);
                     if (d < pickD)
                     {
                         pickD = d;

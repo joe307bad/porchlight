@@ -1,7 +1,7 @@
 // Stage 8: paint everything into the tile grid the 3D view uses. Terrain comes
 // from the heightmap and water, then roads and bridges, the plaza, and
 // buildings. A tile is walkable if a character could stand on it and reach it
-// from spawn. A port of gen/rasterize.ts.
+// from spawn.
 
 using System;
 using System.Collections.Generic;

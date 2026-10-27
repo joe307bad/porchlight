@@ -1,8 +1,7 @@
 // Driving: the player can get into any car and drive it. Arcade handling:
 // steering bites harder the faster you go, the car coasts to a stop when you
 // let go, and stops dead against buildings, sheds, water and the map's edge.
-// Auto walk at the wheel becomes auto drive. Pure. A port of
-// render/iso/driving.ts.
+// Auto walk at the wheel becomes auto drive. Pure.
 
 using System;
 using System.Collections.Generic;
@@ -54,9 +53,9 @@ namespace Porchlight.Explore
                 speed = Math.Min(top, speed);
             }
             else if (throttle < 0) speed -= (speed > 0 ? BRAKE : ACCEL * 0.6) * -throttle * dt;
-            else speed -= Js.Sign(speed) * Math.Min(Math.Abs(speed), DRAG * dt);
+            else speed -= Numbers.Sign(speed) * Math.Min(Math.Abs(speed), DRAG * dt);
             speed = Math.Max(-REVERSE_SPEED, speed);
-            double bite = Math.Min(1, Math.Abs(speed) / FULL_STEER_SPEED) * Js.Sign(speed);
+            double bite = Math.Min(1, Math.Abs(speed) / FULL_STEER_SPEED) * Numbers.Sign(speed);
             double h = heading + steer * STEER_RATE * bite * dt;
             double step = speed * dt;
             double nx = x + Math.Cos(h) * step;
@@ -169,7 +168,7 @@ namespace Porchlight.Explore
                             var p = new Vec2(a.x + tx * t - ty * off * side, a.y + ty * t + tx * off * side);
                             double d = Geo.Dist(p, near);
                             if (d >= bestD || d < 0.75) continue;
-                            double heading = JsMath.Atan2(ty * side, tx * side);
+                            double heading = DetMath.Atan2(ty * side, tx * side);
                             if (!Fits(p.x, p.y, heading, open)) continue;
                             bool crowded = false;
                             foreach (var q in taken) if (Geo.Dist(q, p) < 1.3) { crowded = true; break; }
@@ -303,7 +302,7 @@ namespace Porchlight.Explore
             double k = Math.Min(1, dt * 6);
             car.x += (want.x - car.x) * k;
             car.y += (want.y - car.y) * k;
-            double turn = JsMath.Atan2(ty, tx) - car.heading;
+            double turn = DetMath.Atan2(ty, tx) - car.heading;
             while (turn > Math.PI) turn -= Math.PI * 2;
             while (turn < -Math.PI) turn += Math.PI * 2;
             car.heading += turn * k;
@@ -502,7 +501,7 @@ namespace Porchlight.Explore
             double len = lengths[rd];
             var a = PointAt(r.points, at[rd], Math.Max(0, ss - 0.15));
             var b = PointAt(r.points, at[rd], Math.Min(len, ss + 0.15));
-            double l = Js.Hypot(b.x - a.x, b.y - a.y);
+            double l = Numbers.Hypot(b.x - a.x, b.y - a.y);
             if (l == 0 || double.IsNaN(l)) l = 1;
             return new Vec2((b.x - a.x) / l, (b.y - a.y) / l);
         }

@@ -1,7 +1,6 @@
 // Editing helpers for the road graph: adding and splitting edges, making the
 // graph planar (every crossing becomes a node), merging pass-through nodes,
-// and deriving bridges wherever a road runs over water. A port of
-// gen/roadGraph.ts.
+// and deriving bridges wherever a road runs over water.
 
 using System;
 using System.Collections.Generic;
@@ -167,7 +166,7 @@ namespace Porchlight.Gen
             {
                 var list = cuts[edgeId];
                 var edge = g.edges[edgeId];
-                Js.StableSort(list, (a, b) => a.pos - b.pos);
+                Numbers.StableSort(list, (a, b) => a.pos - b.pos);
                 int startNode = edge.from;
                 double startPos = 0;
                 var startPt = edge.points[0];
@@ -317,7 +316,7 @@ namespace Porchlight.Gen
                     foreach (var (a, b) in spans) if (at >= Math.Min(a, b) - 1e-6 && at <= Math.Max(a, b) + 1e-6) covered = true;
                     if (!covered)
                     {
-                        errors.Add($"road {edge.id} crosses water at {Js.ToFixed(p.x, 1)},{Js.ToFixed(p.y, 1)} without a bridge");
+                        errors.Add($"road {edge.id} crosses water at {Numbers.ToFixed(p.x, 1)},{Numbers.ToFixed(p.y, 1)} without a bridge");
                         break;
                     }
                 }

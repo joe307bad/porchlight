@@ -1,5 +1,4 @@
-// Grids derived from the vector layers, and the road cost field (ports of
-// gen/raster.ts and gen/costs.ts). Every stage that needs to know where water,
+// Grids derived from the vector layers, and the road cost field. Every stage that needs to know where water,
 // roads or steep ground are uses these, and so does rasterize, so blocks, lots
 // and buildings always agree with the final tile grid.
 
@@ -86,7 +85,7 @@ namespace Porchlight.Gen
                         {
                             var c = Geo.ClosestOnSegment(new Vec2(x + 0.5, y + 0.5), a, b);
                             double hw = RiverHalfWidth(river.widthAt[s] + (river.widthAt[s + 1] - river.widthAt[s]) * c.t);
-                            if (Js.Hypot(c.point.x - x - 0.5, c.point.y - y - 0.5) < hw) o[Grid.Index(x, y, w)] = 1;
+                            if (Numbers.Hypot(c.point.x - x - 0.5, c.point.y - y - 0.5) < hw) o[Grid.Index(x, y, w)] = 1;
                         }
                     }
                 }
@@ -239,7 +238,7 @@ namespace Porchlight.Gen
             return d;
         }
 
-        // costs.ts
+        // Road costs
 
         const double SLOPE_PENALTY = 1.5;
         /// <summary>Roads shouldn't run along the map border; tiles this close to it cost extra.</summary>

@@ -161,8 +161,8 @@ namespace Porchlight.Core
                 case null: sb.Append("null"); break;
                 case string s: WriteString(sb, s); break;
                 case bool b: sb.Append(b ? "true" : "false"); break;
-                case double d: sb.Append(Js.NumberToString(d)); break;
-                case float f: sb.Append(Js.NumberToString(f)); break;
+                case double d: sb.Append(Numbers.NumberToString(d)); break;
+                case float f: sb.Append(Numbers.NumberToString(f)); break;
                 case int n: sb.Append(n.ToString(CultureInfo.InvariantCulture)); break;
                 case long n: sb.Append(n.ToString(CultureInfo.InvariantCulture)); break;
                 case IDictionary<string, object> o:

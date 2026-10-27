@@ -1,6 +1,6 @@
 // Shared helpers for blocks, lots and buildings: which tiles can be built on,
-// which tiles a polygon covers, and which side of a parcel faces a road. A port
-// of gen/parcels.ts, plus stage 6 (gen/blocks.ts).
+// which tiles a polygon covers, and which side of a parcel faces a road. Also
+// stage 6, blocks.
 
 using System;
 using System.Collections.Generic;
@@ -36,7 +36,7 @@ namespace Porchlight.Gen
                 for (int x = 0; x < w; x++)
                 {
                     int i = Grid.Index(x, y, w);
-                    bool inside = Js.Hypot(x + 0.5 - C.x, y + 0.5 - C.y) <= R;
+                    bool inside = Numbers.Hypot(x + 0.5 - C.x, y + 0.5 - C.y) <= R;
                     free[i] = inside && water[i] == 0 && rock[i] == 0 && road.kind[i] == 0 ? (byte)1 : (byte)0;
                 }
             }

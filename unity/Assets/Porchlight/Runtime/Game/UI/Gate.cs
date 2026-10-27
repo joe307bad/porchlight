@@ -1,5 +1,5 @@
-// The two screens in front of the game: the sign-in card (auth/gate.ts) and
-// "Who's playing?" (ui/characterPicker.ts), where an account picks one of its
+// The two screens in front of the game: the sign-in card and
+// "Who's playing?", where an account picks one of its
 // characters or makes a new one. Both are overlays on the app's panel.
 
 using System;
