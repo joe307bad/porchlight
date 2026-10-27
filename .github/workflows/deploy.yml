@@ -38,6 +38,15 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Unity licence
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "::error::The UNITY_LICENSE secret isn't set, so the game can't be built. See infra/README.md > One-time setup."
+            exit 1
+          fi
+
       - name: Game — towns grow (every invariant checked) and repeat
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60
 
