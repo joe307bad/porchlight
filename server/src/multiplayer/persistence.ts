@@ -134,6 +134,7 @@ export class PgPersistence implements Persistence {
           .returning({ id: sessions.id });
         if (crashed.length) console.log(`game db: closed ${crashed.length} session(s) left open by a crash`);
         this.ready = true;
+        console.log('game db: ready');
       } catch (err) {
         console.error(`game db not ready (${(err as Error).message}); retrying in ${delay / 1000}s`);
         setTimeout(() => void attempt(Math.min(delay * 2, 60_000)), delay).unref();
