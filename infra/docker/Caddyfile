@@ -1,4 +1,4 @@
-# Porchlight: the app and its sign-in on {$DOMAIN}, Keycloak on auth.{$DOMAIN}.
+# Porchlight: the game and its sign-in on {$DOMAIN}, Keycloak on auth.{$DOMAIN}.
 # Caddy gets and renews both certificates itself (needs both A records first).
 
 {$DOMAIN} {
@@ -16,15 +16,22 @@
 		reverse_proxy auth:3017
 	}
 
-	# The app: Vite's static build, copied here by the deploy.
+	# The game: the Unity WebGL build (unity/Builds/WebGL), copied here by the
+	# deploy. Its big files are gzipped by Unity and named .unityweb: say so,
+	# so the browser unzips them (and compiles the wasm as it streams). Their
+	# names don't change between builds, so everything is revalidated (ETags)
+	# rather than cached for good; the game also keeps them in IndexedDB.
 	handle {
 		root * /srv/site
-		# Hashed file names: cache them for good.
-		@hashed path /assets/*
-		header @hashed Cache-Control "public, max-age=31536000, immutable"
-		# The page itself must always be fresh, or a deploy is invisible.
-		@page path / /index.html
-		header @page Cache-Control "no-cache"
+		@unityweb path /Build/*.unityweb
+		header @unityweb Content-Encoding gzip
+		@wasm path /Build/*.wasm.unityweb
+		header @wasm Content-Type application/wasm
+		@js path /Build/*.js.unityweb
+		header @js Content-Type application/javascript
+		@data path /Build/*.data.unityweb
+		header @data Content-Type application/octet-stream
+		header Cache-Control "no-cache"
 		try_files {path} /index.html
 		file_server
 	}

@@ -146,7 +146,7 @@ namespace Porchlight.App
                 string rest = EncodeQuery(query);
                 platform.ReplaceUrl(platform.PathName + (rest.Length > 0 ? "?" + rest : "") + platform.Hash);
             }
-            Account.FetchMe(platform, origin, (u, provider, err) =>
+            Account.FetchMe(platform, origin, (u, provider, err, status) =>
             {
                 if (u != null)
                 {
@@ -154,9 +154,10 @@ namespace Porchlight.App
                     Start2();
                     return;
                 }
-                // No sign-in service here (the editor without a server, a static
-                // host): play alone.
-                if (err != null && provider == null && error == null && !err.Contains("(5"))
+                // No sign-in service here (a static host, or a dev server without
+                // Keycloak or the game server behind it): play alone.
+                bool absent = status == 0 || status == 404 || status == 502 || status == 503 || status == 504;
+                if (absent && error == null)
                 {
                     Debug.Log("porchlight: no sign-in service (" + err + "); playing offline");
                     Start2();

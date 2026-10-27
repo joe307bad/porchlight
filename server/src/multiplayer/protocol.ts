@@ -1,5 +1,5 @@
-// What the game client and the city room say to each other. The app keeps its
-// own copy of these in app/src/net/protocol.ts: change both together.
+// What the game client and the city room say to each other. The game keeps its
+// own copy of these in unity/Assets/Porchlight/Runtime/Shared/Net/Protocol.cs: change both together.
 //
 // Units are the town's: 1 unit = 1 tile (about 4 m). The ground is x (east)
 // and z (south: the map's y); y is height off the ground (mid-jump).

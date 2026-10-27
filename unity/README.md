@@ -1,85 +1,63 @@
-# Porchlight in Unity
+# Porchlight
 
-The whole front end of Porchlight, written in C#, so it can be built for consoles as well as the web. It is a port of `app/` (the TypeScript and three.js game). The server stays as it is: `server/`, Node and Colyseus.
+The game: grow a town from a seed, see its blueprint, then walk and drive its streets with everyone else exploring the same town. It's a Unity 6000.6.5f1 project in C#, using URP, the Input System, UI Toolkit, TextMeshPro and glTFast. It builds for the web (WebGL) and is set up for consoles and desktop.
 
-It is meant to look exactly like the web game:
-
-- **Same towns.** The generator gives the same output bit for bit.
-- **Same simulation.** The explore logic (walking, driving, traffic, auto-walk) is a direct port.
-- **Same look.** The shaders reproduce three.js r186's Lambert and Standard shading, its hemisphere light, sun shadows and fog.
-
-Unity 6000.6.5f1 with URP, the Input System and UI Toolkit.
+The server is `server/`, Node and Colyseus. It handles sign-in, the characters, and the shared town rooms.
 
 ## Layout
 
 | Folder | What's in it |
 | --- | --- |
-| `Assets/Porchlight/Runtime/Shared` | Engine-free C#: core math, the town generator, the explore logic, and the network client (msgpack, the Colyseus schema decoder, rooms). It builds on plain .NET too. |
-| `Assets/Porchlight/Runtime/Game` | The Unity side. `Rendering`: the 3D town, people and cars. `UI`: the blueprint, sidebar, overlay, sign-in and picker. `App`: the explore view, input, the app itself (`PorchlightApp`, a port of `main.ts`) and the exports. `Net`: multiplayer, accounts and the platform layer. |
-| `Assets/Porchlight/Resources/Porchlight` | Shaders, fonts, the panel settings, and `UI/Porchlight.uss` (`style.css` in UI Toolkit terms). |
-| `Assets/Porchlight/Plugins/WebGL` | `Porchlight.jslib`: the browser half of the platform layer (WebSockets, the URL, storage, downloads). |
-| `Assets/Porchlight/Editor/Setup.cs` | Project setup and builds, from the **Porchlight** menu or batch mode. |
+| `Assets/Porchlight/Runtime/Shared` | Engine-free C#: the town generator, the explore simulation (walking, driving, traffic, directions), and the network client (msgpack, the Colyseus schema decoder, rooms). It builds on plain .NET too, so `Tools~/Checks` can test it without Unity. |
+| `Assets/Porchlight/Runtime/Game` | The Unity side. `Rendering`: the 3D town as GameObjects, people, cars, the sky and lights. `UI`: the blueprint, sidebar, overlay, sign-in and character picker (UI Toolkit). `App`: the explore view, input, and the app itself (`PorchlightApp`). `Net`: multiplayer, accounts, and the platform layer. |
+| `Assets/Porchlight/Models` | The Kenney and RG Poly models (glTF), imported by glTFast. |
+| `Assets/Porchlight/Editor` | `Setup.cs`, which sets up the project and makes the builds (the **Porchlight** menu, or batch mode). `Library.cs` turns the models into the game's prefabs. |
+| `Assets/Porchlight/Resources/Porchlight` | Fonts, the UI's stylesheet (`UI/Porchlight.uss`) and panel settings, and the generated model library. |
+| `Assets/Porchlight/Plugins/WebGL` | `Porchlight.jslib`: the browser side of the platform layer (WebSockets, the page's URL, storage, downloads). |
 | `Assets/WebGLTemplates/Porchlight` | The page around the WebGL build. |
-| `Tools~` | Checks that run outside Unity (see below), and `serve.mjs`. |
+| `Tools~` | `Checks` (the .NET test harness), `net/server.ts` (a throwaway game server for the network check), `serve.mjs` (serves a build for development), and `check.sh`. |
 
-The models aren't copied into the project. In the editor they're read straight from `app/public/models`. A build copies them into `Assets/StreamingAssets/models`, which is gitignored.
+## How it draws
 
-## Testing the browser build
+Everything is Unity's own; there are no custom shaders:
 
-1. **Build it.** Pick **Porchlight ▸ Build WebGL** in the editor, or run this from `unity/`:
+- **Models:** glTFast imports the models. **Porchlight ▸ Set Up Project** runs `Editor/Library.cs`, which turns each model into a prefab with URP Lit materials and records its bounds. For the city kits, it also masks each colour map's window glass so the windows can glow at night. All of this goes in `Assets/Porchlight/Generated` and `Resources/Porchlight/Library.asset`, which are gitignored.
+- **People:** the characters share one armature. Their clips (`people/animations.glb`) are rebound to it, and an Animator controller blends idle, walk and run by pace, with jump, fall and land in the air.
+- **The town:** GameObjects. What never moves is combined with static batching. Procedural parts (ground, roads, walls) are meshes coloured through a palette texture, so they draw with URP Lit like everything else.
+- **Light:** a directional sun with URP soft shadows, Trilight ambient, and linear fog for the close-up camera. A global volume adds bloom and Neutral tonemapping. At night, bulbs and windows glow, and a few real point lights follow the street lamps nearest the camera.
+- **Showing through buildings:** two URP Render Objects passes. One draws you (and the car you drive) in orange wherever you're hidden. The other draws name tags (TextMeshPro) over everything.
 
-   ```
-   /Applications/Unity/Hub/Editor/6000.6.5f1/Unity.app/Contents/MacOS/Unity -batchmode -nographics \
-     -projectPath . -executeMethod Porchlight.EditorTools.Setup.BuildWebGL -logFile -
-   ```
+## Running it
 
-   The build lands in `unity/Builds/WebGL`.
-2. **Start the server** the usual way. `./dev.sh` starts Keycloak, the database and the server on :3017. It also starts Vite on :5173, so stop that one (Ctrl-C once the server is up). Or start just the server with `npm --prefix server run dev`.
-3. **Serve the build** in Vite's place:
+**In the editor:** open `unity/` in Unity 6000.6.5f1. A fresh checkout builds its model library as it opens; run **Porchlight ▸ Set Up Project** to rebuild it. Then open `Assets/Porchlight/Scenes/Boot.unity` and press Play.
 
-   ```
-   node unity/Tools~/serve.mjs
-   ```
+Off the web there's no page address and no browser cookies. The game talks to `PORCHLIGHT_ORIGIN`, or `http://localhost:3017` if that isn't set. It plays offline unless you hand it a session with `PORCHLIGHT_COOKIE=pl_session=<value>` (copy it from a signed-in browser).
 
-   This serves the build at http://localhost:5173/ and passes `/auth` and `/mp` (WebSockets included) through to :3017. Sign-in cookies stay first-party, and the server's `APP_URL` still matches.
-4. **Open http://localhost:5173/** and sign in as dev / dev.
-
-Without the server, the build still runs: it finds no sign-in service, and you play alone.
-
-## Running it in the editor
-
-1. Open `unity/` in Unity 6000.6.5f1.
-2. If it hasn't been done yet, run **Porchlight ▸ Set Up Project**. It sets up URP, the panel, the boot scene and the player settings, and is safe to run again.
-3. Open `Assets/Porchlight/Scenes/Boot.unity` and press Play.
-
-Off the web there's no page to take the address from, so the game talks to `PORCHLIGHT_ORIGIN`, or `http://localhost:3017` if that isn't set. There are no browser cookies either. Signing in is browser-only for now, so the editor plays offline unless you hand it a session.
-
-To play online from the editor, set `PORCHLIGHT_COOKIE=pl_session=<value>` before starting Unity. You can copy the value from a signed-in browser's cookies, or use one that `Tools~/net/server.ts` prints against its test server.
-
-## Checks outside Unity
-
-`Tools~/parity/GenCheck` is a .NET 8 console app. It compiles the `Shared` code and checks it against the TypeScript game, using fixtures written by the `Tools~/parity/*.ts` exporters (run them with `npx --prefix app vite-node`):
+**In the browser:** from the repository root, run
 
 ```
-dotnet run --project "unity/Tools~/parity/GenCheck" -- parity.json        # towns, bit for bit
-dotnet run --project "unity/Tools~/parity/GenCheck" -- sim sim.json       # the explore simulation
-dotnet run --project "unity/Tools~/parity/GenCheck" -- math math.json     # JS math (fdlibm ports)
-dotnet run --project "unity/Tools~/parity/GenCheck" -- models models.json app/public/models
+./dev.sh
 ```
 
-The network client runs against the real server:
+This starts Keycloak, the database and the server. It builds the game if there's no build yet, and serves it at http://localhost:5173/ (sign in as dev / dev). After changing the game, run `./dev.sh --build`, or **Porchlight ▸ Build WebGL** in the editor.
+
+**Deploys:** pushing to `main` builds the WebGL player in CI and ships it. See `infra/README.md`.
+
+## Checks
 
 ```
-node unity/Tools~/net/server.ts           # prints a line of JSON: the port and two test sessions
-dotnet run --project "unity/Tools~/parity/GenCheck" -- net '<that line>'
+dotnet run --project "unity/Tools~/Checks" -- towns 60     # towns grow with every invariant checked, and repeat exactly
+
+node unity/Tools~/net/server.ts                              # a game server; prints a line of JSON
+dotnet run --project "unity/Tools~/Checks" -- net '<that line>'   # two C# clients play it
 ```
 
-`Tools~/check.sh` compile-checks every assembly with `dotnet`. It needs no Unity, but it does need the `.csproj` files Unity generates when it opens the project.
-
-A whole-app smoke run, with no window: build macOS (**Porchlight ▸ Build macOS**), then
+To smoke-test the whole app without a window, build macOS (**Porchlight ▸ Build macOS**) and run it like this:
 
 ```
 PORCHLIGHT_SMOKE=1 Builds/macOS/Porchlight.app/Contents/MacOS/Porchlight -batchmode -logFile -
 ```
 
-This grows a town, enters explore mode, auto-walks for 8 s, goes back to the map, regenerates and quits, logging `smoke:` lines along the way. Leave out `-nographics`: without a GPU device, text and instanced drawing throw.
+It grows a town, explores, auto-walks for 8 seconds, goes back to the map, regenerates and quits, logging `smoke:` lines along the way. Leave out `-nographics`: without a GPU, text and instanced drawing throw.
+
+`Tools~/check.sh` compile-checks every assembly with `dotnet`, using the `.csproj` files Unity generates.

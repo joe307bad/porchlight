@@ -79,8 +79,11 @@ namespace Porchlight.App
         public static void DeleteCharacter(INetPlatform net, string origin, string id, Action<string> done) =>
             Call(net, origin, "DELETE", "/" + Uri.EscapeDataString(id), null, (_, err) => done(err));
 
-        /// <summary>done(user, provider, error): the user when signed in; otherwise the sign-in provider ("google") or an error.</summary>
-        public static void FetchMe(INetPlatform net, string origin, Action<User, string, string> done) =>
+        /// <summary>
+        /// done(user, provider, error, status): the user when signed in; otherwise the
+        /// sign-in provider ("google") or an error. Status 0 is no answer at all.
+        /// </summary>
+        public static void FetchMe(INetPlatform net, string origin, Action<User, string, string, int> done) =>
             net.Request("GET", origin + "/auth/me", null, (status, text) =>
             {
                 object json = null;
@@ -88,15 +91,15 @@ namespace Porchlight.App
                 catch (Exception) { }
                 if (status == 401)
                 {
-                    done(null, Json.Str(json, "signIn"), null);
+                    done(null, Json.Str(json, "signIn"), null, status);
                     return;
                 }
                 if (status < 200 || status >= 300 || json == null)
                 {
-                    done(null, null, $"The sign-in service isn't answering ({status}).");
+                    done(null, null, $"The sign-in service isn't answering ({status}).", status);
                     return;
                 }
-                done(new User { name = Json.Str(json, "name"), email = Json.Str(json, "email") }, null, null);
+                done(new User { name = Json.Str(json, "name"), email = Json.Str(json, "email") }, null, null, status);
             });
     }
 }

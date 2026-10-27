@@ -5,8 +5,7 @@
 //
 //   node unity/Tools~/serve.mjs [build-dir]      (default unity/Builds/WebGL)
 //
-// Run the server first (./dev.sh starts it, along with Vite: stop Vite, or
-// set PORT here to something else and open that instead).
+// ./dev.sh runs this alongside the server.
 
 import { createReadStream, statSync } from 'node:fs';
 import http from 'node:http';
@@ -67,8 +66,10 @@ function serveFile(req, res) {
   }
   const headers = { 'content-length': size, 'cache-control': 'no-cache' };
   let ext = path.extname(file);
-  if (ext === '.gz' || ext === '.br') {
-    headers['content-encoding'] = ext === '.gz' ? 'gzip' : 'br';
+  // Unity's compressed build files (gzip, named .unityweb): tell the browser, so
+  // it decompresses them (and can compile the wasm as it streams in).
+  if (ext === '.unityweb') {
+    headers['content-encoding'] = 'gzip';
     ext = path.extname(file.slice(0, -ext.length));
   }
   headers['content-type'] = TYPES[ext] ?? 'application/octet-stream';
