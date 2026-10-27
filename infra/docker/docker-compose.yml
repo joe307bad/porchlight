@@ -12,7 +12,8 @@
 #             and roles, so the small box runs one Postgres), on the
 #             persistent data volume
 #
-# Sized for a t4g.micro (1 GB + 2 GB swap): every memory knob below is turned
+# Sized for a small box (a t4g.small, 2 GB + 2 GB swap; it began on a 1 GB
+# t4g.micro): every memory knob below is turned
 # down from its default. Nothing is built from the app here; CI builds it and
 # copies dist/ to /opt/porchlight/site.
 

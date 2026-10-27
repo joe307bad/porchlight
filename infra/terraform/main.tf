@@ -42,12 +42,14 @@ variable "domain" {
 }
 
 variable "instance_type" {
-  # The smallest that holds Keycloak. A t4g.nano (0.5 GB) can't: the JVM alone
-  # wants more than that. On the micro, Keycloak's heap is capped at 320 MB,
-  # Postgres at a 32 MB buffer pool, and a 2 GB swap file (user-data) absorbs
-  # Keycloak's start-up spike. Nothing is built from the app on the box; CI
-  # builds it. If Keycloak ever struggles, t4g.small (2 GB) is the next step.
-  default = "t4g.micro"
+  # 2 vCPUs and 2 GB. Keycloak (heap capped at 320 MB), Postgres, Caddy and the
+  # auth + game server come to about 0.9 GB, which on the 1 GB t4g.micro this
+  # started on meant living partly in swap; 2 GB holds it all in memory with
+  # room to spare. The 2 GB swap file (user-data) stays for Keycloak's start-up
+  # spike. Changing this stops and starts the box in place (same disks, same
+  # IP), a minute or two of downtime. Nothing is built from the app on the
+  # box; CI builds it.
+  default = "t4g.small"
 }
 
 variable "ssh_public_key" {
@@ -254,7 +256,9 @@ resource "aws_key_pair" "main" {
 
 resource "aws_ebs_volume" "data" {
   availability_zone = "${var.aws_region}a"
-  size              = 4
+  # Grown in place (deploy.sh grows the filesystem to match). EBS allows one
+  # change per volume every six hours.
+  size = 10
   type              = "gp3"
   encrypted         = true
 
@@ -362,8 +366,10 @@ resource "aws_instance" "main" {
     cpu_credits = "unlimited"
   }
 
+  # Grown in place like the data volume (deploy.sh grows the partition and
+  # filesystem): images and their layers are what fill it.
   root_block_device {
-    volume_size = 12
+    volume_size = 20
     volume_type = "gp3"
     encrypted   = true
   }
@@ -373,9 +379,10 @@ resource "aws_instance" "main" {
   }
 
   # Replacing the box for a newer AMI or edited bootstrap is a deliberate act
-  # (terraform taint / -replace), not a side effect of a deploy.
+  # (terraform taint / -replace), not a side effect of a deploy. The root
+  # volume's size is managed (it grows in place); its other settings aren't.
   lifecycle {
-    ignore_changes = [ami, root_block_device, user_data]
+    ignore_changes = [ami, user_data, root_block_device[0].encrypted, root_block_device[0].volume_type]
   }
 
   user_data = base64encode(templatefile("${path.module}/scripts/user-data.sh", {

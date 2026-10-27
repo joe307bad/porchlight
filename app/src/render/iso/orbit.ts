@@ -149,3 +149,57 @@ export function chaseYaw(heading: number): number {
 function mod(a: number, n: number): number {
   return ((a % n) + n) % n;
 }
+
+/**
+ * A camera point that follows a moving target with no lag at all while the
+ * target moves smoothly (so how long each frame took never shows as the view
+ * wobbling: at driving speed even a few milliseconds' difference would), and
+ * eases over a jump instead of cutting (getting out of a car, a minimap jump,
+ * walking into a room). A jump is any step faster than `maxSpeed`; the gap it
+ * leaves closes at `rate` per second, the same at any frame rate.
+ */
+export class Follow {
+  /** Where to show. */
+  readonly at = { x: 0, y: 0, z: 0 };
+  private readonly last = { x: 0, y: 0, z: 0 };
+  /** Shown minus target: what's left of the last jump. */
+  private readonly gap = { x: 0, y: 0, z: 0 };
+  private started = false;
+
+  constructor(
+    private readonly rate: number,
+    private readonly maxSpeed = 15,
+  ) {}
+
+  /** Follow `target` for a frame of `dt` seconds; `snap` goes straight there. */
+  update(target: { x: number; y: number; z: number }, dt: number, snap = false): { x: number; y: number; z: number } {
+    if (snap || !this.started) {
+      this.gap.x = this.gap.y = this.gap.z = 0;
+      this.started = true;
+    } else {
+      const dx = target.x - this.last.x;
+      const dy = target.y - this.last.y;
+      const dz = target.z - this.last.z;
+      if (Math.hypot(dx, dy, dz) > this.maxSpeed * Math.max(dt, 1 / 240) + 0.02) {
+        // A jump: keep showing where we were, and ease the difference away.
+        this.gap.x -= dx;
+        this.gap.y -= dy;
+        this.gap.z -= dz;
+      }
+      const k = Math.exp(-this.rate * dt);
+      this.gap.x *= k;
+      this.gap.y *= k;
+      this.gap.z *= k;
+    }
+    this.last.x = target.x;
+    this.last.y = target.y;
+    this.last.z = target.z;
+    this.at.x = target.x + this.gap.x;
+    this.at.y = target.y + this.gap.y;
+    this.at.z = target.z + this.gap.z;
+    return this.at;
+  }
+}
+
+/** Ease `from` toward `to` by `rate` per second, the same at any frame rate. */
+export const easeBy = (rate: number, dt: number): number => 1 - Math.exp(-rate * dt);

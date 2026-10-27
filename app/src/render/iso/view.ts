@@ -89,8 +89,10 @@ import {
   DEFAULT_CHASE_TILT,
   DEFAULT_ISO_TILT,
   ISO_TILTS,
+  Follow,
   cameraOffset,
   chaseYaw,
+  easeBy,
   clampTilt,
   tiltPitch,
   nearestStop,
@@ -235,6 +237,11 @@ export class IsoView implements NetHost {
   private zoom = 1;
   private shownZoom = 1;
   private readonly focus = new Vector3();
+  /** The overview camera's and close-up camera's points of interest: no lag while they move, eased over jumps. */
+  private readonly focusFollow = new Follow(8);
+  private readonly lookFollow = new Follow(10);
+  /** When the current positions were worked out (the last frame's time, performance.now() ms). */
+  private simAt = 0;
   private night = false;
   /** Tiles the player may walk on: everything but buildings and sheds, or only the streets. */
   private open: Uint8Array = new Uint8Array(0);
@@ -327,6 +334,7 @@ export class IsoView implements NetHost {
         this.tick(dt);
         left -= dt;
       }
+      this.simAt = now;
       this.frame(Math.min(0.1, (now - this.lastFrame) / 1000));
       this.lastFrame = now;
     });
@@ -473,7 +481,7 @@ export class IsoView implements NetHost {
     const p = this.player;
     if (!p) return null;
     const car = this.driving !== null ? this.cars[this.driving].car.model + 1 : 0;
-    return { x: p.x, y: p.lift, z: p.y, yaw: p.heading, speed: p.speed, car, ride: this.riding ?? '' };
+    return { x: p.x, y: p.lift, z: p.y, yaw: p.heading, speed: p.speed, car, ride: this.riding ?? '', at: this.simAt };
   }
 
   applySpawn(at: SpawnMessage['at'], look: string | null): void {
@@ -1286,6 +1294,8 @@ export class IsoView implements NetHost {
     });
     this.people.forEach((q, k) => this.avatars[k].update(q, dt));
     this.remotes?.update(dt, this.driving !== null && p ? { x: p.x, y: p.y } : null);
+    // A passenger sits where the driver's car is drawn this frame (the tick saw last frame's).
+    if (this.riding !== null) this.followRide();
     this.fleet?.update();
 
     for (const k of this.keepers.values()) if (k.avatar.root.visible) k.avatar.update(k.walker, dt);
@@ -1297,10 +1307,11 @@ export class IsoView implements NetHost {
     const yawTarget = fixed?.yaw ?? this.targetYaw;
     const zoomTarget = fixed?.zoom ?? this.zoom;
     const pitchTarget = fixed?.pitch ?? this.targetPitch;
-    this.yaw += shortestTurn(this.yaw, yawTarget) * (this.snap ? 1 : Math.min(1, dt * 5));
+    this.yaw += shortestTurn(this.yaw, yawTarget) * (this.snap ? 1 : easeBy(5, dt));
     this.shownZoom += (zoomTarget - this.shownZoom) * (this.snap ? 1 : Math.min(1, dt * (fixed ? 5 : 10)));
     const target = fixed?.focus ?? (p ? new Vector3(p.x, 0.3, p.y) : new Vector3(world.model.spawn.x, 0.3, world.model.spawn.y));
-    this.focus.lerp(target, this.snap ? 1 : Math.min(1, dt * (fixed ? 5 : 8)));
+    const f = this.focusFollow.update(target, dt, this.snap);
+    this.focus.set(f.x, f.y, f.z);
     this.pitch += (pitchTarget - this.pitch) * (this.snap ? 1 : Math.min(1, dt * 6));
     if (this.mode === 'close' && p && !fixed) this.placeChase(world, p, dt);
     if (this.mode === 'close' && fixed) this.placeChaseInRoom(fixed, dt);
@@ -1396,6 +1407,7 @@ export class IsoView implements NetHost {
     const k = this.snap ? 1 : Math.min(1, dt * 4);
     this.chase.position.lerp(at, k);
     this.chaseLook.lerp(fixed.focus, k);
+    this.lookFollow.update(this.chaseLook, dt, true); // so leaving the room eases on from here
     const { clientWidth: w, clientHeight: h } = this.host;
     this.chase.aspect = Math.max(1, w) / Math.max(1, h);
     this.chase.updateProjectionMatrix();
@@ -1454,16 +1466,16 @@ export class IsoView implements NetHost {
    */
   private placeChase(world: TownWorld, p: Player, dt: number): void {
     const want = chaseYaw(p.heading) + this.chaseSwing;
-    this.chaseYawNow += shortestTurn(this.chaseYawNow, want) * (this.snap ? 1 : Math.min(1, dt * 3.5));
+    this.chaseYawNow += shortestTurn(this.chaseYawNow, want) * (this.snap ? 1 : easeBy(3.5, dt));
     const wanted = this.chaseDistance * (this.inCar ? DRIVING_CHASE : 1);
-    this.shownChaseDistance += (wanted - this.shownChaseDistance) * (this.snap ? 1 : Math.min(1, dt * 8));
+    this.shownChaseDistance += (wanted - this.shownChaseDistance) * (this.snap ? 1 : easeBy(8, dt));
     const o = cameraOffset(this.chaseYawNow, this.pitch);
     let dist = this.shownChaseDistance;
     for (const b of world.boxes) dist = Math.min(dist, Math.max(0.5, rayBoxDistance(p, CHASE_LOOK_HEIGHT, o, b) - 0.2));
     const ahead = { x: -o.x / Math.hypot(o.x, o.y), y: -o.y / Math.hypot(o.x, o.y) };
     const look = new Vector3(p.x + ahead.x * CHASE_LOOK_AHEAD, CHASE_LOOK_HEIGHT, p.y + ahead.y * CHASE_LOOK_AHEAD);
-    if (this.snap) this.chaseLook.copy(look);
-    else this.chaseLook.lerp(look, Math.min(1, dt * 10));
+    const l = this.lookFollow.update(look, dt, this.snap);
+    this.chaseLook.set(l.x, l.y, l.z);
     const { clientWidth: w, clientHeight: h } = this.host;
     this.chase.aspect = Math.max(1, w) / Math.max(1, h);
     this.chase.updateProjectionMatrix();

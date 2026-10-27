@@ -1,26 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CAMERA_STOPS,
-  DEFAULT_STOP,
-  cameraOffset,
-  nearestStop,
-  CHASE_TILTS,
-  DEFAULT_CHASE_TILT,
-  DEFAULT_ISO_TILT,
-  ISO_TILTS,
-  PITCH,
-  chaseYaw,
-  clampTilt,
-  tiltPitch,
-  rayBoxDistance,
-  rayHitsBox,
-  screenToWorld,
-  shortestTurn,
-  stopLookingAlong,
-  stopBehind,
-  stopYaw,
-  stopsByDistance,
-} from '../src/render/iso/orbit';
+import { CAMERA_STOPS, DEFAULT_STOP, cameraOffset, nearestStop, CHASE_TILTS, DEFAULT_CHASE_TILT, DEFAULT_ISO_TILT, ISO_TILTS, PITCH, chaseYaw, clampTilt, tiltPitch, rayBoxDistance, rayHitsBox, screenToWorld, shortestTurn, stopLookingAlong, stopBehind, stopYaw, stopsByDistance, Follow } from '../src/render/iso/orbit';
 
 const deg = (r: number) => (r * 180) / Math.PI;
 
@@ -137,5 +116,36 @@ describe('camera orbit', () => {
       expect(tiltPitch(tilts, tilts.length - 1)).toBeLessThan(Math.PI / 2);
       expect(tiltPitch(tilts, 0)).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('Follow', () => {
+  it('keeps exactly up with a steadily moving target, whatever the frame times', () => {
+    const f = new Follow(8);
+    let x = 0;
+    for (const dt of [1 / 60, 1 / 30, 1 / 144, 1 / 60, 1 / 20, 1 / 60, 1 / 90]) {
+      x += 8.8 * dt; // a boosted car
+      const at = f.update({ x, y: 0.3, z: 5 }, dt);
+      expect(at.x).toBeCloseTo(x, 9);
+    }
+  });
+
+  it('eases over a jump at the same pace at any frame rate', () => {
+    // A quarter second after a 5-tile jump, at 40, 80 and 160 frames a second.
+    const run = (fps: number) => {
+      const f = new Follow(8);
+      f.update({ x: 0, y: 0, z: 0 }, 1 / fps);
+      for (let k = 0; k < fps / 4; k++) f.update({ x: 5, y: 0, z: 0 }, 1 / fps);
+      return f.at.x;
+    };
+    expect(run(40)).toBeCloseTo(run(160), 6);
+    expect(run(80)).toBeCloseTo(5 - 5 * Math.exp(-8 * 0.25), 6);
+    expect(run(80)).toBeLessThan(5); // eased, not cut
+  });
+
+  it('snaps when told to', () => {
+    const f = new Follow(8);
+    f.update({ x: 0, y: 0, z: 0 }, 0.016);
+    expect(f.update({ x: 9, y: 0, z: 0 }, 0.016, true).x).toBe(9);
   });
 });

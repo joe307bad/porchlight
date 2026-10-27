@@ -48,6 +48,8 @@ export interface LocalState {
   car: number;
   /** A passenger: the driver's session id; otherwise ''. */
   ride: string;
+  /** When this position was worked out (the frame's time, performance.now() ms). */
+  at: number;
 }
 
 /** What the game view does for the network (IsoView). */
@@ -299,7 +301,11 @@ export class Multiplayer {
     }
     this.sentAt = now;
     this.seq = (this.seq + 1) & 0xffff;
-    const t = Math.round(now) >>> 0;
+    // Stamped with when the position was worked out (the last frame), not when
+    // this timer fired, up to a frame later: at driving speed that difference,
+    // different every time, shook everyone watching. A stale frame (a hidden
+    // tab, where nothing moves) is stamped now.
+    const t = Math.round(now - s.at < 100 ? s.at : now) >>> 0;
     const move: MoveMessage = { seq: this.seq, t, epoch: this.epoch, x: s.x, y: s.y, z: s.z, yaw: s.yaw, anim, car: s.car, ride: s.ride };
     room.send(MSG_MOVE, move);
   }

@@ -13,7 +13,7 @@
 import { CanvasTexture, Group, LinearFilter, Mesh, SRGBColorSpace, Sprite, SpriteMaterial, type Object3D } from 'three';
 import { createRng } from '../../core/rng';
 import { PlaybackClock, SnapshotBuffer, turnBetween } from '../../net/interp';
-import { ANIM_DRIVE, ANIM_RIDE, yawFromByte } from '../../net/protocol';
+import { ANIM_DRIVE, ANIM_RIDE, yawFromWire } from '../../net/protocol';
 import { Walker } from './actors';
 import { CARS, CHARACTERS, type TownAssets } from './assets';
 import { Avatar, PERSON_HEIGHT } from './characters';
@@ -138,7 +138,7 @@ export class RemotePlayers {
       if (s.t !== r.lastT) {
         r.lastT = s.t;
         r.clock.observe(s.t, now);
-        r.buffer.push({ t: s.t, x: s.x, y: s.y, z: s.z, yaw: yawFromByte(s.rotY) });
+        r.buffer.push({ t: s.t, x: s.x, y: s.y, z: s.z, yaw: yawFromWire(s.rotY) });
       }
     }
     for (const key of [...this.remotes.keys()]) if (!seen.has(key)) this.drop(key);
@@ -216,7 +216,7 @@ export class RemotePlayers {
 
   private spawn(s: RemoteState, look: string): Remote {
     const walker = new Walker({ model: look }, s.x, s.z, PLAYER_SCALE);
-    walker.heading = yawFromByte(s.rotY);
+    walker.heading = yawFromWire(s.rotY);
     // Their stride's phase from who they are, so two arrivals together don't march in step.
     const avatar = new Avatar(this.assets.character(look), PERSON_HEIGHT, createRng(s.key).next());
     avatar.root.rotation.y = walker.heading;

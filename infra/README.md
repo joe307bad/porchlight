@@ -65,7 +65,7 @@ Without Docker, `dev.sh` turns sign-in off (`VITE_AUTH_ENABLED=false`).
 
 `porchlight.joebad.com` hosts the app and `auth.porchlight.joebad.com` hosts Keycloak. Both names are set in `.github/workflows/deploy.yml` (`DOMAIN`) and `terraform/main.tf`.
 
-**The box is a t4g.micro** (arm64, 2 burstable vCPUs, 1 GB RAM, 2 GB swap). That's the smallest instance that runs Keycloak:
+**The box is a t4g.small** (arm64, 2 burstable vCPUs, 2 GB RAM, 2 GB swap, a 20 GB root disk). It started as a t4g.micro (1 GB), where the stack's ~0.9 GB lived partly in swap; 2 GB holds it all in memory:
 - A t4g.nano (0.5 GB) is too small for the JVM.
 - At rest, measured on arm64 with the production settings:
 
@@ -77,9 +77,9 @@ Without Docker, `dev.sh` turns sign-in off (`VITE_AUTH_ENABLED=false`).
 
   Caddy and the OS take the rest.
 - Nothing is built from the app on the box. The only image builds there are the Keycloak and auth-service images.
-- If Keycloak ever struggles, set `instance_type = "t4g.small"`. That replaces the box, but the data volume survives.
+- **Resizing:** change `instance_type` (or a disk size) in `terraform/main.tf`. A new instance type stops and starts the box in place: same disks, same Elastic IP, a minute or two of downtime. Disks grow in place too, and `deploy.sh` grows the partition and filesystems to match. EBS allows one change per volume every six hours.
 
-**Persistent data** lives on a separate 4 GB EBS volume mounted at `/data`: the Postgres server and Caddy's certificates. To keep one Postgres on the small box, that server holds two databases: `keycloak`, and `porchlight` for the game. Each has its own role. `deploy.sh` creates the game's database and role, and resets that role's password (`GAME_DB_PASSWORD`) from Secrets Manager on every deploy. The volume has `prevent_destroy`, and AWS takes a daily snapshot and keeps 7.
+**Persistent data** lives on a separate 10 GB EBS volume mounted at `/data`: the Postgres server and Caddy's certificates. To keep one Postgres on the small box, that server holds two databases: `keycloak`, and `porchlight` for the game. Each has its own role. `deploy.sh` creates the game's database and role, and resets that role's password (`GAME_DB_PASSWORD`) from Secrets Manager on every deploy. The volume has `prevent_destroy`, and AWS takes a daily snapshot and keeps 7.
 
 ### One-time setup
 

@@ -45,6 +45,16 @@ umask 022
 
 mkdir -p /data/caddy/data /data/caddy/config /data/postgres
 
+# Disks grown in Terraform (root_block_device, aws_ebs_volume.data) get bigger
+# under a running box; grow the root partition and both filesystems to fill
+# them. Each is a no-op once they already do (growpart says NOCHANGE and
+# exits 1, hence the || true).
+root_part=$(findmnt -no SOURCE /)
+sudo growpart "/dev/$(lsblk -no PKNAME "$root_part")" "${root_part##*p}" >/dev/null 2>&1 || true
+sudo xfs_growfs -d / >/dev/null
+sudo xfs_growfs -d /data >/dev/null
+df -h / /data | tail -n +2
+
 echo "building images..."
 docker compose build --pull
 docker compose up -d --remove-orphans
@@ -94,7 +104,7 @@ GOOGLE_CLIENT_ID="$(get GOOGLE_CLIENT_ID)" \
 GOOGLE_CLIENT_SECRET="$(get GOOGLE_CLIENT_SECRET)" \
   ../keycloak/init-keycloak.sh prod
 
-# The box has 12 GB of disk; old image layers are the only thing that grows.
+# The box has 20 GB of disk; old image layers are the only thing that grows.
 docker image prune -f >/dev/null
 
 docker compose ps

@@ -31,7 +31,7 @@ import {
   MSG_TELEPORT,
   SEND_MS,
   quantizeYaw,
-  yawFromByte,
+  yawFromWire,
   type CorrectMessage,
   type DotsMessage,
   type MoveMessage,
@@ -428,7 +428,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       x: rt.player.x,
       y: 0, // never saved mid-jump
       z: rt.player.z,
-      rotY: yawFromByte(rt.player.rotY),
+      rotY: yawFromWire(rt.player.rotY),
       look: rt.player.appearance,
       version: rt.version,
     };

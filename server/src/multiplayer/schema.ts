@@ -17,8 +17,8 @@ export const Player = schema(
     /** Height off the ground (mid-jump). */
     y: 'float32',
     z: 'float32',
-    /** Heading, 0-255 for a full turn. */
-    rotY: 'uint8',
+    /** Heading, 0-65535 for a full turn (quantizeYaw). */
+    rotY: 'uint16',
     /** ANIM_* in protocol.ts. */
     anim: 'uint8',
     /** At the wheel: the car model + 1; on foot 0. */

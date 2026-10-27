@@ -78,6 +78,10 @@ export interface CorrectMessage {
 /** [sessionId, x, z] per player, positions rounded to a tenth of a tile. */
 export type DotsMessage = [string, number, number][];
 
-/** Heading in radians ↔ the 0-255 byte on the wire (about 1.4° a step). */
-export const quantizeYaw = (yaw: number): number => Math.round((yaw / (2 * Math.PI)) * 256) & 255;
-export const yawFromByte = (b: number): number => (b / 256) * 2 * Math.PI;
+/**
+ * Heading in radians ↔ the 0-65535 on the wire. (A byte's 1.4° steps were
+ * enough to see from a passenger's seat: the camera behind a car swung with
+ * each step.)
+ */
+export const quantizeYaw = (yaw: number): number => Math.round((yaw / (2 * Math.PI)) * 65536) & 0xffff;
+export const yawFromWire = (q: number): number => (q / 65536) * 2 * Math.PI;
