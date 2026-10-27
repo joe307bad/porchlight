@@ -1,7 +1,7 @@
-// Serves the Unity WebGL build the way Vite serves the web app in development:
-// the build at http://localhost:5173/, with /auth and /mp (WebSockets too)
-// passed through to the auth + game server on :3017, so sign-in cookies are
-// first-party and the server's APP_URL (localhost:5173) still matches.
+// Serves the game's WebGL build in development: the build at
+// http://localhost:5173/, with /auth and /mp (WebSockets too) passed through
+// to the auth + game server on :3017, so sign-in cookies are first-party and
+// the server's APP_URL (localhost:5173) matches, as Caddy does in production.
 //
 //   node unity/Tools~/serve.mjs [build-dir]      (default unity/Builds/WebGL)
 //
