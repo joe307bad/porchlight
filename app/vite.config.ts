@@ -13,5 +13,11 @@ export default defineConfig({
   },
   // GLB models are assets (tests import them inline to parse them in Node).
   assetsInclude: ['**/*.glb'],
-  test: { environment: 'node', include: ['tests/**/*.test.ts'] },
+  test: {
+    environment: 'node',
+    include: ['tests/**/*.test.ts'],
+    // Some suites generate dozens of towns up front (invariants: 50); CI's
+    // two cores, shared with the other test files, need more than 10 s for it.
+    hookTimeout: 60_000,
+  },
 });
