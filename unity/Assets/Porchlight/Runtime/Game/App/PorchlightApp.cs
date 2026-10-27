@@ -106,7 +106,7 @@ namespace Porchlight.App
             clearCamera = c;
             camera3d = new GameObject("Explore Camera").AddComponent<Camera>();
             camera3d.clearFlags = CameraClearFlags.SolidColor;
-            camera3d.cullingMask = 0; // everything is drawn through the Stage
+            camera3d.cullingMask = ~0; // the Stage draws on layer 0, and the people are renderers in the scene
             camera3d.depth = 0;
             camera3d.allowMSAA = true;
             camera3d.enabled = false;
