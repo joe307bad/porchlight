@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{{ PRODUCT_NAME }}}</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #2b2a27; }
+      #unity-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
+      #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #a99f88; font: 13px system-ui, sans-serif; }
+      #loading .bar { width: 200px; height: 4px; margin-top: 10px; background: #1f1e1b; border-radius: 2px; overflow: hidden; }
+      #loading .fill { width: 0; height: 100%; background: #c2412d; }
+      #loading .error { color: #ff8a73; max-width: 480px; text-align: center; }
+    </style>
+  </head>
+  <body>
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <div id="loading"><div><div class="text">Loading Porchlight…</div><div class="bar"><div class="fill"></div></div></div></div>
+    <script src="Build/{{{ LOADER_FILENAME }}}"></script>
+    <script>
+      const canvas = document.querySelector('#unity-canvas');
+      const loading = document.querySelector('#loading');
+      const fill = loading.querySelector('.fill');
+      createUnityInstance(canvas, {
+        dataUrl: 'Build/{{{ DATA_FILENAME }}}',
+        frameworkUrl: 'Build/{{{ FRAMEWORK_FILENAME }}}',
+#if USE_THREADS
+        workerUrl: 'Build/{{{ WORKER_FILENAME }}}',
+#endif
+#if USE_WASM
+        codeUrl: 'Build/{{{ CODE_FILENAME }}}',
+#endif
+#if MEMORY_FILENAME
+        memoryUrl: 'Build/{{{ MEMORY_FILENAME }}}',
+#endif
+#if SYMBOLS_FILENAME
+        symbolsUrl: 'Build/{{{ SYMBOLS_FILENAME }}}',
+#endif
+        streamingAssetsUrl: 'StreamingAssets',
+        companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+        productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+        productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+        // Draw at the screen's own resolution, as the web game does.
+        devicePixelRatio: window.devicePixelRatio || 1,
+        matchWebGLToCanvasSize: true,
+      }, (progress) => {
+        fill.style.width = `${Math.round(progress * 100)}%`;
+      }).then(() => {
+        loading.remove();
+        canvas.focus();
+      }).catch((err) => {
+        loading.querySelector('.text').className = 'error';
+        loading.querySelector('.error').textContent = `Porchlight couldn't start: ${err}`;
+        loading.querySelector('.bar').remove();
+      });
+    </script>
+  </body>
+</html>

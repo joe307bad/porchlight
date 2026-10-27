@@ -1,5 +1,5 @@
 // The routes, all under /auth on the app's own origin (Caddy in production,
-// Vite's proxy in dev), so the cookies are first-party:
+// unity/Tools~/serve.mjs in dev), so the cookies are first-party:
 //
 //   GET  /auth/login?returnTo=/#seed=x   off to Keycloak (and on to Google)
 //   GET  /auth/callback                  back from Keycloak: set the session cookie

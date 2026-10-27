@@ -2,14 +2,16 @@ name: Deploy
 
 # Test, build, provision (Terraform) and deploy to the EC2 box. The same shape
 # as topspin's deploy-ec2.yml: Terraform owns the box, the box runs Docker
-# Compose, and this job copies files over and runs infra/docker/deploy.sh.
-# See infra/README.md for the one-time setup (secrets, Google, DNS).
+# Compose, and the deploy job copies files over and runs infra/docker/deploy.sh.
+# The game is the Unity WebGL build, made by the build job in Unity's Docker
+# image (game-ci). See infra/README.md for the one-time setup (secrets,
+# including the Unity licence; Google; DNS).
 
 on:
   push:
     branches: [main]
     paths:
-      - 'app/**'
+      - 'unity/**'
       - 'server/**'
       - 'infra/**'
       - '.github/workflows/deploy.yml'
@@ -26,7 +28,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # --- The game: check its engine-free code, then build it for the web ---------
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Unity licence
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "::error::The UNITY_LICENSE secret isn't set, so the game can't be built. See infra/README.md > One-time setup."
+            exit 1
+          fi
+
+      - name: Game — towns grow (every invariant checked) and repeat
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60
+
+      # Unity's import cache: without it every run re-imports every model.
+      - uses: actions/cache@v4
+        with:
+          path: unity/Library
+          key: unity-library-${{ hashFiles('unity/Assets/**', 'unity/Packages/**', 'unity/ProjectSettings/**') }}
+          restore-keys: unity-library-
+
+      - name: Game — WebGL build
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity
+          targetPlatform: WebGL
+          buildMethod: Porchlight.EditorTools.Setup.BuildWebGL
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webgl
+          path: unity/Builds/WebGL
+          if-no-files-found: error
+          retention-days: 7
+
   deploy:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,15 +85,12 @@ jobs:
         with:
           node-version: 24
 
-      # --- Gate: nothing reaches the box unless both halves pass ---------------
-      - name: App — install, typecheck, test, build
-        working-directory: app
-        run: |
-          npm ci
-          npm run typecheck
-          npm test
-          npm run build
+      - uses: actions/download-artifact@v4
+        with:
+          name: webgl
+          path: site
 
+      # --- Gate: nothing reaches the box unless the server passes too ----------
       - name: Auth service — install, typecheck, test
         working-directory: server
         run: |
@@ -154,8 +201,8 @@ jobs:
           RSYNC="rsync -az --delete -e 'ssh -i $HOME/.ssh/id_porchlight -o StrictHostKeyChecking=accept-new'"
           eval $RSYNC --exclude .env --exclude 'terraform/' infra/ "ec2-user@$HOST:/opt/porchlight/infra/"
           eval $RSYNC --exclude node_modules --exclude '.env*' --exclude test server/ "ec2-user@$HOST:/opt/porchlight/server/"
-          # The site last and with delayed deletes, so a page mid-load still finds its old assets.
-          eval $RSYNC --delete-delay app/dist/ "ec2-user@$HOST:/opt/porchlight/site/"
+          # The game last and with delayed deletes, so a page mid-load still finds its old files.
+          eval $RSYNC --delete-delay site/ "ec2-user@$HOST:/opt/porchlight/site/"
 
       - name: Run deploy.sh
         run: |

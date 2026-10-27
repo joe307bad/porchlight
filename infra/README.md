@@ -3,7 +3,7 @@
 Sign-in works the way it does in topspin: Keycloak sits in front of Google but the user never sees it. Everything runs on one small EC2 box.
 
 ```
-browser ──https──> Caddy ──┬── /            static app (app/dist, built in CI)
+browser ──https──> Caddy ──┬── /            the game: Unity WebGL build (unity/, built in CI)
                            ├── /auth/*      auth service (server/) ──back channel──┐
                            ├── /mp/*        the same service: multiplayer ──┐      │
                            └── auth.<domain> Keycloak ── Postgres ◄─────────┘      │
@@ -48,7 +48,9 @@ The realm is provisioned by `keycloak/init-keycloak.sh`, an idempotent `kcadm` s
 - **Keycloak** (Docker) on http://localhost:8080, with the realm provisioned in `dev` mode.
 - **The game database** (Docker, Postgres 17) on localhost:5434 (`game` / `devpassword`, database `city`).
 - **The auth + game server** on :3017.
-- **Vite** on http://localhost:5173, which proxies `/auth` and `/mp` (WebSockets too) to the server.
+- **The game** on http://localhost:5173: the Unity WebGL build, served by `unity/Tools~/serve.mjs`, which passes `/auth` and `/mp` (WebSockets too) through to the server.
+
+The first run builds the game from `unity/`, which needs Unity 6000.6.5f1 with WebGL support. That takes a few minutes. `./dev.sh --build` rebuilds after a change, and the editor's **Porchlight ▸ Build WebGL** does the same.
 
 To try multiplayer, sign in in two windows (a private one works), or open two tabs on one account and pick a different character in each. Then explore the same town: copy the URL, which carries the seed. To load-test, run `npm run bots -- 100 60` in `server/` (100 bots for 60 s; the server logs tick times every minute). Run `npm run test:db` in `server/` to also test the Postgres code against the dev database.
 
@@ -56,14 +58,14 @@ There are two dev accounts:
 
 | What | Where | Login |
 | --- | --- | --- |
-| The app (porchlight realm) | http://localhost:5173 | **dev / dev** |
+| The game (porchlight realm) | http://localhost:5173 | **dev / dev** |
 | Keycloak admin console (master realm) | http://localhost:8080/admin | admin / admin |
 
-Without Docker, `dev.sh` turns sign-in off (`VITE_AUTH_ENABLED=false`).
+Without Docker there's no Keycloak or game server: the game finds no sign-in service and plays alone.
 
 ## Production
 
-`porchlight.joebad.com` hosts the app and `auth.porchlight.joebad.com` hosts Keycloak. Both names are set in `.github/workflows/deploy.yml` (`DOMAIN`) and `terraform/main.tf`.
+`porchlight.joebad.com` hosts the game and `auth.porchlight.joebad.com` hosts Keycloak. Both names are set in `.github/workflows/deploy.yml` (`DOMAIN`) and `terraform/main.tf`.
 
 **The box is a t4g.small** (arm64, 2 burstable vCPUs, 2 GB RAM, 2 GB swap, a 20 GB root disk). It started as a t4g.micro (1 GB), where the stack's ~0.9 GB lived partly in swap; 2 GB holds it all in memory:
 - A t4g.nano (0.5 GB) is too small for the JVM.
@@ -76,7 +78,7 @@ Without Docker, `dev.sh` turns sign-in off (`VITE_AUTH_ENABLED=false`).
   | Auth + game server | ~110 MB idle, ~125 MB with 30 players (heap capped at 160 MB) |
 
   Caddy and the OS take the rest.
-- Nothing is built from the app on the box. The only image builds there are the Keycloak and auth-service images.
+- Nothing is built from the game on the box. The only image builds there are the Keycloak and auth-service images.
 - **Resizing:** change `instance_type` (or a disk size) in `terraform/main.tf`. A new instance type stops and starts the box in place: same disks, same Elastic IP, a minute or two of downtime. Disks grow in place too, and `deploy.sh` grows the partition and filesystems to match. EBS allows one change per volume every six hours.
 
 **Persistent data** lives on a separate 10 GB EBS volume mounted at `/data`: the Postgres server and Caddy's certificates. To keep one Postgres on the small box, that server holds two databases: `keycloak`, and `porchlight` for the game. Each has its own role. `deploy.sh` creates the game's database and role, and resets that role's password (`GAME_DB_PASSWORD`) from Secrets Manager on every deploy. The volume has `prevent_destroy`, and AWS takes a daily snapshot and keeps 7.
@@ -97,6 +99,8 @@ Without Docker, `dev.sh` turns sign-in off (`VITE_AUTH_ENABLED=false`).
    | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | the deploy user |
    | `EC2_SSH_PRIVATE_KEY` | a private key; its public half is installed on the box |
    | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | from step 2 |
+   | `UNITY_EMAIL`, `UNITY_PASSWORD` | the Unity account the build runs as |
+   | `UNITY_LICENSE` | that account's licence file: the contents of `Unity_lic.ulf` (on a Mac, `/Library/Application Support/Unity/`) |
 
 4. **DNS.** The workflow upserts both A records if `joebad.com` is a Route53 zone in that account. Otherwise it prints them as a warning; add them where the zone lives:
    - `porchlight.joebad.com A <elastic ip>`
@@ -106,10 +110,10 @@ Without Docker, `dev.sh` turns sign-in off (`VITE_AUTH_ENABLED=false`).
 
 ### Deploys
 
-Every push to `main` that touches `app/`, `server/`, `infra/` or the workflow deploys. So does running the workflow by hand. Each run:
-1. Tests and typechecks the app and the auth service, then builds the app.
+Every push to `main` that touches `unity/`, `server/`, `infra/` or the workflow deploys. So does running the workflow by hand. Each run:
+1. Checks the game's town generator, builds the game for WebGL in Unity's Docker image ([game-ci](https://game.ci); the import cache, `unity/Library`, is kept between runs), and tests and typechecks the auth service.
 2. Runs `terraform apply`. This is a no-op when nothing changed.
-3. Copies `infra/`, `server/` and `app/dist` to `/opt/porchlight`.
+3. Copies `infra/`, `server/` and the game's build to `/opt/porchlight`.
 4. Runs `infra/docker/deploy.sh` on the box. That script:
    - generates any missing secrets (database and admin passwords, client and session secrets) and stores them in Secrets Manager under `porchlight/prod`;
    - starts the stack;

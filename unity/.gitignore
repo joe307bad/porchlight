@@ -1,0 +1,47 @@
+# Unity
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+/[Mm]emoryCaptures/
+/[Rr]ecordings/
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+sysinfo.txt
+crashlytics-build.properties
+mono_crash.*
+.vs/
+.idea/
+.DS_Store
+# .NET builds of the parity checker
+Tools~/**/bin/
+Tools~/**/obj/
+.vscode/
+/[Aa]ssets/StreamingAssets/
+/[Aa]ssets/StreamingAssets.meta
+/Data/
+# Made by Porchlight ▸ Set Up Project (Editor/Library.cs)
+/Assets/Porchlight/Generated/
+/Assets/Porchlight/Generated.meta
+/Assets/Porchlight/Resources/Porchlight/Library.asset
+/Assets/Porchlight/Resources/Porchlight/Library.asset.meta
+!Tools~/Checks/Checks.csproj
