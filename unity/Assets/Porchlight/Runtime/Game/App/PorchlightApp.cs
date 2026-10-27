@@ -194,7 +194,7 @@ namespace Porchlight.App
                 frames++;
             }
             var renderers = FindObjectsByType<Renderer>();
-            Debug.Log($"smoke: {frames / ((platform.Now() - start) / 1000):0} fps, {renderers.Length} renderers ({renderers.Count(r => r.isPartOfStaticBatch)} static-batched)");
+            Debug.Log($"smoke: {frames / ((platform.Now() - start) / 1000):0} fps, {renderers.Length} renderers ({renderers.Count(r => r.isPartOfStaticBatch)} static-batched), {UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / 1048576} MB allocated, {UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() / 1048576} MB reserved, {GC.GetTotalMemory(false) / 1048576} MB managed");
             Debug.Log($"smoke: after auto walk player={iso?.PlayerPosition} auto={iso?.IsAuto}");
             LeaveExplore();
             Regenerate(RandomSeed(), @params);

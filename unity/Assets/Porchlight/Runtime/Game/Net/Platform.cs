@@ -104,7 +104,8 @@ namespace Porchlight.App
 #if UNITY_WEBGL && !UNITY_EDITOR
                 return PL_Location();
 #else
-                return Environment.GetEnvironmentVariable("PORCHLIGHT_ORIGIN") ?? "http://localhost:3017/";
+                string hash = Environment.GetEnvironmentVariable("PORCHLIGHT_HASH");
+                return (Environment.GetEnvironmentVariable("PORCHLIGHT_ORIGIN") ?? "http://localhost:3017/") + (string.IsNullOrEmpty(hash) ? "" : "#" + hash.TrimStart('#'));
 #endif
             }
         }
