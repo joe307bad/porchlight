@@ -382,7 +382,8 @@ namespace Porchlight.Net
 
         SchemaType InstanceType(byte[] b, ref int i, SchemaType fallback)
         {
-            if (b[i] == SchemaWire.TYPE_ID)
+            // No type id (the field's own type), maybe at the very end of the patch.
+            if (i < b.Length && b[i] == SchemaWire.TYPE_ID)
             {
                 i++;
                 int id = (int)SchemaWire.Number(b, ref i);

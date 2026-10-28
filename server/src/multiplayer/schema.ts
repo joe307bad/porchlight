@@ -36,9 +36,34 @@ export const Player = schema(
 );
 export type Player = InstanceType<typeof Player>;
 
+/** A player's own car, parked where they left it (everyone sees every parked car, near or far). */
+export const ParkedCar = schema(
+  {
+    /** The car model + 1. */
+    model: 'uint8',
+    x: 'float32',
+    z: 'float32',
+    /** Heading, 0-65535 for a full turn (quantizeYaw). */
+    yaw: 'uint16',
+  },
+  'ParkedCar',
+);
+export type ParkedCar = InstanceType<typeof ParkedCar>;
+
 export const CityState = schema(
   {
     players: { map: Player, view: true },
+    /** Each player's parked car, by session id (absent while they drive it, or have none). */
+    cars: { map: ParkedCar },
+    /**
+     * The session that runs the town's traffic and townsfolk and sends them to
+     * everyone else (MSG_WORLD), so all see the same cars and people.
+     */
+    host: 'string',
+    /** Night in this town: anyone can switch it, and it's the same for everyone. */
+    night: 'boolean',
+    /** The town's cars someone has taken: "p3" (parked car 3), "t12" (traffic car 12), comma separated. */
+    taken: 'string',
   },
   'CityState',
 );

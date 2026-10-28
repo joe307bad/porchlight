@@ -14,6 +14,11 @@ namespace Porchlight.Net
         public const string MSG_MOVE = "move";
         public const string MSG_TELEPORT = "teleport";
         public const string MSG_LOOK = "look";
+        public const string MSG_NIGHT = "night";
+        public const string MSG_TAKE = "take";
+        public const string MSG_CAR = "car";
+        /// <summary>The host's traffic and townsfolk; the room passes it on to everyone else.</summary>
+        public const string MSG_WORLD = "world";
 
         public const string MSG_SPAWN = "spawn";
         public const string MSG_CORRECT = "correct";
@@ -33,6 +38,9 @@ namespace Porchlight.Net
 
         /// <summary>How often clients send moves (ms): about 30 a second.</summary>
         public const int SEND_MS = 33;
+
+        /// <summary>How often the host sends the town's traffic and townsfolk (ms): about 10 a second.</summary>
+        public const int WORLD_MS = 100;
 
         public static int QuantizeYaw(double yaw) => (int)Math.Floor((yaw / (2 * Math.PI)) * 65536 + 0.5) & 0xffff;
 

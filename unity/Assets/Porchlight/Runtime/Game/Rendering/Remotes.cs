@@ -220,6 +220,9 @@ namespace Porchlight.Rendering
             }
         }
 
+        /// <summary>Where this player is drawn now, if they're in view.</summary>
+        public Vec2? PositionOf(string key) => remotes.TryGetValue(key, out var r) ? new Vec2(r.walker.x, r.walker.y) : (Vec2?)null;
+
         public List<RemoteDriver> Drivers()
         {
             var o = new List<RemoteDriver>();

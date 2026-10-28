@@ -27,6 +27,7 @@ static class Program
     static int Towns(int count)
     {
         int failed = 0;
+        long buildings = 0, driveways = 0, beds = 0, parked = 0;
         var sw = Stopwatch.StartNew();
         for (int i = 0; i < count; i++)
         {
@@ -37,6 +38,21 @@ static class Program
             {
                 var a = Generator.Generate(seed, p, check: true);
                 var b = Generator.Generate(seed, p);
+                // The street scene too: parking lanes, driveways and gardens.
+                var layout = Porchlight.Explore.Layout.Build(a);
+                buildings += a.buildings.Count;
+                parked += layout.cars.Count;
+                foreach (byte u in layout.use)
+                {
+                    if (u == Porchlight.Explore.Use.DRIVEWAY) driveways++;
+                    if (u == Porchlight.Explore.Use.GARDEN) beds++;
+                }
+                string shared = i == 0 ? Shared(a, layout) : null;
+                if (shared != null)
+                {
+                    failed++;
+                    Console.WriteLine($"FAIL {seed}: shared town: {shared}");
+                }
                 string why = Same(a, b);
                 if (why != null)
                 {
@@ -50,8 +66,49 @@ static class Program
                 Console.WriteLine($"FAIL {seed}: {e.Message}");
             }
         }
-        Console.WriteLine($"{count - failed}/{count} towns ok in {sw.Elapsed.TotalSeconds:0.0} s");
+        Console.WriteLine($"{count - failed}/{count} towns ok in {sw.Elapsed.TotalSeconds:0.0} s: {buildings} buildings, {driveways} driveway tiles, {beds} garden beds, {parked} parked cars");
         return failed == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// The town as players share it: the host's traffic and townsfolk survive
+    /// being packed and followed, a client taking over carries them on, and the
+    /// player finder's route reaches its target.
+    /// </summary>
+    static string Shared(TownModel model, Porchlight.Explore.IsoLayout layout)
+    {
+        var traffic = new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng("t"), Porchlight.Explore.Catalog.PickCarModel);
+        var copy = new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng("other"), Porchlight.Explore.Catalog.PickCarModel);
+        if (traffic.cars.Count == 0) return null;
+        for (int k = 0; k < 40; k++) traffic.Update(0.05, null);
+        var people = new System.Collections.Generic.List<Porchlight.Explore.Walker>();
+        var rng = new Porchlight.Core.Rng("p");
+        for (int k = 0; k < 10 && layout.sidewalks.paths.Count > 0; k++) people.Add(Porchlight.Explore.Pedestrian.Create("x", layout.sidewalks, rng));
+        var others = new System.Collections.Generic.List<Porchlight.Explore.Walker>();
+        foreach (var q in people) others.Add(new Porchlight.Explore.Walker("x", 0, 0));
+        var sync = new Porchlight.Explore.WorldSync();
+        sync.Receive(Porchlight.Explore.WorldSync.EncodeCars(traffic.cars), Porchlight.Explore.WorldSync.EncodePeople(people));
+        sync.Step(0.2, copy.cars, others); // a full catch-up, carrying on 0.2 s at speed
+        for (int k = 0; k < traffic.cars.Count; k++)
+            if (Math.Abs(traffic.cars[k].x - copy.cars[k].x) > 0.6 || Math.Abs(traffic.cars[k].y - copy.cars[k].y) > 0.6) return $"traffic car {k} not followed";
+        for (int k = 0; k < people.Count; k++)
+            if (Math.Abs(people[k].x - others[k].x) > 0.4) return $"person {k} not followed";
+        foreach (var c in copy.cars) copy.Adopt(c);
+        for (int k = 0; k < 40; k++) copy.Update(0.05, null);
+        foreach (var c in copy.cars) if (double.IsNaN(c.x) || c.x < 0 || c.x > model.width) return "adopted traffic went astray";
+        if (layout.sidewalks.paths.Count > 1)
+        {
+            var from = layout.sidewalks.paths[0].points[0];
+            var to = layout.sidewalks.paths[layout.sidewalks.paths.Count - 1].points[0];
+            var walk = Porchlight.Explore.SidewalkWalk.Toward(layout.sidewalks, new Porchlight.Core.Rng("f"), from, to);
+            if (walk != null)
+            {
+                var route = walk.RoutePoints();
+                var end = route[route.Count - 1];
+                if (Math.Sqrt((end.x - to.x) * (end.x - to.x) + (end.y - to.y) * (end.y - to.y)) > 0.5) return "the way to a player stops short";
+            }
+        }
+        return null;
     }
 
     static string Same(TownModel a, TownModel b)

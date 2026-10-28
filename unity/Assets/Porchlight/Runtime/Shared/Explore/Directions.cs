@@ -73,7 +73,7 @@ namespace Porchlight.Explore
                 steps.Add(new Step { kind = turn, text = TurnText(turn, street, last.street, Name(street)), street = street, distance = len });
             }
             int goalStreet = StreetOf(it.goal);
-            steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at your destination on {Name(goalStreet)}", street = goalStreet, distance = 0 });
+            steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at {it.destination ?? "your destination"} on {Name(goalStreet)}", street = goalStreet, distance = 0 });
             for (int k = steps.Count - 2; k >= 1; k--)
             {
                 var a = steps[k - 1];
@@ -123,7 +123,7 @@ namespace Porchlight.Explore
                 path = leg.path;
                 dir = leg.dir;
             }
-            o.Add(new WalkStretch { path = path, s0 = s, s1 = path == it.goal ? Len(path) / 2 : dir > 0 ? Len(path) : 0, dir = dir, via = via });
+            o.Add(new WalkStretch { path = path, s0 = s, s1 = path == it.goal ? (double.IsNaN(it.goalS) ? Len(path) / 2 : it.goalS) : dir > 0 ? Len(path) : 0, dir = dir, via = via });
             return o;
         }
 

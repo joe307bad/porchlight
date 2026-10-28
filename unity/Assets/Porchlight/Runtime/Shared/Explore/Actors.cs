@@ -218,7 +218,7 @@ namespace Porchlight.Explore
     /// <summary>A townsperson strolling the sidewalks (now and then crossing the road), or heading for them.</summary>
     public sealed class Pedestrian : Walker
     {
-        readonly SidewalkWalk walk;
+        SidewalkWalk walk;
         readonly Rng rng;
         double pause;
         readonly double pace;
@@ -242,6 +242,15 @@ namespace Porchlight.Explore
             double scale = rng.Range(0.85, 1.05);
             double pace = rng.Range(0.9, 1.5);
             return new Pedestrian(look, walk, at, rng, scale, pace);
+        }
+
+        /// <summary>Carry on from where they are now (another client was walking them until now).</summary>
+        public void Rejoin(SidewalkNetwork net)
+        {
+            if (net.paths.Count == 0) return;
+            walk = SidewalkWalk.Join(net, rng, new Vec2(x, y));
+            pause = 0;
+            going = speed;
         }
 
         public void Update(double dt)

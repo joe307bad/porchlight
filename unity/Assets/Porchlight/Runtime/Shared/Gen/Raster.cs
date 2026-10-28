@@ -40,9 +40,12 @@ namespace Porchlight.Gen
         /// <summary>Width of the sidewalk the explore view draws along each side of a road or street (tiles).</summary>
         public const double SIDEWALK_WIDTH = 0.45;
 
-        /// <summary>How far a road's drawn surface reaches from its centreline, sidewalks included.</summary>
+        /// <summary>Width of the parking lane between each side of a road or street and its sidewalk (tiles): room for a parked car.</summary>
+        public const double PARKING_WIDTH = 0.5;
+
+        /// <summary>How far a road's drawn surface reaches from its centreline, parking lanes and sidewalks included.</summary>
         public static double RoadReach(RoadKind kind, GenParams p) =>
-            RoadDrawWidth(kind, p) / 2 + (kind == RoadKind.Path ? 0 : SIDEWALK_WIDTH);
+            RoadDrawWidth(kind, p) / 2 + (kind == RoadKind.Path ? 0 : PARKING_WIDTH + SIDEWALK_WIDTH);
 
         public static double RoadDrawWidth(RoadKind kind, GenParams p)
         {
@@ -52,7 +55,8 @@ namespace Porchlight.Gen
         }
 
         /// <summary>Tiles whose centre is closer than this to a road's centreline belong to the road.</summary>
-        public static double RoadHalfWidth(RoadKind kind, GenParams p) => Math.Max(0.75, RoadDrawWidth(kind, p) / 2 + 0.5);
+        public static double RoadHalfWidth(RoadKind kind, GenParams p) =>
+            Math.Max(0.75, RoadDrawWidth(kind, p) / 2 + (kind == RoadKind.Path ? 0 : PARKING_WIDTH) + 0.5);
 
         public static byte[] LakeMask(TownModel model)
         {

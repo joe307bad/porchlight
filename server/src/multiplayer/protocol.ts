@@ -11,11 +11,16 @@ export const CITY_ROOM = 'city';
 export const MSG_MOVE = 'move'; // MoveMessage, about 30 a second while moving (see SEND_MS)
 export const MSG_TELEPORT = 'teleport'; // { x, z }: a minimap jump; answered with `correct`
 export const MSG_LOOK = 'look'; // { model }: a new character
+export const MSG_NIGHT = 'night'; // { on }: switch the town to night or day, for everyone
+export const MSG_TAKE = 'take'; // { car }: "p3" or "t12", a parked or traffic car got into
+export const MSG_CAR = 'car'; // ParkedCarMessage: where their own car is parked (or that it's gone)
+export const MSG_WORLD = 'world'; // the host's traffic and townsfolk (WorldMessage), about 10 a second
 
 /** Server → client. */
 export const MSG_SPAWN = 'spawn'; // SpawnMessage, once after joining
 export const MSG_CORRECT = 'correct'; // CorrectMessage: snap here
 export const MSG_DOTS = 'dots'; // DotsMessage, once a second: everyone in the room, for the minimap
+// MSG_WORLD, passed on from the host to everyone else as it comes.
 
 /** Close codes (4000 is a consented leave; 4001-4010 are Colyseus's own). */
 export const CLOSE_SIGNED_IN_ELSEWHERE = 4100;
@@ -75,8 +80,34 @@ export interface CorrectMessage {
   epoch: number;
 }
 
-/** [sessionId, x, z] per player, positions rounded to a tenth of a tile. */
-export type DotsMessage = [string, number, number][];
+/** [sessionId, x, z, name] per player, positions rounded to a tenth of a tile. */
+export type DotsMessage = [string, number, number, string][];
+
+/** Their own car, left parked: the model + 1 (0: no car, or they're driving it), where, and its heading in radians. */
+export interface ParkedCarMessage {
+  model: number;
+  x: number;
+  z: number;
+  yaw: number;
+}
+
+/**
+ * The host's town, as the clients encode it: the traffic (`cars`) and the
+ * townsfolk (`people`), packed into bytes, and the looks of townsfolk added
+ * since the town was built. The room only checks its size and passes it on.
+ */
+export interface WorldMessage {
+  cars: Uint8Array;
+  people: Uint8Array;
+  looks: string[];
+}
+
+/** Most bytes a world message may carry. */
+export const WORLD_MAX_BYTES = 16_384;
+/** The host's world messages, at most this many a second. */
+export const WORLD_PER_SECOND = 12;
+/** No world message from the host for this long: someone else takes over. */
+export const HOST_SILENT_MS = 3_000;
 
 /**
  * Heading in radians ↔ the 0-65535 on the wire. (A byte's 1.4° steps were

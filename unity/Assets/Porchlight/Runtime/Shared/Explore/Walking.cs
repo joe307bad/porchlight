@@ -28,6 +28,10 @@ namespace Porchlight.Explore
         public Spot start;
         public List<Leg> legs;
         public int goal;
+        /// <summary>Where on the goal sidewalk the walk ends (NaN: halfway along).</summary>
+        public double goalS = double.NaN;
+        /// <summary>Who or what is there, for the last direction (null: "your destination").</summary>
+        public string destination;
         public bool joining;
     }
 
@@ -52,6 +56,7 @@ namespace Porchlight.Explore
         Crossing crossing;
         List<Leg> route = new List<Leg>();
         int? goal;
+        double goalS = double.NaN;
         bool roaming;
         bool joining;
         bool needsPlan;
@@ -74,7 +79,7 @@ namespace Porchlight.Explore
         }
 
         /// <summary>Start from an arbitrary point: walk straight to the nearest sidewalk, then follow it.</summary>
-        public static SidewalkWalk Join(SidewalkNetwork net, Rng rng, Vec2 from)
+        public static SidewalkWalk Join(SidewalkNetwork net, Rng rng, Vec2 from, int dir = 0)
         {
             int bestPath = 0;
             double bestS = 0, bestD = double.PositiveInfinity;
@@ -91,11 +96,54 @@ namespace Porchlight.Explore
                     bestD = d;
                 }
             }
-            var walk = new SidewalkWalk(net, rng, new Spot { path = bestPath, s = bestS, dir = rng.Chance(0.5) ? 1 : -1 });
+            var walk = new SidewalkWalk(net, rng, new Spot { path = bestPath, s = bestS, dir = dir != 0 ? dir : rng.Chance(0.5) ? 1 : -1 });
             walk.crossing = new Crossing { from = from, to = PointAlong(net.paths[bestPath], bestS), t = 0, then = new Spot { path = bestPath, s = bestS, dir = walk.dir } };
             walk.joining = true;
             return walk;
         }
+
+        /// <summary>
+        /// A route along the sidewalks from `from` to the spot nearest `to`
+        /// (whichever way along the first sidewalk is shorter). Only for its
+        /// RoutePoints and Itinerary: nobody walks it.
+        /// </summary>
+        public static SidewalkWalk Toward(SidewalkNetwork net, Rng rng, Vec2 from, Vec2 to)
+        {
+            int goal = 0;
+            double goalS = 0, bestD = double.PositiveInfinity;
+            for (int i = 0; i < net.paths.Count; i++)
+            {
+                var p = net.paths[i];
+                double s = Geo.ArcPosition(to, p.points);
+                var q = PointAlong(p, s);
+                double d = Numbers.Hypot(q.x - to.x, q.y - to.y);
+                if (d < bestD)
+                {
+                    goal = i;
+                    goalS = s;
+                    bestD = d;
+                }
+            }
+            SidewalkWalk best = null;
+            double bestLength = double.PositiveInfinity;
+            foreach (int dir in new[] { 1, -1 })
+            {
+                var walk = Join(net, rng, from, dir);
+                walk.goal = goal;
+                walk.goalS = goalS;
+                walk.Plan();
+                if (walk.goal == null) continue;
+                double length = Geo.PolylineLength(walk.RoutePoints());
+                if (length < bestLength)
+                {
+                    best = walk;
+                    bestLength = length;
+                }
+            }
+            return best;
+        }
+
+        double GoalS(SidewalkPath p) => double.IsNaN(goalS) ? p.Length / 2 : goalS;
 
         /// <summary>Keep heading somewhere far away, and on arrival pick another.</summary>
         public void Roam()
@@ -108,7 +156,7 @@ namespace Porchlight.Explore
         {
             if (goal == null) return null;
             var p = net.paths[goal.Value];
-            return PointAlong(p, p.Length / 2);
+            return PointAlong(p, GoalS(p));
         }
 
         /// <summary>The planned route as a polyline from where we are to the goal.</summary>
@@ -149,7 +197,7 @@ namespace Porchlight.Explore
             if (path == goal)
             {
                 var p = net.paths[path];
-                pts.AddRange(Slice(p, s, p.Length / 2));
+                pts.AddRange(Slice(p, s, GoalS(p)));
             }
             return pts;
         }
@@ -158,7 +206,7 @@ namespace Porchlight.Explore
         {
             if (goal == null) return null;
             var start = crossing != null ? crossing.then : new Spot { path = path, s = s, dir = dir };
-            return new Itinerary { start = start, legs = new List<Leg>(route), goal = goal.Value, joining = joining };
+            return new Itinerary { start = start, legs = new List<Leg>(route), goal = goal.Value, goalS = goalS, joining = joining };
         }
 
         void PickFarGoal()
@@ -179,6 +227,7 @@ namespace Porchlight.Explore
                 }
             }
             goal = best;
+            goalS = double.NaN;
             Plan();
         }
 

@@ -20,6 +20,8 @@ namespace Porchlight.Rendering
         static Material headMaterial, tailMaterial;
 
         public readonly GameObject root;
+        /// <summary>Which car model (Catalog.CARS) it is, where the owner keeps track.</summary>
+        public int model;
         readonly double scale;
         readonly List<Renderer> heads = new List<Renderer>();
         readonly List<Renderer> tails = new List<Renderer>();

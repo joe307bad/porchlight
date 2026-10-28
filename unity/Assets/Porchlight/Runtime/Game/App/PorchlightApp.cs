@@ -70,6 +70,13 @@ namespace Porchlight.App
         bool asked;
         double lastFollow;
         bool started;
+        /// <summary>The town behind the sign-in card: someone wandering its streets.</summary>
+        ExploreView attract;
+        /// <summary>The pictures in the boxes by the minimap, which box is picked, and the car model to bring round.</summary>
+        Portraits portraits;
+        string picked;
+        int carModel;
+        double playersAt;
 
         void Awake()
         {
@@ -109,6 +116,7 @@ namespace Porchlight.App
             camera3d.depth = 0;
             camera3d.allowMSAA = true;
             camera3d.enabled = false;
+            camera3d.cullingMask = ~(1 << Portraits.Layer);
         }
 
         void BuildUi()
@@ -163,12 +171,36 @@ namespace Porchlight.App
                     Start2();
                     return;
                 }
+                StartAttract();
                 SignInGate.Show(root, provider, error ?? err, () =>
                 {
                     string returnTo = platform.PathName + platform.Search + platform.Hash;
                     platform.Navigate("/auth/login?returnTo=" + Uri.EscapeDataString(returnTo));
                 });
             });
+        }
+
+        /// <summary>Behind the sign-in card: a fresh little town, and someone out for a walk in it.</summary>
+        void StartAttract()
+        {
+            try
+            {
+                var host = new VisualElement();
+                host.style.display = DisplayStyle.None;
+                root.Add(host);
+                var p = GenParams.Defaults;
+                p.width = p.height = 96;
+                attract = new ExploreView(camera3d, ModelLibrary.Instance, new ExploreOverlay(host) { Dpr = dpr }, input) { Attract = true };
+                attract.SetTown(Generator.Generate(RandomSeed(), GenParams.Normalize(p)));
+                attract.Spawn(Catalog.RandomLook(new Rng(RandomSeed())));
+                attract.SetAuto(true);
+            }
+            catch (Exception err)
+            {
+                // Only scenery: the card works without it.
+                Debug.LogException(err);
+                attract = null;
+            }
         }
 
         void Start2()
@@ -235,7 +267,7 @@ namespace Porchlight.App
             footer.Add(statusLabel);
             root.Add(footer);
 
-            panel = new DebugPanel(@params, map.visibleLayers, ChangeParams, ResetParams, ToggleLayer);
+            panel = new DebugPanel(map.visibleLayers, ToggleLayer);
             panel.SetOpen(false);
             root.Add(panel.root);
 
@@ -293,6 +325,11 @@ namespace Porchlight.App
             platform.Pump();
             timers.Tick();
             input.Update();
+            if (attract != null)
+            {
+                attract.viewport = new Rect(0, 0, Screen.width, Screen.height);
+                attract.Update();
+            }
             if (!started) return;
             root.EnableInClassList("narrow", Screen.width / dpr <= 720);
             if (iso != null)
@@ -300,6 +337,8 @@ namespace Porchlight.App
                 iso.viewport = ScreenRect(isoHost);
                 if (exploring) ZoomWithWheel();
                 iso.Update();
+                UpdateGarage();
+                UpdatePlayers();
             }
             Follow();
             CheckHash();
@@ -391,10 +430,9 @@ namespace Porchlight.App
             map.Redraw();
         }
 
-        /// <summary>Params changed in one control surface: mirror them in the other and rebuild.</summary>
+        /// <summary>Params changed: show them and rebuild.</summary>
         void ChangeParams(GenParams next)
         {
-            panel.SetParams(next);
             sidebar.SetParams(next);
             Regenerate(seed, next);
         }
@@ -423,6 +461,12 @@ namespace Porchlight.App
             iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
             iso.OnCarChange = SyncCarButton;
             iso.OnAutoChange = SyncAutoWalkButton;
+            iso.OnTake = car => net?.Take(car);
+            iso.OnNightChange = () => controls.dayNight.text = iso.IsNight ? "Day" : "Night";
+            iso.OnCycle = Cycle;
+            portraits = new Portraits(ModelLibrary.Instance);
+            overlay.OnPersonBox = () => Pick(picked == "person" ? null : "person");
+            overlay.OnCarBox = BringCar;
             iso.OnPadAction = action =>
             {
                 if (action == PadAction.Menu)
@@ -573,11 +617,72 @@ namespace Porchlight.App
             controls.autoWalk.EnableInClassList("active", on);
         }
 
+        /// <summary>Night or day: online, for everyone in the town (the room says when it's done).</summary>
         void ToggleNight()
         {
             if (iso == null) return;
-            iso.SetNight(!iso.IsNight);
-            controls.dayNight.text = iso.IsNight ? "Day" : "Night";
+            if (net != null && net.Online) net.SetNight(!iso.IsNight);
+            else iso.SetTownNight(!iso.IsNight);
+        }
+
+        // The boxes by the minimap: your character and your car.
+
+        void Pick(string box)
+        {
+            picked = box;
+            if (iso != null) iso.Cycling = box != null;
+            overlay?.SetGarage(portraits.person, portraits.car, picked);
+        }
+
+        /// <summary>The car box: your car (in place of any other) in the nearest parking lane.</summary>
+        void BringCar()
+        {
+            if (iso == null) return;
+            Pick("car");
+            if (!iso.SpawnCar(carModel)) overlay.Notify("No room for a car near here. Try by a street.");
+            else overlay.Notify(null);
+        }
+
+        /// <summary>Tab or a bumper with a box picked: the next character, or the next car.</summary>
+        void Cycle(int step)
+        {
+            if (iso == null || picked == null) return;
+            if (picked == "person")
+            {
+                var look = iso.CycleLook(step);
+                if (look != null) net?.LookChanged(look);
+                return;
+            }
+            int n = Catalog.CARS.Length;
+            carModel = ((carModel + step) % n + n) % n;
+            if (iso.HasCar) iso.ChangeCar(carModel);
+        }
+
+        void UpdateGarage()
+        {
+            if (portraits == null) return;
+            // The box shows the car you have (one you got into, too).
+            if (iso.CarModel >= 0) carModel = iso.CarModel;
+            portraits.SetLook(iso.LookModel);
+            portraits.SetCar(carModel);
+            portraits.Update(Time.deltaTime, exploring);
+            if (!garageShown)
+            {
+                garageShown = true;
+                overlay.SetGarage(portraits.person, portraits.car, picked);
+            }
+        }
+
+        bool garageShown;
+
+        /// <summary>Who else is here, in the sidebar: tick one for the way to them.</summary>
+        void UpdatePlayers()
+        {
+            double now = platform.Now();
+            if (now < playersAt) return;
+            playersAt = now + 500;
+            var list = iso.Others.Select(o => (o.key, o.name)).OrderBy(o => o.name, StringComparer.OrdinalIgnoreCase).ToList();
+            sidebar.SetPlayers(list, iso.Finding, key => iso.Find(key));
         }
 
         void ToggleAutoWalk()
@@ -634,7 +739,12 @@ namespace Porchlight.App
                 if (code == Key.T) ToggleAutoWalk();
                 if (code == Key.V && !repeat) ToggleCloseUp();
                 if (code == Key.C) NewLook();
-                if (code == Key.Escape) LeaveExplore();
+                if (code == Key.Tab && !repeat && picked != null) Cycle(input.ShiftHeld ? -1 : 1);
+                if (code == Key.Escape)
+                {
+                    if (picked != null) Pick(null);
+                    else LeaveExplore();
+                }
                 return;
             }
             if (Typing()) return;
@@ -710,7 +820,6 @@ namespace Porchlight.App
             if (writtenHash == null || h == writtenHash) return;
             writtenHash = h;
             var state = ReadUrlState();
-            panel.SetParams(state.@params);
             sidebar.SetParams(state.@params);
             Regenerate(state.seed ?? RandomSeed(), state.@params);
 #endif

@@ -47,6 +47,8 @@ namespace Porchlight.Explore
         readonly double[] lengths;
         readonly List<double>[] at;
         readonly Dictionary<int, List<int>> byNode = new Dictionary<int, List<int>>();
+        /// <summary>The roads traffic drives (not paths, cul-de-sacs or stubs).</summary>
+        readonly List<int> mains = new List<int>();
         readonly Rng rng;
 
         public Traffic(IsoLayout layout, Rng rng, Func<Rng, int> pickModel)
@@ -64,7 +66,6 @@ namespace Porchlight.Explore
                 lengths[i] = a[a.Count - 1];
             }
             var dead = Layout.DeadEnds(roads);
-            var mains = new List<int>();
             for (int i = 0; i < roads.Count; i++)
             {
                 var r = roads[i];
@@ -122,6 +123,37 @@ namespace Porchlight.Explore
             var c = cars[i];
             c.taken = true;
             return c;
+        }
+
+        /// <summary>
+        /// Carry on from where another client's traffic had this car (it was
+        /// running the town until now): onto the nearest road, the way it was heading.
+        /// </summary>
+        public void Adopt(TrafficCar car)
+        {
+            var here = new Vec2(car.x, car.y);
+            int best = -1;
+            double bestD = double.PositiveInfinity;
+            foreach (int i in mains)
+            {
+                double d = Geo.DistToPolyline(here, roads[i].points);
+                if (d < bestD)
+                {
+                    bestD = d;
+                    best = i;
+                }
+            }
+            if (best < 0) return;
+            var r = roads[best];
+            double s = Math.Min(lengths[best], Math.Max(0, Geo.ArcPosition(here, r.points)));
+            var a = AutoDrive.PointAt(r.points, at[best], Math.Max(0, s - 0.1));
+            var b = AutoDrive.PointAt(r.points, at[best], Math.Min(lengths[best], s + 0.1));
+            double along = (b.x - a.x) * Math.Cos(car.heading) + (b.y - a.y) * Math.Sin(car.heading);
+            car.road = best;
+            car.s = s;
+            car.dir = along >= 0 ? 1 : -1;
+            car.side = car.dir;
+            car.wait = 0;
         }
 
         public void Update(double dt, IReadOnlyList<Vec2> obstacles)

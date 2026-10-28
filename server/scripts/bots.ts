@@ -40,6 +40,7 @@ async function bot(i: number): Promise<{ room: Room; patches: number }> {
   let epoch = 0;
   room.onMessage('spawn', () => {});
   room.onMessage('dots', () => {});
+  room.onMessage('world', () => {});
   room.onMessage('correct', (c: { x: number; z: number; epoch: number }) => {
     x = c.x;
     z = c.z;

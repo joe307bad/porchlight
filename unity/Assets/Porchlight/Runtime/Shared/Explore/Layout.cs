@@ -1,7 +1,8 @@
 // Turns the blueprint into a street scene for the 3D explore view: smoothed
 // roads with sidewalks, every building on its footprint facing its street,
-// yards with fences, sheds and gardens, community gardens, parked cars, and
-// the sidewalk network townsfolk walk. Pure.
+// yards with fences, sheds, gardens and driveways, community gardens, parked
+// cars (along the parking lane between each road and its sidewalks, and in
+// driveways), and the sidewalk network townsfolk walk. Pure.
 
 using System;
 using System.Collections.Generic;
@@ -79,6 +80,7 @@ namespace Porchlight.Explore
         public const byte SHED = 4;
         public const byte COMMUNITY_GARDEN = 5;
         public const byte GREEN = 6;
+        public const byte DRIVEWAY = 7;
     }
 
     public struct BlockPlan
@@ -111,6 +113,12 @@ namespace Porchlight.Explore
     {
         /// <summary>Width of the sidewalk along each side of a road (tiles).</summary>
         public const double SIDEWALK = Raster.SIDEWALK_WIDTH;
+        /// <summary>Width of the parking lane between each side of a road and its sidewalk (tiles).</summary>
+        public const double PARKING = Raster.PARKING_WIDTH;
+        /// <summary>Most cars parked along the streets.</summary>
+        const int MAX_STREET_PARKED = 400;
+        /// <summary>Houses this tall or shorter count as small: they get driveways and gardens.</summary>
+        const int SMALL_FLOORS = 2;
         const int SMOOTHING_PASSES = 2;
         const double CORNER_RADIUS = 0.9;
         static readonly Facing[] FACINGS = { Facing.N, Facing.E, Facing.S, Facing.W };
@@ -152,7 +160,7 @@ namespace Porchlight.Explore
                 });
             var bridges = FindBridges(model, roads);
             var layout = PlanBlocks(model);
-            layout.cars = ParkCars(model, roads);
+            layout.cars.AddRange(ParkCars(model, roads, layout.use));
             layout.roads = roads;
             layout.bridges = bridges;
             layout.sidewalks = SidewalkNetworkOf(roads);
@@ -167,6 +175,8 @@ namespace Porchlight.Explore
             var houses = new List<House>();
             var fences = new List<Fence>();
             var plans = new List<BlockPlan>();
+            var cars = new List<ParkedCar>();
+            var p = model.@params;
             bool Street(int x, int y) =>
                 Grid.InBounds(x, y, w, h) && (tiles.overlay[Grid.Index(x, y, w)] == Overlay.ROAD_MAIN || tiles.overlay[Grid.Index(x, y, w)] == Overlay.ROAD_STREET);
             bool Open(int t)
@@ -215,29 +225,105 @@ namespace Porchlight.Explore
                     var yard = lotTiles.FindAll(t => use[t] == Use.NONE);
                     foreach (int t in yard) use[t] = Use.YARD;
                     int rndSeed = b.id + 7919;
+                    bool small = style == HouseStyle.House && floors <= SMALL_FLOORS;
+                    if (small && Hash(rndSeed, 3) < p.driveways)
+                    {
+                        var drive = Driveway(house, yard, w, h, Street);
+                        if (drive != null)
+                        {
+                            foreach (int t in drive) use[t] = Use.DRIVEWAY;
+                            if (drive.Count >= 2 && Hash(rndSeed, 4) < 0.75)
+                            {
+                                // A car in it, beside the house, nose to the street or the house.
+                                var (fx, fy) = Grid.DIRS4[(int)house.facing];
+                                double cx2 = ((drive[0] % w) + (drive[1] % w)) / 2.0 + 0.5;
+                                double cy2 = (drive[0] / w + drive[1] / w) / 2.0 + 0.5;
+                                cars.Add(new ParkedCar { x = cx2, y = cy2, angle = DetMath.Atan2(fy, fx), variant = (int)Math.Floor(Hash(rndSeed, 5) * 1000) });
+                            }
+                        }
+                    }
                     if ((style == HouseStyle.House || style == HouseStyle.Workshop) && yard.Count >= 3)
                     {
-                        int far = yard[0];
-                        foreach (int t in yard) if (BackDistance(t, house, w) > BackDistance(far, house, w)) far = t;
-                        if (Hash(rndSeed, 1) < 0.65) use[far] = Use.SHED;
-                        if (style == HouseStyle.House && Hash(rndSeed, 2) < 0.6)
-                        {
-                            var beds = yard.FindAll(t2 => use[t2] == Use.YARD && t2 != far);
-                            for (int k = 0; k < Math.Min(2, beds.Count); k++) use[beds[k]] = Use.GARDEN;
-                        }
+                        int far = -1;
+                        foreach (int t in yard) if (use[t] == Use.YARD && (far < 0 || BackDistance(t, house, w) > BackDistance(far, house, w))) far = t;
+                        if (far >= 0 && Hash(rndSeed, 1) < 0.65) use[far] = Use.SHED;
+                    }
+                    if (small && Hash(rndSeed, 2) < p.gardens)
+                    {
+                        // Beds beside and behind the house: yard touching it, never in front.
+                        var beds = yard.FindAll(t => use[t] == Use.YARD && Touches(t, footprint, w) && FrontDistance(t, house, w) <= 0);
+                        Numbers.StableSort(beds, (a, c) => BackDistance(c, house, w) - BackDistance(a, house, w));
+                        int count = Math.Max(2, (int)Math.Round(p.gardens * 6));
+                        for (int k = 0; k < Math.Min(count, beds.Count); k++) use[beds[k]] = Use.GARDEN;
                     }
                     if (style == HouseStyle.House || style == HouseStyle.Workshop)
                     {
                         var plot = new HashSet<int>(yard);
                         foreach (var t in footprint) plot.Add(Grid.Index(t.x, t.y, w));
-                        foreach (int t in yard) fences.AddRange(FenceAround(t, plot, w, h, Street));
+                        foreach (int t in yard) if (use[t] != Use.DRIVEWAY) fences.AddRange(FenceAround(t, plot, w, h, Street));
                     }
                 }
                 foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h)) if (Open(t) && use[t] == Use.NONE) use[t] = Use.GREEN;
                 plans.Add(new BlockPlan { blockId = block.id, wanted = wanted, placed = placed });
             }
-            return new IsoLayout { houses = houses, use = use, fences = fences, blocks = plans };
+            return new IsoLayout { houses = houses, use = use, fences = fences, blocks = plans, cars = cars };
         }
+
+        /// <summary>
+        /// A strip of yard beside a house, from level with its front out to the
+        /// street (on whichever side has room), or null. Ordered from the house out.
+        /// </summary>
+        static List<int> Driveway(House house, List<int> yard, int w, int h, Func<int, int, bool> street)
+        {
+            var (fx, fy) = Grid.DIRS4[(int)house.facing];
+            int lx = -fy, ly = fx;
+            var mine = new HashSet<int>(yard);
+            int lo = int.MaxValue, hi = int.MinValue, front = int.MinValue;
+            foreach (var t in house.tiles)
+            {
+                int lat = t.x * lx + t.y * ly;
+                lo = Math.Min(lo, lat);
+                hi = Math.Max(hi, lat);
+                front = Math.Max(front, t.x * fx + t.y * fy);
+            }
+            List<int> best = null;
+            foreach (int lat in new[] { hi + 1, lo - 1 })
+            {
+                var run = new List<int>();
+                bool reaches = false;
+                for (int f = front - 1; f <= front + 8; f++)
+                {
+                    int x = f * fx + lat * lx, y = f * fy + lat * ly;
+                    if (!Grid.InBounds(x, y, w, h)) break;
+                    if (street(x, y))
+                    {
+                        reaches = true;
+                        break;
+                    }
+                    int i = Grid.Index(x, y, w);
+                    if (!mine.Contains(i))
+                    {
+                        // Off the lot: fine if the street is just beyond (the kerb's own tile).
+                        int nx = x + fx, ny = y + fy;
+                        reaches = run.Count > 0 && Grid.InBounds(nx, ny, w, h) && street(nx, ny);
+                        break;
+                    }
+                    run.Add(i);
+                }
+                if (reaches && run.Count >= 2 && (best == null || run.Count > best.Count)) best = run;
+            }
+            return best;
+        }
+
+        static bool Touches(int t, List<TilePos> footprint, int w)
+        {
+            int x = t % w, y = t / w;
+            foreach (var p in footprint) if (Math.Abs(p.x - x) <= 1 && Math.Abs(p.y - y) <= 1) return true;
+            return false;
+        }
+
+        /// <summary>How far in front of the house's front a tile is (0 or less: level with it or behind).</summary>
+        static double FrontDistance(int t, House house, int w) => -BackDistance(t, house, w);
 
         public static HouseStyle StyleOf(BuildingKind k) => k switch
         {
@@ -300,21 +386,33 @@ namespace Porchlight.Explore
             }
         }
 
-        static List<ParkedCar> ParkCars(TownModel model, List<RoadStroke> roads)
+        /// <summary>Cars along the parking lanes, now and then, kept clear of driveways and bridges.</summary>
+        static List<ParkedCar> ParkCars(TownModel model, List<RoadStroke> roads, byte[] use)
         {
             var cars = new List<ParkedCar>();
-            var dead = DeadEnds(roads);
-            for (int n = 0; n < roads.Count; n++)
+            int w = model.width;
+            bool ByDriveway(Vec2 p)
+            {
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        int x = (int)Math.Floor(p.x) + dx, y = (int)Math.Floor(p.y) + dy;
+                        if (Grid.InBounds(x, y, w, model.height) && use[Grid.Index(x, y, w)] == Use.DRIVEWAY) return true;
+                    }
+                return false;
+            }
+            for (int n = 0; n < roads.Count && cars.Count < MAX_STREET_PARKED; n++)
             {
                 var r = roads[n];
-                if (r.kind != RoadKind.Street || !dead.Contains(n)) continue;
+                if (r.kind == RoadKind.Path) continue;
+                double chance = r.kind == RoadKind.Main ? 0.18 : 0.3;
                 int seed = n + 1000;
                 double total = 0;
                 for (int k2 = 1; k2 < r.points.Count; k2++) total += Geo.Dist(r.points[k2], r.points[k2 - 1]);
                 int k = 0;
                 for (double s = 2.5; s < total - 2.5; s += 2.6)
                 {
-                    if (Hash(seed, k++) > 0.3) continue;
+                    if (Hash(seed, k++) > chance) continue;
                     var pts = Geo.SubPolyline(r.points, s, s + 0.2);
                     if (pts.Count < 2) continue;
                     var a = pts[0];
@@ -324,9 +422,9 @@ namespace Porchlight.Explore
                     double tx = (b.x - a.x) / len;
                     double ty = (b.y - a.y) / len;
                     int side = Hash(seed, k++) < 0.5 ? 1 : -1;
-                    double off = r.width / 2 - 0.24;
+                    double off = r.width / 2 + PARKING / 2;
                     var p = new Vec2(a.x + ty * off * side, a.y - tx * off * side);
-                    if (IsWaterTile(model, p) || IsWaterTile(model, a)) continue;
+                    if (IsWaterTile(model, p) || IsWaterTile(model, a) || ByDriveway(p)) continue;
                     cars.Add(new ParkedCar { x = p.x, y = p.y, angle = DetMath.Atan2(ty, tx), variant = (int)Math.Floor(Hash(seed, k++) * 1000) });
                 }
             }
@@ -390,7 +488,7 @@ namespace Porchlight.Explore
             {
                 var r = roads[road];
                 if (r.kind == RoadKind.Path) continue;
-                double d = r.width / 2 + SIDEWALK / 2;
+                double d = r.width / 2 + PARKING + SIDEWALK / 2;
                 foreach (int side in new[] { 1, -1 })
                 {
                     var points = OffsetPolyline(r.points, d * side);

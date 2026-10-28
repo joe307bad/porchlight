@@ -78,6 +78,7 @@ namespace Porchlight.EditorTools
             var layers = tags.FindProperty("layers");
             playerLayer = Layer(layers, Porchlight.Rendering.Avatar.PLAYER_LAYER, 8);
             labelsLayer = Layer(layers, NameTag.LABELS_LAYER, 9);
+            Layer(layers, Portraits.PORTRAIT_LAYER, 10);
             tags.ApplyModifiedPropertiesWithoutUndo();
         }
 
@@ -228,6 +229,9 @@ namespace Porchlight.EditorTools
             PlayerSettings.productName = "Porchlight";
             PlayerSettings.colorSpace = ColorSpace.Linear;
             PlayerSettings.runInBackground = true;
+            // Straight into the game: no "Made with Unity" splash.
+            PlayerSettings.SplashScreen.show = false;
+            PlayerSettings.SplashScreen.showUnityLogo = false;
             // Both input backends: the game reads the Input System; UI Toolkit works with either.
             var settings = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset").FirstOrDefault();
             if (settings != null)

@@ -466,7 +466,8 @@ Label {
 .street-hud {
     position: absolute;
     top: 14px;
-    right: 14px;
+    /* Clear of the sidebar's open/close tab (32px, hanging over the view). */
+    right: 54px;
     width: 300px;
     padding: 8px 10px;
     border-radius: 6px;
@@ -570,8 +571,9 @@ Label {
     padding: 16px;
 }
 
+/* The sign-in card floats over a little town going about its day. */
 #signin {
-    background-color: #2a2925;
+    background-color: rgba(20, 19, 17, 0.28);
 }
 
 #picker {
@@ -806,4 +808,41 @@ Label {
 /* A button that couldn't do what it says (no car near enough): a little shake. */
 .btn.nudge {
     translate: 3px 0;
+}
+
+/* Your character and your car, beside the minimap. */
+.garage {
+    position: absolute;
+    left: 286px;
+    bottom: 14px;
+    flex-direction: column;
+}
+
+.garage-box {
+    width: 64px;
+    height: 64px;
+    margin-top: 8px;
+    border-width: 2px;
+    border-color: #444038;
+    border-radius: 6px;
+    background-color: #2b2a27;
+    -unity-background-scale-mode: scale-and-crop;
+    justify-content: flex-end;
+    overflow: hidden;
+}
+
+.garage-box:hover {
+    border-color: #767676;
+}
+
+.garage-box.picked {
+    border-color: #c2412d;
+}
+
+.garage-label {
+    font-size: 10px;
+    color: #efe6cf;
+    background-color: rgba(20, 19, 17, 0.6);
+    -unity-text-align: middle-center;
+    padding: 1px 0;
 }
