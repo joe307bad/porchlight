@@ -1,0 +1,14 @@
+<!--
+  Keep the collider classes in WebGL builds. GameObject.CreatePrimitive adds a
+  collider (the game removes it straight away), and with engine code stripped
+  Unity would otherwise log "Can't add component because class 'SphereCollider'
+  doesn't exist!" for every primitive made.
+-->
+<linker>
+  <assembly fullname="UnityEngine.PhysicsModule">
+    <type fullname="UnityEngine.BoxCollider" preserve="all" />
+    <type fullname="UnityEngine.SphereCollider" preserve="all" />
+    <type fullname="UnityEngine.CapsuleCollider" preserve="all" />
+    <type fullname="UnityEngine.MeshCollider" preserve="all" />
+  </assembly>
+</linker>

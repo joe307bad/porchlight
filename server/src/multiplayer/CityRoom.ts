@@ -418,18 +418,22 @@ export class CityRoom extends Room<{ state: CityState }> {
   /**
    * Someone to run the town: the host stays while they're here and sending; if
    * they leave, drop out or go quiet (a hidden tab), whoever's been here
-   * longest takes over.
+   * longest among those still playing (moving, or at least saying they're
+   * there) takes over. A quiet host stays on if nobody else is playing either,
+   * rather than handing the town to another quiet tab.
    */
   private chooseHost(now: number): void {
     const ready = (rt: PlayerRuntime | undefined): rt is PlayerRuntime => !!rt && !rt.finished && !!rt.client && rt.track.anchored;
+    const active = (rt: PlayerRuntime): boolean => now - rt.lastInputAt <= HOST_SILENT_MS;
     const host = this.runtime.get(this.state.host);
     const silent = ready(host) && now - Math.max(this.hostHeardAt, this.hostSince) > HOST_SILENT_MS;
     if (ready(host) && !silent) return;
     let next: PlayerRuntime | null = null;
     for (const rt of this.runtime.values()) {
       if (!ready(rt) || rt === host) continue;
-      if (!next || rt.joinedAt < next.joinedAt) next = rt;
+      if (!next || (active(rt) && !active(next)) || (active(rt) === active(next) && rt.joinedAt < next.joinedAt)) next = rt;
     }
+    if (next && ready(host) && !active(next)) next = null;
     if (!next) {
       if (!ready(host) && this.state.host !== '') this.state.host = '';
       return;

@@ -69,6 +69,10 @@ namespace Porchlight.Explore
         public List<SidewalkPath> paths = new List<SidewalkPath>();
         /// <summary>For each path end (path * 2 + 0 start, + 1 end), the other path ends close enough to walk on to.</summary>
         public List<List<int>> links = new List<List<int>>();
+        /// <summary>Links that cross a street (the mouth of one, at a junction), keyed by LinkKey(from end, to end).</summary>
+        public HashSet<long> crossings = new HashSet<long>();
+
+        public static long LinkKey(int from, int to) => (long)from * 1000003 + to;
     }
 
     public static class Use
@@ -117,10 +121,16 @@ namespace Porchlight.Explore
         public const double PARKING = Raster.PARKING_WIDTH;
         /// <summary>Most cars parked along the streets.</summary>
         const int MAX_STREET_PARKED = 400;
-        /// <summary>Houses this tall or shorter count as small: they get driveways and gardens.</summary>
+        /// <summary>Houses this tall or shorter count as small: they get driveways, and gardens outside the inner city.</summary>
         const int SMALL_FLOORS = 2;
-        const int SMOOTHING_PASSES = 2;
+        const int SMOOTHING_PASSES = 3;
         const double CORNER_RADIUS = 0.9;
+        /// <summary>How far back from a junction a sidewalk may be cut short at the corner (tiles).</summary>
+        const double CORNER_TRIM = 4;
+        /// <summary>A link between sidewalks may turn you this far and no further (the cosine: about 115°).</summary>
+        const double TURN_BACK = -0.42;
+        /// <summary>A link over a street closer to running along it than this (the cosine: about 50°) is slantwise.</summary>
+        const double SLANTWISE = 0.64;
         static readonly Facing[] FACINGS = { Facing.N, Facing.E, Facing.S, Facing.W };
 
         /// <summary>Add a point r either side of every bend, so Chaikin only rounds the corner itself.</summary>
@@ -198,9 +208,11 @@ namespace Porchlight.Explore
                 {
                     var lotTiles = Parcels.TilesIn(lot.polygon, null, w, h).FindAll(Open);
                     var own = new HashSet<int>(lotTiles);
+                    // The inner city (where buildings stand on the sidewalk) has no gardens.
+                    bool inner = Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / model.townRadius < p.innerCity;
                     if (!buildingOnLot.TryGetValue(lot.id, out var b))
                     {
-                        bool garden = builtLots >= 2 && Hash(lot.id, 1) < 0.45;
+                        bool garden = !inner && builtLots >= 2 && Hash(lot.id, 1) < 0.45;
                         foreach (int t in lotTiles) use[t] = garden ? Use.COMMUNITY_GARDEN : Use.GREEN;
                         if (garden) foreach (int t in lotTiles) fences.AddRange(FenceAround(t, own, w, h, Street));
                         continue;
@@ -248,7 +260,7 @@ namespace Porchlight.Explore
                         foreach (int t in yard) if (use[t] == Use.YARD && (far < 0 || BackDistance(t, house, w) > BackDistance(far, house, w))) far = t;
                         if (far >= 0 && Hash(rndSeed, 1) < 0.65) use[far] = Use.SHED;
                     }
-                    if (small && Hash(rndSeed, 2) < p.gardens)
+                    if (small && !inner && Hash(rndSeed, 2) < p.gardens)
                     {
                         // Beds beside and behind the house: yard touching it, never in front.
                         var beds = yard.FindAll(t => use[t] == Use.YARD && Touches(t, footprint, w) && FrontDistance(t, house, w) <= 0);
@@ -478,24 +490,82 @@ namespace Porchlight.Explore
                 ty /= len;
                 o.Add(new Vec2(pts[i].x + ty * d, pts[i].y - tx * d));
             }
+            return RemoveLoops(o, Math.Max(2, Math.Abs(d) * 8));
+        }
+
+        /// <summary>
+        /// Cut out the little loops a polyline ties in itself (shifted to the inside
+        /// of a bend tighter than the shift, it crosses back over itself): each runs
+        /// from the crossing straight on. Only loops up to `longest` round.
+        /// </summary>
+        public static List<Vec2> RemoveLoops(List<Vec2> pts, double longest)
+        {
+            var o = new List<Vec2>(pts);
+            for (int i = 0; i + 1 < o.Count; i++)
+            {
+                double round = 0;
+                for (int j = i + 1; j + 1 < o.Count; j++)
+                {
+                    round += Geo.Dist(o[j - 1], o[j]);
+                    if (round > longest) break;
+                    if (j < i + 2) continue;
+                    var hit = Geo.SegmentIntersection(o[i], o[i + 1], o[j], o[j + 1]);
+                    if (hit == null) continue;
+                    o.RemoveRange(i + 1, j - i);
+                    o.Insert(i + 1, hit.Value.point);
+                    break;
+                }
+            }
             return o;
         }
 
         static SidewalkNetwork SidewalkNetworkOf(List<RoadStroke> roads)
         {
             var net = new SidewalkNetwork();
+            var lines = new List<(List<Vec2> points, int side, int road)>();
+            double widest = 0;
             for (int road = 0; road < roads.Count; road++)
             {
                 var r = roads[road];
                 if (r.kind == RoadKind.Path) continue;
+                widest = Math.Max(widest, r.width);
                 double d = r.width / 2 + PARKING + SIDEWALK / 2;
-                foreach (int side in new[] { 1, -1 })
+                foreach (int side in new[] { 1, -1 }) lines.Add((OffsetPolyline(r.points, d * side), side, road));
+            }
+            // Each sidewalk stops at the corner, where it meets the sidewalk of a
+            // street joining at that junction, rather than running on into the road.
+            for (int i = 0; i < lines.Count; i++)
+            {
+                var (points, side, road) = lines[i];
+                var at = ArcPositions(points);
+                double length = at[at.Count - 1];
+                double reachIn = Math.Min(length / 2, CORNER_TRIM);
+                double from = 0, to = length;
+                for (int j = 0; j < lines.Count; j++)
                 {
-                    var points = OffsetPolyline(r.points, d * side);
-                    var at = new List<double> { 0 };
-                    for (int k = 1; k < points.Count; k++) at.Add(at[k - 1] + Geo.Dist(points[k], points[k - 1]));
-                    if (at[at.Count - 1] > 0.5) net.paths.Add(new SidewalkPath { points = points, at = at, side = side, road = road });
+                    var other = lines[j];
+                    if (other.road == road) continue;
+                    var ro = roads[other.road];
+                    bool atStart = ro.from == roads[road].from || ro.to == roads[road].from;
+                    bool atEnd = ro.from == roads[road].to || ro.to == roads[road].to;
+                    if (!atStart && !atEnd) continue;
+                    for (int k = 0; k + 1 < points.Count; k++)
+                    {
+                        if (at[k] > reachIn && at[k + 1] < length - reachIn) continue;
+                        for (int m = 0; m + 1 < other.points.Count; m++)
+                        {
+                            var hit = Geo.SegmentIntersection(points[k], points[k + 1], other.points[m], other.points[m + 1]);
+                            if (hit == null) continue;
+                            double sAt = at[k] + (at[k + 1] - at[k]) * hit.Value.t;
+                            if (atStart && sAt <= reachIn) from = Math.Max(from, sAt);
+                            if (atEnd && sAt >= length - reachIn) to = Math.Min(to, sAt);
+                        }
+                    }
                 }
+                var trimmed = from > 0 || to < length ? Geo.SubPolyline(points, from, to) : points;
+                if (trimmed.Count < 2) continue;
+                var tat = ArcPositions(trimmed);
+                if (tat[tat.Count - 1] > 0.5) net.paths.Add(new SidewalkPath { points = trimmed, at = tat, side = side, road = road });
             }
             var ends = new List<Vec2>();
             foreach (var p in net.paths)
@@ -503,15 +573,76 @@ namespace Porchlight.Explore
                 ends.Add(p.points[0]);
                 ends.Add(p.points[p.points.Count - 1]);
             }
-            const double reach = 2.6;
+            // Far enough to cross the mouth of the widest street at a junction.
+            double reach = Math.Max(2.6, widest + 2 * PARKING + SIDEWALK + 0.5);
+            // Which way you're going arriving at an end, and leaving from one along its sidewalk.
+            Vec2 Unit(Vec2 a, Vec2 b)
+            {
+                double l = Geo.Dist(a, b);
+                return l < 1e-9 ? new Vec2(0, 0) : new Vec2((b.x - a.x) / l, (b.y - a.y) / l);
+            }
+            Vec2 Arriving(int e)
+            {
+                var pts = net.paths[e >> 1].points;
+                return (e & 1) == 0 ? Unit(pts[1], pts[0]) : Unit(pts[pts.Count - 2], pts[pts.Count - 1]);
+            }
+            Vec2 Leaving(int e) => new Vec2(-Arriving(e).x, -Arriving(e).y);
+            // The roads meeting at the junction either end is at.
+            int NodeAt(int e)
+            {
+                var r = roads[net.paths[e >> 1].road];
+                return (e & 1) == 0 ? r.from : r.to;
+            }
+            List<int> RoadsAt(int a, int b)
+            {
+                var o = new List<int>();
+                for (int rd = 0; rd < roads.Count; rd++)
+                {
+                    var r = roads[rd];
+                    if (r.kind == RoadKind.Path) continue;
+                    if (r.from == NodeAt(a) || r.to == NodeAt(a) || r.from == NodeAt(b) || r.to == NodeAt(b)) o.Add(rd);
+                }
+                return o;
+            }
+            double Dot(Vec2 a, Vec2 b) => a.x * b.x + a.y * b.y;
             for (int i = 0; i < ends.Count; i++)
             {
                 var near = new List<int>();
+                var arrive = Arriving(i);
                 for (int j = 0; j < ends.Count; j++)
-                    if (j != i && j >> 1 != i >> 1 && Geo.Dist(ends[i], ends[j]) < reach) near.Add(j);
+                {
+                    if (j == i || j >> 1 == i >> 1 || Geo.Dist(ends[i], ends[j]) >= reach) continue;
+                    // Round a corner or straight on across a junction, never doubling back.
+                    var leave = Leaving(j);
+                    if (Dot(arrive, leave) < TURN_BACK) continue;
+                    if (Geo.Dist(ends[i], ends[j]) > 0.3 && (Dot(arrive, Unit(ends[i], ends[j])) < TURN_BACK || Dot(Unit(ends[i], ends[j]), leave) < TURN_BACK)) continue;
+                    // Over a street only straight across it (the mouth of a side street),
+                    // never slantwise along one, from one side of it to the other.
+                    bool crosses = false, slantwise = false;
+                    foreach (int rd in RoadsAt(i, j))
+                    {
+                        var pts = roads[rd].points;
+                        for (int k = 0; k + 1 < pts.Count; k++)
+                        {
+                            if (Geo.SegmentIntersection(ends[i], ends[j], pts[k], pts[k + 1]) == null) continue;
+                            crosses = true;
+                            if (Math.Abs(Dot(Unit(ends[i], ends[j]), Unit(pts[k], pts[k + 1]))) > SLANTWISE) slantwise = true;
+                        }
+                    }
+                    if (slantwise) continue;
+                    if (crosses) net.crossings.Add(SidewalkNetwork.LinkKey(i, j));
+                    near.Add(j);
+                }
                 net.links.Add(near);
             }
             return net;
+        }
+
+        static List<double> ArcPositions(List<Vec2> points)
+        {
+            var at = new List<double> { 0 };
+            for (int k = 1; k < points.Count; k++) at.Add(at[k - 1] + Geo.Dist(points[k], points[k - 1]));
+            return at;
         }
     }
 }

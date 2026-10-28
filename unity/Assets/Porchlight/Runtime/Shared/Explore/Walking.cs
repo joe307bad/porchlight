@@ -38,7 +38,15 @@ namespace Porchlight.Explore
     public sealed class SidewalkWalk
     {
         /// <summary>Crossing the road costs about this many tiles of walking.</summary>
-        const double CROSSING_COST = 4;
+        const double CROSSING_COST = 8;
+        /// <summary>
+        /// Turning costs up to this many tiles (a U-turn; a right angle half that),
+        /// so of routes about as long, the straightest wins: on across the side
+        /// streets, rather than zigzagging block by block.
+        /// </summary>
+        const double TURN_COST = 12;
+        /// <summary>Crossing the mouth of a side street at a junction costs this many tiles, besides the walk over.</summary>
+        const double JUNCTION_CROSSING_COST = 2;
 
         sealed class Crossing
         {
@@ -183,6 +191,13 @@ namespace Porchlight.Explore
                     s = Geo.ArcPosition(pts[pts.Count - 1], other.points);
                     pts.Add(PointAlong(other, s));
                 }
+                else if (leg.path == path)
+                {
+                    // Turning back at a dead end.
+                    var p = net.paths[path];
+                    pts.AddRange(Slice(p, s, dir > 0 ? p.Length : 0));
+                    s = dir > 0 ? p.Length : 0;
+                }
                 else
                 {
                     var p = net.paths[path];
@@ -231,8 +246,23 @@ namespace Porchlight.Explore
             Plan();
         }
 
-        /// <summary>Dijkstra over (sidewalk, direction) states from where we are to the goal sidewalk.</summary>
+        /// <summary>Plan the way to the goal; if there's none going this way, turn round and go the other.</summary>
         void Plan()
+        {
+            var want = goal;
+            PlanFrom();
+            if (goal != null || want == null) return;
+            goal = want;
+            if (crossing != null) crossing.then.dir = -crossing.then.dir;
+            else dir = -dir;
+            PlanFrom();
+            if (goal != null) return;
+            if (crossing != null) crossing.then.dir = -crossing.then.dir;
+            else dir = -dir;
+        }
+
+        /// <summary>Dijkstra over (sidewalk, direction) states from where we are to the goal sidewalk.</summary>
+        void PlanFrom()
         {
             route = new List<Leg>();
             if (goal == null) return;
@@ -271,11 +301,19 @@ namespace Porchlight.Explore
                     }
                 }
                 int end = d > 0 ? 1 : 0;
+                var arrive = EndHeading(p, end, true);
                 foreach (int link in net.links[p * 2 + end])
                 {
                     int q = link >> 1;
-                    Relax(Key(q, (link & 1) == 0 ? 1 : -1), net.paths[p].Length, false);
+                    var leave = EndHeading(q, link & 1, false);
+                    double turn = (1 - (arrive.x * leave.x + arrive.y * leave.y)) / 2;
+                    var from = EndPoint(p, end);
+                    var to = EndPoint(q, link & 1);
+                    double over = Numbers.Hypot(to.x - from.x, to.y - from.y) + (net.crossings.Contains(SidewalkNetwork.LinkKey(p * 2 + end, link)) ? JUNCTION_CROSSING_COST : 0);
+                    Relax(Key(q, (link & 1) == 0 ? 1 : -1), net.paths[p].Length + turn * TURN_COST + over, false);
                 }
+                // A dead end: turn back along it.
+                if (net.links[p * 2 + end].Count == 0) Relax(Key(p, -d), net.paths[p].Length + TURN_COST, false);
                 int sibling = SiblingOf(p);
                 if (sibling >= 0) Relax(Key(sibling, d), CROSSING_COST, true);
             }
@@ -289,6 +327,33 @@ namespace Porchlight.Explore
                 legs.Add(new Leg { path = st >> 1, dir = (st & 1) != 0 ? 1 : -1, cross = viaCross[st] == 1 });
             legs.Reverse();
             route = legs;
+        }
+
+        Vec2 EndPoint(int path, int end)
+        {
+            var pts = net.paths[path].points;
+            return end == 0 ? pts[0] : pts[pts.Count - 1];
+        }
+
+        /// <summary>Which way you're going at one end of a sidewalk (end 0: its start): arriving there, or leaving from it.</summary>
+        Vec2 EndHeading(int path, int end, bool arriving)
+        {
+            var pts = net.paths[path].points;
+            Vec2 a, b;
+            if (end == 0)
+            {
+                a = pts[Math.Min(pts.Count - 1, 1)];
+                b = pts[0];
+            }
+            else
+            {
+                a = pts[Math.Max(0, pts.Count - 2)];
+                b = pts[pts.Count - 1];
+            }
+            double l = Numbers.Hypot(b.x - a.x, b.y - a.y);
+            if (l < 1e-9) return new Vec2(0, 0);
+            double sign = arriving ? 1 : -1;
+            return new Vec2((b.x - a.x) / l * sign, (b.y - a.y) / l * sign);
         }
 
         int SiblingOf(int p)
@@ -430,6 +495,13 @@ namespace Porchlight.Explore
             {
                 needsPlan = false;
                 Plan();
+            }
+            // The plan says turn back here (a dead end).
+            if (route.Count > 0 && !route[0].cross && route[0].path == path)
+            {
+                route.RemoveAt(0);
+                dir = end == 0 ? 1 : -1;
+                return;
             }
             var options = net.links[path * 2 + end];
             int? routed = null;

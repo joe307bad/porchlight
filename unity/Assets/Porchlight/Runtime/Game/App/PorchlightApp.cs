@@ -180,7 +180,7 @@ namespace Porchlight.App
             });
         }
 
-        /// <summary>Behind the sign-in card: a fresh little town, and someone out for a walk in it.</summary>
+        /// <summary>Behind the sign-in card: a fresh big town, by day or night, and someone out for a walk in it.</summary>
         void StartAttract()
         {
             try
@@ -189,11 +189,16 @@ namespace Porchlight.App
                 host.style.display = DisplayStyle.None;
                 root.Add(host);
                 var p = GenParams.Defaults;
-                p.width = p.height = 96;
+                // A big town, spread wide, to take in from far out: its edge about 100
+                // tiles out from the middle, well past the ~80 the view's corners reach as it turns.
+                p.width = p.height = 224;
+                p.townRadius = 0.45;
                 attract = new ExploreView(camera3d, ModelLibrary.Instance, new ExploreOverlay(host) { Dpr = dpr }, input) { Attract = true };
                 attract.SetTown(Generator.Generate(RandomSeed(), GenParams.Normalize(p)));
                 attract.Spawn(Catalog.RandomLook(new Rng(RandomSeed())));
                 attract.SetAuto(true);
+                // Some visits by day, some by night.
+                attract.SetNightNow(new Rng(RandomSeed()).Chance(0.5));
             }
             catch (Exception err)
             {

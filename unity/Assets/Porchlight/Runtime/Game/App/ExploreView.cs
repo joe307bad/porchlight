@@ -65,6 +65,13 @@ namespace Porchlight.App
         const double VIEW_HEIGHT = 20;
         const double MIN_ZOOM = 0.35;
         const double MAX_ZOOM = 2.5;
+        /// <summary>
+        /// Behind the sign-in card: further out than you can zoom, and low, to take in
+        /// much of the town, but not so far that its edges show (at this zoom and pitch
+        /// the top of the view is about 64 tiles past the middle, inside the town).
+        /// </summary>
+        const double ATTRACT_ZOOM = 0.42;
+        const double ATTRACT_PITCH = 22 * Math.PI / 180;
         const int MAX_PEDESTRIANS = 70;
         /// <summary>How far back the orthographic camera sits (the view doesn't change with it; URP's shadows reach this far and more).</summary>
         const double CAMERA_DISTANCE = 60;
@@ -386,7 +393,22 @@ namespace Porchlight.App
             }
         }
 
-        public void PlacePlayer(double x, double z) => MoveTo(x, z);
+        public void PlacePlayer(double x, double z, bool teleported)
+        {
+            // Put back by the server while driving: back there in the car, still driving.
+            if (!teleported && driving != null && player != null && world != null)
+            {
+                var car = cars[driving.Value].car;
+                car.x = x;
+                car.y = z;
+                car.speed = 0;
+                player.x = x;
+                player.y = z;
+                snap = true;
+                return;
+            }
+            MoveTo(x, z);
+        }
 
         public void SyncRemotes(List<RemoteState> players, string me) => remotes?.Sync(players, me);
 
@@ -546,7 +568,7 @@ namespace Porchlight.App
 
         public Vec2? Goal => autoDrive != null ? autoDrive.GoalPoint() : player?.AutoGoal();
 
-        // Finding another player: a dotted line along the sidewalks to them, and directions.
+        // Finding another player: a dotted line along the streets to them, and directions.
 
         /// <summary>Show the way to this player (null: stop).</summary>
         public void Find(string key)
@@ -577,14 +599,12 @@ namespace Porchlight.App
                 ClearFindPath();
                 return;
             }
-            var walk = world.sidewalks.paths.Count > 0 ? SidewalkWalk.Toward(world.sidewalks, autoRng, from, target.Value) : null;
-            if (walk != null)
+            // Along the streets themselves, and off the street only at the last, to them.
+            var way = StreetRoute.Between(world.layout.roads, from, target.Value);
+            if (way != null)
             {
-                findRoute = walk.RoutePoints();
-                findRoute.Add(target.Value);
-                var it = walk.Itinerary();
-                it.destination = name;
-                findSteps = Directions.ForWalk(world.sidewalks, world.names, it);
+                findRoute = way.points;
+                findSteps = Directions.ForDrive(world.names, way.stretches, name);
             }
             else
             {
@@ -972,6 +992,14 @@ namespace Porchlight.App
 
         public bool IsNight => night;
 
+        /// <summary>Night or day straight away, without the fade.</summary>
+        public void SetNightNow(bool on)
+        {
+            night = on;
+            dusk = on ? 1 : 0;
+            OnNightChange?.Invoke();
+        }
+
         // Input ----------------------------------------------------------------------------------
 
         void OnKeyDown(Key code, bool repeat)
@@ -1358,11 +1386,13 @@ namespace Porchlight.App
 
             Fixed? fixedView = room != null ? RoomView(room.Value) : (Fixed?)null;
             double yawTarget = fixedView?.yaw ?? targetYaw;
-            double zoomTarget = fixedView?.zoom ?? zoom;
-            double pitchTarget = fixedView?.pitch ?? TargetPitch;
+            double zoomTarget = fixedView?.zoom ?? (Attract ? ATTRACT_ZOOM : zoom);
+            double pitchTarget = fixedView?.pitch ?? (Attract ? ATTRACT_PITCH : TargetPitch);
             yaw += Orbit.ShortestTurn(yaw, yawTarget) * (snap ? 1 : Orbit.EaseBy(5, dt));
             shownZoom += (zoomTarget - shownZoom) * (snap ? 1 : Math.Min(1, dt * (fixedView != null ? 5 : 10)));
-            var target = fixedView?.focus ?? (p != null ? new Vector3((float)p.x, 0.3f, (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
+            var target = fixedView?.focus
+                ?? (Attract ? new Vector3((float)world.model.center.x, 0.3f, (float)world.model.center.y)
+                : p != null ? new Vector3((float)p.x, 0.3f, (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
             focusFollow.Update(target.x, target.y, target.z, dt, snap);
             focus = new Vector3((float)focusFollow.ax, (float)focusFollow.ay, (float)focusFollow.az);
             pitch += (pitchTarget - pitch) * (snap ? 1 : Math.Min(1, dt * 6));
@@ -1531,9 +1561,14 @@ namespace Porchlight.App
             camera.orthographic = true;
             camera.orthographicSize = (float)half;
             camera.nearClipPlane = 0.1f;
-            camera.farClipPlane = (float)(CAMERA_DISTANCE * 3);
+            // Zoomed far out and low (behind the sign-in card), the bottom of the view
+            // reaches the ground half / tan(pitch) nearer than the middle and the top as
+            // much further: stand back and see far enough for both.
+            double reach = half / Math.Tan(Math.Max(0.1, pitch));
+            double distance = Attract ? Math.Max(CAMERA_DISTANCE, reach + 20) : CAMERA_DISTANCE;
+            camera.farClipPlane = (float)(Attract ? Math.Max(CAMERA_DISTANCE * 3, distance + reach + 60) : CAMERA_DISTANCE * 3);
             var o = Orbit.CameraOffset(yaw, pitch);
-            var pos = WorldOf(focus.x + o.x * CAMERA_DISTANCE, focus.y + o.up * CAMERA_DISTANCE, focus.z + o.y * CAMERA_DISTANCE);
+            var pos = WorldOf(focus.x + o.x * distance, focus.y + o.up * distance, focus.z + o.y * distance);
             var f = WorldOf(focus.x, focus.y, focus.z);
             camera.transform.position = pos;
             camera.transform.rotation = Quaternion.LookRotation(f - pos, Vector3.up);

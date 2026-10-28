@@ -70,7 +70,7 @@ namespace Porchlight.Rendering
                 for (int k = 0; k < pieces; k++)
                 {
                     var m = library.Get(PickModel(candidates, len / depth, house, rng));
-                    const double gap = 0.04;
+                    const double gap = Porchlight.Gen.BuildingsStage.DRAWN_INSET;
                     double sx = (len - gap * 2) / m.size.x;
                     double sz = (depth - gap * 2) / m.size.z;
                     double sy = Math.Sqrt(sx * sz) * HeightFactor(m, Math.Sqrt(sx * sz), house);

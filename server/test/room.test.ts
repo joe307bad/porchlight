@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, MSG_CAR, MSG_CORRECT, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, MSG_CAR, MSG_CORRECT, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -185,6 +185,35 @@ test('the town is shared: one host sends its traffic, and night and taken cars a
   // The host leaves: the guest takes over.
   await a.leave();
   await until('the guest to host', () => b.state.host === b.sessionId);
+  await b.leave();
+});
+
+test('a quiet host hands the town to someone still playing, never to another quiet tab', async () => {
+  const ids: string[] = [];
+  for (const name of ['First', 'Second']) ids.push((await api('town', 'POST', '/mp/characters', { name })).json.id);
+  const shared = { town: 'seed=quiet-host', width: 128, height: 128 };
+  const a = await client('town').joinOrCreate('city', { ...shared, character: ids[0] });
+  a.onMessage(MSG_SPAWN, () => {});
+  move(a, 20, 20);
+  await until('a host', () => a.state.host === a.sessionId);
+  const b = await client('town').joinOrCreate('city', { ...shared, character: ids[1] });
+  b.onMessage(MSG_SPAWN, () => {});
+  b.onMessage(MSG_WORLD, () => {});
+  a.onMessage(MSG_WORLD, () => {});
+  // a's tab goes quiet (no world, no moves); b keeps playing, so b runs the town.
+  const playing = setInterval(() => move(b, 21, 20), 300);
+  try {
+    await until('the playing guest to host', () => b.state.host === b.sessionId, 6000);
+  } finally {
+    clearInterval(playing);
+  }
+  // Now b goes quiet too: a is no better, so b stays on.
+  await new Promise((r) => setTimeout(r, HOST_SILENT_MS + 600));
+  assert.equal(b.state.host, b.sessionId, 'the town went to another quiet tab');
+  // a comes back: a takes over from the quiet b.
+  move(a, 20.5, 20);
+  await until('the returning player to host', () => a.state.host === a.sessionId, 2000);
+  await a.leave();
   await b.leave();
 });
 

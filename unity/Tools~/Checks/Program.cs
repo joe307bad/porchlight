@@ -5,7 +5,9 @@
 //   dotnet run --project "unity/Tools~/Checks" -- net '<json>'      # play the real game server (NetCheck.cs)
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using Porchlight.Gen;
 using Porchlight.Model;
 
@@ -32,7 +34,7 @@ static class Program
         for (int i = 0; i < count; i++)
         {
             string seed = $"check-{i}";
-            var p = new GenParams { width = 64 + (i % 4) * 32, height = 64 + ((i / 4) % 4) * 32, roadDensity = 0.5 + (i % 5) * 0.1 };
+            var p = new GenParams { width = 64 + (i % 4) * 32, height = 64 + ((i / 4) % 4) * 32, roadDensity = 0.5 + (i % 5) * 0.1, frontSetback = (i / 2) % 4 };
             p = GenParams.Normalize(p);
             try
             {
@@ -47,7 +49,7 @@ static class Program
                     if (u == Porchlight.Explore.Use.DRIVEWAY) driveways++;
                     if (u == Porchlight.Explore.Use.GARDEN) beds++;
                 }
-                string shared = i == 0 ? Shared(a, layout) : null;
+                string shared = i % 4 == 0 ? Shared(a, layout) : null;
                 if (shared != null)
                 {
                     failed++;
@@ -96,16 +98,52 @@ static class Program
         foreach (var c in copy.cars) copy.Adopt(c);
         for (int k = 0; k < 40; k++) copy.Update(0.05, null);
         foreach (var c in copy.cars) if (double.IsNaN(c.x) || c.x < 0 || c.x > model.width) return "adopted traffic went astray";
-        if (layout.sidewalks.paths.Count > 1)
+        // Sidewalks run clean: none crosses itself (a loop on the inside of a bend).
+        foreach (var path in layout.sidewalks.paths)
+            for (int i = 0; i + 1 < path.points.Count; i++)
+                for (int j = i + 2; j + 1 < path.points.Count; j++)
+                    if (Porchlight.Core.Geo.SegmentIntersection(path.points[i], path.points[i + 1], path.points[j], path.points[j + 1]) != null)
+                        return $"a sidewalk of road {path.road} loops at ({path.points[i].x:0.0}, {path.points[i].y:0.0})";
+        // Auto walk always finds its way (turning round if it must), along the streets.
+        var roam = new Porchlight.Core.Rng("roam");
+        for (int k = 0; k < 30 && layout.sidewalks.paths.Count > 0; k++)
         {
-            var from = layout.sidewalks.paths[0].points[0];
-            var to = layout.sidewalks.paths[layout.sidewalks.paths.Count - 1].points[0];
-            var walk = Porchlight.Explore.SidewalkWalk.Toward(layout.sidewalks, new Porchlight.Core.Rng("f"), from, to);
-            if (walk != null)
+            var w = Porchlight.Explore.SidewalkWalk.Random(layout.sidewalks, roam);
+            w.Roam();
+            if (w.Itinerary() == null) return "auto walk found no way";
+            for (int step = 0; step < 200; step++) w.Advance(0.2);
+        }
+        // The way to another player keeps to the streets, leaving them only to
+        // start from you and, at the last, for them.
+        var streets = layout.roads.FindAll(r => r.kind != RoadKind.Path);
+        if (streets.Count > 1)
+        {
+            double OffStreet(Porchlight.Core.Vec2 q)
             {
-                var route = walk.RoutePoints();
-                var end = route[route.Count - 1];
-                if (Math.Sqrt((end.x - to.x) * (end.x - to.x) + (end.y - to.y) * (end.y - to.y)) > 0.5) return "the way to a player stops short";
+                double best = double.PositiveInfinity;
+                foreach (var r in streets) best = Math.Min(best, Porchlight.Core.Geo.DistToPolyline(q, r.points));
+                return best;
+            }
+            var pick = new Porchlight.Core.Rng("finder");
+            for (int k = 0; k < 40; k++)
+            {
+                var a = streets[pick.Int(0, streets.Count - 1)];
+                var b = streets[pick.Int(0, streets.Count - 1)];
+                var from = a.points[pick.Int(0, a.points.Count - 1)];
+                var to = b.points[pick.Int(0, b.points.Count - 1)];
+                from = new Porchlight.Core.Vec2(from.x + pick.Range(-2, 2), from.y + pick.Range(-2, 2));
+                to = new Porchlight.Core.Vec2(to.x + pick.Range(-2, 2), to.y + pick.Range(-2, 2));
+                var way = Porchlight.Explore.StreetRoute.Between(layout.roads, from, to);
+                if (way == null || way.points.Count < 2) return "no way to a player";
+                var pts = way.points;
+                if (Porchlight.Core.Geo.Dist(pts[0], from) > 1e-6 || Porchlight.Core.Geo.Dist(pts[pts.Count - 1], to) > 1e-6) return "the way to a player doesn't run from you to them";
+                for (int i = 1; i < pts.Count - 1; i++)
+                    if (OffStreet(pts[i]) > 0.01) return $"the way to a player leaves the street ({pts[i].x:0.0}, {pts[i].y:0.0})";
+                for (int i = 2; i < pts.Count - 1; i++)
+                    if (Porchlight.Core.Geo.Dist(pts[i - 1], pts[i]) > 0.01 && OffStreet(new Porchlight.Core.Vec2((pts[i - 1].x + pts[i].x) / 2, (pts[i - 1].y + pts[i].y) / 2)) > 0.6)
+                        return $"the way to a player cuts across from ({pts[i - 1].x:0.0}, {pts[i - 1].y:0.0}) to ({pts[i].x:0.0}, {pts[i].y:0.0})";
+                var steps = Porchlight.Explore.Directions.ForDrive(Porchlight.Explore.StreetNaming.Name(model, layout.roads), way.stretches, "them");
+                if (steps.Count == 0 || !steps[steps.Count - 1].text.StartsWith("Arrive at them")) return $"the directions to a player don't arrive ({way.stretches.Count} stretches, {pts.Count} points, from {from.x:0.0},{from.y:0.0} to {to.x:0.0},{to.y:0.0})";
             }
         }
         return null;

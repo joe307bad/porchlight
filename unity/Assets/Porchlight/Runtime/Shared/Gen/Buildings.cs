@@ -1,7 +1,7 @@
 // Stage 7b: buildings. Each lot (except the plaza) may get one rectangular
 // building on whole tiles: the largest rectangle inside the lot whose whole
-// front edge looks onto the road across a front yard, set back a little from
-// the rear and sides when there's room. The building faces the road it fronts.
+// front edge looks onto the road across a front yard (none in the inner city),
+// set back a little from the rear and sides when there's room. The building faces the road it fronts.
 // The biggest lot near the center gets the church, and the building nearest
 // the plaza becomes the hall.
 
@@ -15,6 +15,8 @@ namespace Porchlight.Gen
     public sealed class BuildingsStage : IStage
     {
         const double INSET = 0.15;
+        /// <summary>How far in from its tiles' edges a building is drawn (Rendering/WorldParts), ground floor and all.</summary>
+        public const double DRAWN_INSET = 0.04;
         const double SMOOTHING_SLACK = 0.1;
         const double MIN_YARD = 0.5;
         const double CHURCH_REACH = 0.45;
@@ -65,9 +67,12 @@ namespace Porchlight.Gen
                 int facingIndex = Array.IndexOf(counts, max);
                 double maxSide = p.maxBuildingSize + (isChurch ? 2 : 0);
                 var lotTiles = new HashSet<int>(tiles);
-                var gaps = p.frontSetback > 0 ? KerbGaps(model, tiles) : null;
+                // The inner city's taller buildings stand right on the sidewalk; only the
+                // smaller houses further out get a front yard.
+                double setback = d < p.innerCity ? 0 : p.frontSetback;
+                var gaps = KerbGaps(model, tiles);
                 Rect rect;
-                double yard = p.frontSetback;
+                double yard = setback;
                 for (; ; yard -= 0.5)
                 {
                     rect = BestRect(tiles, lotTiles, gaps, facingIndex, maxSide, yard, g, w, h);
@@ -145,11 +150,24 @@ namespace Porchlight.Gen
                     if (g.road.kind[i] != 0) return new List<string> { $"building {b.id} stands on a road" };
                     if (!Geo.PointInPolygon(new Vec2(t.x + 0.5, t.y + 0.5), b.footprint)) return new List<string> { $"building {b.id}'s tiles don't match its footprint" };
                 }
-                var ring = new List<Vec2>(b.footprint) { b.footprint[0] };
+                // As drawn: out to its tiles' edges (less DRAWN_INSET), clear of every sidewalk.
+                int bx0 = int.MaxValue, by0 = int.MaxValue, bx1 = int.MinValue, by1 = int.MinValue;
+                foreach (var t in b.tiles)
+                {
+                    bx0 = Math.Min(bx0, t.x);
+                    by0 = Math.Min(by0, t.y);
+                    bx1 = Math.Max(bx1, t.x + 1);
+                    by1 = Math.Max(by1, t.y + 1);
+                }
+                var ring = new List<Vec2>
+                {
+                    new Vec2(bx0 + DRAWN_INSET, by0 + DRAWN_INSET), new Vec2(bx1 - DRAWN_INSET, by0 + DRAWN_INSET), new Vec2(bx1 - DRAWN_INSET, by1 - DRAWN_INSET),
+                    new Vec2(bx0 + DRAWN_INSET, by1 - DRAWN_INSET), new Vec2(bx0 + DRAWN_INSET, by0 + DRAWN_INSET),
+                };
                 foreach (var e in model.roads.edges)
                 {
-                    double clearance = Raster.RoadDrawWidth(e.kind, p) / 2;
-                    if (Geo.PolylineDistance(ring, e.points) < clearance - 1e-6) return new List<string> { $"building {b.id} overlaps road {e.id}" };
+                    double clearance = Raster.RoadReach(e.kind, p);
+                    if (Geo.PolylineDistance(ring, e.points) < clearance - 1e-6) return new List<string> { $"building {b.id} stands on road {e.id}'s sidewalk" };
                 }
                 int d = (int)b.facing;
                 var (dx, dy) = Grid.DIRS4[d];
@@ -178,7 +196,11 @@ namespace Porchlight.Gen
             return new List<string>();
         }
 
-        /// <summary>How far each lot tile's edge is from the nearest drawn sidewalk (or footpath), in tiles.</summary>
+        /// <summary>
+        /// How far each lot tile, as a building on it is drawn, stands from
+        /// the outside of the nearest drawn sidewalk (or footpath), in tiles: below
+        /// zero, a building there would stand on it.
+        /// </summary>
         static Dictionary<int, double> KerbGaps(TownModel model, List<int> tiles)
         {
             int w = model.width;
@@ -207,16 +229,21 @@ namespace Porchlight.Gen
             foreach (int t in tiles)
             {
                 int x = t % w;
-                var c = new Vec2(x + 0.5, (t - x) / w + 0.5);
+                int y = (t - x) / w;
+                var square = new List<Vec2>
+                {
+                    new Vec2(x + DRAWN_INSET, y + DRAWN_INSET), new Vec2(x + 1 - DRAWN_INSET, y + DRAWN_INSET), new Vec2(x + 1 - DRAWN_INSET, y + 1 - DRAWN_INSET),
+                    new Vec2(x + DRAWN_INSET, y + 1 - DRAWN_INSET), new Vec2(x + DRAWN_INSET, y + DRAWN_INSET),
+                };
                 double gap = double.PositiveInfinity;
-                foreach (var e in roads) gap = Math.Min(gap, Geo.DistToPolyline(c, e.points) - Raster.RoadReach(e.kind, p) - 0.5 - SMOOTHING_SLACK);
+                foreach (var e in roads) gap = Math.Min(gap, Geo.PolylineDistance(square, e.points) - Raster.RoadReach(e.kind, p) - SMOOTHING_SLACK);
                 o[t] = gap;
             }
             return o;
         }
 
         /// <summary>How many tiles ahead a building's front may look for its street, for a yard of `yard` tiles.</summary>
-        static int ReachFor(double yard) => yard == 0 ? 1 : (int)Math.Ceiling(yard) + 2;
+        static int ReachFor(double yard) => (int)Math.Ceiling(yard) + 2;
 
         static Rect BestRect(List<int> tiles, HashSet<int> lotTiles, Dictionary<int, double> gaps, int facing, double maxSide, double yard, Ground g, int w, int h)
         {
@@ -240,7 +267,8 @@ namespace Porchlight.Gen
                 int x = t % w;
                 int y = (t - x) / w;
                 int li = (y - y0) * bw + (x - x0);
-                if (yard > 0 && gaps != null && (gaps.TryGetValue(t, out var gap) ? gap : double.PositiveInfinity) < yard) continue;
+                // Never over the sidewalk; further back than that by the yard.
+                if (gaps != null && (gaps.TryGetValue(t, out var gap) ? gap : double.PositiveInfinity) < yard) continue;
                 inLot[li] = 1;
                 if (StreetAhead(x, y, fx, fy, ReachFor(yard), lotTiles, g, w, h)) front[li] = 1;
             }

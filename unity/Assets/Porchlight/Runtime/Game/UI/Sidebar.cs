@@ -252,7 +252,6 @@ namespace Porchlight.UI
             playersSection.Add(El.Text("PLAYERS HERE", "section-title", "bold"));
             playersList = new VisualElement();
             playersSection.Add(playersList);
-            playersSection.style.display = DisplayStyle.None;
             exploreSection.Add(playersSection);
             body.Add(exploreSection);
             body.Add(seedRow);
@@ -304,7 +303,7 @@ namespace Porchlight.UI
 
         /// <summary>
         /// Everyone else in the town, a box each: tick one to be shown the way to
-        /// them (one at a time; untick to stop).
+        /// them (one at a time; untick to stop). Says so when there's no one.
         /// </summary>
         public void SetPlayers(List<(string key, string name)> players, string finding, Action<string> find)
         {
@@ -313,16 +312,32 @@ namespace Porchlight.UI
             if (shown == playersShown) return;
             playersShown = shown;
             playersList.Clear();
-            playersSection.style.display = players.Count > 0 ? DisplayStyle.Flex : DisplayStyle.None;
+            if (players.Count == 0)
+            {
+                var none = El.Text("No one else is in this town yet. When someone joins your seed, tick them here for the way to them.", "help-text");
+                none.style.whiteSpace = WhiteSpace.Normal;
+                playersList.Add(none);
+            }
             foreach (var (key, name) in players)
             {
-                var box = new Toggle { text = string.IsNullOrEmpty(name) ? "Someone" : name, value = key == finding, focusable = false };
-                box.AddToClassList("check");
-                box.tooltip = $"Show the way to {box.text}";
+                // A row of plain elements (a box and a name) rather than a Toggle, so it
+                // draws the same everywhere; the click ticks this one and unticks the rest.
+                string label = string.IsNullOrEmpty(name) ? "Someone" : name;
+                bool on = key == finding;
                 string k = key;
-                box.RegisterValueChangedCallback(e => onFind?.Invoke(e.newValue ? k : null));
-                playersList.Add(box);
+                var row = new Button(() => onFind?.Invoke(on ? null : k)) { focusable = false, tooltip = on ? "Stop showing the way" : $"Show the way to {label}" };
+                row.AddToClassList("player-row");
+                var tick = El.Box("player-tick");
+                // In their name tag's colour: filled while you're being shown the way.
+                var colour = Porchlight.Rendering.NameTag.ColourFor(key);
+                tick.style.borderTopColor = tick.style.borderRightColor = tick.style.borderBottomColor = tick.style.borderLeftColor = colour;
+                tick.style.backgroundColor = on ? colour : new Color(0, 0, 0, 0);
+                tick.style.borderTopWidth = tick.style.borderRightWidth = tick.style.borderBottomWidth = tick.style.borderLeftWidth = 2;
+                row.Add(tick);
+                row.Add(El.Text(label, "player-name"));
+                playersList.Add(row);
             }
+            Debug.Log($"Porchlight: {players.Count} other player(s) here{(finding != null ? ", finding " + finding : "")}");
         }
 
         static double Snap(double v, ParamSpec spec) => Math.Min(spec.max, Math.Max(spec.min, Numbers.Round((v - spec.min) / spec.step) * spec.step + spec.min));

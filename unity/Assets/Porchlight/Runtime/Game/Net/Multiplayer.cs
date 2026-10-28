@@ -33,8 +33,11 @@ namespace Porchlight.App
         LocalState? GetLocalState();
         /// <summary>Joined: start where they left off in this town (or at its spawn point; at = {x, z, yaw} or null), looking like this.</summary>
         void ApplySpawn(double[] at, string look);
-        /// <summary>The server says they're here (a correction, or a minimap jump it accepted).</summary>
-        void PlacePlayer(double x, double z);
+        /// <summary>
+        /// The server says they're here: a minimap jump it accepted (`teleported`:
+        /// on foot, there), or a correction (put back, in whatever car they're in).
+        /// </summary>
+        void PlacePlayer(double x, double z, bool teleported);
         void SyncRemotes(List<RemoteState> players, string me);
         void ClearRemotes();
         /// <summary>Everyone else in the room (names and rough positions), for the minimap and the player list.</summary>
@@ -100,6 +103,8 @@ namespace Porchlight.App
         const double SETTLE_MS = 300;
         /// <summary>At rest, send this often anyway (ms).</summary>
         const double HEARTBEAT_MS = 1000;
+        /// <summary>A correction this soon after asking to jump somewhere is the jump (ms).</summary>
+        const double TELEPORT_ANSWER_MS = 5000;
         /// <summary>Rejoin delays after losing the room (ms), longest last and then repeated.</summary>
         static readonly double[] RETRY_MS = { 2000, 5000, 10000, 30000 };
 
@@ -111,6 +116,10 @@ namespace Porchlight.App
         int seq;
         double epoch;
         bool spawned;
+        /// <summary>The town this tab has placed its character in (rejoining it, they carry on from where they are).</summary>
+        string placedIn;
+        /// <summary>When we last asked to jump somewhere (ms), so its answer isn't taken for a correction.</summary>
+        double teleportAt = double.NegativeInfinity;
         string lastSent = "";
         double changedAt, sentAt;
         object timer, worldTimer, retry;
@@ -178,6 +187,7 @@ namespace Porchlight.App
         {
             if (room == null || !spawned) return false;
             room.Send(Protocol.MSG_TELEPORT, new Dictionary<string, object> { ["x"] = x, ["z"] = z });
+            teleportAt = platform.Now();
             return true;
         }
 
@@ -275,7 +285,11 @@ namespace Porchlight.App
                         at = new[] { MsgPack.Num(ad["x"]), MsgPack.Num(ad["z"]), MsgPack.Num(ad["yaw"]) };
                     if (d.TryGetValue("look", out var l)) look = l as string;
                 }
-                host.ApplySpawn(at, look);
+                // Back in a town we were already playing (after a dropped connection, or
+                // the server restarting): stay where we are, car and all, rather than
+                // going back to where the server last saved us. The first move says where.
+                if (placedIn != town?.key) host.ApplySpawn(at, look);
+                placedIn = town?.key;
                 spawned = true;
                 Send(true);
             });
@@ -283,7 +297,9 @@ namespace Porchlight.App
             {
                 if (!(m is Dictionary<string, object> c)) return;
                 epoch = MsgPack.Num(c["epoch"]);
-                host.PlacePlayer(MsgPack.Num(c["x"]), MsgPack.Num(c["z"]));
+                bool teleported = platform.Now() - teleportAt < TELEPORT_ANSWER_MS;
+                if (teleported) teleportAt = double.NegativeInfinity;
+                host.PlacePlayer(MsgPack.Num(c["x"]), MsgPack.Num(c["z"]), teleported);
                 Send(true);
             });
             r.OnMessage(Protocol.MSG_DOTS, m =>

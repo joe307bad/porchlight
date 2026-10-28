@@ -42,6 +42,8 @@ namespace Porchlight.Model
         public double buildingDensity = 0.85;
         public double maxBuildingSize = 7;
         public double frontSetback = 0;
+        /// <summary>Within this share of the town radius buildings stand right on the sidewalk, setback or not.</summary>
+        public double innerCity = 0.5;
         // yards
         public double driveways = 0.6;
         public double gardens = 0.5;
@@ -79,6 +81,7 @@ namespace Porchlight.Model
                 "buildingDensity" => buildingDensity,
                 "maxBuildingSize" => maxBuildingSize,
                 "frontSetback" => frontSetback,
+                "innerCity" => innerCity,
                 "driveways" => driveways,
                 "gardens" => gardens,
                 _ => throw new ArgumentException("unknown param " + key),
@@ -112,6 +115,7 @@ namespace Porchlight.Model
                     case "buildingDensity": buildingDensity = value; break;
                     case "maxBuildingSize": maxBuildingSize = value; break;
                     case "frontSetback": frontSetback = value; break;
+                    case "innerCity": innerCity = value; break;
                     case "driveways": driveways = value; break;
                     case "gardens": gardens = value; break;
                     default: throw new ArgumentException("unknown param " + key);
@@ -189,6 +193,7 @@ namespace Porchlight.Model
             S("buildingDensity", "Building density", "Lots & buildings", 0, 1, 0.01),
             S("maxBuildingSize", "Max building size", "Lots & buildings", 2, 12, 1),
             S("frontSetback", "Front setback", "Lots & buildings", 0, 3, 1),
+            S("innerCity", "Inner city (no setback)", "Lots & buildings", 0, 1, 0.05),
             S("driveways", "Driveways", "Yards", 0, 1, 0.01),
             S("gardens", "Gardens", "Yards", 0, 1, 0.01),
         };

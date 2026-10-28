@@ -170,8 +170,8 @@ namespace Porchlight.Explore
             return $"{Numbers.ToFixed(m / 1000, 1)} km";
         }
 
-        /// <summary>Auto drive's route as steps.</summary>
-        public static List<Step> ForDrive(StreetNames names, List<Stretch> stretches)
+        /// <summary>Auto drive's route (or the way along the streets to someone) as steps.</summary>
+        public static List<Step> ForDrive(StreetNames names, List<Stretch> stretches, string destination = null)
         {
             string Name(int street) => street >= 0 && street < names.streets.Count ? names.streets[street].name : "the road";
             var steps = new List<Step>();
@@ -196,8 +196,9 @@ namespace Porchlight.Explore
             if (stretches.Count > 0)
             {
                 int street = names.ofRoad[stretches[stretches.Count - 1].road];
-                steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at your destination on {Name(street)}", street = street, distance = 0 });
+                steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at {destination ?? "your destination"} on {Name(street)}", street = street, distance = 0 });
             }
+            else if (destination != null) steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at {destination}, just here", street = -1, distance = 0 });
             return steps;
         }
 

@@ -1,7 +1,7 @@
 // Other players in the town, as the server sends them: each drawn as the
 // same rigged character the townsfolk use, posed from moves played back on
-// their own clock a little in the past (Interp), with their name floating
-// over them through buildings. At the wheel they're drawn as their car, and a
+// their own clock a little in the past (Interp), with their name on a badge
+// of their own colour floating over them through buildings. At the wheel they're drawn as their car, and a
 // passenger is out of sight inside it, their tag stacked over the car with
 // the driver's. Their cars are drawn as yours is (CarView).
 
@@ -41,47 +41,93 @@ namespace Porchlight.Rendering
     }
 
     /// <summary>
-    /// A name tag over someone: their name in cream on a dark plate, turned to face
-    /// the camera, on the Labels layer (which the renderer draws over everything).
+    /// A name tag over someone: their name on a rectangle of their own colour
+    /// with a point at the bottom aimed down at them, turned to face the camera, on the
+    /// Labels layer (which the renderer draws over everything). The colour comes
+    /// from their key, so everyone sees the same player in the same colour.
     /// </summary>
     public sealed class NameTag
     {
         public const string LABELS_LAYER = "Labels";
         const float FONT_SIZE = 1.1f;
-        static Material plate;
+        const float PAD_X = 0.26f, PAD_Y = 0.12f;
+        /// <summary>Half the width of the point under the box, and how far down it reaches.</summary>
+        const float POINT_WIDTH = 0.16f, POINT_DEPTH = 0.2f;
+        const float SCALE = 0.32f;
 
         readonly GameObject root;
         readonly TextMeshPro text;
 
-        public NameTag(string label, Transform parent)
+        public NameTag(string label, string key, Transform parent)
         {
             root = new GameObject("tag " + label);
             root.transform.SetParent(parent, false);
+            var content = new GameObject("badge");
+            content.transform.SetParent(root.transform, false);
+            var colour = ColourFor(key);
             var textGo = new GameObject("name");
-            textGo.transform.SetParent(root.transform, false);
+            textGo.transform.SetParent(content.transform, false);
             text = textGo.AddComponent<TextMeshPro>();
             text.font = ModelLibrary.Instance.font;
             text.text = label;
             text.fontSize = FONT_SIZE;
-            text.color = Coords.Hex(0xf4f1ea);
+            text.fontStyle = FontStyles.Bold;
+            text.color = IsLight(colour) ? Coords.Hex(0x1c1b18) : Coords.Hex(0xffffff);
             text.alignment = TextAlignmentOptions.Center;
             text.textWrappingMode = TextWrappingModes.NoWrap;
             text.rectTransform.sizeDelta = new Vector2(4, 0.4f);
+            text.sortingOrder = 2;
             var size = text.GetPreferredValues(label);
-            plate ??= Materials.Unlit(Coords.Hex(0x1c1b18));
-            var back = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            UnityEngine.Object.Destroy(back.GetComponent<Collider>());
-            back.name = "plate";
-            back.transform.SetParent(root.transform, false);
-            back.transform.localPosition = new Vector3(0, 0, 0.01f);
-            back.transform.localScale = new Vector3(size.x + 0.14f, size.y + 0.06f, 1);
-            var r = back.GetComponent<Renderer>();
-            r.sharedMaterial = plate;
-            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            text.sortingOrder = 1;
+            float w = size.x + PAD_X, h = size.y + PAD_Y;
+            Badge(content.transform, "plate", Badge(w, h), colour, 0.01f, 1);
+            // The point's tip sits on the spot the tag is placed at.
+            content.transform.localPosition = new Vector3(0, h / 2 + POINT_DEPTH, 0);
             int layer = LayerMask.NameToLayer(LABELS_LAYER);
             if (layer >= 0) foreach (var t in root.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
-            root.transform.localScale = Vector3.one * 0.32f;
+            root.transform.localScale = Vector3.one * SCALE;
+        }
+
+        /// <summary>A bright colour of this player's own (the same on every screen).</summary>
+        public static Color ColourFor(string key)
+        {
+            uint hash = 2166136261;
+            foreach (char ch in key ?? "") hash = (hash ^ ch) * 16777619;
+            float hue = (hash % 3600) / 3600f;
+            return Color.HSVToRGB(hue, 0.68f, 0.96f);
+        }
+
+        static bool IsLight(Color c) => 0.299f * c.r + 0.587f * c.g + 0.114f * c.b > 0.62f;
+
+        static void Badge(Transform parent, string name, Mesh mesh, Color colour, float z, int order)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = new Vector3(0, 0, z);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterial = Materials.Unlit(colour);
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            r.receiveShadows = false;
+            r.sortingOrder = order;
+        }
+
+        /// <summary>A rectangle with a triangle pointing down from the middle of its bottom edge, centred on the rectangle, drawn from both sides.</summary>
+        static Mesh Badge(float w, float h)
+        {
+            float x = w / 2, y = h / 2;
+            var verts = new List<Vector3>
+            {
+                new Vector3(-x, y), new Vector3(x, y), new Vector3(x, -y), new Vector3(-x, -y),
+                new Vector3(-POINT_WIDTH, -y), new Vector3(POINT_WIDTH, -y), new Vector3(0, -y - POINT_DEPTH),
+            };
+            var front = new[] { 0, 1, 2, 0, 2, 3, 4, 5, 6 };
+            var tris = new List<int>(front);
+            for (int i = 0; i < front.Length; i += 3) tris.AddRange(new[] { front[i], front[i + 2], front[i + 1] });
+            var mesh = new Mesh { name = "name badge" };
+            mesh.SetVertices(verts);
+            mesh.SetTriangles(tris, 0);
+            mesh.RecalculateBounds();
+            return mesh;
         }
 
         public void Place(double x, double h, double y)
@@ -91,16 +137,22 @@ namespace Porchlight.Rendering
             if (cam != null) root.transform.rotation = cam.transform.rotation;
         }
 
-        public void Dispose() => UnityEngine.Object.Destroy(root);
+        public void Dispose()
+        {
+            foreach (var f in root.GetComponentsInChildren<MeshFilter>(true)) UnityEngine.Object.Destroy(f.sharedMesh);
+            UnityEngine.Object.Destroy(root);
+        }
     }
 
     public sealed class RemotePlayers
     {
         const double PLAYER_SCALE = 1.05;
         const double CAR_LIFT = 0.035;
-        const double TAG_HEIGHT = 0.62;
-        const double CAR_TAG_HEIGHT = 0.45;
-        const double TAG_STACK = 0.17;
+        /// <summary>Where a tag's point sits: just over their head, or over their car.</summary>
+        const double TAG_HEIGHT = 0.56;
+        const double CAR_TAG_HEIGHT = 0.4;
+        /// <summary>Each passenger's tag above the last (a badge and its point).</summary>
+        const double TAG_STACK = 0.24;
 
         sealed class Remote
         {
@@ -202,7 +254,7 @@ namespace Porchlight.Rendering
                 if (label != r.tagText)
                 {
                     r.tag.Dispose();
-                    r.tag = new NameTag(label, root);
+                    r.tag = new NameTag(label, key, root);
                     r.tagText = label;
                     r.tag.Place(w.x, height + w.lift, w.y);
                 }
@@ -255,7 +307,7 @@ namespace Porchlight.Rendering
                 buffer = new Interp.SnapshotBuffer(),
                 clock = new Interp.PlaybackClock(),
                 lastT = double.NaN,
-                tag = new NameTag(s.name, root),
+                tag = new NameTag(s.name, s.key, root),
                 tagText = s.name,
                 state = s,
             };
