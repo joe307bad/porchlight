@@ -92,7 +92,7 @@ namespace Porchlight.Explore
             Numbers.StableSort(sorted, (a, b) => Angle(a.dir) - Angle(b.dir));
             double width = double.NegativeInfinity;
             foreach (var e in here) width = Math.Max(width, layout.roads[e.road].width);
-            double reach = width / 2 + Layout.SIDEWALK * 0.75;
+            double reach = width / 2 + Layout.PARKING + Layout.SIDEWALK * 0.75;
             var wedges = new List<(double from, double gap)>();
             for (int k = 0; k < sorted.Count; k++)
             {

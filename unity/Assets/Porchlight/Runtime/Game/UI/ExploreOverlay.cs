@@ -3,7 +3,9 @@
 // player, auto-walk's route and flag, other players in blue; click to jump
 // there), the street panel top right (the street you're on and, while
 // auto-walking, the turn-by-turn directions), a one-line prompt bottom centre,
-// and a notice about the connection top centre.
+// and a notice about the connection top centre. Beside the minimap, two boxes:
+// your character and your car (click the car to have it brought round; with a
+// box picked, Tab or a bumper changes which character or car).
 
 using System;
 using System.Collections.Generic;
@@ -31,6 +33,9 @@ namespace Porchlight.UI
         readonly VisualElement hudSteps;
         readonly Label prompt;
         readonly Label notice;
+        readonly VisualElement garage, personBox, carBox;
+        /// <summary>The character box or the car box was clicked.</summary>
+        public Action OnPersonBox, OnCarBox;
         Texture2D baseTexture;
         TownModel model;
         List<Vec2> others = new List<Vec2>();
@@ -70,6 +75,14 @@ namespace Porchlight.UI
             });
             host.Add(minimap);
 
+            garage = new VisualElement();
+            garage.AddToClassList("garage");
+            personBox = Box("You", "Your character: click, then Tab or a bumper for someone else", () => OnPersonBox?.Invoke());
+            carBox = Box("Car", "Your car: click to have it brought to the nearest street, then Tab or a bumper for another", () => OnCarBox?.Invoke());
+            garage.Add(personBox);
+            garage.Add(carBox);
+            host.Add(garage);
+
             hud = new VisualElement();
             hud.AddToClassList("street-hud");
             hud.pickingMode = PickingMode.Ignore;
@@ -102,6 +115,32 @@ namespace Porchlight.UI
             host.RegisterCallback<GeometryChangedEvent>(_ => Center());
             prompt.RegisterCallback<GeometryChangedEvent>(_ => Center());
             notice.RegisterCallback<GeometryChangedEvent>(_ => Center());
+        }
+
+        static VisualElement Box(string label, string tooltip, Action click)
+        {
+            var box = new VisualElement();
+            box.AddToClassList("garage-box");
+            box.tooltip = tooltip;
+            var name = new Label(label);
+            name.AddToClassList("garage-label");
+            name.pickingMode = PickingMode.Ignore;
+            box.Add(name);
+            box.RegisterCallback<PointerDownEvent>(e =>
+            {
+                click();
+                e.StopPropagation();
+            });
+            return box;
+        }
+
+        /// <summary>The boxes' pictures, and which is picked ("person", "car" or null).</summary>
+        public void SetGarage(Texture person, Texture car, string picked)
+        {
+            personBox.style.backgroundImage = Background.FromRenderTexture(person as RenderTexture);
+            carBox.style.backgroundImage = Background.FromRenderTexture(car as RenderTexture);
+            personBox.EnableInClassList("picked", picked == "person");
+            carBox.EnableInClassList("picked", picked == "car");
         }
 
         /// <summary>Centre the prompt and notice (left 50%, translate -50%).</summary>
@@ -151,6 +190,7 @@ namespace Porchlight.UI
             if (!float.IsNaN(vw)) width = Math.Min(width, Math.Min(264, vw * 0.38f));
             minimap.style.width = width;
             minimap.style.height = width * model.height / model.width;
+            garage.style.left = 14 + width + 8;
         }
 
         public void SetOthers(List<Vec2> o) => others = o ?? new List<Vec2>();

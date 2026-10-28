@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, MSG_CORRECT, MSG_SPAWN, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, MSG_CAR, MSG_CORRECT, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -149,6 +149,72 @@ test('passengers ride with a driver, up to three to a car', async () => {
   move(riders[3], 50.1, 50, 1, { anim: 5, ride: driver.sessionId });
   await until('a refusal for riding with a walker', () => corrected[4]() === 2);
   await Promise.all(rooms.map((r) => r.leave()));
+});
+
+test('the town is shared: one host sends its traffic, and night and taken cars are the same for everyone', async () => {
+  const ids: string[] = [];
+  for (const name of ['Host', 'Guest']) ids.push((await api('town', 'POST', '/mp/characters', { name })).json.id);
+  const shared = { town: 'seed=shared', width: 128, height: 128 };
+  const a = await client('town').joinOrCreate('city', { ...shared, character: ids[0] });
+  a.onMessage(MSG_SPAWN, () => {});
+  move(a, 20, 20);
+  await until('a host', () => a.state.host === a.sessionId);
+  const b = await client('town').joinOrCreate('city', { ...shared, character: ids[1] });
+  b.onMessage(MSG_SPAWN, () => {});
+  move(b, 21, 20);
+  const worlds: { looks: string[]; cars: Uint8Array }[] = [];
+  b.onMessage(MSG_WORLD, (m) => worlds.push(m));
+  a.onMessage(MSG_WORLD, () => assert.fail('the host is sent its own world'));
+  await new Promise((r) => setTimeout(r, 100));
+  b.send(MSG_WORLD, { cars: new Uint8Array([9]), people: new Uint8Array(0), looks: [] }); // not the host: dropped
+  a.send(MSG_WORLD, { cars: new Uint8Array([1, 2, 3]), people: new Uint8Array([4]), looks: ['people/x'] });
+  await until('the host\'s world to reach the guest', () => worlds.length === 1);
+  assert.deepEqual([...worlds[0].cars], [1, 2, 3]);
+  assert.deepEqual(worlds[0].looks, ['people/x']);
+
+  b.send(MSG_NIGHT, { on: true });
+  b.send(MSG_TAKE, { car: 'p3' });
+  b.send(MSG_TAKE, { car: 'p3' });
+  a.send(MSG_TAKE, { car: 't12' });
+  a.send(MSG_TAKE, { car: 'nonsense' });
+  b.send(MSG_CAR, { model: 2, x: 22, z: 20, yaw: 0 });
+  await until('night and the taken cars', () => a.state.night === true && a.state.taken.split(',').length === 2);
+  assert.deepEqual(a.state.taken.split(',').sort(), ['p3', 't12']);
+  await until('the guest\'s parked car', () => a.state.cars.get(b.sessionId)?.model === 2);
+
+  // The host leaves: the guest takes over.
+  await a.leave();
+  await until('the guest to host', () => b.state.host === b.sessionId);
+  await b.leave();
+});
+
+test('a quiet host hands the town to someone still playing, never to another quiet tab', async () => {
+  const ids: string[] = [];
+  for (const name of ['First', 'Second']) ids.push((await api('town', 'POST', '/mp/characters', { name })).json.id);
+  const shared = { town: 'seed=quiet-host', width: 128, height: 128 };
+  const a = await client('town').joinOrCreate('city', { ...shared, character: ids[0] });
+  a.onMessage(MSG_SPAWN, () => {});
+  move(a, 20, 20);
+  await until('a host', () => a.state.host === a.sessionId);
+  const b = await client('town').joinOrCreate('city', { ...shared, character: ids[1] });
+  b.onMessage(MSG_SPAWN, () => {});
+  b.onMessage(MSG_WORLD, () => {});
+  a.onMessage(MSG_WORLD, () => {});
+  // a's tab goes quiet (no world, no moves); b keeps playing, so b runs the town.
+  const playing = setInterval(() => move(b, 21, 20), 300);
+  try {
+    await until('the playing guest to host', () => b.state.host === b.sessionId, 6000);
+  } finally {
+    clearInterval(playing);
+  }
+  // Now b goes quiet too: a is no better, so b stays on.
+  await new Promise((r) => setTimeout(r, HOST_SILENT_MS + 600));
+  assert.equal(b.state.host, b.sessionId, 'the town went to another quiet tab');
+  // a comes back: a takes over from the quiet b.
+  move(a, 20.5, 20);
+  await until('the returning player to host', () => a.state.host === a.sessionId, 2000);
+  await a.leave();
+  await b.leave();
 });
 
 test('joins are refused while the database is down', async () => {

@@ -61,7 +61,7 @@ namespace Porchlight.Rendering
         {
             public const int grass = 0x86bd5b, lawn = 0x95c964, sand = 0xe6d49a, rock = 0x9c968c, soil = 0x7a5638, paving = 0xbdb6a4;
             public const int plazaA = 0xddd2b6, plazaB = 0xcdc1a2, bed = 0x6f8a86, bank = 0x8f7656, slab = 0x6b5238, asphalt = 0x6b6b6b;
-            public const int sidewalk = 0xd8d3bf, curb = 0xb3ad98, lane = 0xece7d2, path = 0xc9a46e, stone = 0xa39d8a, stoneShade = 0x7d7768;
+            public const int sidewalk = 0xd8d3bf, curb = 0xb3ad98, lane = 0xece7d2, parking = 0x747472, driveway = 0xb9b2a0, path = 0xc9a46e, stone = 0xa39d8a, stoneShade = 0x7d7768;
             public const int shedWall = 0xb07a4a, shedRoof = 0x5b4636, lampPost = 0x3b3f47, water = 0x5d9bc8;
         }
 
@@ -91,6 +91,14 @@ namespace Porchlight.Rendering
         public List<Signpost> signs = new List<Signpost>();
         public readonly List<Box> boxes = new List<Box>();
         public readonly List<Lamp> lamps = new List<Lamp>();
+        /// <summary>
+        /// Windows with a television on behind them: a few of every building's, in
+        /// groups that each flicker blue on their own at night.
+        /// </summary>
+        public readonly List<Renderer> screens = new List<Renderer>();
+        public const int SCREEN_GROUPS = 6;
+        /// <summary>Roughly one window in this many has the television on.</summary>
+        const double SCREEN_SHARE = 1 / 14.0;
         public Vec2 fountainAt;
         public readonly List<Room> rooms = new List<Room>();
         public readonly List<int> roomBuilding = new List<int>();
@@ -216,6 +224,7 @@ namespace Porchlight.Rendering
                     if (use == Use.HOUSE || overlay == Overlay.ROAD_MAIN || overlay == Overlay.ROAD_STREET || overlay == Overlay.BRIDGE) color = C.paving;
                     else if (overlay == Overlay.PLAZA) color = (x + y) % 2 != 0 ? C.plazaA : C.plazaB;
                     else if (use == Use.GARDEN || use == Use.COMMUNITY_GARDEN) color = Jitter(C.soil, 0.08);
+                    else if (use == Use.DRIVEWAY) color = C.driveway;
                     else if (terrain == Terrain.SAND) color = Jitter(C.sand, 0.05);
                     else if (terrain == Terrain.ROCK) color = Jitter(C.rock, 0.08);
                     else if (use == Use.YARD || use == Use.SHED) color = Jitter(C.lawn, 0.05);
@@ -273,16 +282,28 @@ namespace Porchlight.Rendering
             }
             foreach (var br in layout.bridges)
             {
-                double half = br.width / 2 + Layout.SIDEWALK + 0.25;
+                double half = br.width / 2 + Layout.PARKING + Layout.SIDEWALK + 0.25;
                 b.Ribbon(br.points, half * 2, 0.01, C.stone);
                 b.Wall(br.points, half, BED_Y, 0.01, C.stoneShade);
                 b.Wall(br.points, -half, BED_Y, 0.01, C.stoneShade);
                 foreach (int side in new[] { 1, -1 }) b.Parapet(br.points, side * (half - 0.07), 0.12, 0.01, 0.24, C.stone, C.stoneShade);
             }
-            Layer(0.014, Layout.SIDEWALK * 2 + 0.1, C.curb);
-            Layer(0.018, Layout.SIDEWALK * 2, C.sidewalk);
-            Layer(0.022, 0.08, C.curb);
+            // Out from the middle: the asphalt, a parking lane each side (a shade
+            // lighter, edged with a thin line), the kerb, then the sidewalk.
+            double park = Layout.PARKING * 2;
+            Layer(0.012, park + Layout.SIDEWALK * 2 + 0.1, C.curb);
+            Layer(0.016, park + Layout.SIDEWALK * 2, C.sidewalk);
+            Layer(0.02, park + 0.08, C.curb);
+            Layer(0.023, park, C.parking);
             Layer(0.026, 0, C.asphalt);
+            foreach (var r in streets)
+            {
+                // Stopping short of the junctions, as the centre line does.
+                double length = Geo.PolylineLength(r.points);
+                if (length < 3) continue;
+                var middle = Geo.SubPolyline(r.points, 1.3, length - 1.3);
+                foreach (int side in new[] { 1, -1 }) b.Ribbon(Layout.OffsetPolyline(middle, side * r.width / 2), 0.04, 0.028, C.lane);
+            }
             foreach (var r in layout.roads.Where(rd => rd.kind == RoadKind.Path))
             {
                 b.Ribbon(r.points, r.width, 0.012, C.path);

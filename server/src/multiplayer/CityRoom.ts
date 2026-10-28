@@ -7,6 +7,12 @@
 // carries the time its sender took it, which is what other clients play it
 // back by: the room's own ticks never decide its timing.
 //
+// The town itself is shared too: one client, the host, runs its traffic and
+// townsfolk and sends them out about 10 times a second, which the room passes
+// on to everyone else (if the host goes quiet or leaves, another client takes
+// over from where things were). Night or day, the town's cars someone has got
+// into and everyone's parked car are in the room's state.
+//
 // The tick never waits on the database. A character is read once when it
 // joins, and written in batches every 30 s (if it moved), when it leaves, and
 // on shutdown. If the database is down the game goes on and the writes wait.
@@ -23,13 +29,20 @@ import {
   CAR_SEATS,
   CLOSE_KICKED,
   CLOSE_SIGNED_IN_ELSEWHERE,
+  HOST_SILENT_MS,
+  MSG_CAR,
   MSG_CORRECT,
   MSG_DOTS,
   MSG_LOOK,
   MSG_MOVE,
+  MSG_NIGHT,
   MSG_SPAWN,
+  MSG_TAKE,
   MSG_TELEPORT,
+  MSG_WORLD,
   SEND_MS,
+  WORLD_MAX_BYTES,
+  WORLD_PER_SECOND,
   quantizeYaw,
   yawFromWire,
   type CorrectMessage,
@@ -37,7 +50,7 @@ import {
   type MoveMessage,
   type SpawnMessage,
 } from './protocol.ts';
-import { CityState, Player } from './schema.ts';
+import { CityState, ParkedCar, Player } from './schema.ts';
 
 /** The room's housekeeping tick (idle players, who sees whom). Moves don't wait for it. */
 const TICK_MS = 50;
@@ -53,6 +66,8 @@ const LOOK_SAVE_DELAY_MS = 2_000;
 const TELEPORT_GAP_MS = 1_000;
 /** Shutdown doesn't wait longer than this on the database. */
 const SHUTDOWN_SAVE_MS = 8_000;
+/** Most cars a town's `taken` list holds. */
+const MAX_TAKEN = 4_000;
 
 interface JoinAuth {
   accountId: string;
@@ -81,6 +96,8 @@ interface PlayerRuntime {
   lastInputAt: number;
   lastTeleportAt: number;
   rate: RateLimit;
+  /** World messages this second (while they're the host). */
+  worldRate: RateLimit;
   strikes: Strikes;
   /** Bumped on every saveable change; `savedChange` is the last one written. */
   change: number;
@@ -95,6 +112,11 @@ interface PlayerRuntime {
 const online = new Map<string, { room: CityRoom; sessionId: string }>();
 
 export const isOnline = (characterId: string): boolean => online.has(characterId);
+
+/** Night or day in each town, kept while this process runs (a town's room closes when everyone's left). */
+const nights = new Map<string, boolean>();
+
+const byteLength = (v: unknown): number => (v instanceof Uint8Array ? v.byteLength : -1);
 
 let deps: GameDeps | null = null;
 
@@ -117,6 +139,11 @@ export class CityRoom extends Room<{ state: CityState }> {
   bounds: Bounds = { width: 0, height: 0 };
   private readonly runtime = new Map<string, PlayerRuntime>();
   private readonly interest = new Interest();
+  /** The `taken` list, as a set. */
+  private readonly taken = new Set<string>();
+  /** When the host was chosen, and last sent the world. */
+  private hostSince = 0;
+  private hostHeardAt = 0;
   private shuttingDown = false;
   private flushing = false;
   private flushFailures = 0;
@@ -140,6 +167,9 @@ export class CityRoom extends Room<{ state: CityState }> {
     this.town = town;
     this.bounds = { width, height };
     this.state = new CityState();
+    this.state.night = nights.get(town) ?? false;
+    this.state.taken = '';
+    this.state.host = '';
 
     this.onMessage(MSG_MOVE, (client, raw: unknown) => {
       const rt = this.admit(client);
@@ -166,6 +196,49 @@ export class CityRoom extends Room<{ state: CityState }> {
         rt.lookTimer = null;
         if (!rt.finished) void this.save([rt]);
       }, LOOK_SAVE_DELAY_MS);
+    });
+
+    this.onMessage(MSG_NIGHT, (client, raw: unknown) => {
+      const rt = this.admit(client);
+      const on = (raw as { on?: unknown } | null)?.on;
+      if (!rt || typeof on !== 'boolean') return;
+      this.state.night = on;
+      nights.set(this.town, on);
+    });
+    this.onMessage(MSG_TAKE, (client, raw: unknown) => {
+      const rt = this.admit(client);
+      const car = (raw as { car?: unknown } | null)?.car;
+      if (!rt || typeof car !== 'string' || !/^[pt]\d{1,5}$/.test(car) || this.taken.has(car) || this.taken.size >= MAX_TAKEN) return;
+      this.taken.add(car);
+      this.state.taken = [...this.taken].join(',');
+    });
+    this.onMessage(MSG_CAR, (client, raw: unknown) => {
+      const rt = this.admit(client);
+      const m = raw as { model?: unknown; x?: unknown; z?: unknown; yaw?: unknown } | null;
+      if (!rt || typeof m?.model !== 'number' || !Number.isInteger(m.model) || m.model < 0 || m.model > 32) return;
+      if (m.model === 0) {
+        this.state.cars.delete(client.sessionId);
+        return;
+      }
+      if (typeof m.x !== 'number' || typeof m.z !== 'number' || typeof m.yaw !== 'number' || !Number.isFinite(m.yaw)) return;
+      const c = clampToBounds(this.bounds, m.x, m.z);
+      const car = this.state.cars.get(client.sessionId) ?? new ParkedCar();
+      car.model = m.model;
+      car.x = c.x;
+      car.z = c.z;
+      car.yaw = quantizeYaw(m.yaw);
+      if (!this.state.cars.has(client.sessionId)) this.state.cars.set(client.sessionId, car);
+    });
+    this.onMessage(MSG_WORLD, (client, raw: unknown) => {
+      const rt = this.admit(client);
+      if (!rt || client.sessionId !== this.state.host) return;
+      const m = raw as { cars?: unknown; people?: unknown; looks?: unknown } | null;
+      const cars = byteLength(m?.cars);
+      const people = byteLength(m?.people);
+      if (cars < 0 || people < 0 || cars + people > WORLD_MAX_BYTES || !Array.isArray(m?.looks) || m.looks.length > 256) return;
+      if (rt.worldRate.hit(Date.now()) !== 'ok') return;
+      this.hostHeardAt = Date.now();
+      this.broadcast(MSG_WORLD, { cars: m.cars, people: m.people, looks: m.looks.filter((l) => typeof l === 'string' && l.length < 64) }, { except: client });
     });
 
     this.setSimulationInterval(() => this.tick(), TICK_MS);
@@ -227,8 +300,9 @@ export class CityRoom extends Room<{ state: CityState }> {
         track: newTrack(),
         lastInputAt: Date.now(),
         lastTeleportAt: 0,
-        // Moves come about 30 a second: room for that and the odd teleport or look.
-        rate: new RateLimit(45),
+        // Moves come about 30 a second, and the host's world 10: room for those and the odd teleport, look or car.
+        rate: new RateLimit(60),
+        worldRate: new RateLimit(WORLD_PER_SECOND),
         strikes: new Strikes(),
         change: 0,
         savedChange: 0,
@@ -330,6 +404,7 @@ export class CityRoom extends Room<{ state: CityState }> {
         rt.player.anim = ANIM_IDLE;
       }
     }
+    this.chooseHost(now);
     for (const op of this.interest.drain()) {
       const viewer = this.runtime.get(op.viewer);
       const target = this.state.players.get(op.target);
@@ -338,6 +413,34 @@ export class CityRoom extends Room<{ state: CityState }> {
       else viewer.view.remove(target);
     }
     this.measure(performance.now() - start);
+  }
+
+  /**
+   * Someone to run the town: the host stays while they're here and sending; if
+   * they leave, drop out or go quiet (a hidden tab), whoever's been here
+   * longest among those still playing (moving, or at least saying they're
+   * there) takes over. A quiet host stays on if nobody else is playing either,
+   * rather than handing the town to another quiet tab.
+   */
+  private chooseHost(now: number): void {
+    const ready = (rt: PlayerRuntime | undefined): rt is PlayerRuntime => !!rt && !rt.finished && !!rt.client && rt.track.anchored;
+    const active = (rt: PlayerRuntime): boolean => now - rt.lastInputAt <= HOST_SILENT_MS;
+    const host = this.runtime.get(this.state.host);
+    const silent = ready(host) && now - Math.max(this.hostHeardAt, this.hostSince) > HOST_SILENT_MS;
+    if (ready(host) && !silent) return;
+    let next: PlayerRuntime | null = null;
+    for (const rt of this.runtime.values()) {
+      if (!ready(rt) || rt === host) continue;
+      if (!next || (active(rt) && !active(next)) || (active(rt) === active(next) && rt.joinedAt < next.joinedAt)) next = rt;
+    }
+    if (next && ready(host) && !active(next)) next = null;
+    if (!next) {
+      if (!ready(host) && this.state.host !== '') this.state.host = '';
+      return;
+    }
+    this.state.host = next.sessionId;
+    this.hostSince = now;
+    this.hostHeardAt = 0;
   }
 
   private applyMove(rt: PlayerRuntime, m: MoveMessage, at: number): void {
@@ -415,7 +518,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     const dots: DotsMessage = [];
     for (const rt of this.runtime.values()) {
       if (!rt.track.anchored || rt.finished) continue;
-      dots.push([rt.sessionId, Math.round(rt.player.x * 10) / 10, Math.round(rt.player.z * 10) / 10]);
+      dots.push([rt.sessionId, Math.round(rt.player.x * 10) / 10, Math.round(rt.player.z * 10) / 10, rt.player.name]);
     }
     this.broadcast(MSG_DOTS, dots);
   }
@@ -485,6 +588,7 @@ export class CityRoom extends Room<{ state: CityState }> {
   private forget(rt: PlayerRuntime): void {
     this.interest.remove(rt.sessionId);
     this.state.players.delete(rt.sessionId);
+    this.state.cars.delete(rt.sessionId);
     this.runtime.delete(rt.sessionId);
   }
 

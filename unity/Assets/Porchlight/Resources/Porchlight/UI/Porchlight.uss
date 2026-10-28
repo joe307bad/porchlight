@@ -343,6 +343,41 @@ Label {
     color: #efe6cf;
 }
 
+.player-row {
+    flex-direction: row;
+    align-items: center;
+    margin: 0 0 6px 0;
+    padding: 2px 0;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    -unity-text-align: middle-left;
+}
+
+.player-tick {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: #767676;
+    background-color: #ffffff;
+    margin-right: 8px;
+}
+
+.player-tick.on {
+    background-color: #c2412d;
+    border-color: #c2412d;
+}
+
+.player-name {
+    font-size: 13px;
+    color: #efe6cf;
+}
+
+.player-row:hover > .player-name {
+    color: #ffffff;
+}
+
 .sb-tools {
     flex-direction: row;
     flex-wrap: wrap;
@@ -466,7 +501,8 @@ Label {
 .street-hud {
     position: absolute;
     top: 14px;
-    right: 14px;
+    /* Clear of the sidebar's open/close tab (32px, hanging over the view). */
+    right: 54px;
     width: 300px;
     padding: 8px 10px;
     border-radius: 6px;
@@ -570,8 +606,9 @@ Label {
     padding: 16px;
 }
 
+/* The sign-in card floats over a little town going about its day. */
 #signin {
-    background-color: #2a2925;
+    background-color: rgba(20, 19, 17, 0.28);
 }
 
 #picker {
@@ -587,6 +624,8 @@ Label {
 }
 
 .signin-card {
+    opacity: 1;
+    background-color: #1f1e1b;
     width: 360px;
     max-width: 100%;
     align-items: stretch;
@@ -806,4 +845,41 @@ Label {
 /* A button that couldn't do what it says (no car near enough): a little shake. */
 .btn.nudge {
     translate: 3px 0;
+}
+
+/* Your character and your car, beside the minimap. */
+.garage {
+    position: absolute;
+    left: 286px;
+    bottom: 14px;
+    flex-direction: column;
+}
+
+.garage-box {
+    width: 64px;
+    height: 64px;
+    margin-top: 8px;
+    border-width: 2px;
+    border-color: #444038;
+    border-radius: 6px;
+    background-color: #2b2a27;
+    -unity-background-scale-mode: scale-and-crop;
+    justify-content: flex-end;
+    overflow: hidden;
+}
+
+.garage-box:hover {
+    border-color: #767676;
+}
+
+.garage-box.picked {
+    border-color: #c2412d;
+}
+
+.garage-label {
+    font-size: 10px;
+    color: #efe6cf;
+    background-color: rgba(20, 19, 17, 0.6);
+    -unity-text-align: middle-center;
+    padding: 1px 0;
 }

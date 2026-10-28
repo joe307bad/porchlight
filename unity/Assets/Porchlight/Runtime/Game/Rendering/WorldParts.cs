@@ -70,7 +70,7 @@ namespace Porchlight.Rendering
                 for (int k = 0; k < pieces; k++)
                 {
                     var m = library.Get(PickModel(candidates, len / depth, house, rng));
-                    const double gap = 0.04;
+                    const double gap = Porchlight.Gen.BuildingsStage.DRAWN_INSET;
                     double sx = (len - gap * 2) / m.size.x;
                     double sz = (depth - gap * 2) / m.size.z;
                     double sy = Math.Sqrt(sx * sz) * HeightFactor(m, Math.Sqrt(sx * sz), house);
@@ -158,6 +158,9 @@ namespace Porchlight.Rendering
         {
             int lastBuilding = -1;
             int colour = FACADES[0];
+            var tv = new MeshBuilder[SCREEN_GROUPS];
+            for (int g = 0; g < tv.Length; g++) tv[g] = new MeshBuilder(palette);
+            int pane = 0;
             for (int i = 0; i < rooms.Count; i++)
             {
                 var room = rooms[i];
@@ -210,10 +213,34 @@ namespace Porchlight.Rendering
                         double cy = origin.y + alongV.y * tt;
                         if (isFront && Numbers.Hypot(cx - door.at.x, cy - door.at.y) < half + width / 2 + 0.08) continue;
                         WindowPane(b, new Vec2(cx, cy), alongV, n, width, sill, top);
+                        // Not drawn from `rng`, so the rest of the town comes out as before.
+                        double roll = Layout.Hash(pane++, 77);
+                        if (roll < SCREEN_SHARE) Screen(tv[(int)(roll / SCREEN_SHARE * SCREEN_GROUPS)], new Vec2(cx, cy), alongV, n, width, sill, top);
                     }
                 }
                 facades.Add(b.Build("facade", still));
             }
+            var screenMaterial = Materials.Glowing(Coords.Hex(0x6f9fe8));
+            for (int g = 0; g < tv.Length; g++)
+            {
+                if (tv[g].Empty) continue;
+                var go = new GameObject("screens " + g);
+                go.transform.SetParent(root.transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = tv[g].Build("screens");
+                var r = go.AddComponent<MeshRenderer>();
+                r.sharedMaterial = screenMaterial;
+                r.shadowCastingMode = ShadowCastingMode.Off;
+                r.enabled = false;
+                screens.Add(r);
+            }
+        }
+
+        /// <summary>A television's glow just inside a window: a pane over its glass, lit only at night.</summary>
+        static void Screen(MeshBuilder b, Vec2 c, Vec2 along, Vec2 n, double width, double y0, double y1)
+        {
+            double half = width / 2 - 0.01, ox = c.x + n.x * 0.011, oy = c.y + n.y * 0.011;
+            b.Quad(v(ox - along.x * half, y0 + 0.01, oy - along.y * half), v(ox + along.x * half, y0 + 0.01, oy + along.y * half),
+                v(ox + along.x * half, y1 - 0.01, oy + along.y * half), v(ox - along.x * half, y1 - 0.01, oy - along.y * half), GLASS, new V3(n.x, 0, n.y));
         }
 
         static void WindowPane(MeshBuilder b, Vec2 c, Vec2 along, Vec2 n, double width, double y0, double y1)
@@ -419,7 +446,7 @@ namespace Porchlight.Rendering
                     byte use = layout.use[i];
                     byte terrain = tiles.terrain[i];
                     if (tiles.overlay[i] != Overlay.NONE) continue;
-                    if (use == Use.HOUSE || use == Use.SHED || use == Use.GARDEN || use == Use.COMMUNITY_GARDEN) continue;
+                    if (use == Use.HOUSE || use == Use.SHED || use == Use.GARDEN || use == Use.COMMUNITY_GARDEN || use == Use.DRIVEWAY) continue;
                     if (terrain == Terrain.ROCK)
                     {
                         if (rng.Chance(0.22))

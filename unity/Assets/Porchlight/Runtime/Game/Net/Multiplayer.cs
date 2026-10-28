@@ -7,6 +7,11 @@
 // everyone nearby to the view, and does what the room says (start where you
 // left off, snap back after a bad move).
 //
+// The town is shared as well: the room names one client its host, which runs
+// the traffic and townsfolk and sends them about ten times a second for the
+// others to follow; night or day, the town's cars someone has taken and each
+// player's parked car come with the room's state.
+//
 // Movement is predicted: your character moves the moment you press a key, and
 // the server only ever corrects it. If the server can't be reached the town
 // still works, on your own, and the client keeps trying to rejoin.
@@ -14,6 +19,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using Porchlight.Core;
 using Porchlight.Net;
 using Porchlight.Rendering;
@@ -27,14 +33,49 @@ namespace Porchlight.App
         LocalState? GetLocalState();
         /// <summary>Joined: start where they left off in this town (or at its spawn point; at = {x, z, yaw} or null), looking like this.</summary>
         void ApplySpawn(double[] at, string look);
-        /// <summary>The server says they're here (a correction, or a minimap jump it accepted).</summary>
-        void PlacePlayer(double x, double z);
+        /// <summary>
+        /// The server says they're here: a minimap jump it accepted (`teleported`:
+        /// on foot, there), or a correction (put back, in whatever car they're in).
+        /// </summary>
+        void PlacePlayer(double x, double z, bool teleported);
         void SyncRemotes(List<RemoteState> players, string me);
         void ClearRemotes();
-        /// <summary>Everyone else in the room, for the minimap.</summary>
-        void SetDots(List<Vec2> dots);
+        /// <summary>Everyone else in the room (names and rough positions), for the minimap and the player list.</summary>
+        void SetOthers(List<OtherPlayer> others);
         /// <summary>A line about the connection (null clears it).</summary>
         void Notify(string text);
+        /// <summary>Run the town's traffic and townsfolk here (alone, or the room's host), or follow the host's.</summary>
+        void SetHost(bool host);
+        /// <summary>The traffic and townsfolk to send, while running them.</summary>
+        WorldState? World();
+        void ApplyWorld(byte[] cars, byte[] people, List<string> looks);
+        /// <summary>The room's list of the town's cars someone has got into ("p3,t12").</summary>
+        void SetTaken(string list);
+        void SetTownNight(bool on);
+        void SyncParked(List<RemoteParked> cars, string me);
+        /// <summary>Your own car, if it's parked.</summary>
+        ParkedState OwnCar();
+    }
+
+    public struct WorldState
+    {
+        public byte[] cars, people;
+        public List<string> looks;
+    }
+
+    /// <summary>A parked car of your own: model + 1 (0: none, or you're driving it), where and which way (map heading).</summary>
+    public struct ParkedState
+    {
+        public int model;
+        public double x, z, yaw;
+    }
+
+    /// <summary>Someone else's parked car: model index, map position and heading.</summary>
+    public struct RemoteParked
+    {
+        public string key;
+        public int model;
+        public double x, y, heading;
     }
 
     /// <summary>How this tab is doing online, for the sidebar.</summary>
@@ -62,6 +103,8 @@ namespace Porchlight.App
         const double SETTLE_MS = 300;
         /// <summary>At rest, send this often anyway (ms).</summary>
         const double HEARTBEAT_MS = 1000;
+        /// <summary>A correction this soon after asking to jump somewhere is the jump (ms).</summary>
+        const double TELEPORT_ANSWER_MS = 5000;
         /// <summary>Rejoin delays after losing the room (ms), longest last and then repeated.</summary>
         static readonly double[] RETRY_MS = { 2000, 5000, 10000, 30000 };
 
@@ -73,9 +116,14 @@ namespace Porchlight.App
         int seq;
         double epoch;
         bool spawned;
+        /// <summary>The town this tab has placed its character in (rejoining it, they carry on from where they are).</summary>
+        string placedIn;
+        /// <summary>When we last asked to jump somewhere (ms), so its answer isn't taken for a correction.</summary>
+        double teleportAt = double.NegativeInfinity;
         string lastSent = "";
         double changedAt, sentAt;
-        object timer, retry;
+        object timer, worldTimer, retry;
+        string lastCar = "";
         int retries;
         bool stopped;
         int generation;
@@ -139,6 +187,7 @@ namespace Porchlight.App
         {
             if (room == null || !spawned) return false;
             room.Send(Protocol.MSG_TELEPORT, new Dictionary<string, object> { ["x"] = x, ["z"] = z });
+            teleportAt = platform.Now();
             return true;
         }
 
@@ -150,15 +199,37 @@ namespace Porchlight.App
             generation++;
             if (retry != null) timers.Cancel(retry);
             retry = null;
-            if (timer != null) timers.Cancel(timer);
-            timer = null;
+            StopTimers();
             var r = room;
             room = null;
             spawned = false;
-            host.ClearRemotes();
-            host.SetDots(new List<Vec2>());
+            Offline();
             r?.Leave();
         }
+
+        void StopTimers()
+        {
+            if (timer != null) timers.Cancel(timer);
+            timer = null;
+            if (worldTimer != null) timers.Cancel(worldTimer);
+            worldTimer = null;
+        }
+
+        /// <summary>Out of the room: nobody else, and the town runs here again.</summary>
+        void Offline()
+        {
+            host.ClearRemotes();
+            host.SetOthers(new List<OtherPlayer>());
+            host.SetHost(true);
+        }
+
+        /// <summary>Night or day, for everyone in the town.</summary>
+        public void SetNight(bool on) => room?.Send(Protocol.MSG_NIGHT, new Dictionary<string, object> { ["on"] = on });
+
+        /// <summary>One of the town's cars is yours now ("p3", "t12"): off the street for everyone.</summary>
+        public void Take(string car) => room?.Send(Protocol.MSG_TAKE, new Dictionary<string, object> { ["car"] = car });
+
+        public bool Online => room != null;
 
         void Join()
         {
@@ -197,6 +268,9 @@ namespace Porchlight.App
             seq = 0;
             epoch = 0;
             lastSent = "";
+            lastCar = "";
+            // Following the room's host until the room says otherwise.
+            host.SetHost(false);
             retries = 0;
             host.Notify(null);
             SetStatus(NetStatus.Online(1));
@@ -211,7 +285,11 @@ namespace Porchlight.App
                         at = new[] { MsgPack.Num(ad["x"]), MsgPack.Num(ad["z"]), MsgPack.Num(ad["yaw"]) };
                     if (d.TryGetValue("look", out var l)) look = l as string;
                 }
-                host.ApplySpawn(at, look);
+                // Back in a town we were already playing (after a dropped connection, or
+                // the server restarting): stay where we are, car and all, rather than
+                // going back to where the server last saved us. The first move says where.
+                if (placedIn != town?.key) host.ApplySpawn(at, look);
+                placedIn = town?.key;
                 spawned = true;
                 Send(true);
             });
@@ -219,7 +297,9 @@ namespace Porchlight.App
             {
                 if (!(m is Dictionary<string, object> c)) return;
                 epoch = MsgPack.Num(c["epoch"]);
-                host.PlacePlayer(MsgPack.Num(c["x"]), MsgPack.Num(c["z"]));
+                bool teleported = platform.Now() - teleportAt < TELEPORT_ANSWER_MS;
+                if (teleported) teleportAt = double.NegativeInfinity;
+                host.PlacePlayer(MsgPack.Num(c["x"]), MsgPack.Num(c["z"]), teleported);
                 Send(true);
             });
             r.OnMessage(Protocol.MSG_DOTS, m =>
@@ -227,11 +307,18 @@ namespace Porchlight.App
                 if (!(m is List<object> dots)) return;
                 int here = Math.Max(1, dots.Count);
                 if (status.state != "online" || status.here != here) SetStatus(NetStatus.Online(here));
-                var list = new List<Vec2>();
+                var list = new List<OtherPlayer>();
                 foreach (var e in dots)
-                    if (e is List<object> dot && dot.Count >= 3 && (dot[0] as string) != r.sessionId)
-                        list.Add(new Vec2(MsgPack.Num(dot[1]), MsgPack.Num(dot[2])));
-                host.SetDots(list);
+                    if (e is List<object> dot && dot.Count >= 3 && dot[0] is string key && key != r.sessionId)
+                        list.Add(new OtherPlayer { key = key, name = dot.Count > 3 ? dot[3] as string ?? "" : "", x = MsgPack.Num(dot[1]), y = MsgPack.Num(dot[2]) });
+                host.SetOthers(list);
+            });
+            r.OnMessage(Protocol.MSG_WORLD, m =>
+            {
+                if (!(m is Dictionary<string, object> w)) return;
+                var looks = new List<string>();
+                if (w.TryGetValue("looks", out var l) && l is List<object> ll) foreach (var x in ll) if (x is string look) looks.Add(look);
+                host.ApplyWorld(w.TryGetValue("cars", out var c) ? c as byte[] : null, w.TryGetValue("people", out var p) ? p as byte[] : null, looks);
             });
             r.onStateChange = state =>
             {
@@ -240,6 +327,15 @@ namespace Porchlight.App
                     foreach (var key in map.keys)
                         if (key != r.sessionId && map.items[key] is SchemaObj p) players.Add(Pick(p, key));
                 host.SyncRemotes(players, r.sessionId);
+                host.SetHost(state.Str("host") == r.sessionId);
+                host.SetTownNight(state.Bool("night"));
+                host.SetTaken(state.Str("taken") ?? "");
+                var parked = new List<RemoteParked>();
+                if (state.Get("cars") is SchemaMap cars)
+                    foreach (var key in cars.keys)
+                        if (cars.items[key] is SchemaObj c && c.Num("model") > 0)
+                            parked.Add(new RemoteParked { key = key, model = (int)c.Num("model") - 1, x = c.Num("x"), y = c.Num("z"), heading = Protocol.YawFromWire(c.Num("yaw")) });
+                host.SyncParked(parked, r.sessionId);
             };
             r.onDrop = () => host.Notify("Connection lost. Reconnecting…");
             r.onReconnect = () =>
@@ -252,10 +348,8 @@ namespace Porchlight.App
                 if (room != r) return; // we left it ourselves
                 room = null;
                 spawned = false;
-                if (timer != null) timers.Cancel(timer);
-                timer = null;
-                host.ClearRemotes();
-                host.SetDots(new List<Vec2>());
+                StopTimers();
+                Offline();
                 if (code == Protocol.CLOSE_SIGNED_IN_ELSEWHERE)
                 {
                     stopped = true;
@@ -276,6 +370,19 @@ namespace Porchlight.App
                 }
             };
             timer = timers.Every(Protocol.SEND_MS, () => Send(false));
+            worldTimer = timers.Every(Protocol.WORLD_MS, SendWorld);
+        }
+
+        /// <summary>The host's traffic and townsfolk, for everyone else.</summary>
+        void SendWorld()
+        {
+            if (room == null || !spawned) return;
+            var w = host.World();
+            if (w == null) return;
+            room.Send(Protocol.MSG_WORLD, new Dictionary<string, object>
+            {
+                ["cars"] = w.Value.cars, ["people"] = w.Value.people, ["looks"] = w.Value.looks.Cast<object>().ToList(),
+            });
         }
 
         void ScheduleRejoin()
@@ -310,6 +417,13 @@ namespace Porchlight.App
         {
             var r = room;
             if (r == null || !spawned) return;
+            var own = host.OwnCar();
+            string car = own.model == 0 ? "" : $"{own.model},{F(own.x, 2)},{F(own.z, 2)},{F(own.yaw, 2)}";
+            if (car != lastCar)
+            {
+                lastCar = car;
+                r.Send(Protocol.MSG_CAR, new Dictionary<string, object> { ["model"] = own.model, ["x"] = own.x, ["z"] = own.z, ["yaw"] = own.yaw });
+            }
             var ls = host.GetLocalState();
             if (ls == null) return;
             var s = ls.Value;

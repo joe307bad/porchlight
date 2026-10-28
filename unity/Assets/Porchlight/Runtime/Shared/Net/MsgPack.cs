@@ -145,6 +145,25 @@ namespace Porchlight.Net
                     else WriteDouble(o, d);
                     break;
                 case float f: Write(o, (double)f); break;
+                case byte[] bytes:
+                    if (bytes.Length < 0x100)
+                    {
+                        o.Add(0xc4);
+                        o.Add((byte)bytes.Length);
+                    }
+                    else if (bytes.Length < 0x10000)
+                    {
+                        o.Add(0xc5);
+                        o.Add((byte)(bytes.Length >> 8));
+                        o.Add((byte)bytes.Length);
+                    }
+                    else
+                    {
+                        o.Add(0xc6);
+                        for (int sh = 24; sh >= 0; sh -= 8) o.Add((byte)(bytes.Length >> sh));
+                    }
+                    o.AddRange(bytes);
+                    break;
                 case IDictionary<string, object> m:
                     WriteHeader(o, m.Count, 0x80, 0xde, 0xdf);
                     foreach (var kv in m)

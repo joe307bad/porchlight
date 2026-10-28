@@ -5,7 +5,10 @@
 // auto-walk wanders the sidewalks), G / B gets in and out of cars, doors swing
 // open into furnished ground floors, townsfolk stroll and traffic drives, and
 // day and night blend with the street lamps (a few faulty) lighting up. Other
-// players come and go through the network (NetHost).
+// players come and go through the network (NetHost); in a shared town one
+// client runs the traffic and townsfolk and the rest follow it (WorldSync), so
+// everyone sees the same. You have one car of your own at a time, and can ask
+// for the way to another player (Find).
 
 using System;
 using System.Collections.Generic;
@@ -37,6 +40,14 @@ namespace Porchlight.App
         public double at;
     }
 
+    /// <summary>Someone else in the town, as the room's once-a-second roll call has them.</summary>
+    public struct OtherPlayer
+    {
+        public string key;
+        public string name;
+        public double x, y;
+    }
+
     /// <summary>What the view shows besides the 3D scene (the minimap, street panel and notices: ExploreOverlay).</summary>
     public interface IExploreOverlay
     {
@@ -54,6 +65,13 @@ namespace Porchlight.App
         const double VIEW_HEIGHT = 20;
         const double MIN_ZOOM = 0.35;
         const double MAX_ZOOM = 2.5;
+        /// <summary>
+        /// Behind the sign-in card: further out than you can zoom, and low, to take in
+        /// much of the town, but not so far that its edges show (at this zoom and pitch
+        /// the top of the view is about 64 tiles past the middle, inside the town).
+        /// </summary>
+        const double ATTRACT_ZOOM = 0.42;
+        const double ATTRACT_PITCH = 22 * Math.PI / 180;
         const int MAX_PEDESTRIANS = 70;
         /// <summary>How far back the orthographic camera sits (the view doesn't change with it; URP's shadows reach this far and more).</summary>
         const double CAMERA_DISTANCE = 60;
@@ -87,7 +105,7 @@ namespace Porchlight.App
             [Key.D] = (1, 0), [Key.RightArrow] = (1, 0),
         };
 
-        sealed class OwnCar
+        sealed class MyCar
         {
             public Vehicle car;
             public CarView view;
@@ -161,12 +179,41 @@ namespace Porchlight.App
         bool space;
         bool steering;
         public Action<PadAction> OnPadAction;
-        readonly List<OwnCar> cars = new List<OwnCar>();
+        readonly List<MyCar> cars = new List<MyCar>();
         int? driving;
         AutoDrive autoDrive;
         public Action OnAutoChange;
         public Action<bool> OnCarChange;
         readonly HashSet<int> takenParked = new HashSet<int>();
+        /// <summary>Running the traffic and townsfolk here (alone, or the room's host), rather than following the host's.</summary>
+        bool authority = true;
+        readonly WorldSync sync = new WorldSync();
+        /// <summary>How many townsfolk the town starts with (more join: drivers put out of their cars).</summary>
+        int basePeople;
+        /// <summary>The town's cars someone has taken ("p3", "t12"), applied here.</summary>
+        readonly HashSet<string> taken = new HashSet<string>();
+        bool takenSynced;
+        /// <summary>A parked or traffic car got into ("p3", "t12"): the network tells everyone.</summary>
+        public Action<string> OnTake;
+        /// <summary>Night or day changed (by someone in the room, or here).</summary>
+        public Action OnNightChange;
+        List<OtherPlayer> others = new List<OtherPlayer>();
+        readonly Dictionary<string, CarView> othersParked = new Dictionary<string, CarView>();
+        readonly Dictionary<string, Vec2> othersParkedAt = new Dictionary<string, Vec2>();
+        /// <summary>Who we're finding the way to, the way there and its directions.</summary>
+        string finding;
+        List<Vec2> findRoute = new List<Vec2>();
+        List<Step> findSteps;
+        double findTimer;
+        GameObject findPath;
+        Palette findPalette;
+        /// <summary>The finder's target left the town.</summary>
+        public Action OnFindLost;
+        /// <summary>The sign-in screen's town: no controls, an auto walk and a slowly turning camera.</summary>
+        public bool Attract;
+        /// <summary>While one of the boxes by the minimap is picked, the bumpers flick through its choices (OnCycle) rather than zoom.</summary>
+        public bool Cycling;
+        public Action<int> OnCycle;
         Func<double, double, bool> canDrive = (x, y) => false;
         double hudTimer;
         int? street;
@@ -215,6 +262,16 @@ namespace Porchlight.App
             riding = null;
             autoDrive = null;
             takenParked.Clear();
+            taken.Clear();
+            takenSynced = false;
+            sync.Clear();
+            foreach (var v in othersParked.Values) v.Dispose();
+            othersParked.Clear();
+            othersParkedAt.Clear();
+            finding = null;
+            findRoute = new List<Vec2>();
+            findSteps = null;
+            ClearFindPath();
             ClearRoute();
             avatars.Clear();
             people.Clear();
@@ -226,7 +283,6 @@ namespace Porchlight.App
             open = WalkMask();
             canDrive = Vehicle.Drivable(model, world.layout);
             overlay.SetTown(model);
-            LeaveCarAtSpawn();
 
             traffic = new Traffic(world.layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             fleet = new Fleet(traffic, library, world.root.transform);
@@ -241,6 +297,7 @@ namespace Porchlight.App
                 people.Add(p);
                 avatars.Add(a);
             }
+            basePeople = people.Count;
         }
 
         /// <summary>Put a new character with the given look at the town's spawn point (or swap the look in place).</summary>
@@ -336,19 +393,298 @@ namespace Porchlight.App
             }
         }
 
-        public void PlacePlayer(double x, double z) => MoveTo(x, z);
+        public void PlacePlayer(double x, double z, bool teleported)
+        {
+            // Put back by the server while driving: back there in the car, still driving.
+            if (!teleported && driving != null && player != null && world != null)
+            {
+                var car = cars[driving.Value].car;
+                car.x = x;
+                car.y = z;
+                car.speed = 0;
+                player.x = x;
+                player.y = z;
+                snap = true;
+                return;
+            }
+            MoveTo(x, z);
+        }
 
         public void SyncRemotes(List<RemoteState> players, string me) => remotes?.Sync(players, me);
 
-        public void ClearRemotes() => remotes?.Clear();
+        public void ClearRemotes()
+        {
+            remotes?.Clear();
+            SyncParked(new List<RemoteParked>(), "");
+        }
 
-        public void SetDots(List<Vec2> dots) => overlay.SetOthers(dots);
+        public void SetOthers(List<OtherPlayer> list)
+        {
+            others = list ?? new List<OtherPlayer>();
+            overlay.SetOthers(others.Select(o => new Vec2(o.x, o.y)).ToList());
+            if (finding != null && !others.Any(o => o.key == finding))
+            {
+                Find(null);
+                OnFindLost?.Invoke();
+            }
+        }
+
+        public List<OtherPlayer> Others => others;
+
+        /// <summary>Run the town here (true), or follow the host's (false).</summary>
+        public void SetHost(bool host)
+        {
+            if (host == authority) return;
+            authority = host;
+            if (!authority || world == null) return;
+            // Carry on from where the host had everyone.
+            foreach (var c in traffic.cars) if (!c.taken) traffic.Adopt(c);
+            foreach (var q in people) q.Rejoin(world.sidewalks);
+            sync.Clear();
+        }
+
+        public bool IsHost => authority;
+
+        /// <summary>The town's traffic and townsfolk, to send everyone else (while running it), or null.</summary>
+        public WorldState? World()
+        {
+            if (!authority || world == null || traffic == null) return null;
+            var looks = new List<string>();
+            for (int i = basePeople; i < people.Count; i++) looks.Add(people[i].look);
+            return new WorldState { cars = WorldSync.EncodeCars(traffic.cars), people = WorldSync.EncodePeople(people), looks = looks };
+        }
+
+        /// <summary>The host's traffic and townsfolk.</summary>
+        public void ApplyWorld(byte[] carBytes, byte[] peopleBytes, List<string> looks)
+        {
+            if (authority || world == null) return;
+            sync.Receive(carBytes, peopleBytes);
+            int want = Math.Max(basePeople, sync.PeopleCount);
+            while (people.Count < want && world.sidewalks.paths.Count > 0)
+            {
+                int extra = people.Count - basePeople;
+                string look = looks != null && extra < looks.Count && Catalog.IsCharacter(looks[extra]) ? looks[extra] : Catalog.RandomLook(autoRng);
+                AddPerson(Pedestrian.Create(look, world.sidewalks, autoRng));
+            }
+            while (people.Count > want)
+            {
+                avatars[avatars.Count - 1].Dispose();
+                avatars.RemoveAt(avatars.Count - 1);
+                people.RemoveAt(people.Count - 1);
+            }
+        }
+
+        /// <summary>The room's list of taken cars: out of the traffic and off the street.</summary>
+        public void SetTaken(string list)
+        {
+            bool first = !takenSynced;
+            takenSynced = true;
+            foreach (var id in (list ?? "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+                // Drivers put out of their cars long ago aren't put out again.
+                ApplyTake(id, authority && !first);
+        }
+
+        void ApplyTake(string id, bool eject)
+        {
+            if (world == null || id.Length < 2 || !taken.Add(id) || !int.TryParse(id.Substring(1), out int i) || i < 0) return;
+            if (id[0] == 'p' && i < world.parked.Count)
+            {
+                takenParked.Add(i);
+                world.SetParkedVisible(i, false);
+            }
+            else if (id[0] == 't' && traffic != null && i < traffic.cars.Count && !traffic.cars[i].taken)
+            {
+                var c = traffic.Take(i);
+                if (eject) EjectDriver(c.x, c.y, c.heading);
+            }
+        }
+
+        /// <summary>Into one of the town's cars: off the street here, and (online) for everyone.</summary>
+        void TakeCar(string id)
+        {
+            ApplyTake(id, authority);
+            OnTake?.Invoke(id);
+        }
+
+        public void SetTownNight(bool on)
+        {
+            if (night == on) return;
+            night = on;
+            OnNightChange?.Invoke();
+        }
+
+        /// <summary>Everyone else's parked cars.</summary>
+        public void SyncParked(List<RemoteParked> list, string me)
+        {
+            if (world == null) return;
+            var seen = new HashSet<string>();
+            foreach (var c in list)
+            {
+                if (c.key == me || c.model < 0 || c.model >= Catalog.CARS.Length) continue;
+                seen.Add(c.key);
+                if (othersParked.TryGetValue(c.key, out var v) && v.model != c.model)
+                {
+                    v.Dispose();
+                    othersParked.Remove(c.key);
+                }
+                if (!othersParked.TryGetValue(c.key, out v))
+                {
+                    v = new CarView(library.Get(Catalog.CARS[c.model]), world.root.transform) { model = c.model };
+                    othersParked[c.key] = v;
+                }
+                var f = new Vec2(Math.Cos(c.heading), Math.Sin(c.heading));
+                v.Place(c.x, c.y, DetMath.Atan2(f.x, f.y));
+                othersParkedAt[c.key] = new Vec2(c.x, c.y);
+            }
+            foreach (var key in othersParked.Keys.ToList())
+            {
+                if (seen.Contains(key)) continue;
+                othersParked[key].Dispose();
+                othersParked.Remove(key);
+                othersParkedAt.Remove(key);
+            }
+        }
+
+        /// <summary>Your car, if it's parked (not while you drive it), for everyone else.</summary>
+        public ParkedState OwnCar()
+        {
+            if (cars.Count == 0 || driving != null) return new ParkedState();
+            var c = cars[0].car;
+            return new ParkedState { model = c.model + 1, x = c.x, z = c.y, yaw = c.heading };
+        }
+
+        /// <summary>Where another player is: close by, as the room last moved them; further off, the roll call's spot.</summary>
+        Vec2? PositionOf(string key)
+        {
+            var near = remotes?.PositionOf(key);
+            if (near != null) return near;
+            foreach (var o in others) if (o.key == key) return new Vec2(o.x, o.y);
+            return null;
+        }
 
         public void Notify(string t) => overlay.Notify(t);
 
         public List<Vec2> Route => autoDrive?.RoutePoints() ?? player?.AutoRoute() ?? new List<Vec2>();
 
         public Vec2? Goal => autoDrive != null ? autoDrive.GoalPoint() : player?.AutoGoal();
+
+        // Finding another player: a dotted line along the streets to them, and directions.
+
+        /// <summary>Show the way to this player (null: stop).</summary>
+        public void Find(string key)
+        {
+            finding = key;
+            findTimer = 0;
+            if (key != null) return;
+            findRoute = new List<Vec2>();
+            findSteps = null;
+            ClearFindPath();
+        }
+
+        public string Finding => finding;
+
+        void UpdateFind(double dt)
+        {
+            findTimer -= dt;
+            if (finding == null || findTimer > 0 || player == null || world == null) return;
+            findTimer = 1;
+            var target = PositionOf(finding);
+            if (target == null) return;
+            string name = others.FirstOrDefault(o => o.key == finding).name ?? "them";
+            var from = new Vec2(player.x, player.y);
+            if (Geo.Dist(from, target.Value) < 1.5)
+            {
+                findRoute = new List<Vec2>();
+                findSteps = new List<Step> { new Step { kind = StepKind.Arrive, text = $"You're with {name}", distance = 0 } };
+                ClearFindPath();
+                return;
+            }
+            // Along the streets themselves, and off the street only at the last, to them.
+            var way = StreetRoute.Between(world.layout.roads, from, target.Value);
+            if (way != null)
+            {
+                findRoute = way.points;
+                findSteps = Directions.ForDrive(world.names, way.stretches, name);
+            }
+            else
+            {
+                findRoute = new List<Vec2> { from, target.Value };
+                findSteps = null;
+            }
+            DrawFindPath(target.Value);
+        }
+
+        void ClearFindPath()
+        {
+            if (findPath == null) return;
+            UnityEngine.Object.Destroy(findPath.GetComponent<MeshFilter>().sharedMesh);
+            UnityEngine.Object.Destroy(findPath);
+            findPath = null;
+        }
+
+        static Material findMaterial;
+
+        /// <summary>The way to them as a line of dots on the ground, and a ring where they are.</summary>
+        void DrawFindPath(Vec2 target)
+        {
+            ClearFindPath();
+            if (findRoute.Count < 2) return;
+            findPalette ??= new Palette();
+            var b = new MeshBuilder(findPalette);
+            const int color = 0x3b9be0;
+            foreach (var p in Geo.SamplePolyline(findRoute, 0.32)) b.Disc(p, 0.065, 0.036, color, 8);
+            b.Disc(target, 0.3, 0.035, color);
+            findMaterial ??= Materials.Unlit(Coords.Hex(color));
+            findPath = new GameObject("finding");
+            findPath.transform.SetParent(world.root.transform, false);
+            findPath.AddComponent<MeshFilter>().sharedMesh = b.Build("finding");
+            var r = findPath.AddComponent<MeshRenderer>();
+            r.sharedMaterial = findMaterial;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        }
+
+        // Your car: one at a time.
+
+        /// <summary>A car of this model in the parking lane nearest you, in place of any car you had. False if there's no room near.</summary>
+        public bool SpawnCar(int model)
+        {
+            if (player == null || world == null || riding != null) return false;
+            GetOut();
+            var near = new Vec2(player.x, player.y);
+            var busy = new List<Vec2>();
+            for (int i = 0; i < world.parked.Count; i++) if (!takenParked.Contains(i)) busy.Add(new Vec2(world.parked[i].x, world.parked[i].y));
+            busy.AddRange(othersParkedAt.Values);
+            if (traffic != null) foreach (var c in traffic.Positions()) busy.Add(new Vec2(c.x, c.y));
+            var spot = Vehicle.CarSpotNear(near, world.layout.roads, Layout.PARKING / 2, canDrive, busy);
+            if (spot == null) return false;
+            AddCar(new Vehicle(model, spot.Value.x, spot.Value.y, spot.Value.heading));
+            return true;
+        }
+
+        /// <summary>Your car becomes this model, where it is (even with you at the wheel).</summary>
+        public void ChangeCar(int model)
+        {
+            if (cars.Count == 0 || world == null) return;
+            var old = cars[0].car;
+            if (old.model == model) return;
+            bool wasDriving = driving != null;
+            AddCar(new Vehicle(model, old.x, old.y, old.heading) { speed = old.speed });
+            if (wasDriving) driving = 0;
+        }
+
+        public bool HasCar => cars.Count > 0;
+
+        public int CarModel => cars.Count > 0 ? cars[0].car.model : -1;
+
+        /// <summary>The next (or previous) character's look, in place.</summary>
+        public string CycleLook(int step)
+        {
+            if (player == null) return null;
+            int n = Catalog.CHARACTERS.Length;
+            int at = Array.IndexOf(Catalog.CHARACTERS, player.look);
+            Spawn(Catalog.CHARACTERS[((at + step) % n + n) % n]);
+            return player.look;
+        }
 
         public void SetBackground(bool on)
         {
@@ -452,15 +788,14 @@ namespace Porchlight.App
                 if (pk.kind == PickKind.Parked)
                 {
                     var c = world.parked[pk.i];
-                    takenParked.Add(pk.i);
-                    world.SetParkedVisible(pk.i, false);
+                    TakeCar("p" + pk.i);
                     car = new Vehicle(c.model, c.x, c.y, c.heading);
                 }
                 else
                 {
-                    var c = traffic.Take(pk.i);
+                    var c = traffic.cars[pk.i];
                     car = new Vehicle(c.model, c.x, c.y, c.heading) { speed = Math.Min(c.speed, 1) };
-                    EjectDriver(c.x, c.y, c.heading);
+                    TakeCar("t" + pk.i);
                 }
                 driving = AddCar(car);
             }
@@ -480,27 +815,26 @@ namespace Porchlight.App
             var rng = autoRng;
             var look = Catalog.RandomLook(rng);
             var door = new Vec2(x + Math.Sin(heading) * 0.45, y - Math.Cos(heading) * 0.45);
-            var driver = Pedestrian.Create(look, world.sidewalks, rng, door);
-            var avatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform);
-            people.Add(driver);
-            avatars.Add(avatar);
+            AddPerson(Pedestrian.Create(look, world.sidewalks, rng, door));
         }
 
+        void AddPerson(Pedestrian p)
+        {
+            people.Add(p);
+            avatars.Add(new Avatar(library.Character(p.look), Avatar.PERSON_HEIGHT, autoRng.Next(), world.root.transform));
+        }
+
+        /// <summary>Your car, in place of the one you had (you only ever have one).</summary>
         int AddCar(Vehicle car)
         {
-            cars.Add(new OwnCar { car = car, view = new CarView(library.Get(Catalog.CARS[car.model]), world.root.transform) });
-            return cars.Count - 1;
+            foreach (var c in cars) RemoveCar(c);
+            cars.Clear();
+            driving = null;
+            cars.Add(new MyCar { car = car, view = new CarView(library.Get(Catalog.CARS[car.model]), world.root.transform) });
+            return 0;
         }
 
-        void RemoveCar(OwnCar c) => c.view.Dispose();
-
-        void LeaveCarAtSpawn()
-        {
-            var rng = new Rng($"{world.model.seed}::spawn-car");
-            var taken = world.parked.Select(c => new Vec2(c.x, c.y)).ToList();
-            var spot = Vehicle.CarSpotNear(world.model.spawn, world.layout.roads, Layout.SIDEWALK, canDrive, taken);
-            if (spot != null) AddCar(new Vehicle(rng.Pick(new[] { 0, 1, 2, 4 }), spot.Value.x, spot.Value.y, spot.Value.heading));
-        }
+        void RemoveCar(MyCar c) => c.view.Dispose();
 
         void GetOut()
         {
@@ -658,11 +992,19 @@ namespace Porchlight.App
 
         public bool IsNight => night;
 
+        /// <summary>Night or day straight away, without the fade.</summary>
+        public void SetNightNow(bool on)
+        {
+            night = on;
+            dusk = on ? 1 : 0;
+            OnNightChange?.Invoke();
+        }
+
         // Input ----------------------------------------------------------------------------------
 
         void OnKeyDown(Key code, bool repeat)
         {
-            if (background) return;
+            if (background || Attract) return;
             if (code == Key.LeftShift || code == Key.RightShift) shift = true;
             if (code == Key.Q || code == Key.E)
             {
@@ -724,6 +1066,11 @@ namespace Porchlight.App
         void ReadPad(double dt)
         {
             var s = input.Pad;
+            if (Attract)
+            {
+                padState = PadState.Idle;
+                return;
+            }
             if (background)
             {
                 padState = PadState.Idle;
@@ -745,7 +1092,13 @@ namespace Porchlight.App
             }
             int tilt = lookFlickY.Update(s.look.y);
             if (tilt != 0) Tilt(-tilt);
-            int zoomDir = (s.Held(Button.RB) || s.Held(Button.Up) ? 1 : 0) - (s.Held(Button.LB) || s.Held(Button.Down) ? 1 : 0);
+            if (Cycling)
+            {
+                if (s.Pressed(Button.RB)) OnCycle?.Invoke(1);
+                if (s.Pressed(Button.LB)) OnCycle?.Invoke(-1);
+            }
+            bool bumpers = !Cycling;
+            int zoomDir = ((bumpers && s.Held(Button.RB)) || s.Held(Button.Up) ? 1 : 0) - ((bumpers && s.Held(Button.LB)) || s.Held(Button.Down) ? 1 : 0);
             if (zoomDir != 0)
             {
                 double k = Math.Exp(zoomDir * PAD_ZOOM_RATE * dt);
@@ -848,10 +1201,19 @@ namespace Porchlight.App
             }
             UpdateDoors(dt);
             UpdateRoom();
-            foreach (var q in people) q.Update(dt);
-            var obstacles = cars.Select(c => new Vec2(c.car.x, c.car.y)).ToList();
-            if (p != null && !InCar && room == null) obstacles.Add(new Vec2(p.x, p.y));
-            traffic?.Update(dt, obstacles);
+            if (authority)
+            {
+                foreach (var q in people) q.Update(dt);
+                // Traffic stops for you, everyone else and every car left at the kerb.
+                var obstacles = cars.Select(c => new Vec2(c.car.x, c.car.y)).ToList();
+                if (p != null && !InCar && room == null) obstacles.Add(new Vec2(p.x, p.y));
+                foreach (var o in others) obstacles.Add(PositionOf(o.key) ?? new Vec2(o.x, o.y));
+                obstacles.AddRange(othersParkedAt.Values);
+                traffic?.Update(dt, obstacles);
+            }
+            else if (traffic != null) sync.Step(dt, traffic.cars, people);
+            if (Attract && p != null && !p.IsAuto) p.StartAuto(world.sidewalks, autoRng);
+            UpdateFind(dt);
             dusk += ((night ? 1 : 0) - dusk) * Math.Min(1, dt * 2.5);
             KeepInSight(dt);
         }
@@ -1018,15 +1380,19 @@ namespace Porchlight.App
             remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
             if (riding != null) FollowRide();
             fleet?.Update(dusk);
+            foreach (var v in othersParked.Values) v.Lights(dusk);
+            if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);
 
             Fixed? fixedView = room != null ? RoomView(room.Value) : (Fixed?)null;
             double yawTarget = fixedView?.yaw ?? targetYaw;
-            double zoomTarget = fixedView?.zoom ?? zoom;
-            double pitchTarget = fixedView?.pitch ?? TargetPitch;
+            double zoomTarget = fixedView?.zoom ?? (Attract ? ATTRACT_ZOOM : zoom);
+            double pitchTarget = fixedView?.pitch ?? (Attract ? ATTRACT_PITCH : TargetPitch);
             yaw += Orbit.ShortestTurn(yaw, yawTarget) * (snap ? 1 : Orbit.EaseBy(5, dt));
             shownZoom += (zoomTarget - shownZoom) * (snap ? 1 : Math.Min(1, dt * (fixedView != null ? 5 : 10)));
-            var target = fixedView?.focus ?? (p != null ? new Vector3((float)p.x, 0.3f, (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
+            var target = fixedView?.focus
+                ?? (Attract ? new Vector3((float)world.model.center.x, 0.3f, (float)world.model.center.y)
+                : p != null ? new Vector3((float)p.x, 0.3f, (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
             focusFollow.Update(target.x, target.y, target.z, dt, snap);
             focus = new Vector3((float)focusFollow.ax, (float)focusFollow.ay, (float)focusFollow.az);
             pitch += (pitchTarget - pitch) * (snap ? 1 : Math.Min(1, dt * 6));
@@ -1044,7 +1410,8 @@ namespace Porchlight.App
                 DrawRoute();
                 routeTimer = 0.2;
             }
-            overlay.DrawMinimap(p != null ? new Vec2(p.x, p.y) : (Vec2?)null, ViewQuad(), Goal, Route);
+            bool auto = IsAuto;
+            overlay.DrawMinimap(p != null ? new Vec2(p.x, p.y) : (Vec2?)null, ViewQuad(), auto || finding == null ? Goal : PositionOf(finding), auto || finding == null ? Route : findRoute);
             hudTimer -= dt;
             if (hudTimer <= 0)
             {
@@ -1059,7 +1426,7 @@ namespace Porchlight.App
             var it = p?.AutoItinerary();
             steps = autoDrive != null
                 ? Directions.ForDrive(world.names, autoDrive.Stretches())
-                : it != null ? Directions.ForWalk(world.sidewalks, world.names, it) : null;
+                : it != null ? Directions.ForWalk(world.sidewalks, world.names, it) : findSteps;
             if (it != null && !it.joining) street = world.names.ofRoad[world.sidewalks.paths[it.start.path].road];
             else street = p != null && room == null ? StreetAt(new Vec2(p.x, p.y)) : null;
             string name = street != null ? world.names.streets[street.Value].name : null;
@@ -1100,7 +1467,7 @@ namespace Porchlight.App
                     best = i;
                 }
             }
-            return best >= 0 && bestD < Layout.SIDEWALK + 0.35 ? world.names.ofRoad[best] : (int?)null;
+            return best >= 0 && bestD < Layout.PARKING + Layout.SIDEWALK + 0.35 ? world.names.ofRoad[best] : (int?)null;
         }
 
         /// <summary>A world position in map terms: (x, height, map y), as `focus` is kept.</summary>
@@ -1194,9 +1561,14 @@ namespace Porchlight.App
             camera.orthographic = true;
             camera.orthographicSize = (float)half;
             camera.nearClipPlane = 0.1f;
-            camera.farClipPlane = (float)(CAMERA_DISTANCE * 3);
+            // Zoomed far out and low (behind the sign-in card), the bottom of the view
+            // reaches the ground half / tan(pitch) nearer than the middle and the top as
+            // much further: stand back and see far enough for both.
+            double reach = half / Math.Tan(Math.Max(0.1, pitch));
+            double distance = Attract ? Math.Max(CAMERA_DISTANCE, reach + 20) : CAMERA_DISTANCE;
+            camera.farClipPlane = (float)(Attract ? Math.Max(CAMERA_DISTANCE * 3, distance + reach + 60) : CAMERA_DISTANCE * 3);
             var o = Orbit.CameraOffset(yaw, pitch);
-            var pos = WorldOf(focus.x + o.x * CAMERA_DISTANCE, focus.y + o.up * CAMERA_DISTANCE, focus.z + o.y * CAMERA_DISTANCE);
+            var pos = WorldOf(focus.x + o.x * distance, focus.y + o.up * distance, focus.z + o.y * distance);
             var f = WorldOf(focus.x, focus.y, focus.z);
             camera.transform.position = pos;
             camera.transform.rotation = Quaternion.LookRotation(f - pos, Vector3.up);
@@ -1302,6 +1674,17 @@ namespace Porchlight.App
                 lampLevels[i] = dusk * flicker;
             }
             sky.Update(dusk, mode == CameraMode.Close, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, roomLight);
+            // Televisions: a cold blue flicker in a few windows, each group to its own programme.
+            for (int g = 0; g < world.screens.Count; g++)
+            {
+                var r = world.screens[g];
+                r.enabled = dusk > 0.3;
+                if (!r.enabled) continue;
+                double cut = Noise(t * 1.3 + g * 17) > 0.7 ? 0.45 : 1; // a scene change
+                double level = (0.55 + 0.45 * Noise(t * 7 + g * 5.3)) * cut;
+                var blue = Color.Lerp(Coords.Hex(0x5b8cff), Coords.Hex(0xb4d0ff), (float)Noise(t * 2.1 + g * 3.1));
+                Materials.SetGlow(r, blue, (float)(dusk * level * 1.4));
+            }
         }
     }
 }

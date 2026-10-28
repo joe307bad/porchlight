@@ -1,7 +1,8 @@
 // The right-hand sidebar, the app's one menu in both modes: Regenerate and
-// Explore / Back to map, the seed and the handful of params most people want.
-// On the map it adds layers and view/export actions; while exploring, the
-// explore controls. Every other tunable lives in the debug panel.
+// Explore / Back to map, the seed, the handful of params most people want and,
+// folded away below them, a slider for every other generator setting. On the
+// map it adds layers and view/export actions; while exploring, the explore
+// controls and who else is in the town (tick one to be shown the way to them).
 
 using System;
 using System.Collections.Generic;
@@ -148,6 +149,9 @@ namespace Porchlight.UI
         readonly Button exploreButton;
         readonly Button debugButton;
         readonly VisualElement mapOnlyLayers, mapOnlyTools, exploreSection;
+        readonly VisualElement playersSection, playersList;
+        string playersShown;
+        Action<string> onFind;
         bool exploring;
         VisualElement characterRow;
         Label characterName;
@@ -175,30 +179,23 @@ namespace Porchlight.UI
             seedRow.Add(seedInput);
 
             var sliders = El.Box("sb-sliders");
-            foreach (var slider in MAIN_SLIDERS)
+            foreach (var slider in MAIN_SLIDERS) sliders.Add(SliderRow(slider, h));
+
+            // Every setting, a fold per stage.
+            var all = new VisualElement();
+            all.Add(El.Text("ALL SETTINGS", "section-title", "bold"));
+            foreach (var group in ParamSpec.Groups)
             {
-                var input = new Slider((float)slider.spec.min, (float)slider.spec.max) { focusable = false };
-                input.AddToClassList("range");
-                input.showInputField = false;
-                var output = El.Text("", "sb-slider-value", "mono");
-                var s = slider;
-                input.RegisterValueChangedCallback(e =>
+                var (fold, foldBody) = El.Details(group);
+                var groupSliders = El.Box("sb-sliders");
+                foreach (var spec in ParamSpec.All)
                 {
-                    double stepped = Snap(e.newValue, s.spec);
-                    output.text = s.format(stepped);
-                });
-                input.RegisterCallback<PointerCaptureOutEvent>(_ => Commit(input, s, h));
-                input.RegisterCallback<PointerUpEvent>(_ => Commit(input, s, h), TrickleDown.TrickleDown);
-                var head = El.Box("sb-slider-head");
-                var label = El.Text(slider.label);
-                label.tooltip = slider.hint;
-                head.Add(label);
-                head.Add(output);
-                var wrap = El.Box("sb-slider");
-                wrap.Add(head);
-                wrap.Add(input);
-                sliders.Add(wrap);
-                inputs[slider.id] = (input, output, slider);
+                    if (spec.group != group) continue;
+                    var one = new MainSlider { id = spec.key, label = spec.label, hint = $"{spec.label} ({Numbers.NumberToString(spec.min)} to {Numbers.NumberToString(spec.max)})", spec = spec, keys = new[] { spec.key }, format = FormatFor(spec) };
+                    groupSliders.Add(SliderRow(one, h));
+                }
+                foldBody.Add(groupSliders);
+                all.Add(fold);
             }
 
             var regen = El.Btn("Regenerate", "Build a new town from a fresh seed", () => h.OnRegenerate?.Invoke(), "btn-regenerate");
@@ -224,7 +221,7 @@ namespace Porchlight.UI
             layersBody.Add(layerList);
             mapOnlyLayers = layersRoot;
 
-            debugButton = El.Btn("Debug panel", "Show every generator setting and debug views (`)", () => h.OnToggleDebug?.Invoke());
+            debugButton = El.Btn("Debug", "Show the debug views (`)", () => h.OnToggleDebug?.Invoke());
             mapOnlyTools = El.Box("sb-tools");
             mapOnlyTools.Add(El.Btn("Fit", "Fit the whole map in view (double-click the map)", () => h.OnFitView?.Invoke()));
             mapOnlyTools.Add(El.Btn("JSON", "Download the TownModel as JSON", () => h.OnExportJson?.Invoke()));
@@ -251,6 +248,11 @@ namespace Porchlight.UI
             exploreSection = new VisualElement();
             exploreSection.Add(El.Text("EXPLORE", "section-title", "bold"));
             exploreSection.Add(exploreControls.root);
+            playersSection = new VisualElement();
+            playersSection.Add(El.Text("PLAYERS HERE", "section-title", "bold"));
+            playersList = new VisualElement();
+            playersSection.Add(playersList);
+            exploreSection.Add(playersSection);
             body.Add(exploreSection);
             body.Add(seedRow);
             var shape = new VisualElement();
@@ -258,6 +260,7 @@ namespace Porchlight.UI
             shape.Add(sliders);
             shape.Add(reset);
             body.Add(shape);
+            body.Add(all);
             body.Add(mapOnlyLayers);
             body.Add(mapOnlyTools);
             root.Add(scroll);
@@ -265,6 +268,76 @@ namespace Porchlight.UI
             SetParams(initial);
             SetExploring(false);
             root.RegisterCallback<GeometryChangedEvent>(_ => collapse.text = root.parent != null && root.parent.ClassListContains("sidebar-closed") ? "‹" : "›");
+        }
+
+        VisualElement SliderRow(MainSlider slider, SidebarHandlers h)
+        {
+            var input = new Slider((float)slider.spec.min, (float)slider.spec.max) { focusable = false };
+            input.AddToClassList("range");
+            input.showInputField = false;
+            var output = El.Text("", "sb-slider-value", "mono");
+            var s = slider;
+            input.RegisterValueChangedCallback(e => output.text = s.format(Snap(e.newValue, s.spec)));
+            input.RegisterCallback<PointerCaptureOutEvent>(_ => Commit(input, s, h));
+            input.RegisterCallback<PointerUpEvent>(_ => Commit(input, s, h), TrickleDown.TrickleDown);
+            var head = El.Box("sb-slider-head");
+            var label = El.Text(slider.label);
+            label.tooltip = slider.hint;
+            head.Add(label);
+            head.Add(output);
+            var wrap = El.Box("sb-slider");
+            wrap.Add(head);
+            wrap.Add(input);
+            inputs[slider.id] = (input, output, slider);
+            return wrap;
+        }
+
+        /// <summary>A value as its step shows it: whole numbers, or as many decimals as the step has.</summary>
+        static Func<double, string> FormatFor(ParamSpec spec)
+        {
+            int places = 0;
+            for (double step = spec.step; places < 4 && Math.Abs(step - Math.Round(step)) > 1e-9; step *= 10) places++;
+            if (spec.min == 0 && spec.max == 1) return Percent;
+            return v => Numbers.ToFixed(v, places);
+        }
+
+        /// <summary>
+        /// Everyone else in the town, a box each: tick one to be shown the way to
+        /// them (one at a time; untick to stop). Says so when there's no one.
+        /// </summary>
+        public void SetPlayers(List<(string key, string name)> players, string finding, Action<string> find)
+        {
+            onFind = find;
+            string shown = string.Join("|", players.Select(p => p.key + ":" + p.name)) + "#" + finding;
+            if (shown == playersShown) return;
+            playersShown = shown;
+            playersList.Clear();
+            if (players.Count == 0)
+            {
+                var none = El.Text("No one else is in this town yet. When someone joins your seed, tick them here for the way to them.", "help-text");
+                none.style.whiteSpace = WhiteSpace.Normal;
+                playersList.Add(none);
+            }
+            foreach (var (key, name) in players)
+            {
+                // A row of plain elements (a box and a name) rather than a Toggle, so it
+                // draws the same everywhere; the click ticks this one and unticks the rest.
+                string label = string.IsNullOrEmpty(name) ? "Someone" : name;
+                bool on = key == finding;
+                string k = key;
+                var row = new Button(() => onFind?.Invoke(on ? null : k)) { focusable = false, tooltip = on ? "Stop showing the way" : $"Show the way to {label}" };
+                row.AddToClassList("player-row");
+                var tick = El.Box("player-tick");
+                // In their name tag's colour: filled while you're being shown the way.
+                var colour = Porchlight.Rendering.NameTag.ColourFor(key);
+                tick.style.borderTopColor = tick.style.borderRightColor = tick.style.borderBottomColor = tick.style.borderLeftColor = colour;
+                tick.style.backgroundColor = on ? colour : new Color(0, 0, 0, 0);
+                tick.style.borderTopWidth = tick.style.borderRightWidth = tick.style.borderBottomWidth = tick.style.borderLeftWidth = 2;
+                row.Add(tick);
+                row.Add(El.Text(label, "player-name"));
+                playersList.Add(row);
+            }
+            Debug.Log($"Porchlight: {players.Count} other player(s) here{(finding != null ? ", finding " + finding : "")}");
         }
 
         static double Snap(double v, ParamSpec spec) => Math.Min(spec.max, Math.Max(spec.min, Numbers.Round((v - spec.min) / spec.step) * spec.step + spec.min));
@@ -391,8 +464,11 @@ namespace Porchlight.UI
                 ("Space", "Jump"),
                 ("Shift", "Sprint (in a car: boost)"),
                 ("Minimap", "Click to jump there"),
+                ("You / Car boxes", "By the minimap: click Car to have your car brought to the nearest street (one car at a time)"),
+                ("Tab", "With a box picked, the next character or car (Shift+Tab back)"),
+                ("Players here", "Tick someone in the sidebar for a dotted path and directions to them"),
                 ("Esc", "Back to the map"),
-                ("Controller", "Left stick walk / steer · RT sprint, or at the wheel RT drive and boost, LT brake · right stick turn and tilt · d-pad left / right turn · LB / RB or d-pad up / down zoom · A jump · B car · X auto · Y close up · left stick click day / night · right stick click look ahead · View new character · Menu back to the map"),
+                ("Controller", "Left stick walk / steer · RT sprint, or at the wheel RT drive and boost, LT brake · right stick turn and tilt · d-pad left / right turn · LB / RB or d-pad up / down zoom (with a box picked, LB / RB change it) · A jump · B car · X auto · Y close up · left stick click day / night · right stick click look ahead · View new character · Menu back to the map"),
             };
             foreach (var (key, text) in rows)
             {
@@ -406,57 +482,16 @@ namespace Porchlight.UI
         }
     }
 
-    /// <summary>The debug panel (lil-gui): a slider per GenParams value grouped by stage, and the debug views.</summary>
+    /// <summary>The debug panel: the blueprint's debug views (every generator setting is in the sidebar).</summary>
     public sealed class DebugPanel
     {
         public readonly VisualElement root;
-        readonly GenParams parameters;
-        readonly List<(Slider slider, Label value, ParamSpec spec)> sliders = new List<(Slider, Label, ParamSpec)>();
         public bool IsOpen => root.style.display != DisplayStyle.None;
 
-        public DebugPanel(GenParams initial, ISet<string> visible, Action<GenParams> onParamsChange, Action onReset, Action<string, bool> onLayerToggle)
+        public DebugPanel(ISet<string> visible, Action<string, bool> onLayerToggle)
         {
-            parameters = initial.Clone();
             root = El.Box("debug-panel");
             root.Add(El.Text("Debug", "debug-title"));
-            var (gen, genBody) = Folder("Generator", true);
-            root.Add(gen);
-            var groups = new Dictionary<string, VisualElement>();
-            foreach (var spec in ParamSpec.All)
-            {
-                if (!groups.TryGetValue(spec.group, out var folderBody))
-                {
-                    var (f, b) = Folder(spec.group, spec.group == "Map");
-                    genBody.Add(f);
-                    groups[spec.group] = folderBody = b;
-                }
-                var row = El.Box("debug-row");
-                row.Add(El.Text(spec.label, "debug-label"));
-                var slider = new Slider((float)spec.min, (float)spec.max) { focusable = false };
-                slider.AddToClassList("debug-slider");
-                var value = El.Text("", "debug-value");
-                var s = spec;
-                slider.RegisterValueChangedCallback(e =>
-                {
-                    double v = Math.Min(s.max, Math.Max(s.min, Numbers.Round((e.newValue - s.min) / s.step) * s.step + s.min));
-                    value.text = Numbers.NumberToString(Math.Round(v, 6));
-                });
-                void Finish()
-                {
-                    double v = Math.Min(s.max, Math.Max(s.min, Numbers.Round((slider.value - s.min) / s.step) * s.step + s.min));
-                    if (v == parameters[s.key]) return;
-                    parameters[s.key] = v;
-                    onParamsChange?.Invoke(parameters.Clone());
-                }
-                slider.RegisterCallback<PointerCaptureOutEvent>(_ => Finish());
-                row.Add(slider);
-                row.Add(value);
-                folderBody.Add(row);
-                sliders.Add((slider, value, spec));
-            }
-            var reset = new Button(() => onReset?.Invoke()) { text = "Reset to defaults", focusable = false };
-            reset.AddToClassList("debug-button");
-            genBody.Add(reset);
             var (dbg, dbgBody) = Folder("Debug views", true);
             root.Add(dbg);
             foreach (var layer in BlueprintView.LAYERS)
@@ -468,7 +503,6 @@ namespace Porchlight.UI
                 t.RegisterValueChangedCallback(e => onLayerToggle?.Invoke(id, e.newValue));
                 dbgBody.Add(t);
             }
-            SetParams(initial);
             root.style.display = DisplayStyle.None;
         }
 
@@ -490,15 +524,5 @@ namespace Porchlight.UI
         }
 
         public void SetOpen(bool open) => root.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
-
-        public void SetParams(GenParams p)
-        {
-            foreach (var key in ParamSpec.All) parameters[key.key] = p[key.key];
-            foreach (var (slider, value, spec) in sliders)
-            {
-                slider.SetValueWithoutNotify((float)p[spec.key]);
-                value.text = Numbers.NumberToString(p[spec.key]);
-            }
-        }
     }
 }

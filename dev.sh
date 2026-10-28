@@ -6,7 +6,8 @@
 # Sign in as dev / dev. Without Docker there's no sign-in (and so no
 # multiplayer): the game opens straight away and plays alone.
 #
-# The game is built from unity/ if there's no build yet (or with --build);
+# The game is built from unity/ if there's no build yet, if anything in the
+# project is newer than the build, or with --build;
 # that needs Unity 6000.6.5f1 (set UNITY to its executable if it isn't in the
 # Hub's usual place).
 set -euo pipefail
@@ -25,16 +26,32 @@ if [ ! -d "$ROOT/server/node_modules" ]; then
   npm --prefix "$ROOT/server" install
 fi
 
-if [ "${1:-}" = "--build" ] || [ ! -f "$BUILD/index.html" ]; then
-  if [ ! -x "$UNITY" ]; then
-    echo "error: no WebGL build in unity/Builds/WebGL, and no Unity at $UNITY to make one." >&2
-    echo "Install Unity $(sed -n 's/^m_EditorVersion: //p' "$ROOT/unity/ProjectSettings/ProjectVersion.txt") with WebGL support, or set UNITY." >&2
-    exit 1
+# Rebuild when there's no build, when asked, or when the project has changed since the last one.
+stale() {
+  [ ! -f "$BUILD/index.html" ] && return 0
+  [ -n "$(find "$ROOT/unity/Assets" "$ROOT/unity/Packages" "$ROOT/unity/ProjectSettings" \
+    -type f -newer "$BUILD/index.html" -print -quit)" ]
+}
+
+if [ "${1:-}" = "--build" ] || stale; then
+  if pgrep -f "Unity.app/Contents/MacOS/Unity.*-projectpath $ROOT/unity" >/dev/null 2>&1; then
+    if [ ! -f "$BUILD/index.html" ]; then
+      echo "error: there's no build yet, and the Unity editor has unity/ open so one can't be made; close it and run this again." >&2
+      exit 1
+    fi
+    echo "warning: the build in unity/Builds/WebGL is older than the project, but the Unity editor has unity/ open" >&2
+    echo "         so it can't be rebuilt; serving the OLD build. Close the editor and run this again for the latest." >&2
+  else
+    if [ ! -x "$UNITY" ]; then
+      echo "error: no WebGL build in unity/Builds/WebGL, and no Unity at $UNITY to make one." >&2
+      echo "Install Unity $(sed -n 's/^m_EditorVersion: //p' "$ROOT/unity/ProjectSettings/ProjectVersion.txt") with WebGL support, or set UNITY." >&2
+      exit 1
+    fi
+    echo "Building the game (Unity WebGL; a few minutes the first time)..."
+    "$UNITY" -batchmode -nographics -projectPath "$ROOT/unity" \
+      -executeMethod Porchlight.EditorTools.Setup.BuildWebGL -logFile "$ROOT/unity/Logs/build-webgl.log" \
+      || { echo "error: the build failed; see unity/Logs/build-webgl.log" >&2; exit 1; }
   fi
-  echo "Building the game (Unity WebGL; a few minutes the first time)..."
-  "$UNITY" -batchmode -nographics -projectPath "$ROOT/unity" \
-    -executeMethod Porchlight.EditorTools.Setup.BuildWebGL -logFile "$ROOT/unity/Logs/build-webgl.log" \
-    || { echo "error: the build failed; see unity/Logs/build-webgl.log" >&2; exit 1; }
 fi
 
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then

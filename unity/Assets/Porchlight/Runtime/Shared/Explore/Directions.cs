@@ -73,7 +73,7 @@ namespace Porchlight.Explore
                 steps.Add(new Step { kind = turn, text = TurnText(turn, street, last.street, Name(street)), street = street, distance = len });
             }
             int goalStreet = StreetOf(it.goal);
-            steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at your destination on {Name(goalStreet)}", street = goalStreet, distance = 0 });
+            steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at {it.destination ?? "your destination"} on {Name(goalStreet)}", street = goalStreet, distance = 0 });
             for (int k = steps.Count - 2; k >= 1; k--)
             {
                 var a = steps[k - 1];
@@ -123,7 +123,7 @@ namespace Porchlight.Explore
                 path = leg.path;
                 dir = leg.dir;
             }
-            o.Add(new WalkStretch { path = path, s0 = s, s1 = path == it.goal ? Len(path) / 2 : dir > 0 ? Len(path) : 0, dir = dir, via = via });
+            o.Add(new WalkStretch { path = path, s0 = s, s1 = path == it.goal ? (double.IsNaN(it.goalS) ? Len(path) / 2 : it.goalS) : dir > 0 ? Len(path) : 0, dir = dir, via = via });
             return o;
         }
 
@@ -170,8 +170,8 @@ namespace Porchlight.Explore
             return $"{Numbers.ToFixed(m / 1000, 1)} km";
         }
 
-        /// <summary>Auto drive's route as steps.</summary>
-        public static List<Step> ForDrive(StreetNames names, List<Stretch> stretches)
+        /// <summary>Auto drive's route (or the way along the streets to someone) as steps.</summary>
+        public static List<Step> ForDrive(StreetNames names, List<Stretch> stretches, string destination = null)
         {
             string Name(int street) => street >= 0 && street < names.streets.Count ? names.streets[street].name : "the road";
             var steps = new List<Step>();
@@ -196,8 +196,9 @@ namespace Porchlight.Explore
             if (stretches.Count > 0)
             {
                 int street = names.ofRoad[stretches[stretches.Count - 1].road];
-                steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at your destination on {Name(street)}", street = street, distance = 0 });
+                steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at {destination ?? "your destination"} on {Name(street)}", street = street, distance = 0 });
             }
+            else if (destination != null) steps.Add(new Step { kind = StepKind.Arrive, text = $"Arrive at {destination}, just here", street = -1, distance = 0 });
             return steps;
         }
 

@@ -125,7 +125,7 @@ namespace Porchlight.Explore
             return null;
         }
 
-        static bool ClearOfRoads(Vec2 p, double heading, IReadOnlyList<RoadStroke> roads, double sidewalk)
+        static bool ClearOfRoads(Vec2 p, double heading, IReadOnlyList<RoadStroke> roads, double offset)
         {
             var f = new Vec2(Math.Cos(heading), Math.Sin(heading));
             var ends = new[] { p, new Vec2(p.x + f.x * CAR_HALF_LENGTH, p.y + f.y * CAR_HALF_LENGTH), new Vec2(p.x - f.x * CAR_HALF_LENGTH, p.y - f.y * CAR_HALF_LENGTH) };
@@ -133,7 +133,7 @@ namespace Porchlight.Explore
             {
                 if (r.kind == RoadKind.Path) continue;
                 double kerb = r.width / 2;
-                if (!(Geo.DistToPolyline(p, r.points) > kerb + sidewalk / 2 - 0.03)) return false;
+                if (!(Geo.DistToPolyline(p, r.points) > kerb + offset - 0.03)) return false;
                 foreach (var e in ends) if (!(Geo.DistToPolyline(e, r.points) > kerb + 0.1)) return false;
             }
             return true;
@@ -144,15 +144,19 @@ namespace Porchlight.Explore
             public double x, y, heading;
         }
 
-        /// <summary>A spot to leave a car near `near`: up on the pavement beside the kerb of the nearest road, pointing along it.</summary>
-        public static Spot? CarSpotNear(Vec2 near, IReadOnlyList<RoadStroke> roads, double sidewalk, Func<double, double, bool> open, IReadOnlyList<Vec2> taken)
+        /// <summary>
+        /// A spot to leave a car near `near`: in the parking lane beside the
+        /// nearest road (`offset` tiles out from its edge), pointing along it, clear
+        /// of the cars at `taken`.
+        /// </summary>
+        public static Spot? CarSpotNear(Vec2 near, IReadOnlyList<RoadStroke> roads, double offset, Func<double, double, bool> open, IReadOnlyList<Vec2> taken)
         {
             Spot? best = null;
             double bestD = double.PositiveInfinity;
             foreach (var r in roads)
             {
                 if (r.kind == RoadKind.Path) continue;
-                double off = r.width / 2 + sidewalk / 2;
+                double off = r.width / 2 + offset;
                 for (int k = 1; k < r.points.Count; k++)
                 {
                     var a = r.points[k - 1];
@@ -173,7 +177,7 @@ namespace Porchlight.Explore
                             bool crowded = false;
                             foreach (var q in taken) if (Geo.Dist(q, p) < 1.3) { crowded = true; break; }
                             if (crowded) continue;
-                            if (!ClearOfRoads(p, heading, roads, sidewalk)) continue;
+                            if (!ClearOfRoads(p, heading, roads, offset)) continue;
                             bestD = d;
                             best = new Spot { x = p.x, y = p.y, heading = heading };
                         }

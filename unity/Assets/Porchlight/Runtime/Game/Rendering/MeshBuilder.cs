@@ -82,10 +82,25 @@ namespace Porchlight.Rendering
         public void Ribbon(IReadOnlyList<Vec2> pts, double width, double h, int color)
         {
             if (pts.Count < 2) return;
-            var l = Layout.OffsetPolyline(pts, width / 2);
-            var r = Layout.OffsetPolyline(pts, -width / 2);
+            // Each segment is its own rectangle and each bend gets a round joint, so
+            // the inside of a tight bend overlaps itself rather than folding over
+            // (a folded quad faces down and is culled, showing the layer beneath).
+            double half = width / 2;
+            Vec2? lastDir = null;
             for (int k = 1; k < pts.Count; k++)
-                Quad(v(l[k - 1].x, h, l[k - 1].y), v(l[k].x, h, l[k].y), v(r[k].x, h, r[k].y), v(r[k - 1].x, h, r[k - 1].y), color);
+            {
+                var a = pts[k - 1];
+                var b = pts[k];
+                double dx = b.x - a.x, dy = b.y - a.y;
+                double len = Math.Sqrt(dx * dx + dy * dy);
+                if (len < 1e-9) continue;
+                dx /= len;
+                dy /= len;
+                double nx = dy * half, ny = -dx * half;
+                Quad(v(a.x + nx, h, a.y + ny), v(b.x + nx, h, b.y + ny), v(b.x - nx, h, b.y - ny), v(a.x - nx, h, a.y - ny), color);
+                if (lastDir != null && lastDir.Value.x * dx + lastDir.Value.y * dy < 0.9998) Disc(a, half, h, color, 12);
+                lastDir = new Vec2(dx, dy);
+            }
         }
 
         /// <summary>A flat disc (a round road end or junction cap).</summary>

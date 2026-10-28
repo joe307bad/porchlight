@@ -249,6 +249,52 @@ static class NetCheck
             Check(((SchemaObj)ao).Str("name") == "Unity a", "a's name");
         }
 
+        // The shared town: one host, whose world reaches the other through the room
+        // (bytes packed by WorldSync); night, taken cars and parked cars in the state.
+        string hostKey = ps[0].room.State?.Str("host");
+        Check(hostKey == ps[0].room.sessionId || hostKey == ps[1].room.sessionId, $"a host is chosen ({hostKey})");
+        var host = hostKey == ps[0].room.sessionId ? ps[0] : ps[1];
+        var guest = host == ps[0] ? ps[1] : ps[0];
+        Check(guest.dots != null && guest.dots.Count > 0 && guest.dots[0] is List<object> dot && dot.Count == 4 && dot[3] is string, "dots carry names");
+        var sent = new List<Porchlight.Explore.TrafficCar> { new Porchlight.Explore.TrafficCar { x = 10.5, y = 20.25, heading = 1, speed = 2 } };
+        var walkers = new List<Porchlight.Explore.Walker> { new Porchlight.Explore.Walker("people/a", 30.5, 31.5) { heading = 2, speed = 1 } };
+        byte[] worldCars = null, worldPeople = null;
+        List<object> worldLooks = null;
+        guest.room.OnMessage("world", m =>
+        {
+            var w = m as Dictionary<string, object>;
+            worldCars = w?["cars"] as byte[];
+            worldPeople = w?["people"] as byte[];
+            worldLooks = w?["looks"] as List<object>;
+        });
+        host.room.Send("world", new Dictionary<string, object>
+        {
+            ["cars"] = Porchlight.Explore.WorldSync.EncodeCars(sent), ["people"] = Porchlight.Explore.WorldSync.EncodePeople(walkers), ["looks"] = new List<object> { "people/a" },
+        });
+        Pump(ps, 2000, () => worldCars != null);
+        Check(worldCars != null && worldPeople != null && worldLooks?.Count == 1, "the host's world reaches the guest");
+        if (worldCars != null)
+        {
+            var sync = new Porchlight.Explore.WorldSync();
+            sync.Receive(worldCars, worldPeople);
+            var got = new List<Porchlight.Explore.TrafficCar> { new Porchlight.Explore.TrafficCar() };
+            var people = new List<Porchlight.Explore.Walker> { new Porchlight.Explore.Walker("people/a", 0, 0) };
+            // A full catch-up, carrying on 0.2 s at the speed each was going.
+            sync.Step(0.2, got, people);
+            Check(Math.Abs(got[0].x - (10.5 + Math.Cos(1) * 0.4)) < 0.02 && Math.Abs(got[0].y - (20.25 + Math.Sin(1) * 0.4)) < 0.02 && Math.Abs(got[0].heading - 1) < 0.01, $"the guest's car follows ({got[0].x:0.00}, {got[0].y:0.00}, heading {got[0].heading:0.00})");
+            Check(Math.Abs(people[0].x - (30.5 + Math.Sin(2) * 0.2)) < 0.02 && Math.Abs(people[0].y - (31.5 + Math.Cos(2) * 0.2)) < 0.02, $"the guest's townsperson follows ({people[0].x:0.00}, {people[0].y:0.00})");
+        }
+        guest.room.Send("night", new Dictionary<string, object> { ["on"] = true });
+        guest.room.Send("take", new Dictionary<string, object> { ["car"] = "p3" });
+        guest.room.Send("car", new Dictionary<string, object> { ["model"] = 3, ["x"] = 30.0, ["z"] = 31.0, ["yaw"] = 0.5 });
+        bool Shared() => host.room.State.Bool("night") && host.room.State.Str("taken") == "p3"
+            && host.room.State.Get("cars") is SchemaMap cm && cm.items.ContainsKey(guest.room.sessionId);
+        Pump(ps, 2000, Shared);
+        Check(host.room.State.Bool("night"), "night for everyone");
+        Check(host.room.State.Str("taken") == "p3", $"taken cars ({host.room.State.Str("taken")})");
+        var parked = (host.room.State.Get("cars") as SchemaMap)?.items;
+        Check(parked != null && parked.TryGetValue(guest.room.sessionId, out var pc) && ((SchemaObj)pc).Num("model") == 3 && Math.Abs(((SchemaObj)pc).Num("x") - 30) < 0.01, "the guest's parked car");
+
         // Leave: b goes; a's map drops them.
         ps[0].timers.Cancel(tA);
         ps[1].timers.Cancel(tB);
