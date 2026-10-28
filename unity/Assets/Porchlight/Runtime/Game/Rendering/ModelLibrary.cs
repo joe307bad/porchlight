@@ -1,7 +1,8 @@
 // Every model the town uses, as prefabs built from the glTF files in Models/
 // (Editor/Library.cs makes them: glTFast imports each .glb, its materials
 // become URP Lit ones, people get an Animator). The library also holds each
-// model's bounds, the kits' colour variations and window glass, the
+// model's bounds, each building's ground floor (its room, doors, windows and
+// walls), the kits' colour variations and window glass, the
 // people's animator controller, the font, and the material templates every
 // runtime material is copied from (so their shader variants are in the build).
 
@@ -21,6 +22,52 @@ namespace Porchlight.Rendering
             public GameObject prefab;
             /// <summary>Bounds in the prefab's own space.</summary>
             public Vector3 min, size;
+            /// <summary>A building's ground floor (storey 0 for anything else).</summary>
+            public Ground ground;
+        }
+
+        /// <summary>
+        /// What Editor/Buildings.cs found on a building's ground floor, in the prefab's own
+        /// space (the front faces -z): the room behind the front, the doors into it (each a
+        /// part of the prefab that moves), the glass in its walls (the part named GLASS),
+        /// the rest of the building's glass, and its walls at walking height.
+        /// </summary>
+        [Serializable]
+        public sealed class Ground
+        {
+            public const string GLASS = "ground glass";
+            /// <summary>The room's floor: x0, z0, x1, z1.</summary>
+            public Vector4 room;
+            /// <summary>How tall the ground floor is.</summary>
+            public float storey;
+            public List<GroundDoor> doors = new List<GroundDoor>();
+            /// <summary>The panes in the room's walls (side as for doors).</summary>
+            public List<Pane> windows = new List<Pane>();
+            /// <summary>All the other panes (side is the way each faces, numbered as room sides are).</summary>
+            public List<Pane> panes = new List<Pane>();
+            /// <summary>The walls where people would walk into them, as segments: x0, z0, x1, z1.</summary>
+            public List<Vector4> walls = new List<Vector4>();
+        }
+
+        [Serializable]
+        public sealed class GroundDoor
+        {
+            /// <summary>The prefab's child that moves: pivoted on its hinge (or, lifting, the middle of its top edge).</summary>
+            public string part;
+            /// <summary>Which of the room's walls it's in: 0 front (-z), 1 back (+z), 2 left (-x), 3 right (+x).</summary>
+            public int side;
+            /// <summary>Its edges along the wall (x in the front and back, z in the sides), and its top.</summary>
+            public float a0, a1, top;
+            /// <summary>A garage door, which tips up and in from its top edge instead of swinging.</summary>
+            public bool lifts;
+        }
+
+        [Serializable]
+        public sealed class Pane
+        {
+            public int side;
+            /// <summary>Where its wall stands (z in the front and back, x in the sides), its edges along it, and its sill and head.</summary>
+            public float plane, a0, a1, y0, y1;
         }
 
         [Serializable]
@@ -47,8 +94,8 @@ namespace Porchlight.Rendering
         public List<Kit> kits = new List<Kit>();
         public RuntimeAnimatorController peopleController;
         public TMP_FontAsset font;
-        /// <summary>URP Lit; URP Lit with emission; URP Unlit; URP Particles Unlit (additive).</summary>
-        public Material lit, litEmissive, unlit, particles;
+        /// <summary>URP Lit; URP Lit with emission; URP Unlit; URP Particles Unlit (additive); URP Lit see-through.</summary>
+        public Material lit, litEmissive, unlit, particles, clear;
 
         const string PATH = "Porchlight/Library";
         static ModelLibrary loaded;

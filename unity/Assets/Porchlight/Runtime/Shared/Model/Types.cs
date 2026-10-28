@@ -29,8 +29,11 @@ namespace Porchlight.Model
         public const byte PATH = 3;
         public const byte BRIDGE = 4;
         public const byte PLAZA = 5;
+        /// <summary>The airport's grounds: taxiway, apron, hangars and car park, and the grass between.</summary>
+        public const byte AIRPORT = 6;
+        public const byte RUNWAY = 7;
 
-        public static readonly string[] Names = { "NONE", "ROAD_MAIN", "ROAD_STREET", "PATH", "BRIDGE", "PLAZA" };
+        public static readonly string[] Names = { "NONE", "ROAD_MAIN", "ROAD_STREET", "PATH", "BRIDGE", "PLAZA", "AIRPORT", "RUNWAY" };
     }
 
     public enum RoadKind { Main, Street, Path }
@@ -151,6 +154,18 @@ namespace Porchlight.Model
         public List<int> lotIds;
     }
 
+    /// <summary>
+    /// The town's airport: a rectangle of tiles (x1, y1 exclusive), its long side
+    /// `front` facing the town. Airfield (Gen) says where each part of it is.
+    /// </summary>
+    public sealed class Airport
+    {
+        public int x0, y0, x1, y1;
+        public Facing front;
+        /// <summary>How far along the front (Airfield's u) the road comes in.</summary>
+        public double entranceU;
+    }
+
     /// <summary>Derived fields kept for the debug views.</summary>
     public sealed class DebugFields
     {
@@ -216,6 +231,8 @@ namespace Porchlight.Model
         public List<Lot> lots = new List<Lot>();
         public List<Building> buildings = new List<Building>();
         public List<Landmark> landmarks = new List<Landmark>();
+        /// <summary>Null on a map with no room for one.</summary>
+        public Airport airport;
 
         public TileGrid tiles;
         public Vec2 spawn;

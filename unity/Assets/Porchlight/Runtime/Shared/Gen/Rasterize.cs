@@ -1,6 +1,6 @@
 // Stage 8: paint everything into the tile grid the 3D view uses. Terrain comes
-// from the heightmap and water, then roads and bridges, the plaza, and
-// buildings. A tile is walkable if a character could stand on it and reach it
+// from the heightmap and water, then the airport, roads and bridges, the
+// plaza, and buildings. A tile is walkable if a character could stand on it and reach it
 // from spawn.
 
 using System;
@@ -21,7 +21,7 @@ namespace Porchlight.Gen
         static bool WalkableTerrain(byte t) => t == Terrain.GRASS || t == Terrain.DIRT || t == Terrain.SAND;
 
         static bool WalkableOverlay(byte o) =>
-            o == Overlay.ROAD_MAIN || o == Overlay.ROAD_STREET || o == Overlay.PATH || o == Overlay.BRIDGE || o == Overlay.PLAZA;
+            o == Overlay.ROAD_MAIN || o == Overlay.ROAD_STREET || o == Overlay.PATH || o == Overlay.BRIDGE || o == Overlay.PLAZA || o == Overlay.AIRPORT || o == Overlay.RUNWAY;
 
         public TownModel Run(TownModel model, Rng rng)
         {
@@ -56,6 +56,17 @@ namespace Porchlight.Gen
                     int x = (int)Math.Floor(r.points[k].x), y = (int)Math.Floor(r.points[k].y);
                     if (Grid.InBounds(x, y, w, h)) tiles.terrain[Grid.Index(x, y, w)] = Terrain.WATER_DEEP;
                 }
+            }
+
+            // The airport, under its road in.
+            if (model.airport != null)
+            {
+                foreach (int i in Airfield.TilesIn(model.airport, new Airfield.Box(0, 0, Airfield.Length(model.airport), Airfield.DEPTH), w, h))
+                {
+                    tiles.terrain[i] = Terrain.GRASS;
+                    tiles.overlay[i] = Overlay.AIRPORT;
+                }
+                foreach (int i in Airfield.TilesIn(model.airport, Airfield.Runway(model.airport), w, h)) tiles.overlay[i] = Overlay.RUNWAY;
             }
 
             var road = Raster.RoadRaster(model);

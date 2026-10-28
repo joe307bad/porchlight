@@ -1,0 +1,22 @@
+Planes from Poly Pizza (poly.pizza), each under CC BY 3.0 (https://creativecommons.org/licenses/by/3.0/).
+Attribution is required: credit the author named here if any of these ship in the game.
+
+airliner-a.glb — "Airplane" by Poly by Google, https://poly.pizza/m/0ZVPPr6X6gM
+airliner-b.glb — "Airplane" by Poly by Google, https://poly.pizza/m/2eG17I-VDiG
+airliner-c.glb — "Airplane" by Poly by Google, https://poly.pizza/m/8ciDd9k8wha
+airliner-d.glb — "Airplane" by jeremy, https://poly.pizza/m/9Ev6pklkSYp
+airliner-e.glb — "Airplane" by Poly by Google, https://poly.pizza/m/a3XrQkLNna9
+airliner-f.glb — "Airplane 3268" by Remy Tauziac, https://poly.pizza/m/bjlICuVX1Sg
+airliner-g.glb — "Airplane" by Poly by Google, https://poly.pizza/m/fzIXe2paBN9
+airliner-cute.glb — "very cute airplane" by Akash Rudra, https://poly.pizza/m/3UtIosDm9u-
+airliner-cartoon.glb — "Airplane" by Poly by Google, https://poly.pizza/m/886-xsZYasM
+jumbo-jet.glb — "Boeing 747" by Miha Lunar, https://poly.pizza/m/49CLof4tP2V
+jet-private.glb — "Jet" by Poly by Google, https://poly.pizza/m/3B3Pa6BHXn1
+jet-business.glb — "Jet" by Poly by Google, https://poly.pizza/m/bgUY8zN2Bq9
+prop-small.glb — "Small Airplane" by Vojtěch Balák, https://poly.pizza/m/7cvx6ex-xfL
+prop-warbird.glb — "Aeroplane" by Gilang Romadhan, https://poly.pizza/m/9VeIc0cybp4
+glider.glb — "Airplane" by Poly by Google, https://poly.pizza/m/4zE4UQ4siZa
+biplane-a.glb — "Airplane" by Poly by Google, https://poly.pizza/m/6D4MwQoxK-K
+biplane-b.glb — "Airplane" by Poly by Google, https://poly.pizza/m/8VysVKMXN2J
+biplane-c.glb — "plane 2" by Jake Blakeley, https://poly.pizza/m/amIu9ua-L0A
+biplane-dh2.glb — "AIRCO DH2 v2" by Joshua Johanson, https://poly.pizza/m/9iVI9GHMleJ

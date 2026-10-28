@@ -1,7 +1,10 @@
-// Driving: the player can get into any car and drive it. Arcade handling:
-// steering bites harder the faster you go, the car coasts to a stop when you
-// let go, and stops dead against buildings, sheds, water and the map's edge.
-// Auto walk at the wheel becomes auto drive. Pure.
+// Driving: the player can get into any car, boat or plane and drive it. Arcade
+// handling: steering bites harder the faster a car goes, it coasts to a stop
+// when you let go, and stops dead against buildings, sheds, water and the
+// map's edge. Boats keep to the water and turn on their rudder at any speed.
+// Planes taxi like a car, lift off past their take-off speed with the throttle
+// open, climb over the roofs and come down to land where there's room. Auto
+// walk at the wheel becomes auto drive (cars only). Pure.
 
 using System;
 using System.Collections.Generic;
@@ -10,6 +13,8 @@ using Porchlight.Model;
 
 namespace Porchlight.Explore
 {
+    public enum VehicleKind { Car, Boat, Plane }
+
     public sealed class Vehicle
     {
         public const double TOP_SPEED = 5.2;
@@ -24,14 +29,47 @@ namespace Porchlight.Explore
         public const double CAR_HALF_LENGTH = 0.5;
         public const double CAR_HALF_WIDTH = 0.22;
 
+        const double BOAT_TOP = 3.4;
+        const double BOAT_REVERSE = 1;
+        const double BOAT_ACCEL = 1.8;
+        const double BOAT_BRAKE = 2.6;
+        const double BOAT_DRAG = 0.7;
+        const double BOAT_STEER = 1.3;
+        /// <summary>A boat's rudder bites from this speed (tiles per second).</summary>
+        const double BOAT_STEERAGE = 0.5;
+        const double BOAT_HALF_LENGTH = 0.7;
+        const double BOAT_HALF_WIDTH = 0.3;
+
+        /// <summary>Flat out in the air (under the server's limit for anything that moves).</summary>
+        public const double PLANE_TOP = 7.4;
+        const double PLANE_TAXI_STEER = 1.6;
+        const double PLANE_ACCEL = 2.2;
+        const double PLANE_SLOWING = 1.2;
+        /// <summary>Fast enough to lift off (with the throttle open), or to stay up.</summary>
+        public const double TAKEOFF_SPEED = 4.6;
+        const double STALL_SPEED = 3.4;
+        const double CLIMB = 2.2;
+        const double SINK = 1.1;
+        /// <summary>How high a plane climbs to (tiles), well over the tallest towers (the server allows 24).</summary>
+        public const double CRUISE_HEIGHT = 20;
+        const double AIR_TURN = 1;
+        const double BANK = 0.55;
+
         /// <summary>Forward speed (tiles per second, negative reversing).</summary>
         public double speed;
         /// <summary>Index into the car model list.</summary>
         public readonly int model;
+        public readonly VehicleKind kind;
+        /// <summary>Half its length and width, for what it may run into (a plane's width is its wings').</summary>
+        public readonly double halfLength, halfWidth;
         public double x;
         public double y;
         /// <summary>Direction the car points, radians in map space (atan2(dy, dx)).</summary>
         public double heading;
+        /// <summary>Height off the ground (tiles): above 0 while a plane flies.</summary>
+        public double altitude;
+        /// <summary>A plane's lean into a turn, and its nose up (radians): for drawing it.</summary>
+        public double bank, pitch;
 
         public Vehicle(int model, double x, double y, double heading)
         {
@@ -39,58 +77,145 @@ namespace Porchlight.Explore
             this.x = x;
             this.y = y;
             this.heading = heading;
+            kind = Catalog.KindOf(model);
+            if (kind == VehicleKind.Boat)
+            {
+                halfLength = BOAT_HALF_LENGTH;
+                halfWidth = BOAT_HALF_WIDTH;
+            }
+            else if (kind == VehicleKind.Plane)
+            {
+                double length = Catalog.PlaneLength(Catalog.CARS[model]);
+                halfLength = length * 0.42;
+                halfWidth = length * 0.42;
+            }
+            else
+            {
+                halfLength = CAR_HALF_LENGTH;
+                halfWidth = CAR_HALF_WIDTH;
+            }
         }
 
         public Vec2 Forward => new Vec2(Math.Cos(heading), Math.Sin(heading));
 
-        /// <summary>One step of driving: throttle +1 / -1 / 0, steer -1 (left) to +1 (right).</summary>
-        public void Drive(double throttle, double steer, double dt, Func<double, double, bool> open, bool boost = false)
+        public bool Airborne => altitude > 0;
+
+        /// <summary>How fast it goes flat out (for the speedometer).</summary>
+        public double TopSpeed => kind == VehicleKind.Boat ? BOAT_TOP : kind == VehicleKind.Plane ? PLANE_TOP : TOP_SPEED;
+
+        /// <summary>
+        /// One step of driving: throttle +1 / -1 / 0, steer -1 (left) to +1 (right).
+        /// `open`: where it may be on the ground (or water, for a boat). `floor`: for a
+        /// plane in the air, how low it may fly over a point (Infinity off the map).
+        /// </summary>
+        public void Drive(double throttle, double steer, double dt, Func<double, double, bool> open, bool boost = false, Func<double, double, double> floor = null)
         {
-            double top = TOP_SPEED * (boost ? BOOST_SPEED : 1);
+            if (kind == VehicleKind.Plane && Airborne)
+            {
+                Fly(throttle, steer, dt, open, floor);
+                return;
+            }
+            bool boat = kind == VehicleKind.Boat, plane = kind == VehicleKind.Plane;
+            double top = boat ? BOAT_TOP * (boost ? BOOST_SPEED : 1) : plane ? PLANE_TOP : TOP_SPEED * (boost ? BOOST_SPEED : 1);
+            double accel = boat ? BOAT_ACCEL : plane ? PLANE_ACCEL : ACCEL * (boost ? BOOST_ACCEL : 1);
+            double brake = boat ? BOAT_BRAKE : BRAKE;
+            double drag = boat ? BOAT_DRAG : DRAG;
             if (throttle > 0 && speed <= top * throttle)
             {
-                speed += (speed < 0 ? BRAKE : ACCEL * (boost ? BOOST_ACCEL : 1)) * throttle * dt;
+                speed += (speed < 0 ? brake : accel) * throttle * dt;
                 speed = Math.Min(top, speed);
             }
-            else if (throttle < 0) speed -= (speed > 0 ? BRAKE : ACCEL * 0.6) * -throttle * dt;
-            else speed -= Numbers.Sign(speed) * Math.Min(Math.Abs(speed), DRAG * dt);
-            speed = Math.Max(-REVERSE_SPEED, speed);
-            double bite = Math.Min(1, Math.Abs(speed) / FULL_STEER_SPEED) * Numbers.Sign(speed);
-            double h = heading + steer * STEER_RATE * bite * dt;
+            else if (throttle < 0) speed -= (speed > 0 ? brake : accel * 0.6) * -throttle * dt;
+            else speed -= Numbers.Sign(speed) * Math.Min(Math.Abs(speed), drag * dt);
+            speed = Math.Max(boat ? -BOAT_REVERSE : -REVERSE_SPEED, speed);
+            double turn;
+            if (boat) turn = BOAT_STEER * Math.Min(1, Math.Abs(speed) / BOAT_STEERAGE) * Numbers.Sign(speed);
+            else
+            {
+                double bite = Math.Min(1, Math.Abs(speed) / FULL_STEER_SPEED) * Numbers.Sign(speed);
+                // A plane rolling fast keeps straight: it turns as hard as it does at taxiing speed.
+                turn = plane ? PLANE_TAXI_STEER * bite * Math.Min(1, FULL_STEER_SPEED * 1.5 / Math.Max(1e-6, Math.Abs(speed))) : STEER_RATE * bite;
+            }
+            double h = heading + steer * turn * dt;
             double step = speed * dt;
             double nx = x + Math.Cos(h) * step;
             double ny = y + Math.Sin(h) * step;
-            if (Fits(nx, ny, h, open))
+            if (FitsAt(nx, ny, h, open))
             {
                 x = nx;
                 y = ny;
                 heading = h;
             }
-            else if (Fits(x, y, h, open))
+            else if (FitsAt(x, y, h, open))
             {
                 heading = h;
                 speed = 0;
             }
             else speed = 0;
+            bank += (0 - bank) * Math.Min(1, dt * 4);
+            pitch += (0 - pitch) * Math.Min(1, dt * 4);
+            // Off the ground, at take-off speed with the throttle open.
+            if (plane && throttle > 0 && speed >= TAKEOFF_SPEED) altitude = 1e-3;
+        }
+
+        /// <summary>In the air: forward climbs (and speeds up) to cruising height, back sinks (and slows), let go to hold.</summary>
+        void Fly(double throttle, double steer, double dt, Func<double, double, bool> open, Func<double, double, double> floor)
+        {
+            double target = throttle > 0 ? PLANE_TOP : throttle < 0 ? STALL_SPEED : Math.Max(STALL_SPEED, speed);
+            speed += Math.Max(-PLANE_SLOWING * dt, Math.Min(PLANE_ACCEL * dt, target - speed));
+            double climb = throttle > 0 ? (altitude < CRUISE_HEIGHT ? CLIMB : 0) : throttle < 0 ? -SINK : 0;
+            double h = heading + steer * AIR_TURN * dt;
+            double nx = x + Math.Cos(h) * speed * dt;
+            double ny = y + Math.Sin(h) * speed * dt;
+            double under = floor?.Invoke(nx, ny) ?? 0;
+            heading = h;
+            if (!double.IsInfinity(under))
+            {
+                x = nx;
+                y = ny;
+            }
+            else under = floor?.Invoke(x, y) ?? 0;
+            if (double.IsInfinity(under)) under = 0;
+            double was = altitude;
+            altitude = Math.Min(Math.Max(CRUISE_HEIGHT, under), Math.Max(altitude + climb * dt, under));
+            if (altitude <= 0)
+            {
+                // Down: on open ground it lands and rolls on; anywhere else it skims along until there's room.
+                if (FitsAt(x, y, heading, open))
+                {
+                    altitude = 0;
+                    speed = Math.Min(speed, TAKEOFF_SPEED - 0.4);
+                }
+                else altitude = 0.3;
+            }
+            double rate = (altitude - was) / Math.Max(1e-6, dt);
+            pitch += (DetMath.Atan2(rate, Math.Max(1, speed)) - pitch) * Math.Min(1, dt * 3);
+            bank += (steer * BANK - bank) * Math.Min(1, dt * 3);
         }
 
         static readonly (int, int)[] Corners = { (1, 1), (1, -1), (-1, 1), (-1, -1), (1, 0), (-1, 0), (0, 1), (0, -1) };
 
         /// <summary>True if a car at (x, y) pointing along `heading` stands wholly on open ground.</summary>
-        public static bool Fits(double x, double y, double heading, Func<double, double, bool> open)
+        public static bool Fits(double x, double y, double heading, Func<double, double, bool> open) =>
+            Fits(x, y, heading, CAR_HALF_LENGTH, CAR_HALF_WIDTH, open);
+
+        /// <summary>True if this vehicle at (x, y) pointing along `heading` stands wholly on open ground (or water).</summary>
+        public bool FitsAt(double x, double y, double heading, Func<double, double, bool> open) => Fits(x, y, heading, halfLength, halfWidth, open);
+
+        static bool Fits(double x, double y, double heading, double halfLength, double halfWidth, Func<double, double, bool> open)
         {
             double fx = Math.Cos(heading), fy = Math.Sin(heading);
             double rx = -fy, ry = fx;
             foreach (var (a, b) in Corners)
             {
-                double px = x + fx * CAR_HALF_LENGTH * a + rx * CAR_HALF_WIDTH * b;
-                double py = y + fy * CAR_HALF_LENGTH * a + ry * CAR_HALF_WIDTH * b;
+                double px = x + fx * halfLength * a + rx * halfWidth * b;
+                double py = y + fy * halfLength * a + ry * halfWidth * b;
                 if (!open(px, py)) return false;
             }
             return true;
         }
 
-        /// <summary>Where a car may go: anywhere on the map but buildings, sheds and open water.</summary>
+        /// <summary>Where a car (or a plane on the ground) may go: anywhere on the map but buildings, sheds, hangars and open water.</summary>
         public static Func<double, double, bool> Drivable(TownModel model, IsoLayout layout)
         {
             int w = model.width, h = model.height;
@@ -101,22 +226,35 @@ namespace Porchlight.Explore
                 byte use = layout.use[i];
                 bool wet = Terrain.IsWater(tiles.terrain[i]);
                 byte over = tiles.overlay[i];
-                ok[i] = use == Use.HOUSE || use == Use.SHED || (wet && over == Overlay.NONE) ? (byte)0 : (byte)1;
+                ok[i] = use == Use.HOUSE || use == Use.SHED || use == Use.HANGAR || (wet && over == Overlay.NONE) ? (byte)0 : (byte)1;
             }
-            return (x, y) =>
-            {
-                int tx = (int)Math.Floor(x), ty = (int)Math.Floor(y);
-                return x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 && ok[Grid.Index(tx, ty, w)] == 1;
-            };
+            return Lookup(ok, w, h);
         }
+
+        /// <summary>Where a boat may go: open water, not under a bridge or into a dock.</summary>
+        public static Func<double, double, bool> Sailable(TownModel model, IsoLayout layout)
+        {
+            int w = model.width, h = model.height;
+            var tiles = model.tiles;
+            var ok = new byte[w * h];
+            for (int i = 0; i < ok.Length; i++)
+                ok[i] = Terrain.IsWater(tiles.terrain[i]) && tiles.overlay[i] == Overlay.NONE && layout.use[i] != Use.DOCK ? (byte)1 : (byte)0;
+            return Lookup(ok, w, h);
+        }
+
+        static Func<double, double, bool> Lookup(byte[] ok, int w, int h) => (x, y) =>
+        {
+            int tx = (int)Math.Floor(x), ty = (int)Math.Floor(y);
+            return x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 && ok[Grid.Index(tx, ty, w)] == 1;
+        };
 
         /// <summary>Where the driver steps out: beside the driver's door if there's room, else the other side, behind or in front.</summary>
         public static Vec2? ExitSpot(Vehicle car, Func<double, double, bool> canStand)
         {
             var f = car.Forward;
             var left = new Vec2(f.y, -f.x);
-            double side = CAR_HALF_WIDTH + 0.28;
-            double end = CAR_HALF_LENGTH + 0.28;
+            double side = car.halfWidth + 0.28;
+            double end = car.halfLength + 0.28;
             foreach (var (a, b) in new[] { (0.0, side), (0.0, -side), (-end, 0.0), (end, 0.0), (0.0, side + 0.4), (0.0, -side - 0.4) })
             {
                 var p = new Vec2(car.x + f.x * a + left.x * b, car.y + f.y * a + left.y * b);

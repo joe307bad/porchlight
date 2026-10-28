@@ -1,7 +1,8 @@
 // Moving traffic on every through road: cars keep to the right-hand lane,
 // follow the road graph through junctions (U-turning at the map edge) and slow
 // down behind the car ahead, or for the player in their lane, turning round
-// if held up too long. Pure state.
+// if held up too long. A boat or two sails each lake's loop (Ports) among them.
+// Pure state.
 
 using System;
 using System.Collections.Generic;
@@ -31,6 +32,8 @@ namespace Porchlight.Explore
         public double wait;
         /// <summary>Taken out of the traffic (the player got in).</summary>
         public bool taken;
+        /// <summary>The lake loop a boat sails (layout.boatLoops), s along it; -1 for a car on the roads.</summary>
+        public int loop = -1;
     }
 
     public sealed class Traffic
@@ -41,6 +44,9 @@ namespace Porchlight.Explore
         const int MAX_CARS = 70;
         const double PATIENCE = 4;
         const double LANE_HALF = 0.42;
+        const double SAIL = 1.6;
+        /// <summary>A loop at least this long (tiles) gets a second boat.</summary>
+        const double TWO_BOATS = 60;
 
         public readonly List<TrafficCar> cars = new List<TrafficCar>();
         readonly List<RoadStroke> roads;
@@ -49,6 +55,8 @@ namespace Porchlight.Explore
         readonly Dictionary<int, List<int>> byNode = new Dictionary<int, List<int>>();
         /// <summary>The roads traffic drives (not paths, cul-de-sacs or stubs).</summary>
         readonly List<int> mains = new List<int>();
+        readonly List<List<Vec2>> loops;
+        readonly List<double>[] loopAt;
         readonly Rng rng;
 
         public Traffic(IsoLayout layout, Rng rng, Func<Rng, int> pickModel)
@@ -89,6 +97,19 @@ namespace Porchlight.Explore
                 car.speed = CRUISE;
                 car.side = car.dir;
                 cars.Add(car);
+            }
+            loops = layout.boatLoops;
+            loopAt = new List<double>[loops.Count];
+            for (int i = 0; i < loops.Count; i++)
+            {
+                var a = new List<double> { 0 };
+                for (int k = 1; k < loops[i].Count; k++) a.Add(a[k - 1] + Geo.Dist(loops[i][k], loops[i][k - 1]));
+                loopAt[i] = a;
+                double length = a[a.Count - 1];
+                int boats = length >= TWO_BOATS ? 2 : 1;
+                double start = rng.Range(0, length);
+                for (int k = 0; k < boats; k++)
+                    cars.Add(new TrafficCar { model = Catalog.PickBoatModel(rng, true), loop = i, s = (start + length * k / boats) % length, dir = 1, speed = SAIL, side = 1 });
             }
             Update(0, null);
         }
@@ -132,6 +153,12 @@ namespace Porchlight.Explore
         public void Adopt(TrafficCar car)
         {
             var here = new Vec2(car.x, car.y);
+            if (car.loop >= 0)
+            {
+                car.s = Math.Max(0, Geo.ArcPosition(here, loops[car.loop]));
+                car.wait = 0;
+                return;
+            }
             int best = -1;
             double bestD = double.PositiveInfinity;
             foreach (int i in mains)
@@ -161,6 +188,11 @@ namespace Porchlight.Explore
             foreach (var car in cars)
             {
                 if (car.taken) continue;
+                if (car.loop >= 0)
+                {
+                    Sail(car, dt, obstacles);
+                    continue;
+                }
                 double blocked = BlockedAhead(car, obstacles);
                 double ahead = Math.Min(GapAhead(car), blocked);
                 double target = ahead < GAP ? 0 : ahead < GAP * 2 ? CRUISE * ((ahead - GAP) / GAP) : CRUISE;
@@ -183,11 +215,31 @@ namespace Porchlight.Explore
             double best = double.PositiveInfinity;
             foreach (var o in cars)
             {
-                if (o == car || o.taken || o.road != car.road || o.dir != car.dir) continue;
+                if (o == car || o.taken || o.loop >= 0 || o.road != car.road || o.dir != car.dir) continue;
                 double d = (o.s - car.s) * car.dir;
                 if (d > 0 && d < best) best = d;
             }
             return best;
+        }
+
+        /// <summary>Round and round its loop, easing off for a boat (or the player) just ahead.</summary>
+        void Sail(TrafficCar car, double dt, IReadOnlyList<Vec2> obstacles)
+        {
+            var a = loopAt[car.loop];
+            double length = a[a.Count - 1];
+            double target = BlockedAhead(car, obstacles) < GAP * 1.5 ? 0 : SAIL;
+            car.speed += (target - car.speed) * Math.Min(1, dt * 1.5);
+            car.s = ((car.s + car.speed * dt) % length + length) % length;
+            var points = loops[car.loop];
+            var p = AutoDrive.PointAt(points, a, car.s);
+            var q = AutoDrive.PointAt(points, a, (car.s + 0.4) % length);
+            if (Numbers.Hypot(q.x - p.x, q.y - p.y) > 1e-6)
+            {
+                double want = DetMath.Atan2(q.y - p.y, q.x - p.x);
+                car.heading += dt != 0 ? Orbit.ShortestTurn(car.heading, want) * Math.Min(1, dt * 2) : Orbit.ShortestTurn(car.heading, want);
+            }
+            car.x = p.x;
+            car.y = p.y;
         }
 
         void TurnAtJunction(TrafficCar car)

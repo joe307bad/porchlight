@@ -1,7 +1,7 @@
 // Builds the model library (Resources/Porchlight/Library.asset) from the glTF
 // files in Models/, which glTFast imports: each model becomes a prefab drawn
 // with URP Lit materials, each building's window glass becomes a part of its
-// own (lit at night), and the people share one Animator controller whose clips
+// own (lit at night) and its ground floor is opened up (Buildings.cs), and the people share one Animator controller whose clips
 // are the kit's animations (people/animations.glb) bound to their armature.
 // Everything it makes goes in Assets/Porchlight/Generated; run again to
 // rebuild (Porchlight ▸ Set Up Project does).
@@ -55,6 +55,7 @@ namespace Porchlight.EditorTools
             lib.lit = Template("Lit", "Universal Render Pipeline/Lit", false);
             lib.litEmissive = Template("Lit Emissive", "Universal Render Pipeline/Lit", true);
             lib.unlit = Template("Unlit", "Universal Render Pipeline/Unlit", false);
+            lib.clear = ClearTemplate();
             lib.particles = ParticlesTemplate();
             lib.font = Font();
 
@@ -67,6 +68,17 @@ namespace Porchlight.EditorTools
             EditorUtility.SetDirty(lib);
             AssetDatabase.SaveAssets();
             Debug.Log($"Porchlight: library built ({lib.models.Count} models, {lib.people.Count} people, {lib.kits.Count} kits)");
+        }
+
+        /// <summary>Whether the library is there and holds every model and person the catalog names (buildings opened up).</summary>
+        public static bool UpToDate()
+        {
+            var lib = AssetDatabase.LoadAssetAtPath<ModelLibrary>(LibraryPath);
+            if (lib == null) return false;
+            var models = new HashSet<string>(lib.models.Select(m => m.name));
+            var people = new HashSet<string>(lib.people.Select(p => p.name));
+            return Catalog.Statics.All(models.Contains) && Catalog.CHARACTERS.All(people.Contains)
+                && lib.models.Where(m => IsBuilding(m.name)).All(m => m.ground != null && m.ground.storey > 0);
         }
 
         static GameObject Source(string name)
@@ -96,6 +108,32 @@ namespace Porchlight.EditorTools
                 m.globalIlluminationFlags = MaterialGlobalIlluminationFlags.RealtimeEmissive;
             }
             m.SetFloat("_Smoothness", 0.1f);
+            EditorUtility.SetDirty(m);
+            return m;
+        }
+
+        /// <summary>URP Lit, see-through (alpha-blended): glass you can see into a room through.</summary>
+        static Material ClearTemplate()
+        {
+            string path = $"{Out}/Materials/Clear.mat";
+            var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m == null)
+            {
+                m = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+                AssetDatabase.CreateAsset(m, path);
+            }
+            m.SetFloat("_Surface", 1);
+            m.SetFloat("_Blend", 0);
+            m.SetOverrideTag("RenderType", "Transparent");
+            m.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+            m.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+            m.SetInt("_SrcBlendAlpha", (int)BlendMode.One);
+            m.SetInt("_DstBlendAlpha", (int)BlendMode.OneMinusSrcAlpha);
+            m.SetInt("_ZWrite", 0);
+            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            m.renderQueue = (int)RenderQueue.Transparent;
+            m.SetFloat("_Smoothness", 0.8f);
+            m.enableInstancing = true;
             EditorUtility.SetDirty(m);
             return m;
         }
@@ -162,12 +200,12 @@ namespace Porchlight.EditorTools
 
         // Kits: colour variations and window masks ------------------------------------------------
 
-        static bool IsBuilding(string name) => name.StartsWith("suburban/building") || name.StartsWith("commercial/building");
+        static bool IsBuilding(string name) => name.StartsWith("suburban/building") || name.StartsWith("commercial/building") || name.StartsWith("industrial/building");
 
         static List<ModelLibrary.Kit> Kits()
         {
             var kits = new List<ModelLibrary.Kit>();
-            foreach (var kit in new[] { "suburban", "commercial" })
+            foreach (var kit in new[] { "suburban", "commercial", "industrial" })
             {
                 var maps = new List<Texture2D> { AssetDatabase.LoadAssetAtPath<Texture2D>($"{Models}/{kit}/Textures/colormap.png") };
                 if (Catalog.VARIATIONS.TryGetValue(kit, out var variations))
@@ -295,11 +333,25 @@ namespace Porchlight.EditorTools
                 r.sharedMaterials = r.sharedMaterials.Select(m => Convert(m, converted, looks, kit)).ToArray();
                 r.shadowCastingMode = ShadowCastingMode.On;
             }
+            // Vehicles are turned to face down +z, as the cars are.
+            float yaw = Catalog.YawOf(name);
+            if (yaw != 0)
+            {
+                var holder = new GameObject(go.name);
+                go.transform.SetParent(holder.transform, false);
+                go.transform.localRotation = Quaternion.Euler(0, yaw, 0) * go.transform.localRotation;
+                go = holder;
+            }
             var withWindows = IsBuilding(name) ? kits.Find(k => k.name == kit) : null;
-            if (withWindows != null) SplitWindows(go, name, withWindows);
+            ModelLibrary.Ground ground = null;
+            if (withWindows != null)
+            {
+                SplitWindows(go, name, withWindows);
+                ground = Buildings.Open(go, name, withWindows.windows, Out + "/Meshes");
+            }
             var bounds = BoundsOf(go);
             var prefab = Save(go, name);
-            return new ModelLibrary.Model { name = name, prefab = prefab, min = bounds.min, size = bounds.size };
+            return new ModelLibrary.Model { name = name, prefab = prefab, min = bounds.min, size = bounds.size, ground = ground };
         }
 
         static GameObject Save(GameObject go, string name)

@@ -7,7 +7,8 @@ import { ANIM_MAX, type MoveMessage } from './protocol.ts';
 
 /**
  * Fastest anything goes, tiles per second: a boosted car (TOP_SPEED 5.2 ×
- * BOOST_SPEED 1.7 in the app's driving.ts). Sprinting on foot is 6.1.
+ * BOOST_SPEED 1.7 in the game's Driving.cs). Sprinting on foot is 6.1, a plane
+ * flies at 7.4 and a boat goes no faster than a car.
  */
 export const MAX_SPEED = 8.9;
 /** Allowance over MAX_SPEED for jitter in when moves arrive. */
@@ -17,8 +18,8 @@ const SLACK = 0.75;
 /** Time counted between moves (seconds): at least one send interval, at most a second. */
 const MIN_GAP = 0.05;
 const MAX_GAP = 1;
-/** How high off the ground anything gets (tiles); a jump is about 0.2. */
-const MAX_HEIGHT = 3;
+/** How high off the ground anything gets (tiles): a jump is about 0.2, a plane climbs to 20. */
+const MAX_HEIGHT = 24;
 
 export interface Bounds {
   width: number;

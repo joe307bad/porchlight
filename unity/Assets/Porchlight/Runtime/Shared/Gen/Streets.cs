@@ -3,7 +3,7 @@
 // segments (after Parish & Müller's local constraints): a segment that would
 // cross a road stops there and joins it, one that ends just short of a node or
 // road carries straight on to meet it, and one that hits water, steep ground,
-// the town edge or crowds a parallel road is dropped. Afterwards dead ends get
+// the airport, the town edge or crowds a parallel road is dropped. Afterwards dead ends get
 // short connectors where one fits, and land the roads never reach gets a
 // footpath back to the network.
 
@@ -62,6 +62,7 @@ namespace Porchlight.Gen
             var water = terrainInfo.water;
             var slope = terrainInfo.slope;
             var cost = terrainInfo.cost;
+            var airport = Airfield.Mask(model.airport, w, h);
             var g = RoadGraphOps.BuilderFrom(model.roads);
             double Falloff(Vec2 pt) => Math.Max(0, 1 - Geo.Dist(pt, C) / R);
             var keep = new HashSet<int>();
@@ -76,7 +77,7 @@ namespace Porchlight.Gen
             {
                 if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) return false;
                 int i = Grid.Index(x, y, w);
-                return water[i] == 0 && slope[i] <= p.maxRoadSlope;
+                return water[i] == 0 && airport[i] == 0 && slope[i] <= p.maxRoadSlope;
             }
             bool CellOk(Vec2 pt) => TileOk((int)Math.Floor(pt.x), (int)Math.Floor(pt.y));
             bool LandOk(Vec2 a, Vec2 b)
@@ -379,6 +380,7 @@ namespace Porchlight.Gen
             errors.AddRange(RoadsStage.CheckRoadSlopes(model, RoadKind.Main));
             errors.AddRange(RoadsStage.CheckRoadSlopes(model, RoadKind.Street));
             errors.AddRange(RoadGraphOps.CheckBridges(model, Raster.WaterMask(model)));
+            errors.AddRange(AirportStage.CheckRoadIn(model));
             return errors;
         }
 

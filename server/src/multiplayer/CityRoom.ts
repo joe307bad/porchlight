@@ -215,7 +215,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     this.onMessage(MSG_CAR, (client, raw: unknown) => {
       const rt = this.admit(client);
       const m = raw as { model?: unknown; x?: unknown; z?: unknown; yaw?: unknown } | null;
-      if (!rt || typeof m?.model !== 'number' || !Number.isInteger(m.model) || m.model < 0 || m.model > 32) return;
+      if (!rt || typeof m?.model !== 'number' || !Number.isInteger(m.model) || m.model < 0 || m.model > 255) return;
       if (m.model === 0) {
         this.state.cars.delete(client.sessionId);
         return;

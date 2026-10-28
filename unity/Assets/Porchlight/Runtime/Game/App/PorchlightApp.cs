@@ -180,7 +180,7 @@ namespace Porchlight.App
             });
         }
 
-        /// <summary>Behind the sign-in card: a fresh big town, by day or night, and someone out for a walk in it.</summary>
+        /// <summary>Behind the sign-in card: a fresh little town, by day or night, and someone out for a walk in it.</summary>
         void StartAttract()
         {
             try
@@ -189,10 +189,9 @@ namespace Porchlight.App
                 host.style.display = DisplayStyle.None;
                 root.Add(host);
                 var p = GenParams.Defaults;
-                // A big town, spread wide, to take in from far out: its edge about 100
-                // tiles out from the middle, well past the ~80 the view's corners reach as it turns.
-                p.width = p.height = 224;
-                p.townRadius = 0.45;
+                // A little town, seen close: light enough for phones and weak machines, its
+                // edge about 35 tiles out from the middle, past the ~24 the view's corners reach as it turns.
+                p.width = p.height = 96;
                 attract = new ExploreView(camera3d, ModelLibrary.Instance, new ExploreOverlay(host) { Dpr = dpr }, input) { Attract = true };
                 attract.SetTown(Generator.Generate(RandomSeed(), GenParams.Normalize(p)));
                 attract.Spawn(Catalog.RandomLook(new Rng(RandomSeed())));
@@ -658,7 +657,7 @@ namespace Porchlight.App
                 if (look != null) net?.LookChanged(look);
                 return;
             }
-            int n = Catalog.CARS.Length;
+            int n = Catalog.CarCount;
             carModel = ((carModel + step) % n + n) % n;
             if (iso.HasCar) iso.ChangeCar(carModel);
         }
@@ -666,8 +665,8 @@ namespace Porchlight.App
         void UpdateGarage()
         {
             if (portraits == null) return;
-            // The box shows the car you have (one you got into, too).
-            if (iso.CarModel >= 0) carModel = iso.CarModel;
+            // The box shows the car you have (one you got into, too: not a boat or a plane, which stay where they are).
+            if (iso.CarModel >= 0 && Catalog.IsCar(iso.CarModel)) carModel = iso.CarModel;
             portraits.SetLook(iso.LookModel);
             portraits.SetCar(carModel);
             portraits.Update(Time.deltaTime, exploring);
