@@ -66,12 +66,13 @@ namespace Porchlight.App
         const double MIN_ZOOM = 0.35;
         const double MAX_ZOOM = 2.5;
         /// <summary>
-        /// Behind the sign-in card: further out than you can zoom, and low, to take in
-        /// much of the town, but not so far that its edges show (at this zoom and pitch
-        /// the top of the view is about 64 tiles past the middle, inside the town).
+        /// Behind the sign-in card: close in on the middle of a small town, a little
+        /// lower than play, so there's little to draw on weak machines and phones (at this
+        /// zoom and pitch the top of the view is about 18 tiles past the middle and a wide
+        /// screen's corners about 24, inside the town).
         /// </summary>
-        const double ATTRACT_ZOOM = 0.42;
-        const double ATTRACT_PITCH = 22 * Math.PI / 180;
+        const double ATTRACT_ZOOM = 1.1;
+        const double ATTRACT_PITCH = 30 * Math.PI / 180;
         const int MAX_PEDESTRIANS = 70;
         /// <summary>How far back the orthographic camera sits (the view doesn't change with it; URP's shadows reach this far and more).</summary>
         const double CAMERA_DISTANCE = 60;
@@ -84,10 +85,13 @@ namespace Porchlight.App
         const double CHASE_LOOK_HEIGHT = 0.42;
         const double CHASE_LOOK_AHEAD = 0.6;
         const double TURN_RATE = 2.6;
-        const double FOG_NEAR = 22;
-        const double FOG_FAR = 60;
+        /// <summary>A faint haze far off: the whole town (and the horizon past it) stays clear.</summary>
+        const double FOG_NEAR = 180;
+        const double FOG_FAR = 420;
         const double DOOR_REACH = 0.85;
         const double DOOR_SPEED = 3;
+        /// <summary>How close on foot a room's keeper is about (rooms themselves are always there).</summary>
+        const double ROOM_NEAR = 2.5;
         static readonly double ROOM_PITCH = (55 * Math.PI) / 180;
         const double ROOM_MARGIN = 1.35;
         const double CHASE_TILT_GUESS = 0.3;
@@ -143,6 +147,8 @@ namespace Porchlight.App
         Vector3 chaseLook;
         int? room;
         readonly Dictionary<int, Keeper> keepers = new Dictionary<int, Keeper>();
+        readonly HashSet<int> shownRooms = new HashSet<int>();
+        readonly HashSet<int> wantedRooms = new HashSet<int>();
         int roomTurn;
         double inputYaw = Orbit.StopYaw(Orbit.DEFAULT_STOP);
         bool screenKeys;
@@ -215,6 +221,11 @@ namespace Porchlight.App
         public bool Cycling;
         public Action<int> OnCycle;
         Func<double, double, bool> canDrive = (x, y) => false;
+        Func<double, double, bool> canSail = (x, y) => false;
+        /// <summary>How low a plane may fly over each tile: clear of the roofs.</summary>
+        float[] skyFloor = new float[0];
+        /// <summary>How far above a roof a plane keeps.</summary>
+        const double ROOF_CLEARANCE = 0.6;
         double hudTimer;
         int? street;
         List<Step> steps;
@@ -255,6 +266,7 @@ namespace Porchlight.App
             playerAvatar?.Dispose();
             foreach (var k in keepers.Values) k.avatar.Dispose();
             keepers.Clear();
+            shownRooms.Clear();
             room = null;
             foreach (var c in cars) RemoveCar(c);
             cars.Clear();
@@ -282,6 +294,8 @@ namespace Porchlight.App
             snap = true;
             open = WalkMask();
             canDrive = Vehicle.Drivable(model, world.layout);
+            canSail = Vehicle.Sailable(model, world.layout);
+            skyFloor = SkyFloor();
             overlay.SetTown(model);
 
             traffic = new Traffic(world.layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
@@ -495,7 +509,7 @@ namespace Porchlight.App
             else if (id[0] == 't' && traffic != null && i < traffic.cars.Count && !traffic.cars[i].taken)
             {
                 var c = traffic.Take(i);
-                if (eject) EjectDriver(c.x, c.y, c.heading);
+                if (eject && Catalog.IsCar(c.model)) EjectDriver(c.x, c.y, c.heading);
             }
         }
 
@@ -650,6 +664,7 @@ namespace Porchlight.App
         {
             if (player == null || world == null || riding != null) return false;
             GetOut();
+            if (driving != null) return false;
             var near = new Vec2(player.x, player.y);
             var busy = new List<Vec2>();
             for (int i = 0; i < world.parked.Count; i++) if (!takenParked.Contains(i)) busy.Add(new Vec2(world.parked[i].x, world.parked[i].y));
@@ -666,7 +681,8 @@ namespace Porchlight.App
         {
             if (cars.Count == 0 || world == null) return;
             var old = cars[0].car;
-            if (old.model == model) return;
+            // Boats and planes are where they are: only a car becomes another.
+            if (old.model == model || old.kind != VehicleKind.Car || !Catalog.IsCar(model)) return;
             bool wasDriving = driving != null;
             AddCar(new Vehicle(model, old.x, old.y, old.heading) { speed = old.speed });
             if (wasDriving) driving = 0;
@@ -704,7 +720,8 @@ namespace Porchlight.App
             held.Clear();
             if (driving != null)
             {
-                autoDrive = on ? new AutoDrive(world.layout.roads, autoRng, cars[driving.Value].car) : null;
+                var car = cars[driving.Value].car;
+                autoDrive = on && car.kind == VehicleKind.Car ? new AutoDrive(world.layout.roads, autoRng, car) : null;
                 return;
             }
             if (on) player.StartAuto(world.sidewalks, autoRng);
@@ -841,7 +858,24 @@ namespace Porchlight.App
             var p = player;
             if (driving == null || world == null || p == null) return;
             var car = cars[driving.Value].car;
-            var spot = ExitBeside(car);
+            if (car.Airborne)
+            {
+                Notify("Land first: ease back to come down on open ground");
+                return;
+            }
+            Vec2 spot;
+            if (car.kind == VehicleKind.Boat)
+            {
+                // Off a boat only onto a dock or the shore, never into the water.
+                var dry = Vehicle.ExitSpot(car, (x, y) => Player.Standable(x, y, open, world.model, world.solids));
+                if (dry == null)
+                {
+                    Notify("Pull in beside a dock or the shore to get out");
+                    return;
+                }
+                spot = dry.Value;
+            }
+            else spot = ExitBeside(car);
             car.speed = 0;
             driving = null;
             if (autoDrive != null)
@@ -905,6 +939,8 @@ namespace Porchlight.App
             var f = car.Forward;
             player.heading = DetMath.Atan2(f.x, f.y);
             player.speed = 0;
+            // Up with a plane in the air (and so for everyone else, as the height they see you at).
+            player.lift = car.altitude;
         }
 
         public void SetStreetsOnly(bool on)
@@ -922,10 +958,38 @@ namespace Porchlight.App
         {
             if (world == null) return new byte[0];
             if (streetsOnly) return Streets.Mask(world.model.tiles);
+            // Not into sheds or hangars, or the water but over a bridge or a dock.
             var o = new byte[world.layout.use.Length];
-            for (int i = 0; i < o.Length; i++) o[i] = world.layout.use[i] == Use.SHED ? (byte)0 : (byte)1;
+            var tiles = world.model.tiles;
+            for (int i = 0; i < o.Length; i++)
+            {
+                byte use = world.layout.use[i];
+                bool wet = Terrain.IsWater(tiles.terrain[i]) && tiles.overlay[i] == Overlay.NONE && use != Use.DOCK;
+                o[i] = use == Use.SHED || use == Use.HANGAR || wet ? (byte)0 : (byte)1;
+            }
             return o;
         }
+
+        float[] SkyFloor()
+        {
+            int w = world.model.width, h = world.model.height;
+            var o = new float[w * h];
+            foreach (var b in world.boxes)
+                for (int y = Math.Max(0, (int)Math.Floor(b.y0)); y <= Math.Min(h - 1, (int)Math.Floor(b.y1)); y++)
+                    for (int x = Math.Max(0, (int)Math.Floor(b.x0)); x <= Math.Min(w - 1, (int)Math.Floor(b.x1)); x++)
+                        o[Grid.Index(x, y, w)] = Math.Max(o[Grid.Index(x, y, w)], (float)(b.top + ROOF_CLEARANCE));
+            return o;
+        }
+
+        /// <summary>The lowest a plane may fly at (x, y); Infinity off the map, which it can't fly past.</summary>
+        double FloorAt(double x, double y)
+        {
+            int w = world.model.width, h = world.model.height;
+            if (x < 0.5 || y < 0.5 || x > w - 0.5 || y > h - 0.5) return double.PositiveInfinity;
+            return skyFloor[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), w)];
+        }
+
+        Func<double, double, bool> OpenFor(Vehicle car) => car.kind == VehicleKind.Boat ? canSail : canDrive;
 
         public bool IsStreetsOnly => streetsOnly;
 
@@ -1176,7 +1240,7 @@ namespace Porchlight.App
                 {
                     double triggers = pad.rt - pad.lt;
                     double throttle = Clamp1(-Numbers.Sign(ky) + (triggers != 0 ? triggers : -pad.move.y));
-                    car.Drive(throttle, Clamp1(inputV.x), dt, canDrive, shift || pad.rt > 0.3);
+                    car.Drive(throttle, Clamp1(inputV.x), dt, OpenFor(car), shift || pad.rt > 0.3, FloorAt);
                 }
                 SyncDriver();
             }
@@ -1224,23 +1288,43 @@ namespace Porchlight.App
             for (int i = 0; i < world.doors.Count; i++)
             {
                 var d = world.doors[i];
-                var at = Interiors.DoorOf(world.rooms[i]).at;
+                var at = d.at;
                 bool near = p != null && !InCar && Math.Abs(p.x - at.x) < DOOR_REACH && Math.Abs(p.y - at.y) < DOOR_REACH && Numbers.Hypot(p.x - at.x, p.y - at.y) < DOOR_REACH;
                 double target = near ? 1 : 0;
                 if (d.open == target) continue;
-                double was = d.open;
                 d.open = target > d.open ? Math.Min(1, d.open + dt * DOOR_SPEED) : Math.Max(0, d.open - dt * DOOR_SPEED);
                 world.SwingDoor(i);
-                if (was == 0 && d.open > 0) ShowRoom(i, true);
-                if (d.open == 0 && i != room) ShowRoom(i, false);
             }
+            ShowRooms();
+        }
+
+        /// <summary>Put keepers in the rooms there's a way to see into: the one you're in, any with a door open, and those close by on foot.</summary>
+        void ShowRooms()
+        {
+            var p = player;
+            wantedRooms.Clear();
+            if (room != null) wantedRooms.Add(room.Value);
+            foreach (var d in world.doors) if (d.open > 0) wantedRooms.Add(d.room);
+            if (p != null && !InCar)
+            {
+                for (int i = 0; i < world.rooms.Count; i++)
+                {
+                    var r = world.rooms[i];
+                    double dx = Math.Max(0, Math.Max(r.x0 - p.x, p.x - r.x1));
+                    double dy = Math.Max(0, Math.Max(r.y0 - p.y, p.y - r.y1));
+                    if (dx * dx + dy * dy < ROOM_NEAR * ROOM_NEAR) wantedRooms.Add(i);
+                }
+            }
+            foreach (int id in shownRooms.Where(id => !wantedRooms.Contains(id)).ToList()) ShowRoom(id, false);
+            foreach (int id in wantedRooms) ShowRoom(id, true);
         }
 
         void UpdateRoom()
         {
             var p = player;
             int? now = null;
-            if (p != null)
+            // At the wheel (or flying over a building) you're never in its rooms.
+            if (p != null && !InCar)
             {
                 var at = new Vec2(p.x, p.y);
                 if (room != null && Interiors.InRoom(world.rooms[room.Value], at, Interiors.LEAVE_MARGIN)) now = room;
@@ -1256,7 +1340,7 @@ namespace Porchlight.App
                 world.SetShellVisible(room.Value, true);
                 var it = world.InteriorOf(room.Value);
                 foreach (var side in it.walls.Keys.ToList()) it.SetWallScale(side, 1);
-                if (world.doors[room.Value].open == 0) ShowRoom(room.Value, false);
+                it.CastShadows(false);
             }
             var left = room;
             room = now;
@@ -1275,13 +1359,16 @@ namespace Porchlight.App
             if (now != null)
             {
                 world.SetShellVisible(now.Value, false);
+                world.InteriorOf(now.Value).CastShadows(true);
                 ShowRoom(now.Value, true);
             }
         }
 
         void ShowRoom(int id, bool on)
         {
-            world.InteriorOf(id).Visible = on;
+            if (on == shownRooms.Contains(id)) return;
+            if (on) shownRooms.Add(id);
+            else shownRooms.Remove(id);
             if (on) ShowKeeper(id);
             else if (keepers.TryGetValue(id, out var k)) k.avatar.Visible = false;
         }
@@ -1315,7 +1402,8 @@ namespace Porchlight.App
             if (sightTimer <= 0)
             {
                 sightTimer = 0.1;
-                hidden = room == null && Blocked(new Vec2(p.x, p.y), Orbit.StopYaw(CameraStop));
+                // Flying over the roofs, nothing's in the way.
+                hidden = room == null && !(InCar && p.lift > 0) && Blocked(new Vec2(p.x, p.y), Orbit.StopYaw(CameraStop));
             }
             var car = driving != null ? cars[driving.Value].car : null;
             if (!p.IsAuto && car == null)
@@ -1373,7 +1461,7 @@ namespace Porchlight.App
                     c.view.SetLayer(through ? LayerMask.NameToLayer(Avatar.PLAYER_LAYER) : 0);
                 }
                 var f = c.car.Forward;
-                c.view.Place(c.car.x, c.car.y, DetMath.Atan2(f.x, f.y));
+                c.view.Place(c.car.x, c.car.y, DetMath.Atan2(f.x, f.y), c.car.altitude, c.car.pitch, c.car.bank);
                 c.view.Lights(dusk);
             }
             for (int k = 0; k < people.Count; k++) avatars[k].Update(people[k], dt);
@@ -1392,14 +1480,14 @@ namespace Porchlight.App
             shownZoom += (zoomTarget - shownZoom) * (snap ? 1 : Math.Min(1, dt * (fixedView != null ? 5 : 10)));
             var target = fixedView?.focus
                 ?? (Attract ? new Vector3((float)world.model.center.x, 0.3f, (float)world.model.center.y)
-                : p != null ? new Vector3((float)p.x, 0.3f, (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
+                : p != null ? new Vector3((float)p.x, 0.3f + (float)(InCar ? p.lift : 0), (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
             focusFollow.Update(target.x, target.y, target.z, dt, snap);
             focus = new Vector3((float)focusFollow.ax, (float)focusFollow.ay, (float)focusFollow.az);
             pitch += (pitchTarget - pitch) * (snap ? 1 : Math.Min(1, dt * 6));
             if (mode == CameraMode.Close && p != null && fixedView == null) PlaceChase(p, dt);
             if (mode == CameraMode.Close && fixedView != null) PlaceChaseInRoom(fixedView.Value, dt);
             if (room != null) CutWalls(room.Value, dt);
-            Vector3? roomLight = fixedView != null ? Coords.Map(fixedView.Value.focus.x, fixedView.Value.focus.z, Interiors.WALL_HEIGHT * 0.9) : (Vector3?)null;
+            Vector3? roomLight = fixedView != null ? Coords.Map(fixedView.Value.focus.x, fixedView.Value.focus.z, world.rooms[room.Value].height * 0.9) : (Vector3?)null;
             snap = false;
             PlaceCamera();
 
@@ -1434,8 +1522,15 @@ namespace Porchlight.App
             bool pad = input.Connected;
             if (driving != null)
             {
-                int kmh = Numbers.RoundInt((Math.Abs(cars[driving.Value].car.speed) / Vehicle.TOP_SPEED) * 50);
-                overlay.SetPrompt(autoDrive != null
+                var car = cars[driving.Value].car;
+                int kmh = Numbers.RoundInt((Math.Abs(car.speed) / Vehicle.TOP_SPEED) * 50);
+                if (car.kind == VehicleKind.Plane)
+                    overlay.SetPrompt(car.Airborne
+                        ? pad ? $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · RT climb, LT descend, stick banks · land to get out" : $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · W climb, S descend, A/D bank · land to get out"
+                        : pad ? $"Taxiing · {kmh} km/h · RT full throttle to take off, LT brake, stick steers · B to get out" : $"Taxiing · {kmh} km/h · hold W to take off, S brake, A/D steer · G to get out");
+                else if (car.kind == VehicleKind.Boat)
+                    overlay.SetPrompt(pad ? $"Sailing · {kmh} km/h · RT throttle, LT astern, stick steers · B to get out at a dock or the shore" : $"Sailing · {kmh} km/h · W/S throttle and astern, A/D steer · G to get out at a dock or the shore");
+                else overlay.SetPrompt(autoDrive != null
                     ? pad ? $"Auto drive · {kmh} km/h · stick or triggers take the wheel · X stop · B to get out" : $"Auto drive · {kmh} km/h · arrows take the wheel · T stop · G to get out"
                     : pad ? $"Driving · {kmh} km/h · RT boost, LT brake, stick steers · X auto drive · B to get out" : $"Driving · {kmh} km/h · W/S speed and brake, Shift boost, A/D steer · T auto drive · G to get out");
             }
@@ -1449,8 +1544,14 @@ namespace Porchlight.App
             {
                 var pick = CarInReach();
                 string key = pad ? "B" : "G";
-                overlay.SetPrompt(pick == null ? null : pick.Value.driver != null ? $"Press {key} to ride with {pick.Value.driver.Value.name}" : $"Press {key} to get in the car");
+                overlay.SetPrompt(pick == null ? null : pick.Value.driver != null ? $"Press {key} to ride with {pick.Value.driver.Value.name}" : $"Press {key} to get in the {NameOf(pick.Value)}");
             }
+        }
+
+        string NameOf(Pick pick)
+        {
+            int model = pick.kind == PickKind.Own ? cars[pick.i].car.model : pick.kind == PickKind.Parked ? world.parked[pick.i].model : traffic.cars[pick.i].model;
+            return Catalog.KindOf(model) switch { VehicleKind.Boat => "boat", VehicleKind.Plane => "plane", _ => "car" };
         }
 
         int? StreetAt(Vec2 at)
@@ -1495,7 +1596,7 @@ namespace Porchlight.App
             var cam = MapOf(mode == CameraMode.Close ? chasePos : camera.transform.position);
             var r = world.rooms[id];
             var dir = new Vec2(cam.x - (r.x0 + r.x1) / 2, cam.z - (r.y0 + r.y1) / 2);
-            double low = 0.12 / Interiors.WALL_HEIGHT;
+            double low = 0.12 / r.height;
             var it = world.InteriorOf(id);
             foreach (var side in it.walls.Keys.ToList())
             {
@@ -1513,7 +1614,7 @@ namespace Porchlight.App
             bool quarter = Math.Abs(roomTurn) % 2 == 1;
             double across = quarter ? fr.depth : fr.width;
             double deep = quarter ? fr.width : fr.depth;
-            double tall = deep * Math.Sin(ROOM_PITCH) + Interiors.WALL_HEIGHT * Math.Cos(ROOM_PITCH);
+            double tall = deep * Math.Sin(ROOM_PITCH) + r.height * Math.Cos(ROOM_PITCH);
             double half = Math.Max(1.6, Math.Max((tall / 2) * ROOM_MARGIN, ((across / 2) * ROOM_MARGIN) / aspect));
             return new Fixed
             {
@@ -1536,12 +1637,14 @@ namespace Porchlight.App
             var o = Orbit.CameraOffset(chaseYawNow, pitch);
             double dist = shownChaseDistance;
             var at = new Vec2(p.x, p.y);
-            foreach (var b in world.boxes) dist = Math.Min(dist, Math.Max(0.5, Orbit.RayBoxDistance(at, CHASE_LOOK_HEIGHT, o, b) - 0.2));
+            // Up with a plane in flight.
+            double look = CHASE_LOOK_HEIGHT + (InCar ? p.lift : 0);
+            foreach (var b in world.boxes) dist = Math.Min(dist, Math.Max(0.5, Orbit.RayBoxDistance(at, look, o, b) - 0.2));
             double flat = Numbers.Hypot(o.x, o.y);
             var ahead = new Vec2(-o.x / flat, -o.y / flat);
-            lookFollow.Update(p.x + ahead.x * CHASE_LOOK_AHEAD, CHASE_LOOK_HEIGHT, p.y + ahead.y * CHASE_LOOK_AHEAD, dt, snap);
+            lookFollow.Update(p.x + ahead.x * CHASE_LOOK_AHEAD, look, p.y + ahead.y * CHASE_LOOK_AHEAD, dt, snap);
             chaseLook = WorldOf(lookFollow.ax, lookFollow.ay, lookFollow.az);
-            chasePos = WorldOf(p.x + o.x * dist, CHASE_LOOK_HEIGHT + o.up * dist, p.y + o.y * dist);
+            chasePos = WorldOf(p.x + o.x * dist, look + o.up * dist, p.y + o.y * dist);
         }
 
         void PlaceCamera()
@@ -1552,7 +1655,7 @@ namespace Porchlight.App
                 camera.orthographic = false;
                 camera.fieldOfView = (float)CHASE_FOV;
                 camera.nearClipPlane = 0.05f;
-                camera.farClipPlane = 300;
+                camera.farClipPlane = (float)(FOG_FAR + 40);
                 camera.transform.position = chasePos;
                 camera.transform.rotation = Quaternion.LookRotation(chaseLook - chasePos, Vector3.up);
                 return;

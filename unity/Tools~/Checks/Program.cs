@@ -29,7 +29,7 @@ static class Program
     static int Towns(int count)
     {
         int failed = 0;
-        long buildings = 0, driveways = 0, beds = 0, parked = 0;
+        long buildings = 0, driveways = 0, beds = 0, parked = 0, airports = 0, planes = 0, docks = 0, boats = 0, loops = 0;
         var sw = Stopwatch.StartNew();
         for (int i = 0; i < count; i++)
         {
@@ -44,6 +44,21 @@ static class Program
                 var layout = Porchlight.Explore.Layout.Build(a);
                 buildings += a.buildings.Count;
                 parked += layout.cars.Count;
+                if (a.airport != null) airports++;
+                docks += layout.docks.Count;
+                loops += layout.boatLoops.Count;
+                foreach (var c in layout.cars)
+                {
+                    var kind = Porchlight.Explore.Catalog.KindOf(c.vehicle - 1);
+                    if (c.vehicle > 0 && kind == Porchlight.Explore.VehicleKind.Plane) planes++;
+                    if (c.vehicle > 0 && kind == Porchlight.Explore.VehicleKind.Boat) boats++;
+                }
+                string ports = Ports(a, layout);
+                if (ports != null)
+                {
+                    failed++;
+                    Console.WriteLine($"FAIL {seed}: {ports}");
+                }
                 foreach (byte u in layout.use)
                 {
                     if (u == Porchlight.Explore.Use.DRIVEWAY) driveways++;
@@ -68,8 +83,41 @@ static class Program
                 Console.WriteLine($"FAIL {seed}: {e.Message}");
             }
         }
-        Console.WriteLine($"{count - failed}/{count} towns ok in {sw.Elapsed.TotalSeconds:0.0} s: {buildings} buildings, {driveways} driveway tiles, {beds} garden beds, {parked} parked cars");
+        Console.WriteLine($"{count - failed}/{count} towns ok in {sw.Elapsed.TotalSeconds:0.0} s: {buildings} buildings, {driveways} driveway tiles, {beds} garden beds, {parked} parked cars; {airports} airports, {planes} planes, {docks} docks, {boats} moored boats, {loops} boat loops");
         return failed == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// The airport has 8-10 planes, all on its apron; docks run out over open
+    /// water, their boats float, and the boats' loops keep to the water.
+    /// </summary>
+    static string Ports(TownModel model, Porchlight.Explore.IsoLayout layout)
+    {
+        int w = model.width;
+        bool Wet(double x, double y)
+        {
+            int tx = (int)Math.Floor(x), ty = (int)Math.Floor(y);
+            return tx >= 0 && ty >= 0 && tx < w && ty < model.height && Terrain.IsWater(model.tiles.terrain[ty * w + tx]);
+        }
+        int planes = 0;
+        foreach (var c in layout.cars)
+        {
+            if (c.vehicle <= 0) continue;
+            var kind = Porchlight.Explore.Catalog.KindOf(c.vehicle - 1);
+            if (kind == Porchlight.Explore.VehicleKind.Boat && !Wet(c.x, c.y)) return $"a boat moored on land at ({c.x:0.0}, {c.y:0.0})";
+            if (kind != Porchlight.Explore.VehicleKind.Plane) continue;
+            planes++;
+            var a = model.airport;
+            if (a == null || c.x < a.x0 || c.x > a.x1 + 1 || c.y < a.y0 || c.y > a.y1 + 1) return $"a plane off the airfield at ({c.x:0.0}, {c.y:0.0})";
+        }
+        if (model.airport != null && (planes < 8 || planes > 10)) return $"{planes} planes at the airport";
+        foreach (var d in layout.docks)
+            foreach (var t in d.tiles)
+                if (!Wet(t.x + 0.5, t.y + 0.5)) return $"a dock on land at ({t.x}, {t.y})";
+        foreach (var loop in layout.boatLoops)
+            foreach (var q in loop)
+                if (!Wet(q.x, q.y)) return $"a boat loop runs aground at ({q.x:0.0}, {q.y:0.0})";
+        return null;
     }
 
     /// <summary>

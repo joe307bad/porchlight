@@ -1,9 +1,10 @@
 // The 3D town for a TownModel, built as GameObjects from its layout: tiled
 // ground with sunken rivers, roads with sidewalks and kerbs, stone bridges,
 // Kenney houses, shops and towers fitted to every blueprint footprint (long
-// street fronts split into rows) standing on built ground floors with doors
-// and furnished rooms, fenced yards with sheds and vegetable beds, trees,
-// street lamps, street name signs, parked cars and the plaza fountain.
+// street fronts split into rows), their doors opening onto furnished rooms
+// behind see-through windows, fenced yards with sheds and vegetable beds, trees,
+// street lamps, street name signs, parked cars and the plaza fountain, and
+// (WorldPorts) the airport and the docks.
 // One-of-a-kind geometry is combined by static batching; the many copies of
 // the same models are drawn with GPU instancing. The
 // map's (x, y) is Coords.Map's (x, -z).
@@ -17,6 +18,7 @@ using Porchlight.Model;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Grid = Porchlight.Core.Grid;
+using Rect = Porchlight.Explore.Rect;
 
 namespace Porchlight.Rendering
 {
@@ -30,11 +32,16 @@ namespace Porchlight.Rendering
 
     public sealed class DoorState
     {
-        public Vec2 hinge;
-        public double shut;
-        public int swing;
+        /// <summary>The room it opens into, and the middle of its doorway.</summary>
+        public int room;
+        public Vec2 at;
+        /// <summary>How far open, 0..1.</summary>
         public double open;
-        public Transform panel;
+        /// <summary>What it turns on (its hinge, or a garage door's top edge): shut, about which axis, and how far (degrees) open.</summary>
+        public Transform pivot;
+        public Quaternion shut;
+        public Vector3 axis;
+        public float turn;
     }
 
     public struct ParkedPose
@@ -51,8 +58,9 @@ namespace Porchlight.Rendering
         const double LAMP_SPACING = 7;
         const double FLOOR_H = 0.95;
         public const double CAR_LENGTH = 1.05;
-        public const double GROUND_FLOOR = Interiors.WALL_HEIGHT;
-        const double DOOR_SWING = 1.75;
+        /// <summary>How far doors open (degrees): just short of square, clear of the wall beside them.</summary>
+        const float DOOR_SWING = 86;
+        const float DOOR_LIFT = 85;
         const double LAMP_HEIGHT = 0.95;
         const double LAMP_REACH = 0.3;
         static readonly double BUILDING_TURN = Math.PI;
@@ -65,16 +73,11 @@ namespace Porchlight.Rendering
             public const int shedWall = 0xb07a4a, shedRoof = 0x5b4636, lampPost = 0x3b3f47, water = 0x5d9bc8;
         }
 
-        static readonly int[] FACADES = { 0xb5563f, 0xe9dcc0, 0xf1efe9, 0xa9b99a, 0x9aa8b5, 0xd8bf8f, 0xc9c4b8, 0xc98a5a, 0x8fa6a0 };
         const int GLASS = 0x8fb8e8;
-        /// <summary>What a window looks like lit from inside.</summary>
-        public const int WINDOW_LIGHT = 0xffd28a;
-        const int TRIM = 0xf4f1ea;
-        static readonly int[] DOOR_COLOURS = { 0x8a3b2e, 0x2f5d50, 0x2e4a7a, 0x6b4a2f, 0xb08a3e, 0x5b3b5e, 0xe8e2d0 };
 
         public readonly GameObject root;
         /// <summary>
-        /// What never moves and is one of a kind (ground, roads, facades, the cut-down
+        /// What never moves and is one of a kind (ground, roads, the
         /// building shells): combined by static batching once built.
         /// </summary>
         readonly Transform still;
@@ -101,7 +104,6 @@ namespace Porchlight.Rendering
         const double SCREEN_SHARE = 1 / 14.0;
         public Vec2 fountainAt;
         public readonly List<Room> rooms = new List<Room>();
-        public readonly List<int> roomBuilding = new List<int>();
         public readonly List<RoomPlan> plans = new List<RoomPlan>();
         public readonly List<DoorState> doors = new List<DoorState>();
         public Solids solids;
@@ -110,7 +112,9 @@ namespace Porchlight.Rendering
         readonly ModelLibrary library;
         readonly Palette palette;
         readonly List<GameObject> shells = new List<GameObject>();
-        readonly List<GameObject> facades = new List<GameObject>();
+        readonly List<Piece> pieces = new List<Piece>();
+        /// <summary>The buildings' own walls at walking height, as solids.</summary>
+        readonly List<Rect> groundWalls = new List<Rect>();
         readonly List<GameObject> parkedCars = new List<GameObject>();
         readonly Dictionary<int, Interior> interiors = new Dictionary<int, Interior>();
 
@@ -133,13 +137,17 @@ namespace Porchlight.Rendering
             BuildRoads().Build("roads", still);
             var sheds = new MeshBuilder(palette);
             AddHouses(rng);
-            Furnish(rng);
-            AddFacades(rng);
-            AddDoors(rng);
+            // Rooms are furnished from a stream of their own, so the rest of the town doesn't move when they change.
+            Furnish(new Rng($"{model.seed}::rooms"));
+            AddScreens();
+            AddDoors();
+            for (int i = 0; i < rooms.Count; i++) InteriorOf(i);
             AddYards(sheds, rng);
             AddTrees(rng);
             AddPlazaDecor(rng);
             AddParkedCars();
+            AddAirport();
+            AddDocks();
             if (!sheds.Empty) sheds.Build("sheds", still);
             AddLamps(rng);
             signs = Signs.Plan(model, layout, names);
@@ -154,8 +162,8 @@ namespace Porchlight.Rendering
         public void SetShellVisible(int room, bool visible)
         {
             Show(shells[room], visible);
-            Show(facades[room], visible);
         }
+
 
         /// <summary>Shown or hidden without moving anything (static-batched objects can't be switched off whole).</summary>
         static void Show(GameObject go, bool visible)

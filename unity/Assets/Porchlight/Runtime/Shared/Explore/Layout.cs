@@ -2,7 +2,8 @@
 // roads with sidewalks, every building on its footprint facing its street,
 // yards with fences, sheds, gardens and driveways, community gardens, parked
 // cars (along the parking lane between each road and its sidewalks, and in
-// driveways), and the sidewalk network townsfolk walk. Pure.
+// driveways), the sidewalk network townsfolk walk, and (Ports) the docks and
+// the airport. Pure.
 
 using System;
 using System.Collections.Generic;
@@ -39,6 +40,8 @@ namespace Porchlight.Explore
         public double angle;
         /// <summary>Stable pick for model and colour.</summary>
         public int variant;
+        /// <summary>A set model (index into Catalog.CARS) + 1: a boat, a plane, or a car parked just so; 0 for an everyday car picked by variant, either way round.</summary>
+        public int vehicle;
     }
 
     public sealed class RoadStroke
@@ -85,6 +88,10 @@ namespace Porchlight.Explore
         public const byte COMMUNITY_GARDEN = 5;
         public const byte GREEN = 6;
         public const byte DRIVEWAY = 7;
+        /// <summary>The airport's hangars and control tower.</summary>
+        public const byte HANGAR = 8;
+        /// <summary>A dock's pier, out over the water.</summary>
+        public const byte DOCK = 9;
     }
 
     public struct BlockPlan
@@ -111,6 +118,9 @@ namespace Porchlight.Explore
         public List<RoadStroke> roads;
         public List<LayoutBridge> bridges;
         public SidewalkNetwork sidewalks;
+        public List<Dock> docks = new List<Dock>();
+        /// <summary>A loop round the open water of each lake big enough, for boats to sail (closed: its last point is its first).</summary>
+        public List<List<Vec2>> boatLoops = new List<List<Vec2>>();
     }
 
     public static class Layout
@@ -174,6 +184,7 @@ namespace Porchlight.Explore
             layout.roads = roads;
             layout.bridges = bridges;
             layout.sidewalks = SidewalkNetworkOf(roads);
+            Ports.Add(model, layout);
             return layout;
         }
 
@@ -539,7 +550,8 @@ namespace Porchlight.Explore
                 var (points, side, road) = lines[i];
                 var at = ArcPositions(points);
                 double length = at[at.Count - 1];
-                double reachIn = Math.Min(length / 2, CORNER_TRIM);
+                // Half the road, but on a short one at least as far as the corner itself.
+                double reachIn = Math.Min(Math.Max(length / 2, widest + PARKING * 2 + SIDEWALK), CORNER_TRIM);
                 double from = 0, to = length;
                 for (int j = 0; j < lines.Count; j++)
                 {

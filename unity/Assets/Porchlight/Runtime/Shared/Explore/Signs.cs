@@ -119,7 +119,7 @@ namespace Porchlight.Explore
             if (!Grid.InBounds(tx, ty, model.width, model.height)) return false;
             int t = Grid.Index(tx, ty, model.width);
             byte ter = model.tiles.terrain[t];
-            if (Terrain.IsWater(ter) || layout.use[t] == Use.HOUSE || layout.use[t] == Use.SHED) return false;
+            if (Terrain.IsWater(ter) || layout.use[t] == Use.HOUSE || layout.use[t] == Use.SHED || layout.use[t] == Use.HANGAR) return false;
             foreach (var r in layout.roads) if (!(Geo.DistToPolyline(at, r.points) > r.width / 2 + 0.08)) return false;
             return true;
         }

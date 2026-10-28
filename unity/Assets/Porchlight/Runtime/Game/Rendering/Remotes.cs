@@ -340,7 +340,7 @@ namespace Porchlight.Rendering
                 r.car = new CarView(library.Get(Catalog.CARS[model]), root);
                 r.carModel = model;
             }
-            r.car.Place(r.walker.x, r.walker.y, r.walker.heading);
+            r.car.Place(r.walker.x, r.walker.y, r.walker.heading, r.walker.lift);
             r.car.Lights(dusk);
         }
     }

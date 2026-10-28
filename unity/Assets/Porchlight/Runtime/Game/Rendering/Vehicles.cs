@@ -1,7 +1,9 @@
 // Cars in the scene: each an instance of its Kenney model, with two
 // headlights and two tail lights that glow at night (and bloom, through the
-// camera's post-processing). The Fleet keeps the traffic's cars where the
-// simulation says.
+// camera's post-processing). Boats and planes are drawn the same way: a boat
+// sits down in the water, a plane has red and green lights on its wingtips and
+// banks and pitches as it flies. The Fleet keeps the traffic's cars (and the
+// boats sailing the lakes) where the simulation says.
 
 using System;
 using System.Collections.Generic;
@@ -11,25 +13,45 @@ using UnityEngine;
 
 namespace Porchlight.Rendering
 {
-    /// <summary>One drawn car: a model with its lamps.</summary>
+    /// <summary>One drawn car (or boat, or plane): a model with its lamps.</summary>
     public sealed class CarView
     {
         public const double LIFT = 0.035;
         static readonly Color Head = Coords.Hex(0xfff4dc);
         static readonly Color Tail = Coords.Hex(0xff2a1a);
-        static Material headMaterial, tailMaterial;
+        static readonly Color Port = Coords.Hex(0xff3020);
+        static readonly Color Starboard = Coords.Hex(0x40ff70);
+        /// <summary>How far down into the water a boat's hull sits.</summary>
+        const double DRAUGHT = 0.07;
+        static Material headMaterial, tailMaterial, portMaterial, starboardMaterial;
 
         public readonly GameObject root;
         /// <summary>Which car model (Catalog.CARS) it is, where the owner keeps track.</summary>
         public int model;
         readonly double scale;
+        readonly double lift;
         readonly List<Renderer> heads = new List<Renderer>();
         readonly List<Renderer> tails = new List<Renderer>();
+        readonly List<Renderer> ports = new List<Renderer>();
+        readonly List<Renderer> starboards = new List<Renderer>();
 
         public CarView(ModelLibrary.Model model, Transform parent)
         {
-            scale = Props.CarScale(model);
-            root = Props.Place(model, parent, 0, 0, 0, scale, scale, scale, LIFT);
+            var kind = Catalog.KindOf(model.name);
+            scale = ScaleOf(model);
+            lift = LiftOf(kind);
+            root = Props.Place(model, parent, 0, 0, 0, scale, scale, scale, lift);
+            if (kind == VehicleKind.Boat) return;
+            if (kind == VehicleKind.Plane)
+            {
+                portMaterial ??= Materials.Glowing(Port);
+                starboardMaterial ??= Materials.Glowing(Starboard);
+                var light = Vector3.one * (float)(0.07 / scale);
+                float tip = model.size.x / 2 - 0.03f / (float)scale, wing = model.size.y * 0.4f;
+                ports.Add(Lamp(new Vector3(-tip, wing, 0), light, portMaterial));
+                starboards.Add(Lamp(new Vector3(tip, wing, 0), light, starboardMaterial));
+                return;
+            }
             headMaterial ??= Materials.Glowing(Head);
             tailMaterial ??= Materials.Glowing(Tail);
             float halfLength = model.size.z / 2, halfWidth = model.size.x / 2, height = model.size.y * 0.36f;
@@ -56,11 +78,24 @@ namespace Porchlight.Rendering
             return r;
         }
 
-        /// <summary>Put the car at map (x, y) facing heading `rot` (Coords.Yaw).</summary>
-        public void Place(double x, double y, double rot)
+        /// <summary>How big a vehicle model is drawn: cars to one length, boats at one scale, each plane its own length.</summary>
+        public static double ScaleOf(ModelLibrary.Model model) => Catalog.KindOf(model.name) switch
         {
-            root.transform.localPosition = Coords.Map(x, y, LIFT);
-            root.transform.localRotation = Coords.Yaw(rot);
+            VehicleKind.Boat => Catalog.BOAT_SCALE,
+            VehicleKind.Plane => Catalog.PlaneLength(model.name) / model.size.z,
+            _ => Props.CarScale(model),
+        };
+
+        /// <summary>How high it stands: a car on the road, a boat down in the water.</summary>
+        public static double LiftOf(VehicleKind kind) => kind == VehicleKind.Boat ? TownWorld.WATER_Y - DRAUGHT : LIFT;
+
+        /// <summary>Put the car at map (x, y) facing heading `rot` (Coords.Yaw); a plane `altitude` up, nose `pitch` up and banked `bank` (radians, + to the right).</summary>
+        public void Place(double x, double y, double rot, double altitude = 0, double pitch = 0, double bank = 0)
+        {
+            root.transform.localPosition = Coords.Map(x, y, lift + altitude);
+            var turn = Coords.Yaw(rot);
+            if (pitch != 0 || bank != 0) turn *= Quaternion.Euler((float)(-pitch * 180 / Math.PI), 0, (float)(-bank * 180 / Math.PI));
+            root.transform.localRotation = turn;
         }
 
         public bool Visible
@@ -75,6 +110,9 @@ namespace Porchlight.Rendering
             float d = (float)dusk;
             foreach (var r in heads) Materials.SetGlow(r, Head, d * 2.5f);
             foreach (var r in tails) Materials.SetGlow(r, Tail, d * 1.8f);
+            // Navigation lights are on day and night.
+            foreach (var r in ports) Materials.SetGlow(r, Port, 0.8f + d * 1.6f);
+            foreach (var r in starboards) Materials.SetGlow(r, Starboard, 0.8f + d * 1.6f);
         }
 
         public void SetLayer(int layer)

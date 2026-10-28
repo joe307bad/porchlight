@@ -1,4 +1,4 @@
-// Stage 4: main roads. A* from each gate to the center over the cost field,
+// Stage 4: main roads. A* from each gate (and the airport) to the center over the cost field,
 // along the tile grid with a penalty per turn, so roads run straight. Cells
 // already on a road are cheap and cells beside one are penalised, so later
 // roads merge into earlier ones. Each stretch of new road becomes a graph edge;
@@ -103,18 +103,18 @@ namespace Porchlight.Gen
             foreach (var g in model.gates) gates.Add(Grid.Index((int)Math.Floor(g.x), (int)Math.Floor(g.y), w));
             Numbers.StableSort(gates, (a, b) => AStar.Octile(a, centerCell, w) - AStar.Octile(b, centerCell, w));
 
-            foreach (int gate in gates)
+            void Route(int from, Func<int, double> step)
             {
-                var path = AStar.FindGridPath(gate, new GridSearch
+                var path = AStar.FindGridPath(from, new GridSearch
                 {
                     Width = w,
                     Height = h,
-                    Step = (from, to) => onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY : 0),
+                    Step = (a, to) => step(to),
                     TurnCost = TURN_COST,
                     Goal = c => c == centerCell,
                     Estimate = c => AStar.Manhattan(c, centerCell, w) * REUSE_COST,
                 });
-                if (path == null) continue;
+                if (path == null) return;
                 int n = path.Count;
                 int k = 0;
                 while (k < n)
@@ -133,7 +133,18 @@ namespace Porchlight.Gen
                     AddEdgeCells(path.GetRange(s, e - s + 1));
                     k = end + 1;
                 }
-                EnsureNode(gate);
+                EnsureNode(from);
+            }
+            double Step(int to) => onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY : 0);
+            foreach (int gate in gates) Route(gate, Step);
+            // The road to the airport: out of its car park (straight across the airport's
+            // own tiles, which the others go round) and on to the nearest road.
+            if (model.airport != null)
+            {
+                var lane = Airfield.EntranceLane(model.airport, w, h);
+                var inLane = new HashSet<int>(lane);
+                // Running alongside another road is worse for this one: it would sooner join it.
+                if (lane.Count > 0) Route(lane[0], to => inLane.Contains(to) ? 1 : onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY * 4 : 0));
             }
 
             Vec2 Center(int c) => new Vec2((c % w) + 0.5, c / w + 0.5);
@@ -175,6 +186,7 @@ namespace Porchlight.Gen
             }
             errors.AddRange(CheckRoadSlopes(model, RoadKind.Main));
             errors.AddRange(RoadGraphOps.CheckBridges(model, Raster.WaterMask(model)));
+            errors.AddRange(AirportStage.CheckRoadIn(model));
             return errors;
         }
 
@@ -183,13 +195,15 @@ namespace Porchlight.Gen
         {
             var t = Raster.RoadTerrain(model);
             int w = model.width;
+            // The airport's ground is levelled.
+            var airport = Airfield.Mask(model.airport, w, model.height);
             foreach (var e in model.roads.edges)
             {
                 if (e.kind != kind) continue;
                 foreach (var p in Geo.SamplePolyline(e.points, 0.5))
                 {
                     int i = Grid.Index((int)Math.Floor(p.x), (int)Math.Floor(p.y), w);
-                    if (t.water[i] == 0 && t.slope[i] > model.@params.maxRoadSlope + 1e-6)
+                    if (t.water[i] == 0 && airport[i] == 0 && t.slope[i] > model.@params.maxRoadSlope + 1e-6)
                         return new List<string> { $"{Names.Of(kind)} road {e.id} climbs a {Numbers.ToFixed(t.slope[i], 3)} slope at {Numbers.ToFixed(p.x, 1)},{Numbers.ToFixed(p.y, 1)}" };
                 }
             }

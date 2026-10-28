@@ -30,6 +30,7 @@ namespace Porchlight.Gen
             var water = Raster.WaterMask(model);
             var road = Raster.RoadRaster(model);
             var rock = Raster.RockMask(Raster.SlopeField(model, water), model.@params);
+            var airport = Airfield.Mask(model.airport, w, h);
             var free = new byte[w * h];
             for (int y = 0; y < h; y++)
             {
@@ -37,7 +38,7 @@ namespace Porchlight.Gen
                 {
                     int i = Grid.Index(x, y, w);
                     bool inside = Numbers.Hypot(x + 0.5 - C.x, y + 0.5 - C.y) <= R;
-                    free[i] = inside && water[i] == 0 && rock[i] == 0 && road.kind[i] == 0 ? (byte)1 : (byte)0;
+                    free[i] = inside && water[i] == 0 && rock[i] == 0 && airport[i] == 0 && road.kind[i] == 0 ? (byte)1 : (byte)0;
                 }
             }
             return new Ground { water = water, road = road, free = free };

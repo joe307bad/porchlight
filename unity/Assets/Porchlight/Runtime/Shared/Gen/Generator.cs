@@ -38,6 +38,7 @@ namespace Porchlight.Gen
             new TerrainStage(),
             new RiversStage(),
             new SiteStage(),
+            new AirportStage(),
             new RoadsStage(),
             new StreetsStage(),
             new BlocksStage(),

@@ -55,6 +55,19 @@ namespace Porchlight.Rendering
             return m;
         }
 
+        static Material glass;
+
+        /// <summary>Clear window glass, faintly blue: what a shown room's windows are.</summary>
+        public static Material Glass()
+        {
+            if (glass == null)
+            {
+                glass = new Material(Library.clear) { name = "clear glass", enableInstancing = true };
+                glass.SetColor(BaseColor, new Color(0.75f, 0.86f, 1f, 0.22f));
+            }
+            return glass;
+        }
+
         /// <summary>Flat colour, unaffected by light (lamp bulbs by day, the route line).</summary>
         public static Material Unlit(Color color)
         {

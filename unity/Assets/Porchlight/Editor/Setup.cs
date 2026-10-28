@@ -287,7 +287,7 @@ namespace Porchlight.EditorTools
             EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
         }
 
-        /// <summary>A fresh checkout has no model library (it's generated): make it when the editor opens.</summary>
+        /// <summary>A fresh checkout has no model library (it's generated): make it when the editor opens, or again when the catalog names models it lacks.</summary>
         [InitializeOnLoadMethod]
         static void EnsureLibrary()
         {
@@ -296,7 +296,7 @@ namespace Porchlight.EditorTools
             {
                 // Only the library: the rest of the setup is committed, and Run() would
                 // replace the open scene.
-                if (AssetDatabase.LoadAssetAtPath<ModelLibrary>(Library.LibraryPath) == null) Library.Build();
+                if (!Library.UpToDate()) Library.Build();
                 // A renderer from before a change to its passes: bring them up to date.
                 var renderer = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(SettingsDir + "/Renderer.asset");
                 if (renderer != null && !renderer.rendererFeatures.Any(f => f != null && f.name == StencilFeature))

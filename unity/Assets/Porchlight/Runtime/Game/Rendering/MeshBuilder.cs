@@ -75,8 +75,8 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>A flat axis-aligned rectangle at height h.</summary>
-        public void Rect(double x0, double y0, double x1, double y1, double h, int color) =>
-            Quad(v(x0, h, y0), v(x1, h, y0), v(x1, h, y1), v(x0, h, y1), color);
+        public void Rect(double x0, double y0, double x1, double y1, double h, int color, int glow = 0) =>
+            Quad(v(x0, h, y0), v(x1, h, y0), v(x1, h, y1), v(x0, h, y1), color, null, glow);
 
         /// <summary>A flat strip `width` wide along a polyline, at height h.</summary>
         public void Ribbon(IReadOnlyList<Vec2> pts, double width, double h, int color)
@@ -139,13 +139,13 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>An axis-aligned box, with an optional colour for its top.</summary>
-        public void Box(double x0, double y0, double x1, double y1, double h0, double h1, int color, int? top = null)
+        public void Box(double x0, double y0, double x1, double y1, double h0, double h1, int color, int? top = null, int glow = 0)
         {
-            Rect(x0, y0, x1, y1, h1, top ?? color);
-            Quad(v(x0, h0, y0), v(x1, h0, y0), v(x1, h1, y0), v(x0, h1, y0), color, new V3(0, 0, -1));
-            Quad(v(x0, h0, y1), v(x1, h0, y1), v(x1, h1, y1), v(x0, h1, y1), color, new V3(0, 0, 1));
-            Quad(v(x0, h0, y0), v(x0, h0, y1), v(x0, h1, y1), v(x0, h1, y0), color, new V3(-1, 0, 0));
-            Quad(v(x1, h0, y0), v(x1, h0, y1), v(x1, h1, y1), v(x1, h1, y0), color, new V3(1, 0, 0));
+            Rect(x0, y0, x1, y1, h1, top ?? color, glow);
+            Quad(v(x0, h0, y0), v(x1, h0, y0), v(x1, h1, y0), v(x0, h1, y0), color, new V3(0, 0, -1), glow);
+            Quad(v(x0, h0, y1), v(x1, h0, y1), v(x1, h1, y1), v(x0, h1, y1), color, new V3(0, 0, 1), glow);
+            Quad(v(x0, h0, y0), v(x0, h0, y1), v(x0, h1, y1), v(x0, h1, y0), color, new V3(-1, 0, 0), glow);
+            Quad(v(x1, h0, y0), v(x1, h0, y1), v(x1, h1, y1), v(x1, h1, y0), color, new V3(1, 0, 0), glow);
         }
 
         public Mesh Build(string name = "built")

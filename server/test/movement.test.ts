@@ -38,6 +38,8 @@ test('stale moves (old seq, old epoch) and out-of-town ones', () => {
   assert.equal(judgeMove(t, move({ seq: 6, epoch: 1 }), 50, bounds), 'stale');
   assert.equal(judgeMove(t, move({ seq: 6, epoch: 2, x: -1 }), 50, bounds), 'out-of-bounds');
   assert.equal(judgeMove(t, move({ seq: 6, epoch: 2, y: 50 }), 50, bounds), 'out-of-bounds');
+  // A plane at its ceiling is in the town.
+  assert.equal(judgeMove(t, move({ seq: 6, epoch: 2, y: 20 }), 50, bounds), 'ok');
 });
 
 test('rate limit drops, then kicks when it keeps up', () => {
