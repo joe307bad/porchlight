@@ -67,10 +67,14 @@ namespace Porchlight.App
         /// Firefox on macOS reports a Bluetooth Xbox One S pad (id "045e-02fd-…") as a
         /// standard gamepad but with its own button numbers: for each of Button's,
         /// the standard index it comes in at (-1: it doesn't). It gives Y and LB one
-        /// number (read as Y), RB and View another (read as RB, the way to the nearest
-        /// player), has no triggers, and puts Menu past the 16 buttons the Input System reads.
+        /// number (FIREFOX_Y_OR_LB: a tap is read as LB, a hold as Y), RB and View
+        /// another (read as RB, the way to the nearest player), has no triggers, and
+        /// puts Menu past the 16 buttons the Input System reads.
         /// </summary>
-        static readonly int[] FirefoxXboxBluetooth = { 1, 2, 3, 5, -1, 8, -1, -1, -1, -1, 11, -1, 12, 13, 14, 15 };
+        static readonly int[] FirefoxXboxBluetooth = { 1, 2, 3, -1, -1, 8, -1, -1, -1, -1, 11, -1, 12, 13, 14, 15 };
+        const int FIREFOX_Y_OR_LB = 5;
+        /// <summary>Seconds Firefox's shared Y / LB button is held before it counts as Y.</summary>
+        const double Y_HOLD = 0.4;
 
         /// <summary>The keys the game listens for.</summary>
         static readonly Key[] Keys =
@@ -83,6 +87,8 @@ namespace Porchlight.App
         readonly Dictionary<Key, double> repeatAt = new Dictionary<Key, double>();
         PadState pad = PadState.Idle;
         bool[] padWas = new bool[Button.Count];
+        double sharedDownAt = -1;
+        bool sharedWasY;
 
         /// <summary>Told of each key going down: (key, repeat).</summary>
         public event Action<Key, bool> KeyDown;
@@ -187,6 +193,7 @@ namespace Porchlight.App
                 int from = firefoxXbox ? FirefoxXboxBluetooth[i] : i;
                 s.now[i] = from >= 0 && controls[from].isPressed;
             }
+            if (firefoxXbox) SplitYAndLB(s, controls[FIREFOX_Y_OR_LB].isPressed);
             s.was = padWas;
             padWas = s.now;
             s.move = Stick(g.leftStick.ReadUnprocessedValue());
@@ -194,6 +201,31 @@ namespace Porchlight.App
             s.lt = firefoxXbox ? 0 : Level(g.leftTrigger.ReadUnprocessedValue());
             s.rt = firefoxXbox ? 0 : Level(g.rightTrigger.ReadUnprocessedValue());
             pad = s;
+        }
+
+        /// <summary>
+        /// Firefox's one button for Y and LB as two: let go within Y_HOLD and it's an LB
+        /// press, held on past that it's a Y press (each for one frame: the game only
+        /// asks either whether it was just pressed).
+        /// </summary>
+        void SplitYAndLB(PadState s, bool down)
+        {
+            double now = Time.realtimeSinceStartupAsDouble;
+            if (down && sharedDownAt < 0)
+            {
+                sharedDownAt = now;
+                sharedWasY = false;
+            }
+            if (down && !sharedWasY && now - sharedDownAt >= Y_HOLD)
+            {
+                s.now[Button.Y] = true;
+                sharedWasY = true;
+            }
+            if (!down && sharedDownAt >= 0)
+            {
+                if (!sharedWasY) s.now[Button.LB] = true;
+                sharedDownAt = -1;
+            }
         }
 
         static double Level(float v) => v > TRIGGER_DEADZONE ? (v - TRIGGER_DEADZONE) / (1 - TRIGGER_DEADZONE) : 0;
