@@ -1,7 +1,7 @@
 // Who's asking, for the game: the signed-in account (from the same sealed
 // session cookie the auth routes set), and the routes for its characters.
 //
-//   GET    /mp/characters        this account's characters
+//   GET    /mp/characters        this account's characters (and the town each is playing in, if any)
 //   POST   /mp/characters        { name, look } → a new one
 //   DELETE /mp/characters/:id    delete one (not while it's being played)
 //
@@ -19,6 +19,8 @@ export interface GameDeps {
   appUrl: string;
   /** Is this character in a room right now? */
   isOnline(characterId: string): boolean;
+  /** The town this character is playing in right now, if any. */
+  townOf(characterId: string): string | null;
 }
 
 /**
@@ -72,7 +74,8 @@ export function createCharacterRoutes(deps: GameDeps) {
       if (account.banned) return send(403, { error: 'This account is banned.' });
 
       if (req.method === 'GET' && path === PREFIX) {
-        return send(200, { characters: await deps.persistence.listCharacters(account.id) });
+        const characters = await deps.persistence.listCharacters(account.id);
+        return send(200, { characters: characters.map((c) => ({ ...c, town: deps.townOf(c.id) })) });
       }
       if (req.method === 'POST' && path === PREFIX) {
         // JSON only: a cross-site form can't send it without a preflight.

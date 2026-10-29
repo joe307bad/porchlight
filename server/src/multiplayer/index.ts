@@ -13,7 +13,7 @@ import type { AddressInfo } from 'node:net';
 import { Server, matchMaker } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { createCharacterRoutes, type GameDeps } from './accounts.ts';
-import { CityRoom, configureCityRoom, isOnline } from './CityRoom.ts';
+import { CityRoom, configureCityRoom, isOnline, townOf } from './CityRoom.ts';
 import type { Persistence } from './persistence.ts';
 import { CITY_ROOM } from './protocol.ts';
 
@@ -35,7 +35,7 @@ export interface GameServer {
 }
 
 export async function startGameServer(opts: GameServerOptions): Promise<GameServer> {
-  const deps: GameDeps = { persistence: opts.persistence, sessionSecret: opts.sessionSecret, appUrl: opts.appUrl, isOnline };
+  const deps: GameDeps = { persistence: opts.persistence, sessionSecret: opts.sessionSecret, appUrl: opts.appUrl, isOnline, townOf };
   configureCityRoom(deps);
   const characters = createCharacterRoutes(deps);
 

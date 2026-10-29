@@ -54,6 +54,9 @@ namespace Porchlight.App
             Account.ListCharacters(platform, origin, (list, err) => done(list?.Find(c => c.id == id)));
         }
 
+        /// <summary>This tab's character's id from earlier, if any.</summary>
+        public static string RememberedId(Platform platform) => platform.Load(KEY, session: true);
+
         public static void Forget(Platform platform) => platform.Save(KEY, null, session: true);
 
         /// <summary>Show the picker; done(character) once one is chosen, or done(null) if they play alone.</summary>

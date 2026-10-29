@@ -28,7 +28,7 @@ namespace Porchlight.App
 {
     public enum CameraMode { Iso, Close }
 
-    public enum PadAction { Car, Night, NewCharacter, Menu, Center }
+    public enum PadAction { Car, Night, NewCharacter, Menu, Center, Characters, Cars, ChooserPick, ChooserClose }
 
     /// <summary>The local player as the network sees them. Ground is (x, z); y is height.</summary>
     public struct LocalState
@@ -59,6 +59,8 @@ namespace Porchlight.App
         void Notify(string text);
         /// <summary>A notice that goes away by itself after a few seconds.</summary>
         void Flash(string text);
+        /// <summary>A grid of choices (characters, cars) is open over the view.</summary>
+        bool Choosing { get; }
         Action<Vec2> OnMinimapPick { set; }
     }
 
@@ -107,6 +109,8 @@ namespace Porchlight.App
         const double DRIVING_CHASE = 1.7;
         const double PAD_SWING_RATE = 2.4;
         const double PAD_ZOOM_RATE = 1.4;
+        /// <summary>Seconds A is held, on foot, before the jump it gave runs into a sprint.</summary>
+        const double A_SPRINT_AFTER = 0.25;
 
         static readonly Dictionary<Key, (int x, int y)> KEYS = new Dictionary<Key, (int, int)>
         {
@@ -188,6 +192,7 @@ namespace Porchlight.App
         bool snap = true;
         readonly List<Key> held = new List<Key>();
         PadState padState = PadState.Idle;
+        double aHeldFor;
         readonly Flick lookFlickX = new Flick();
         readonly Flick lookFlickY = new Flick();
         readonly Flick moveFlick = new Flick();
@@ -1200,12 +1205,21 @@ namespace Porchlight.App
                 if (s.Pressed(Button.Menu)) OnPadAction?.Invoke(PadAction.Menu);
                 return;
             }
+            if (overlay.Choosing)
+            {
+                // A grid of characters or cars is open: LB and RB step through them (and switch grids), A picks, B closes.
+                padState = PadState.Idle;
+                var chooser = new[] { (Button.LB, PadAction.Characters), (Button.RB, PadAction.Cars), (Button.A, PadAction.ChooserPick), (Button.B, PadAction.ChooserClose), (Button.Menu, PadAction.Menu) };
+                foreach (var (b, action) in chooser) if (s.Pressed(b)) OnPadAction?.Invoke(action);
+                return;
+            }
             padState = s;
-            // The one place the pad's buttons are given their jobs (A jump and RT sprint are read in Step).
+            // The one place the pad's buttons are given their jobs (A jump, and A held or RT for turbo, are read in Tick).
             if (s.Pressed(Button.A)) Jump();
             var actions = new[] { (Button.B, PadAction.Car), (Button.X, PadAction.Center), (Button.Y, PadAction.Night), (Button.View, PadAction.NewCharacter), (Button.Menu, PadAction.Menu) };
             foreach (var (b, action) in actions) if (s.Pressed(b)) OnPadAction?.Invoke(action);
             if (s.Pressed(Button.RB)) FindNearest();
+            if (s.Pressed(Button.LB)) OnPadAction?.Invoke(PadAction.Characters);
             if (s.Pressed(Button.Left)) Rotate(-1);
             if (s.Pressed(Button.Right)) Rotate(1);
             if (mode == CameraMode.Close && room == null) chaseSwing += s.look.x * PAD_SWING_RATE * dt;
@@ -1273,7 +1287,10 @@ namespace Porchlight.App
             var inputV = new Vec2(kx + pad.move.x, ky + pad.move.y);
             var p = player;
             steering = held.Count > 0 || pad.move.x != 0 || pad.move.y != 0;
-            if (p != null) p.sprinting = shift || pad.rt > 0.3;
+            // Turbo: RT, or A held (at once in a vehicle; on foot a tap of A is a jump, and holding it on runs into a sprint).
+            aHeldFor = pad.Held(Button.A) ? aHeldFor + dt : 0;
+            bool turbo = shift || pad.rt > 0.3 || (pad.Held(Button.A) && (InCar || aHeldFor >= A_SPRINT_AFTER));
+            if (p != null) p.sprinting = turbo;
             if (p != null) p.jumpHeld = space || pad.Held(Button.A);
             if (!steering)
             {
@@ -1294,7 +1311,7 @@ namespace Porchlight.App
                 {
                     double triggers = pad.rt - pad.lt;
                     double throttle = Clamp1(-Numbers.Sign(ky) + (triggers != 0 ? triggers : -pad.move.y));
-                    car.Drive(throttle, Clamp1(inputV.x), dt, OpenFor(car), shift || pad.rt > 0.3, FloorAt);
+                    car.Drive(throttle, Clamp1(inputV.x), dt, OpenFor(car), turbo, FloorAt);
                 }
                 SyncDriver();
             }
@@ -1596,13 +1613,13 @@ namespace Porchlight.App
                 int kmh = Numbers.RoundInt((Math.Abs(car.speed) / Vehicle.TOP_SPEED) * 50);
                 if (car.kind == VehicleKind.Plane)
                     overlay.SetPrompt(car.Airborne
-                        ? pad ? $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · RT climb and boost, LT descend, stick banks · land to get out" : $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · W climb, S descend, Shift boost, A/D bank · land to get out"
+                        ? pad ? $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · RT climb, hold A boost, LT descend, stick banks · land to get out" : $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · W climb, S descend, Shift boost, A/D bank · land to get out"
                         : pad ? $"Taxiing · {kmh} km/h · RT full throttle to take off, LT brake, stick steers · B to get out" : $"Taxiing · {kmh} km/h · hold W to take off, Shift boost, S brake, A/D steer · G to get out");
                 else if (car.kind == VehicleKind.Boat)
-                    overlay.SetPrompt(pad ? $"Sailing · {kmh} km/h · RT throttle and boost, LT astern, stick steers · B to get out at a dock or the shore" : $"Sailing · {kmh} km/h · W/S throttle and astern, Shift boost, A/D steer · G to get out at a dock or the shore");
+                    overlay.SetPrompt(pad ? $"Sailing · {kmh} km/h · RT throttle, hold A boost, LT astern, stick steers · B to get out at a dock or the shore" : $"Sailing · {kmh} km/h · W/S throttle and astern, Shift boost, A/D steer · G to get out at a dock or the shore");
                 else overlay.SetPrompt(autoDrive != null
                     ? pad ? $"Auto drive · {kmh} km/h · stick or triggers take the wheel · B to get out" : $"Auto drive · {kmh} km/h · arrows take the wheel · T stop · G to get out"
-                    : pad ? $"Driving · {kmh} km/h · RT boost, LT brake, stick steers · B to get out" : $"Driving · {kmh} km/h · W/S speed and brake, Shift boost, A/D steer · T auto drive · G to get out");
+                    : pad ? $"Driving · {kmh} km/h · RT or hold A boost, LT brake, stick steers · B to get out" : $"Driving · {kmh} km/h · W/S speed and brake, Shift boost, A/D steer · T auto drive · G to get out");
             }
             else if (riding != null)
             {

@@ -16,9 +16,11 @@ namespace Porchlight.App
         public string name;
         /// <summary>Character model (a CHARACTERS entry), if they've been given one.</summary>
         public string look;
+        /// <summary>The town (its key) they're playing in right now, if they are.</summary>
+        public string town;
 
         public static Character From(object o) => o is Dictionary<string, object> d
-            ? new Character { id = Json.Str(d, "id"), name = Json.Str(d, "name"), look = Json.Str(d, "look") }
+            ? new Character { id = Json.Str(d, "id"), name = Json.Str(d, "name"), look = Json.Str(d, "look"), town = Json.Str(d, "town") }
             : null;
     }
 

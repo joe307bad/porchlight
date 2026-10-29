@@ -144,14 +144,27 @@ namespace Porchlight.UI
 
         public bool Choosing => chooser != null;
 
+        /// <summary>What the open grid is choosing (as Choose was told), or null with none open.</summary>
+        public string ChooserKind => chooser != null ? chooserKind : null;
+
+        string chooserKind;
+        List<VisualElement> chooserTiles;
+        ScrollView chooserScroll;
+        int highlighted = -1;
+        Action<int> chooserPick;
+
         /// <summary>
         /// A grid of choices over the view, each a picture and a name, the current one
         /// marked: clicking one closes the grid and calls pick with its index; clicking
         /// outside, the close button or Escape (CloseChooser) closes it without.
         /// </summary>
-        public void Choose(string title, IReadOnlyList<Texture> pictures, IReadOnlyList<string> names, int current, Action<int> pick)
+        public void Choose(string title, IReadOnlyList<Texture> pictures, IReadOnlyList<string> names, int current, Action<int> pick, string kind = null)
         {
             CloseChooser();
+            chooserKind = kind;
+            chooserTiles = new List<VisualElement>();
+            chooserPick = pick;
+            highlighted = current >= 0 && current < pictures.Count ? current : 0;
             chooser = new VisualElement();
             chooser.AddToClassList("overlay");
             chooser.AddToClassList("chooser");
@@ -166,6 +179,7 @@ namespace Porchlight.UI
             head.Add(El.Btn("×", "Close (Esc)", CloseChooser, "chooser-close"));
             card.Add(head);
             var grid = new ScrollView();
+            chooserScroll = grid;
             grid.AddToClassList("chooser-scroll");
             grid.contentContainer.AddToClassList("chooser-grid");
             for (int i = 0; i < pictures.Count; i++)
@@ -184,6 +198,7 @@ namespace Porchlight.UI
                     pick(at);
                 });
                 grid.Add(tile);
+                chooserTiles.Add(tile);
             }
             card.Add(grid);
             chooser.Add(card);
@@ -194,6 +209,30 @@ namespace Porchlight.UI
         {
             chooser?.RemoveFromHierarchy();
             chooser = null;
+            chooserTiles = null;
+            chooserPick = null;
+        }
+
+        /// <summary>The controller's cursor in the grid: shown (from the current one) at 0, else moved on this many, round the end.</summary>
+        public void Highlight(int step)
+        {
+            if (chooserTiles == null || chooserTiles.Count == 0) return;
+            int n = chooserTiles.Count;
+            highlighted = ((highlighted + step) % n + n) % n;
+            for (int i = 0; i < n; i++) chooserTiles[i].EnableInClassList("highlighted", i == highlighted);
+            var tile = chooserTiles[highlighted];
+            // Once it's laid out (the first time, the grid has only just been added).
+            chooserScroll.schedule.Execute(() => chooserScroll.ScrollTo(tile));
+        }
+
+        /// <summary>Pick the one under the controller's cursor, as a click on it would.</summary>
+        public void PickHighlighted()
+        {
+            if (chooserPick == null || highlighted < 0) return;
+            var pick = chooserPick;
+            int at = highlighted;
+            CloseChooser();
+            pick(at);
         }
 
         /// <summary>Centre the prompt and notice (left 50%, translate -50%).</summary>

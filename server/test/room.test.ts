@@ -72,6 +72,7 @@ test('characters: an account makes several, and only sees its own', async () => 
   assert.equal((await api('dad', 'POST', '/mp/characters', { name: '' })).status, 400);
   const mine = (await api('dad', 'GET', '/mp/characters')).json.characters;
   assert.deepEqual(mine.map((c: { name: string }) => c.name), ['Dad', 'Kid']);
+  assert.deepEqual(mine.map((c: { town: string | null }) => c.town), [null, null]);
   assert.equal(mine[1].look, 'characters/character-female-b');
   assert.deepEqual((await api('stranger', 'GET', '/mp/characters')).json.characters, []);
   assert.equal((await fetch(`${base}/mp/characters`)).status, 401);
@@ -84,6 +85,9 @@ test('two characters on one account play together, and see each other move', asy
   const b = await client('dad').joinOrCreate('city', { ...town, character: kid.id });
   b.onMessage(MSG_SPAWN, () => {});
   assert.equal(a.roomId, b.roomId);
+  // Signed in somewhere else, the account sees who's playing where (to join them).
+  const listed = (await api('dad', 'GET', '/mp/characters')).json.characters;
+  assert.deepEqual(listed.map((c: { town: string | null }) => c.town), ['seed=test', 'seed=test']);
   assert.equal((await spawnA).at, null); // never played here: the town's own spawn point
 
   move(a, 10, 10);

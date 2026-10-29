@@ -384,9 +384,24 @@ namespace Porchlight.UI
             characterName.tooltip = characterName.text;
         }
 
+        VisualElement accountRow, joinRows;
+
+        /// <summary>Under your name: "Join <name>" for each of your characters playing somewhere right now (null: none).</summary>
+        public void SetJoins(List<(string name, Action join)> playing)
+        {
+            joinRows?.RemoveFromHierarchy();
+            joinRows = null;
+            if (playing == null || playing.Count == 0 || accountRow == null) return;
+            joinRows = El.Box("sb-joins");
+            foreach (var (name, join) in playing)
+                joinRows.Add(El.Btn($"Join {name}", $"Go to {name}'s town, and be shown the way to them", join, "btn-primary"));
+            body.Insert(body.IndexOf(accountRow) + 1, joinRows);
+        }
+
         public void SetAccount(string name, string email, Action onSignOut)
         {
             var row = El.Box("sb-account");
+            accountRow = row;
             var n = El.Text(name, "sb-account-name");
             n.tooltip = email ?? name;
             row.Add(n);
@@ -467,7 +482,7 @@ namespace Porchlight.UI
                 ("You / Car boxes", "By the minimap: click either to choose your character or car from a grid (the car is brought to the nearest street, one car at a time)"),
                 ("Players here", "Tick someone in the sidebar for a dotted path and directions to them"),
                 ("Esc", "Back to the map"),
-                ("Controller", "Left stick walk / steer · RT sprint, or at the wheel RT drive and boost, LT brake · right stick turn and tilt · d-pad left / right turn, up / down zoom · A jump · B in / out of a car · X camera behind you · Y day / night · RB the way to the nearest player · View new character · Menu back to the map"),
+                ("Controller", "Left stick walk / steer · A jump, hold A or RT sprint · at the wheel RT drive, hold A boost, LT brake · right stick turn and tilt · d-pad left / right turn, up / down zoom · B in / out of a car · X camera behind you · Y day / night · RB the way to the nearest player · LB choose a character (again for the next; RB for cars, A to pick, B to close) · View new character · Menu back to the map"),
             };
             foreach (var (key, text) in rows)
             {

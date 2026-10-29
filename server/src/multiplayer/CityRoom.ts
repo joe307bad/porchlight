@@ -115,6 +115,9 @@ const online = new Map<string, { room: CityRoom; sessionId: string }>();
 
 export const isOnline = (characterId: string): boolean => online.has(characterId);
 
+/** The town (its room's key) this character is playing in right now, if any. */
+export const townOf = (characterId: string): string | null => online.get(characterId)?.room.town ?? null;
+
 /** Night or day in each town, kept while this process runs (a town's room closes when everyone's left). */
 const nights = new Map<string, boolean>();
 

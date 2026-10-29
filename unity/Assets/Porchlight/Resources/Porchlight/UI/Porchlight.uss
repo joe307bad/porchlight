@@ -439,6 +439,12 @@ Label {
     color: #a99f88;
 }
 
+.sb-joins {
+    padding-top: 8px;
+}
+.sb-joins > .btn {
+    margin-top: 4px;
+}
 .sb-account {
     flex-direction: row;
     align-items: center;
@@ -937,4 +943,9 @@ Label {
 
 .chooser-tile.current {
     border-color: #c2412d;
+}
+/* Where the controller's cursor is (LB / RB step it, A picks). */
+.chooser-tile.highlighted {
+    border-color: #f2e6c9;
+    border-width: 3px;
 }

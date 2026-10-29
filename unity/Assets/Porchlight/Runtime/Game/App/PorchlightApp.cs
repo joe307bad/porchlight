@@ -76,6 +76,10 @@ namespace Porchlight.App
         Portraits portraits;
         int carModel;
         double playersAt;
+        /// <summary>Who you've joined (by the button under your name), until they're found.</summary>
+        string joining;
+        double joiningUntil;
+        const double JOIN_FIND_MS = 30000;
 
         void Awake()
         {
@@ -291,7 +295,11 @@ namespace Porchlight.App
                 OnExportPng = () => StartCoroutine(Export.Png(platform, model, map.visibleLayers, panelSettings)),
                 OnToggleDebug = () => SetDebugOpen(!panel.IsOpen),
             }, controls, SetSidebarOpen);
-            if (user != null) sidebar.SetAccount(user.name, user.email, () => platform.PostForm("/auth/logout"));
+            if (user != null)
+            {
+                sidebar.SetAccount(user.name, user.email, () => platform.PostForm("/auth/logout"));
+                OfferJoins();
+            }
 
             controls.walkMode.clicked += ToggleWalkMode;
             controls.autoWalk.clicked += ToggleAutoWalk;
@@ -486,6 +494,11 @@ namespace Porchlight.App
                     iso.CenterBehind();
                     SyncCloseUpButton();
                 }
+                // LB: the characters' grid, then on through them; RB (with a grid open): the cars', then on through those.
+                if (action == PadAction.Characters) StepChooser("look", ChooseLook);
+                if (action == PadAction.Cars) StepChooser("car", ChooseCar);
+                if (action == PadAction.ChooserPick) overlay.PickHighlighted();
+                if (action == PadAction.ChooserClose) overlay.CloseChooser();
             };
         }
 
@@ -604,6 +617,34 @@ namespace Porchlight.App
             if (isoTown == model) net?.Enter(new TownKey { key = EncodeUrlState(seed, @params), width = model.width, height = model.height });
         }
 
+        /// <summary>
+        /// Signed in while one of the account's characters is already playing (another
+        /// tab, another device, someone else on this sign-in): a button under the name
+        /// to go to their town and be shown the way to them.
+        /// </summary>
+        void OfferJoins()
+        {
+            string mine = CharacterPicker.RememberedId(platform);
+            Account.ListCharacters(platform, origin, (list, err) =>
+            {
+                if (list == null) return;
+                var playing = list.Where(c => !string.IsNullOrEmpty(c.town) && c.id != mine).ToList();
+                sidebar.SetJoins(playing.Select(c => (c.name, (Action)(() => Join(c)))).ToList());
+            });
+        }
+
+        /// <summary>Into their town (playing as whoever's picked next), finding the way to them once they're seen.</summary>
+        void Join(Character them)
+        {
+            sidebar.SetJoins(null);
+            var state = ParseUrlState(them.town);
+            sidebar.SetParams(state.@params);
+            Regenerate(state.seed ?? RandomSeed(), state.@params);
+            joining = them.name;
+            joiningUntil = platform.Now() + JOIN_FIND_MS;
+            _ = Explore();
+        }
+
         void SwitchCharacter()
         {
             net?.Close();
@@ -632,6 +673,18 @@ namespace Porchlight.App
 
         // The boxes by the minimap: your character and your car.
 
+        /// <summary>From the controller: open this grid (the cursor on the current one), or with it open, move the cursor on one.</summary>
+        void StepChooser(string kind, Action open)
+        {
+            if (overlay.ChooserKind == kind)
+            {
+                overlay.Highlight(1);
+                return;
+            }
+            open();
+            overlay.Highlight(0);
+        }
+
         /// <summary>The character box: a grid of everyone to be, and you become the one picked.</summary>
         void ChooseLook()
         {
@@ -642,7 +695,7 @@ namespace Porchlight.App
                 {
                     var look = iso.ChangeLook(looks[i]);
                     if (look != null) net?.LookChanged(look);
-                });
+                }, "look");
         }
 
         /// <summary>The car box: a grid of every car, and the one picked is yours, brought to the nearest parking lane (in place of any other).</summary>
@@ -656,7 +709,7 @@ namespace Porchlight.App
                 if (iso.HasCar) iso.ChangeCar(carModel);
                 else if (!iso.SpawnCar(carModel)) overlay.Flash("No room for a car near here. Try by a street.");
                 else overlay.Notify(null);
-            });
+            }, "car");
         }
 
         /// <summary>"cars/suv-luxury" as "Suv luxury".</summary>
@@ -690,6 +743,13 @@ namespace Porchlight.App
             if (now < playersAt) return;
             playersAt = now + 500;
             var list = iso.Others.Select(o => (o.key, o.name)).OrderBy(o => o.name, StringComparer.OrdinalIgnoreCase).ToList();
+            if (joining != null)
+            {
+                // Joined someone: the way to them as soon as they're on the map (or not, after a while).
+                var them = iso.Others.FirstOrDefault(o => o.name == joining);
+                if (them.key != null) iso.Find(them.key);
+                if (them.key != null || now > joiningUntil) joining = null;
+            }
             sidebar.SetPlayers(list, iso.Finding, key => iso.Find(key));
         }
 
@@ -795,9 +855,12 @@ namespace Porchlight.App
             public GenParams @params;
         }
 
-        UrlState ReadUrlState()
+        UrlState ReadUrlState() => ParseUrlState(platform.Hash.TrimStart('#'));
+
+        /// <summary>A town's key (the hash, without its #: also what its room is called).</summary>
+        static UrlState ParseUrlState(string query)
         {
-            var hash = ParseQuery(platform.Hash.TrimStart('#'));
+            var hash = ParseQuery(query ?? "");
             var partial = new Dictionary<string, double>();
             foreach (var spec in ParamSpec.All)
                 if (hash.TryGetValue(spec.key, out var raw)) partial[spec.key] = Numbers.ParseNumber(raw);
