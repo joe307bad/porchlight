@@ -2,7 +2,9 @@
 // each model stands well away from the town on its own layer, lit by its own
 // light and filmed by its own small camera into a render texture the UI shows.
 // The character idles as it does in the street. For the pickers, a still of
-// every character and every car, filmed the same way once and kept.
+// every character and every car, filmed the same way once and copied into
+// plain textures (a render texture nothing draws into any more can come back
+// blank, as it did in the browser).
 
 using System;
 using System.Linq;
@@ -32,7 +34,9 @@ namespace Porchlight.Rendering
         string look;
         int carIndex = -1;
         /// <summary>The stills, once asked for; and what's filming them (gone once they're taken).</summary>
-        RenderTexture[] lookStills, carStills;
+        Texture2D[] lookStills, carStills;
+        /// <summary>What the stills' cameras are filming into, and the still each is copied to when they're done.</summary>
+        readonly System.Collections.Generic.List<(RenderTexture film, Texture2D still)> filming = new System.Collections.Generic.List<(RenderTexture, Texture2D)>();
         GameObject stills;
         readonly System.Collections.Generic.List<(Avatar avatar, Walker at)> stillAvatars = new System.Collections.Generic.List<(Avatar, Walker)>();
         int stillFrames;
@@ -134,10 +138,10 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>A still of each of Catalog.CHARACTERS, in order (filmed over the next few frames).</summary>
-        public RenderTexture[] LookStills()
+        public Texture2D[] LookStills()
         {
             if (lookStills != null) return lookStills;
-            lookStills = new RenderTexture[Catalog.CHARACTERS.Length];
+            lookStills = new Texture2D[Catalog.CHARACTERS.Length];
             for (int i = 0; i < lookStills.Length; i++)
             {
                 var at = new Vector3(i * STILL_SPACING, 0, 40);
@@ -145,18 +149,18 @@ namespace Porchlight.Rendering
                 a.SnapYaw(standing.heading);
                 OnLayer(a.root);
                 stillAvatars.Add((a, new Walker(null, at.x, -at.z) { heading = standing.heading }));
-                lookStills[i] = Texture("look " + i);
-                Film(lookStills[i], at + new Vector3(0, 0.2f, 0), 0.2f, 0.95f, stills.transform);
+                lookStills[i] = Still("look " + i, out var film);
+                Film(film, at + new Vector3(0, 0.2f, 0), 0.2f, 0.95f, stills.transform);
                 Light(at, stills.transform);
             }
             return lookStills;
         }
 
         /// <summary>A still of each of the first Catalog.CarCount of Catalog.CARS (the cars), in order.</summary>
-        public RenderTexture[] CarStills()
+        public Texture2D[] CarStills()
         {
             if (carStills != null) return carStills;
-            carStills = new RenderTexture[Catalog.CarCount];
+            carStills = new Texture2D[Catalog.CarCount];
             for (int i = 0; i < carStills.Length; i++)
             {
                 var at = new Vector3(i * STILL_SPACING, 0, 60);
@@ -164,11 +168,45 @@ namespace Porchlight.Rendering
                 double s = Props.CarScale(m);
                 var go = Props.Place(m, StillsRoot(), at.x, -at.z, 0.6, s, s, s, castShadows: false);
                 OnLayer(go);
-                carStills[i] = Texture("car " + i);
-                Film(carStills[i], at + new Vector3(0, 0.15f, 0), 0.15f, 2.1f, stills.transform);
+                carStills[i] = Still("car " + i, out var film);
+                Film(film, at + new Vector3(0, 0.15f, 0), 0.15f, 2.1f, stills.transform);
                 Light(at, stills.transform);
             }
             return carStills;
+        }
+
+        /// <summary>A still, blank (the cameras' background) until it's filmed, and the render texture it's filmed into.</summary>
+        Texture2D Still(string name, out RenderTexture film)
+        {
+            film = Texture(name);
+            var still = new Texture2D(SIZE, SIZE, TextureFormat.RGBA32, false) { name = "still " + name };
+            var blank = new Color32[SIZE * SIZE];
+            Color32 bg = Coords.Hex(0x2b2a27);
+            for (int i = 0; i < blank.Length; i++) blank[i] = bg;
+            still.SetPixels32(blank);
+            still.Apply();
+            filming.Add((film, still));
+            return still;
+        }
+
+        /// <summary>Copy what's been filmed into the stills, and let the render textures go.</summary>
+        void Keep()
+        {
+            var was = RenderTexture.active;
+            var flat = RenderTexture.GetTemporary(SIZE, SIZE, 0, RenderTextureFormat.ARGB32);
+            foreach (var (film, still) in filming)
+            {
+                // Through a plain texture first: resolves the multisampling.
+                Graphics.Blit(film, flat);
+                RenderTexture.active = flat;
+                still.ReadPixels(new UnityEngine.Rect(0, 0, SIZE, SIZE), 0, 0, false);
+                still.Apply();
+                film.Release();
+                UnityEngine.Object.Destroy(film);
+            }
+            RenderTexture.active = was;
+            RenderTexture.ReleaseTemporary(flat);
+            filming.Clear();
         }
 
         Transform StillsRoot()
@@ -191,6 +229,7 @@ namespace Porchlight.Rendering
             if (stills == null) return;
             foreach (var (a, at) in stillAvatars) a.Update(at, dt);
             if (++stillFrames < STILL_FRAMES) return;
+            Keep();
             foreach (var (a, _) in stillAvatars) a.Dispose();
             stillAvatars.Clear();
             UnityEngine.Object.Destroy(stills);
@@ -200,11 +239,12 @@ namespace Porchlight.Rendering
         public void Dispose()
         {
             UnityEngine.Object.Destroy(root);
-            foreach (var rt in (lookStills ?? new RenderTexture[0]).Concat(carStills ?? new RenderTexture[0]))
+            foreach (var (film, _) in filming)
             {
-                rt.Release();
-                UnityEngine.Object.Destroy(rt);
+                film.Release();
+                UnityEngine.Object.Destroy(film);
             }
+            foreach (var still in (lookStills ?? new Texture2D[0]).Concat(carStills ?? new Texture2D[0])) UnityEngine.Object.Destroy(still);
             person.Release();
             car.Release();
             UnityEngine.Object.Destroy(person);

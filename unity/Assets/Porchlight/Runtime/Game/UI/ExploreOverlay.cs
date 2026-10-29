@@ -173,7 +173,7 @@ namespace Porchlight.UI
                 int at = i;
                 var tile = El.Box("chooser-tile");
                 if (i == current) tile.AddToClassList("current");
-                tile.style.backgroundImage = Background.FromRenderTexture(pictures[i] as RenderTexture);
+                tile.style.backgroundImage = pictures[i] is RenderTexture rt ? Background.FromRenderTexture(rt) : Background.FromTexture2D(pictures[i] as Texture2D);
                 var label = El.Text(names[i], "garage-label");
                 label.pickingMode = PickingMode.Ignore;
                 tile.Add(label);
