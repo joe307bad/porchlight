@@ -698,7 +698,7 @@ namespace Porchlight.App
                 }, "look");
         }
 
-        /// <summary>The car box: a grid of every car, and the one picked is yours, brought to the nearest parking lane (in place of any other).</summary>
+        /// <summary>The car box: a grid of every car, and the one picked is yours, brought right beside you (in place of any other).</summary>
         void ChooseCar()
         {
             if (iso == null) return;
@@ -706,7 +706,8 @@ namespace Porchlight.App
             overlay.Choose("Choose your car", portraits.CarStills(), names, carModel, i =>
             {
                 carModel = i;
-                if (iso.HasCar) iso.ChangeCar(carModel);
+                // At the wheel it's swapped under you; otherwise it's brought right beside you.
+                if (iso.IsDriving) iso.ChangeCar(carModel);
                 else if (!iso.SpawnCar(carModel)) overlay.Flash("No room for a car near here. Try by a street.");
                 else overlay.Notify(null);
             }, "car");

@@ -724,7 +724,7 @@ namespace Porchlight.App
 
         // Your car: one at a time.
 
-        /// <summary>A car of this model in the parking lane nearest you, in place of any car you had. False if there's no room near.</summary>
+        /// <summary>A car of this model right beside you (or, with no room there, in the nearest parking lane), in place of any car you had. False if there's no room near.</summary>
         public bool SpawnCar(int model)
         {
             if (player == null || world == null || riding != null) return false;
@@ -735,10 +735,29 @@ namespace Porchlight.App
             for (int i = 0; i < world.parked.Count; i++) if (!takenParked.Contains(i)) busy.Add(new Vec2(world.parked[i].x, world.parked[i].y));
             busy.AddRange(othersParkedAt.Values);
             if (traffic != null) foreach (var c in traffic.Positions()) busy.Add(new Vec2(c.x, c.y));
-            var spot = Vehicle.CarSpotNear(near, world.layout.roads, Layout.PARKING / 2, canDrive, busy);
+            var spot = SpotBeside(busy) ?? Vehicle.CarSpotNear(near, world.layout.roads, Layout.PARKING / 2, canDrive, busy);
             if (spot == null) return false;
             AddCar(new Vehicle(model, spot.Value.x, spot.Value.y, spot.Value.heading));
             return true;
+        }
+
+        /// <summary>
+        /// Somewhere a car fits right beside you, facing the way you are (or turned, if
+        /// only that fits): your right first, then your left, then a little further out.
+        /// </summary>
+        Vehicle.Spot? SpotBeside(List<Vec2> busy)
+        {
+            var f = new Vec2(Math.Sin(player.heading), Math.Cos(player.heading));
+            double facing = Math.Atan2(f.y, f.x); // a car's heading points along (cos, sin)
+            foreach (double off in new[] { 0.7, 0.9, 1.2 })
+                foreach (int side in new[] { 1, -1 })
+                {
+                    var p = new Vec2(player.x + f.y * off * side, player.y - f.x * off * side);
+                    if (busy.Any(q => Geo.Dist(q, p) < 1.3)) continue;
+                    foreach (double turn in new[] { 0, Math.PI, Math.PI / 4, -Math.PI / 4, Math.PI / 2 })
+                        if (Vehicle.Fits(p.x, p.y, facing + turn, canDrive)) return new Vehicle.Spot { x = p.x, y = p.y, heading = facing + turn };
+                }
+            return null;
         }
 
         /// <summary>Your car becomes this model, where it is (even with you at the wheel).</summary>

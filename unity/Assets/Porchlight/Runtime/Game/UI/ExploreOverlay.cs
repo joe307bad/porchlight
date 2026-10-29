@@ -79,7 +79,7 @@ namespace Porchlight.UI
             garage = new VisualElement();
             garage.AddToClassList("garage");
             personBox = Box("You", "Your character: click to choose someone else", () => OnPersonBox?.Invoke());
-            carBox = Box("Car", "Your car: click to choose one, and have it brought to the nearest street", () => OnCarBox?.Invoke());
+            carBox = Box("Car", "Your car: click to choose one, and have it brought right beside you", () => OnCarBox?.Invoke());
             garage.Add(personBox);
             garage.Add(carBox);
             host.Add(garage);
