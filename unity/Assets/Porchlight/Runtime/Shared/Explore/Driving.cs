@@ -43,6 +43,8 @@ namespace Porchlight.Explore
 
         /// <summary>Flat out in the air (under the server's limit for anything that moves).</summary>
         public const double PLANE_TOP = 7.4;
+        /// <summary>A plane's boost (its top speed and climb-out, times this): 11.1 flat out, the server's limit.</summary>
+        const double PLANE_BOOST = 1.5;
         const double PLANE_TAXI_STEER = 1.6;
         const double PLANE_ACCEL = 2.2;
         const double PLANE_SLOWING = 1.2;
@@ -113,12 +115,12 @@ namespace Porchlight.Explore
         {
             if (kind == VehicleKind.Plane && Airborne)
             {
-                Fly(throttle, steer, dt, open, floor);
+                Fly(throttle, steer, dt, open, floor, boost);
                 return;
             }
             bool boat = kind == VehicleKind.Boat, plane = kind == VehicleKind.Plane;
-            double top = boat ? BOAT_TOP * (boost ? BOOST_SPEED : 1) : plane ? PLANE_TOP : TOP_SPEED * (boost ? BOOST_SPEED : 1);
-            double accel = boat ? BOAT_ACCEL : plane ? PLANE_ACCEL : ACCEL * (boost ? BOOST_ACCEL : 1);
+            double top = boat ? BOAT_TOP * (boost ? BOOST_SPEED : 1) : plane ? PLANE_TOP * (boost ? PLANE_BOOST : 1) : TOP_SPEED * (boost ? BOOST_SPEED : 1);
+            double accel = (boat ? BOAT_ACCEL : plane ? PLANE_ACCEL : ACCEL) * (boost ? BOOST_ACCEL : 1);
             double brake = boat ? BOAT_BRAKE : BRAKE;
             double drag = boat ? BOAT_DRAG : DRAG;
             if (throttle > 0 && speed <= top * throttle)
@@ -159,11 +161,12 @@ namespace Porchlight.Explore
             if (plane && throttle > 0 && speed >= TAKEOFF_SPEED) altitude = 1e-3;
         }
 
-        /// <summary>In the air: forward climbs (and speeds up) to cruising height, back sinks (and slows), let go to hold.</summary>
-        void Fly(double throttle, double steer, double dt, Func<double, double, bool> open, Func<double, double, double> floor)
+        /// <summary>In the air: forward climbs (and speeds up) to cruising height, back sinks (and slows), let go to hold; boost goes faster still.</summary>
+        void Fly(double throttle, double steer, double dt, Func<double, double, bool> open, Func<double, double, double> floor, bool boost)
         {
-            double target = throttle > 0 ? PLANE_TOP : throttle < 0 ? STALL_SPEED : Math.Max(STALL_SPEED, speed);
-            speed += Math.Max(-PLANE_SLOWING * dt, Math.Min(PLANE_ACCEL * dt, target - speed));
+            double flatOut = PLANE_TOP * (boost ? PLANE_BOOST : 1);
+            double target = throttle > 0 ? flatOut : throttle < 0 ? STALL_SPEED : Math.Min(flatOut, Math.Max(STALL_SPEED, speed));
+            speed += Math.Max(-PLANE_SLOWING * dt, Math.Min(PLANE_ACCEL * (boost ? BOOST_ACCEL : 1) * dt, target - speed));
             double climb = throttle > 0 ? (altitude < CRUISE_HEIGHT ? CLIMB : 0) : throttle < 0 ? -SINK : 0;
             double h = heading + steer * AIR_TURN * dt;
             double nx = x + Math.Cos(h) * speed * dt;
