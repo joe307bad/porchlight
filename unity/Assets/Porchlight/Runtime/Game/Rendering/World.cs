@@ -280,12 +280,21 @@ namespace Porchlight.Rendering
             var b = new MeshBuilder(palette);
             var streets = layout.roads.Where(r => r.kind != RoadKind.Path).ToList();
             bool InMap(Vec2 p) => p.x > 0.01 && p.y > 0.01 && p.x < model.width - 0.01 && p.y < model.height - 0.01;
+            // A cul-de-sac's end widens into its bulb.
+            double bulb = Gen.Raster.BulbRadius(model.@params);
+            bool Bulb(RoadStroke r, bool atEnd) => layout.bulbs.Exists(q => layout.roads[q.edge] == r && q.atEnd == atEnd);
             void Layer(double y, double extra, int color)
             {
                 foreach (var r in streets)
                 {
                     b.Ribbon(r.points, r.width + extra, y, color);
-                    foreach (var p in new[] { r.points[0], r.points[r.points.Count - 1] }) if (InMap(p)) b.Disc(p, (r.width + extra) / 2, y, color);
+                    foreach (bool atEnd in new[] { false, true })
+                    {
+                        var p = atEnd ? r.points[r.points.Count - 1] : r.points[0];
+                        if (!InMap(p)) continue;
+                        if (Bulb(r, atEnd)) b.Disc(p, bulb + extra / 2, y, color, 36);
+                        else b.Disc(p, (r.width + extra) / 2, y, color);
+                    }
                 }
             }
             foreach (var br in layout.bridges)
@@ -308,8 +317,9 @@ namespace Porchlight.Rendering
             {
                 // Stopping short of the junctions, as the centre line does.
                 double length = Geo.PolylineLength(r.points);
-                if (length < 3) continue;
-                var middle = Geo.SubPolyline(r.points, 1.3, length - 1.3);
+                double from = Bulb(r, false) ? bulb + 0.3 : 1.3, to = length - (Bulb(r, true) ? bulb + 0.3 : 1.3);
+                if (length < 3 || to - from < 0.4) continue;
+                var middle = Geo.SubPolyline(r.points, from, to);
                 foreach (int side in new[] { 1, -1 }) b.Ribbon(Layout.OffsetPolyline(middle, side * r.width / 2), 0.04, 0.028, C.lane);
             }
             foreach (var r in layout.roads.Where(rd => rd.kind == RoadKind.Path))
@@ -320,6 +330,7 @@ namespace Porchlight.Rendering
             foreach (var r in streets)
             {
                 double len = Geo.PolylineLength(r.points);
+                double from = Bulb(r, false) ? bulb + 0.2 : 1.2, to = len - (Bulb(r, true) ? bulb + 0.2 : 1.2);
                 var samples = Geo.SamplePolyline(r.points, 0.1);
                 double travelled = 0;
                 var run = new List<Vec2>();
@@ -333,7 +344,7 @@ namespace Porchlight.Rendering
                     double seg = Geo.Dist(samples[k - 1], samples[k]);
                     double mid = travelled + seg / 2;
                     travelled += seg;
-                    if (mid < 1.2 || mid > len - 1.2 || mid % 0.9 > 0.45)
+                    if (mid < from || mid > to || mid % 0.9 > 0.45)
                     {
                         Flush();
                         continue;

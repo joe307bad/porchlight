@@ -464,11 +464,10 @@ namespace Porchlight.UI
                 ("Space", "Jump"),
                 ("Shift", "Sprint (in a car: boost)"),
                 ("Minimap", "Click to jump there"),
-                ("You / Car boxes", "By the minimap: click Car to have your car brought to the nearest street (one car at a time)"),
-                ("Tab", "With a box picked, the next character or car (Shift+Tab back)"),
+                ("You / Car boxes", "By the minimap: click either to choose your character or car from a grid (the car is brought to the nearest street, one car at a time)"),
                 ("Players here", "Tick someone in the sidebar for a dotted path and directions to them"),
                 ("Esc", "Back to the map"),
-                ("Controller", "Left stick walk / steer · RT sprint, or at the wheel RT drive and boost, LT brake · right stick turn and tilt · d-pad left / right turn · LB / RB or d-pad up / down zoom (with a box picked, LB / RB change it) · A jump · B car · X auto · Y close up · left stick click day / night · right stick click look ahead · View new character · Menu back to the map"),
+                ("Controller", "Left stick walk / steer · RT sprint, or at the wheel RT drive and boost, LT brake · right stick turn and tilt · d-pad left / right turn, up / down zoom · A jump · B in / out of a car · X camera behind you · Y day / night · RB the way to the nearest player · View new character · Menu back to the map"),
             };
             foreach (var (key, text) in rows)
             {

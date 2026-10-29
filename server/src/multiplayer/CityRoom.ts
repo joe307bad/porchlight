@@ -21,7 +21,7 @@ import { CloseCode, Room, ServerError, type AuthContext, type Client } from '@co
 import { StateView } from '@colyseus/schema';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { Interest } from './interest.ts';
-import { RateLimit, Strikes, clampToBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
+import { MAX_SPEED, RateLimit, Strikes, clampToBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
 import { cleanLook, type EndReason, type Snapshot } from './persistence.ts';
 import {
   ANIM_DRIVE,
@@ -58,6 +58,8 @@ const FLUSH_MS = 30_000;
 const DOTS_MS = 1_000;
 /** Seconds a dropped client has to come back. */
 const RECONNECT_SECONDS = 20;
+/** How close (tiles) to a car you have to be to get in with its driver. */
+const RIDE_REACH = 3;
 /** No moves for this long: show them standing. */
 const IDLE_AFTER_MS = 2_000;
 /** A new look is saved this long after the last change. */
@@ -475,11 +477,17 @@ export class CityRoom extends Room<{ state: CityState }> {
     if (moved) rt.change++;
   }
 
-  /** May they ride with `m.ride`: someone else, driving, close by, with a seat free? */
+  /**
+   * May they ride with `m.ride`: someone else, driving, close by, with a seat free?
+   * Getting in takes being beside the car; once in, a rider sits where they see the
+   * car, which is a little behind where its driver last said it was (interpolation
+   * and the network both lag), so at speed they're allowed a second's drive behind.
+   */
   private canRide(rt: PlayerRuntime, m: MoveMessage): boolean {
     const driver = this.runtime.get(m.ride);
     if (!driver || driver === rt || driver.finished || driver.player.anim !== ANIM_DRIVE) return false;
-    if (Math.hypot(driver.player.x - m.x, driver.player.z - m.z) > 3) return false;
+    const reach = rt.player.ride === m.ride ? RIDE_REACH + MAX_SPEED : RIDE_REACH;
+    if (Math.hypot(driver.player.x - m.x, driver.player.z - m.z) > reach) return false;
     let riders = 0;
     for (const other of this.runtime.values()) if (other !== rt && other.player.ride === m.ride) riders++;
     return riders < CAR_SEATS - 1;

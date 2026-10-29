@@ -17,6 +17,14 @@ namespace Porchlight.Gen
         public int[] edgeId;
     }
 
+    /// <summary>A cul-de-sac's round turning bulb: the end of street `edge` (its last point if atEnd, else its first).</summary>
+    public struct Bulb
+    {
+        public int edge;
+        public bool atEnd;
+        public Vec2 at;
+    }
+
     public sealed class RoadTerrain
     {
         public byte[] water;
@@ -57,6 +65,39 @@ namespace Porchlight.Gen
         /// <summary>Tiles whose centre is closer than this to a road's centreline belong to the road.</summary>
         public static double RoadHalfWidth(RoadKind kind, GenParams p) =>
             Math.Max(0.75, RoadDrawWidth(kind, p) / 2 + (kind == RoadKind.Path ? 0 : PARKING_WIDTH) + 0.5);
+
+        /// <summary>How much further than the street's own edge a cul-de-sac's bulb reaches (tiles).</summary>
+        public const double BULB_EXTRA = 1;
+
+        /// <summary>Radius of a cul-de-sac's bulb of asphalt.</summary>
+        public static double BulbRadius(GenParams p) => p.streetWidth / 2 + BULB_EXTRA;
+
+        /// <summary>How far a bulb's drawn surface reaches from its middle, parking lane and sidewalk included.</summary>
+        public static double BulbReach(GenParams p) => BulbRadius(p) + PARKING_WIDTH + SIDEWALK_WIDTH;
+
+        /// <summary>Tiles whose centre is closer than this to a bulb's middle belong to its street.</summary>
+        public static double BulbHalfWidth(GenParams p) => BulbRadius(p) + PARKING_WIDTH + 0.5;
+
+        /// <summary>
+        /// The cul-de-sacs: every end of a street that no other road, street or
+        /// footpath meets widens into a round bulb to turn in. Read off the graph
+        /// alone, so every stage and the explore view find the same ones.
+        /// </summary>
+        public static List<Bulb> Bulbs(IReadOnlyList<RoadEdge> edges)
+        {
+            var degree = new Dictionary<int, int>();
+            foreach (var e in edges)
+                foreach (int n in new[] { e.from, e.to })
+                    degree[n] = (degree.TryGetValue(n, out int d) ? d : 0) + 1;
+            var o = new List<Bulb>();
+            foreach (var e in edges)
+            {
+                if (e.kind != RoadKind.Street || e.from == e.to) continue;
+                if (degree[e.from] == 1) o.Add(new Bulb { edge = e.id, atEnd = false, at = e.points[0] });
+                if (degree[e.to] == 1) o.Add(new Bulb { edge = e.id, atEnd = true, at = e.points[e.points.Count - 1] });
+            }
+            return o;
+        }
 
         public static byte[] LakeMask(TownModel model)
         {
@@ -194,6 +235,24 @@ namespace Porchlight.Gen
                                 best[i] = (float)d;
                             }
                         }
+                    }
+                }
+            }
+            // The cul-de-sacs' bulbs, as their streets (where nothing ranks above them).
+            double bulbHw = BulbHalfWidth(p);
+            foreach (var bulb in Bulbs(edges))
+            {
+                var c = bulb.at;
+                for (int y = (int)Math.Max(0, Math.Floor(c.y - bulbHw)); y <= (int)Math.Min(h - 1, Math.Ceiling(c.y + bulbHw)); y++)
+                {
+                    for (int x = (int)Math.Max(0, Math.Floor(c.x - bulbHw)); x <= (int)Math.Min(w - 1, Math.Ceiling(c.x + bulbHw)); x++)
+                    {
+                        if (!(Numbers.Hypot(x + 0.5 - c.x, y + 0.5 - c.y) < bulbHw)) continue;
+                        int i = Grid.Index(x, y, w);
+                        if (kind[i] != ROAD_NONE && KIND_RANK[kind[i]] <= KIND_RANK[ROAD_STREET]) continue;
+                        kind[i] = ROAD_STREET;
+                        edgeId[i] = bulb.edge;
+                        best[i] = 0;
                     }
                 }
             }

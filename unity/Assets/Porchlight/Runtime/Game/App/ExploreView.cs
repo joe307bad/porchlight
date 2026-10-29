@@ -28,7 +28,7 @@ namespace Porchlight.App
 {
     public enum CameraMode { Iso, Close }
 
-    public enum PadAction { Car, Auto, CloseUp, Night, NewCharacter, Menu }
+    public enum PadAction { Car, Night, NewCharacter, Menu, Center }
 
     /// <summary>The local player as the network sees them. Ground is (x, z); y is height.</summary>
     public struct LocalState
@@ -85,9 +85,14 @@ namespace Porchlight.App
         const double CHASE_LOOK_HEIGHT = 0.42;
         const double CHASE_LOOK_AHEAD = 0.6;
         const double TURN_RATE = 2.6;
-        /// <summary>A faint haze far off: the whole town (and the horizon past it) stays clear.</summary>
-        const double FOG_NEAR = 180;
-        const double FOG_FAR = 420;
+        /// <summary>
+        /// The close camera sees this far into a haze and no further: drawing the whole
+        /// town to the horizon cost too much frame time.
+        /// </summary>
+        const double FOG_NEAR = 22;
+        const double FOG_FAR = 60;
+        /// <summary>How far from you rooms are furnished behind their windows (further off they're dark glass).</summary>
+        const double INTERIOR_REACH = 24;
         const double DOOR_REACH = 0.85;
         const double DOOR_SPEED = 3;
         /// <summary>How close on foot a room's keeper is about (rooms themselves are always there).</summary>
@@ -131,6 +136,9 @@ namespace Porchlight.App
         public TownWorld world;
         RemotePlayers remotes;
         string riding;
+        /// <summary>When (ms) the car we're riding in went missing from the town, if it has: a dropped update shouldn't throw us out.</summary>
+        double? rideLostAt;
+        const double RIDE_LOST_AFTER = 2000;
         public Func<double, double, bool> TeleportHook;
         Player player;
         Avatar playerAvatar;
@@ -217,11 +225,10 @@ namespace Porchlight.App
         public Action OnFindLost;
         /// <summary>The sign-in screen's town: no controls, an auto walk and a slowly turning camera.</summary>
         public bool Attract;
-        /// <summary>While one of the boxes by the minimap is picked, the bumpers flick through its choices (OnCycle) rather than zoom.</summary>
-        public bool Cycling;
-        public Action<int> OnCycle;
         Func<double, double, bool> canDrive = (x, y) => false;
         Func<double, double, bool> canSail = (x, y) => false;
+        /// <summary>What's drawn as sidewalk or road, short of sheds and hangars: walkable where it overhangs a closed tile (the water's edge).</summary>
+        Func<double, double, bool> walkPaved;
         /// <summary>How low a plane may fly over each tile: clear of the roofs.</summary>
         float[] skyFloor = new float[0];
         /// <summary>How far above a roof a plane keeps.</summary>
@@ -293,6 +300,15 @@ namespace Porchlight.App
             remotes = new RemotePlayers(world.root.transform, library);
             snap = true;
             open = WalkMask();
+            var paved = Vehicle.Paved(model, world.layout);
+            var use = world.layout.use;
+            int width = model.width;
+            walkPaved = (x, y) =>
+            {
+                if (!paved(x, y)) return false;
+                byte u = use[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), width)];
+                return u != Use.SHED && u != Use.HANGAR;
+            };
             canDrive = Vehicle.Drivable(model, world.layout);
             canSail = Vehicle.Sailable(model, world.layout);
             skyFloor = SkyFloor();
@@ -347,12 +363,12 @@ namespace Porchlight.App
             double x = Math.Min(w - 0.2, Math.Max(0.2, at.x));
             double y = Math.Min(h - 0.2, Math.Max(0.2, at.y));
             var solids = world.solids;
-            if (open.Length > 0 && !Player.Standable(x, y, open, model, solids))
+            if (open.Length > 0 && !Player.Standable(x, y, open, model, solids, walkPaved))
             {
                 double bestD = double.PositiveInfinity;
                 for (int i = 0; i < open.Length; i++)
                 {
-                    if (open[i] == 0 || !Player.Standable((i % w) + 0.5, i / w + 0.5, open, model, solids)) continue;
+                    if (!Player.Standable((i % w) + 0.5, i / w + 0.5, open, model, solids, walkPaved)) continue;
                     double d = Numbers.Hypot((i % w) + 0.5 - x, i / w + 0.5 - y);
                     if (d < bestD)
                     {
@@ -421,6 +437,8 @@ namespace Porchlight.App
                 snap = true;
                 return;
             }
+            // Riding: the server only put us where it last saw the car; we go on riding with it.
+            if (!teleported && riding != null && player != null && world != null) return;
             MoveTo(x, z);
         }
 
@@ -597,6 +615,46 @@ namespace Porchlight.App
 
         public string Finding => finding;
 
+        /// <summary>The way to the nearest other player, or (already showing one) stop.</summary>
+        public void FindNearest()
+        {
+            if (finding != null || player == null)
+            {
+                Find(null);
+                return;
+            }
+            string best = null;
+            double bestD = double.PositiveInfinity;
+            foreach (var o in others)
+            {
+                double d = Numbers.Hypot(o.x - player.x, o.y - player.y);
+                if (d < bestD)
+                {
+                    bestD = d;
+                    best = o.key;
+                }
+            }
+            if (best == null) Notify("No one else is in town");
+            else Find(best);
+        }
+
+        /// <summary>The camera close behind you, at its usual distance, looking the way you face.</summary>
+        public void CenterBehind()
+        {
+            var p = player;
+            if (p == null) return;
+            if (room != null)
+            {
+                roomTurn = 0;
+                return;
+            }
+            SetCameraMode(CameraMode.Close);
+            chaseSwing = 0;
+            chaseDistance = CHASE_DISTANCE;
+            chaseYawNow = Orbit.ChaseYaw(p.heading);
+            shownChaseDistance = chaseDistance;
+        }
+
         void UpdateFind(double dt)
         {
             findTimer -= dt;
@@ -693,12 +751,11 @@ namespace Porchlight.App
         public int CarModel => cars.Count > 0 ? cars[0].car.model : -1;
 
         /// <summary>The next (or previous) character's look, in place.</summary>
-        public string CycleLook(int step)
+        /// <summary>Become this character where you stand (null if there's no one to change).</summary>
+        public string ChangeLook(string look)
         {
             if (player == null) return null;
-            int n = Catalog.CHARACTERS.Length;
-            int at = Array.IndexOf(Catalog.CHARACTERS, player.look);
-            Spawn(Catalog.CHARACTERS[((at + step) % n + n) % n]);
+            if (player.look != look) Spawn(look);
             return player.look;
         }
 
@@ -793,6 +850,7 @@ namespace Porchlight.App
                     OnAutoChange?.Invoke();
                 }
                 riding = pk.driver.Value.key;
+                rideLostAt = null;
                 held.Clear();
                 p.Halt();
                 OnCarChange?.Invoke(true);
@@ -867,7 +925,7 @@ namespace Porchlight.App
             if (car.kind == VehicleKind.Boat)
             {
                 // Off a boat only onto a dock or the shore, never into the water.
-                var dry = Vehicle.ExitSpot(car, (x, y) => Player.Standable(x, y, open, world.model, world.solids));
+                var dry = Vehicle.ExitSpot(car, (x, y) => Player.Standable(x, y, open, world.model, world.solids, walkPaved));
                 if (dry == null)
                 {
                     Notify("Pull in beside a dock or the shore to get out");
@@ -894,7 +952,7 @@ namespace Porchlight.App
         }
 
         Vec2 ExitBeside(Vehicle car) =>
-            Vehicle.ExitSpot(car, (x, y) => Player.Standable(x, y, open, world.model, world.solids)) ?? StandableNear(new Vec2(car.x, car.y));
+            Vehicle.ExitSpot(car, (x, y) => Player.Standable(x, y, open, world.model, world.solids, walkPaved)) ?? StandableNear(new Vec2(car.x, car.y));
 
         void LeaveRide()
         {
@@ -919,9 +977,11 @@ namespace Porchlight.App
             if (remotes != null) foreach (var r in remotes.Drivers()) if (r.key == riding) d = r;
             if (d == null)
             {
-                LeaveRide();
+                rideLostAt ??= Now;
+                if (Now - rideLostAt > RIDE_LOST_AFTER) LeaveRide();
                 return;
             }
+            rideLostAt = null;
             p.x = d.Value.x;
             p.y = d.Value.y;
             p.heading = d.Value.heading;
@@ -947,11 +1007,8 @@ namespace Porchlight.App
         {
             streetsOnly = on;
             open = WalkMask();
-            if (player != null && world != null)
-            {
-                int here = Grid.Index((int)Math.Floor(player.x), (int)Math.Floor(player.y), world.model.width);
-                if (open[here] == 0 || !Player.Standable(player.x, player.y, open, world.model, world.solids)) Teleport(new Vec2(player.x, player.y));
-            }
+            if (player != null && world != null && !Player.Standable(player.x, player.y, open, world.model, world.solids, walkPaved))
+                Teleport(new Vec2(player.x, player.y));
         }
 
         byte[] WalkMask()
@@ -1142,10 +1199,11 @@ namespace Porchlight.App
                 return;
             }
             padState = s;
+            // The one place the pad's buttons are given their jobs (A jump and RT sprint are read in Step).
             if (s.Pressed(Button.A)) Jump();
-            var actions = new[] { (Button.B, PadAction.Car), (Button.X, PadAction.Auto), (Button.Y, PadAction.CloseUp), (Button.LeftStick, PadAction.Night), (Button.View, PadAction.NewCharacter), (Button.Menu, PadAction.Menu) };
+            var actions = new[] { (Button.B, PadAction.Car), (Button.X, PadAction.Center), (Button.Y, PadAction.Night), (Button.View, PadAction.NewCharacter), (Button.Menu, PadAction.Menu) };
             foreach (var (b, action) in actions) if (s.Pressed(b)) OnPadAction?.Invoke(action);
-            if (s.Pressed(Button.RightStick)) LookAlongWalk();
+            if (s.Pressed(Button.RB)) FindNearest();
             if (s.Pressed(Button.Left)) Rotate(-1);
             if (s.Pressed(Button.Right)) Rotate(1);
             if (mode == CameraMode.Close && room == null) chaseSwing += s.look.x * PAD_SWING_RATE * dt;
@@ -1156,13 +1214,7 @@ namespace Porchlight.App
             }
             int tilt = lookFlickY.Update(s.look.y);
             if (tilt != 0) Tilt(-tilt);
-            if (Cycling)
-            {
-                if (s.Pressed(Button.RB)) OnCycle?.Invoke(1);
-                if (s.Pressed(Button.LB)) OnCycle?.Invoke(-1);
-            }
-            bool bumpers = !Cycling;
-            int zoomDir = ((bumpers && s.Held(Button.RB)) || s.Held(Button.Up) ? 1 : 0) - ((bumpers && s.Held(Button.LB)) || s.Held(Button.Down) ? 1 : 0);
+            int zoomDir = (s.Held(Button.Up) ? 1 : 0) - (s.Held(Button.Down) ? 1 : 0);
             if (zoomDir != 0)
             {
                 double k = Math.Exp(zoomDir * PAD_ZOOM_RATE * dt);
@@ -1254,14 +1306,14 @@ namespace Porchlight.App
                 double heading = p.heading - Clamp1(inputV.x) * TURN_RATE * dt;
                 var ahead = new Vec2(Math.Sin(heading), Math.Cos(heading));
                 double back = Clamp1(inputV.y);
-                p.Update(back != 0 ? new Vec2(-ahead.x * back, -ahead.y * back) : (Vec2?)null, dt, world.model, open, world.solids);
+                p.Update(back != 0 ? new Vec2(-ahead.x * back, -ahead.y * back) : (Vec2?)null, dt, world.model, open, world.solids, walkPaved);
                 p.heading = heading;
             }
             else
             {
                 var d = Orbit.ScreenToWorld(inputV, inputYaw);
                 double k = Math.Min(1, Numbers.Hypot(inputV.x, inputV.y));
-                p?.Update(d != null ? new Vec2(d.Value.x * k, d.Value.y * k) : (Vec2?)null, dt, world.model, open, world.solids);
+                p?.Update(d != null ? new Vec2(d.Value.x * k, d.Value.y * k) : (Vec2?)null, dt, world.model, open, world.solids, walkPaved);
             }
             UpdateDoors(dt);
             UpdateRoom();
@@ -1317,6 +1369,22 @@ namespace Porchlight.App
             }
             foreach (int id in shownRooms.Where(id => !wantedRooms.Contains(id)).ToList()) ShowRoom(id, false);
             foreach (int id in wantedRooms) ShowRoom(id, true);
+            ShowInteriors();
+        }
+
+        /// <summary>Only the rooms near you are drawn: every one in the town at once was a lot of draw calls for windows too far off to see into.</summary>
+        void ShowInteriors()
+        {
+            double vx = player != null ? player.x : focus.x, vy = player != null ? player.y : focus.z;
+            for (int i = 0; i < world.rooms.Count; i++)
+            {
+                var r = world.rooms[i];
+                double dx = Math.Max(0, Math.Max(r.x0 - vx, vx - r.x1));
+                double dy = Math.Max(0, Math.Max(r.y0 - vy, vy - r.y1));
+                bool on = wantedRooms.Contains(i) || dx * dx + dy * dy < INTERIOR_REACH * INTERIOR_REACH;
+                var it = world.InteriorOf(i);
+                if (it.Visible != on) it.Visible = on;
+            }
         }
 
         void UpdateRoom()
@@ -1531,8 +1599,8 @@ namespace Porchlight.App
                 else if (car.kind == VehicleKind.Boat)
                     overlay.SetPrompt(pad ? $"Sailing · {kmh} km/h · RT throttle, LT astern, stick steers · B to get out at a dock or the shore" : $"Sailing · {kmh} km/h · W/S throttle and astern, A/D steer · G to get out at a dock or the shore");
                 else overlay.SetPrompt(autoDrive != null
-                    ? pad ? $"Auto drive · {kmh} km/h · stick or triggers take the wheel · X stop · B to get out" : $"Auto drive · {kmh} km/h · arrows take the wheel · T stop · G to get out"
-                    : pad ? $"Driving · {kmh} km/h · RT boost, LT brake, stick steers · X auto drive · B to get out" : $"Driving · {kmh} km/h · W/S speed and brake, Shift boost, A/D steer · T auto drive · G to get out");
+                    ? pad ? $"Auto drive · {kmh} km/h · stick or triggers take the wheel · B to get out" : $"Auto drive · {kmh} km/h · arrows take the wheel · T stop · G to get out"
+                    : pad ? $"Driving · {kmh} km/h · RT boost, LT brake, stick steers · B to get out" : $"Driving · {kmh} km/h · W/S speed and brake, Shift boost, A/D steer · T auto drive · G to get out");
             }
             else if (riding != null)
             {

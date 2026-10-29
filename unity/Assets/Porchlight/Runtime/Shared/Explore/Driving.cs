@@ -9,6 +9,7 @@
 using System;
 using System.Collections.Generic;
 using Porchlight.Core;
+using Porchlight.Gen;
 using Porchlight.Model;
 
 namespace Porchlight.Explore
@@ -215,23 +216,47 @@ namespace Porchlight.Explore
             return true;
         }
 
-        /// <summary>Where a car (or a plane on the ground) may go: anywhere on the map but buildings, sheds, hangars and open water.</summary>
+        /// <summary>
+        /// Where a car (or a plane on the ground) may go: anywhere on the map but buildings,
+        /// sheds, hangars and open water, and always on whatever is drawn as road, short of a
+        /// house or shed. The tiles alone aren't enough: roads are drawn along their smoothed
+        /// lines with a parking lane and sidewalk each side, so they run over the edges of
+        /// water and airport tiles the raster leaves as they were, which stopped cars dead on
+        /// open road.
+        /// </summary>
         public static Func<double, double, bool> Drivable(TownModel model, IsoLayout layout)
         {
             int w = model.width, h = model.height;
             var tiles = model.tiles;
             var ok = new byte[w * h];
+            var hard = new byte[w * h];
             for (int i = 0; i < ok.Length; i++)
             {
                 byte use = layout.use[i];
                 bool wet = Terrain.IsWater(tiles.terrain[i]);
                 byte over = tiles.overlay[i];
                 ok[i] = use == Use.HOUSE || use == Use.SHED || use == Use.HANGAR || (wet && over == Overlay.NONE) ? (byte)0 : (byte)1;
+                // Houses and sheds stand on the whole of their tiles: no road reaches into them.
+                hard[i] = use == Use.HOUSE || use == Use.SHED ? (byte)1 : (byte)0;
             }
-            return Lookup(ok, w, h);
+            var tile = Lookup(ok, w, h);
+            var paved = Paved(model, layout);
+            // The hangars and tower themselves, as drawn: a road beside them may reach onto their tiles.
+            var halls = new List<(double x0, double y0, double x1, double y1)>();
+            if (model.airport != null)
+                foreach (var b in new List<Airfield.Box>(Airfield.Hangars(model.airport)) { Airfield.Tower(model.airport) })
+                    halls.Add(Airfield.Rect(model.airport, b));
+            return (x, y) =>
+            {
+                if (tile(x, y)) return true;
+                if (x <= 0.05 || y <= 0.05 || x >= w - 0.05 || y >= h - 0.05 || !paved(x, y)) return false;
+                if (hard[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), w)] == 1) return false;
+                foreach (var r in halls) if (x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1) return false;
+                return true;
+            };
         }
 
-        /// <summary>Where a boat may go: open water, not under a bridge or into a dock.</summary>
+        /// <summary>Where a boat may go: open water, not under a bridge or a road's edge, or into a dock.</summary>
         public static Func<double, double, bool> Sailable(TownModel model, IsoLayout layout)
         {
             int w = model.width, h = model.height;
@@ -239,7 +264,47 @@ namespace Porchlight.Explore
             var ok = new byte[w * h];
             for (int i = 0; i < ok.Length; i++)
                 ok[i] = Terrain.IsWater(tiles.terrain[i]) && tiles.overlay[i] == Overlay.NONE && layout.use[i] != Use.DOCK ? (byte)1 : (byte)0;
-            return Lookup(ok, w, h);
+            var tile = Lookup(ok, w, h);
+            var paved = Paved(model, layout);
+            return (x, y) => tile(x, y) && !paved(x, y);
+        }
+
+        /// <summary>Cells per tile, each way, in the map of what's drawn as road.</summary>
+        const int PAVED_CELLS = 4;
+
+        /// <summary>True on what's drawn as road (to the sidewalk's outer edge, which on a bridge is inside its parapets), a cul-de-sac's bulb or a path: a fine grid of cells, each paved if its middle is.</summary>
+        public static Func<double, double, bool> Paved(TownModel model, IsoLayout layout)
+        {
+            int cw = model.width * PAVED_CELLS, ch = model.height * PAVED_CELLS;
+            var cells = new byte[cw * ch];
+            void Mark(IReadOnlyList<Vec2> pts, double half)
+            {
+                for (int k = 0; k + 1 < pts.Count; k++)
+                {
+                    Vec2 a = pts[k], b = pts[k + 1];
+                    int x0 = Math.Max(0, (int)Math.Floor((Math.Min(a.x, b.x) - half) * PAVED_CELLS));
+                    int x1 = Math.Min(cw - 1, (int)Math.Floor((Math.Max(a.x, b.x) + half) * PAVED_CELLS));
+                    int y0 = Math.Max(0, (int)Math.Floor((Math.Min(a.y, b.y) - half) * PAVED_CELLS));
+                    int y1 = Math.Min(ch - 1, (int)Math.Floor((Math.Max(a.y, b.y) + half) * PAVED_CELLS));
+                    for (int cy = y0; cy <= y1; cy++)
+                        for (int cx = x0; cx <= x1; cx++)
+                        {
+                            int i = cy * cw + cx;
+                            if (cells[i] != 0) continue;
+                            var mid = new Vec2((cx + 0.5) / PAVED_CELLS, (cy + 0.5) / PAVED_CELLS);
+                            if (Geo.DistToSegment(mid, a, b) <= half) cells[i] = 1;
+                        }
+                }
+            }
+            foreach (var r in layout.roads)
+                Mark(r.points, r.kind == RoadKind.Path ? r.width / 2 : r.width / 2 + Layout.PARKING + Layout.SIDEWALK);
+            double bulb = Raster.BulbReach(model.@params);
+            foreach (var b in layout.bulbs) Mark(new[] { b.at, b.at }, bulb);
+            return (x, y) =>
+            {
+                int cx = (int)Math.Floor(x * PAVED_CELLS), cy = (int)Math.Floor(y * PAVED_CELLS);
+                return cx >= 0 && cy >= 0 && cx < cw && cy < ch && cells[cy * cw + cx] == 1;
+            };
         }
 
         static Func<double, double, bool> Lookup(byte[] ok, int w, int h) => (x, y) =>

@@ -122,7 +122,7 @@ namespace Porchlight.Explore
         }
 
         /// <summary>Walk in a world direction (or stand still), only onto open tiles and clear of solids, sliding along them.</summary>
-        public void Update(Vec2? dir, double dt, TownModel model, byte[] open, Solids solids = null)
+        public void Update(Vec2? dir, double dt, TownModel model, byte[] open, Solids solids = null, Func<double, double, bool> paved = null)
         {
             buffered = Math.Max(0, buffered - dt);
             if (lift > 0)
@@ -181,7 +181,7 @@ namespace Porchlight.Explore
                     if (mx == 0 && my == 0) continue;
                     double nx = ClampX(x + mx);
                     double ny = ClampY(y + my);
-                    if (CanStand(nx, ny, open, model) && (solids == null || !solids.Hits(nx, ny, PLAYER_RADIUS)))
+                    if (CanStand(nx, ny, open, model, paved) && (solids == null || !solids.Hits(nx, ny, PLAYER_RADIUS)))
                     {
                         dx = nx - x;
                         dy = ny - y;
@@ -198,18 +198,23 @@ namespace Porchlight.Explore
             Moved(dx, dy, dt);
         }
 
-        /// <summary>True if the player could stand at (x, y): on open tiles and clear of solids.</summary>
-        public static bool Standable(double x, double y, byte[] open, TownModel model, Solids solids = null) =>
-            CanStand(x, y, open, model) && (solids == null || !solids.Hits(x, y, PLAYER_RADIUS));
+        /// <summary>
+        /// True if the player could stand at (x, y): on open tiles (or, where `paved` says so,
+        /// on what's drawn as sidewalk over the edge of a closed one, such as water) and
+        /// clear of solids.
+        /// </summary>
+        public static bool Standable(double x, double y, byte[] open, TownModel model, Solids solids = null, Func<double, double, bool> paved = null) =>
+            CanStand(x, y, open, model, paved) && (solids == null || !solids.Hits(x, y, PLAYER_RADIUS));
 
-        static bool CanStand(double x, double y, byte[] open, TownModel model)
+        static bool CanStand(double x, double y, byte[] open, TownModel model, Func<double, double, bool> paved)
         {
             double r = PLAYER_RADIUS;
             foreach (var (ox, oy) in new[] { (0.0, 0.0), (r, 0.0), (-r, 0.0), (0.0, r), (0.0, -r) })
             {
                 int tx = (int)Math.Floor(x + ox);
                 int ty = (int)Math.Floor(y + oy);
-                if (tx < 0 || ty < 0 || tx >= model.width || ty >= model.height || open[Grid.Index(tx, ty, model.width)] == 0) return false;
+                if (tx < 0 || ty < 0 || tx >= model.width || ty >= model.height) return false;
+                if (open[Grid.Index(tx, ty, model.width)] == 0 && (paved == null || !paved(x + ox, y + oy))) return false;
             }
             return true;
         }

@@ -4,8 +4,9 @@
 // cross a road stops there and joins it, one that ends just short of a node or
 // road carries straight on to meet it, and one that hits water, steep ground,
 // the airport, the town edge or crowds a parallel road is dropped. Afterwards dead ends get
-// short connectors where one fits, and land the roads never reach gets a
-// footpath back to the network.
+// short connectors where one fits (but every so often one with room is kept as
+// a cul-de-sac, ending in a round bulb to turn in), land the roads never reach gets a
+// footpath back to the network, and a dead end with no room for its bulb is cut back.
 
 using System;
 using System.Collections.Generic;
@@ -26,6 +27,11 @@ namespace Porchlight.Gen
         const int PATH_COMPONENT_MIN = 150;
         const double DUPLICATE_DISTANCE = 1.5;
         const int MAX_DUPLICATE_PASSES = 200;
+        /// <summary>How often a dead end that could be joined up is kept as a cul-de-sac instead.</summary>
+        const double CUL_DE_SAC_CHANCE = 0.5;
+        /// <summary>A cul-de-sac runs at least this far from its junction to the middle of its bulb (tiles).</summary>
+        const double CUL_DE_SAC_LENGTH = 4;
+        const int MAX_PRUNE_PASSES = 50;
 
         struct Proposal
         {
@@ -291,12 +297,44 @@ namespace Porchlight.Gen
                     queue.Add(new Proposal { from = r.node, angle = prop.angle, depth = prop.depth, since = since, tries = 0 });
             }
 
-            ConnectDeadEnds(g, keep, p.streetSegment * 1.8, FirstHit, LandOk, AngleClash, Joinable);
+            // Room for a cul-de-sac's bulb at the end of `edge`: on gentle dry land,
+            // its asphalt and parking lane clear of every other road's.
+            double bulbRadius = Raster.BulbRadius(p);
+            double bulbTiles = Raster.BulbHalfWidth(p);
+            bool BulbFits(Vec2 at, int edge)
+            {
+                for (int y = (int)Math.Floor(at.y - bulbTiles); y <= (int)Math.Ceiling(at.y + bulbTiles); y++)
+                    for (int x = (int)Math.Floor(at.x - bulbTiles); x <= (int)Math.Ceiling(at.x + bulbTiles); x++)
+                        if (Numbers.Hypot(x + 0.5 - at.x, y + 0.5 - at.y) < bulbTiles && !TileOk(x, y)) return false;
+                foreach (var e in RoadGraphOps.LiveEdges(g))
+                {
+                    if (e.id == edge) continue;
+                    double room = bulbRadius + (e.kind == RoadKind.Path ? Raster.RoadDrawWidth(e.kind, p) / 2 : Raster.RoadDrawWidth(e.kind, p) / 2 + Raster.PARKING_WIDTH);
+                    if (!(Geo.DistToPolyline(at, e.points) >= room)) return false;
+                }
+                return true;
+            }
+            bool CulDeSac(int node, RoadEdge e) =>
+                Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id) && rng.Chance(CUL_DE_SAC_CHANCE);
+
+            ConnectDeadEnds(g, keep, p.streetSegment * 1.8, FirstHit, LandOk, AngleClash, Joinable, CulDeSac);
             AddFootpaths(model, g, water, cost, slope, terrainInfo, C);
 
             RoadGraphOps.Planarize(g);
             RoadGraphOps.MergePassThrough(g, keep);
             DropDuplicateStreets(g);
+            // A dead end without room for its bulb is cut back, a stretch at a time.
+            for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
+            {
+                var cut = new List<int>();
+                foreach (var b in Raster.Bulbs(RoadGraphOps.LiveEdges(g)))
+                {
+                    var e = g.edges[b.edge];
+                    if (!keep.Contains(b.atEnd ? e.to : e.from) && !BulbFits(b.at, b.edge)) cut.Add(b.edge);
+                }
+                if (cut.Count == 0) break;
+                foreach (int e in cut) g.dead.Add(e);
+            }
             var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
             var next = model.With();
             next.roads = roads;
@@ -391,7 +429,8 @@ namespace Porchlight.Gen
             Func<Vec2, Vec2, int[], int, Hit?> firstHit,
             Func<Vec2, Vec2, bool> landOk,
             Func<int, Vec2, bool> angleClash,
-            Func<int, int, bool> joinable)
+            Func<int, int, bool> joinable,
+            Func<int, RoadEdge, bool> culDeSac)
         {
             var inc = RoadGraphOps.Incidence(g);
             foreach (var kv in inc)
@@ -409,6 +448,7 @@ namespace Porchlight.Gen
                     along = new List<Vec2>(e.points);
                     along.Reverse();
                 }
+                if (culDeSac(node, e)) continue;
                 var dir = Geo.Scale(Heading(a, along), -1);
                 var hit = firstHit(a, Geo.Add(a, Geo.Scale(dir, reach)), new[] { node }, -1);
                 if (hit != null && hit.Value.t * reach >= MIN_SEGMENT && landOk(a, hit.Value.point))

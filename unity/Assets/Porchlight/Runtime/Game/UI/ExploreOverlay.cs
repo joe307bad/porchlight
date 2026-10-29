@@ -4,8 +4,8 @@
 // there), the street panel top right (the street you're on and, while
 // auto-walking, the turn-by-turn directions), a one-line prompt bottom centre,
 // and a notice about the connection top centre. Beside the minimap, two boxes:
-// your character and your car (click the car to have it brought round; with a
-// box picked, Tab or a bumper changes which character or car).
+// your character and your car. Clicking either opens a grid of every
+// character or car to pick from (a car picked is brought round).
 
 using System;
 using System.Collections.Generic;
@@ -34,6 +34,7 @@ namespace Porchlight.UI
         readonly Label prompt;
         readonly Label notice;
         readonly VisualElement garage, personBox, carBox;
+        VisualElement chooser;
         /// <summary>The character box or the car box was clicked.</summary>
         public Action OnPersonBox, OnCarBox;
         Texture2D baseTexture;
@@ -77,8 +78,8 @@ namespace Porchlight.UI
 
             garage = new VisualElement();
             garage.AddToClassList("garage");
-            personBox = Box("You", "Your character: click, then Tab or a bumper for someone else", () => OnPersonBox?.Invoke());
-            carBox = Box("Car", "Your car: click to have it brought to the nearest street, then Tab or a bumper for another", () => OnCarBox?.Invoke());
+            personBox = Box("You", "Your character: click to choose someone else", () => OnPersonBox?.Invoke());
+            carBox = Box("Car", "Your car: click to choose one, and have it brought to the nearest street", () => OnCarBox?.Invoke());
             garage.Add(personBox);
             garage.Add(carBox);
             host.Add(garage);
@@ -134,13 +135,65 @@ namespace Porchlight.UI
             return box;
         }
 
-        /// <summary>The boxes' pictures, and which is picked ("person", "car" or null).</summary>
-        public void SetGarage(Texture person, Texture car, string picked)
+        /// <summary>The boxes' pictures.</summary>
+        public void SetGarage(Texture person, Texture car)
         {
             personBox.style.backgroundImage = Background.FromRenderTexture(person as RenderTexture);
             carBox.style.backgroundImage = Background.FromRenderTexture(car as RenderTexture);
-            personBox.EnableInClassList("picked", picked == "person");
-            carBox.EnableInClassList("picked", picked == "car");
+        }
+
+        public bool Choosing => chooser != null;
+
+        /// <summary>
+        /// A grid of choices over the view, each a picture and a name, the current one
+        /// marked: clicking one closes the grid and calls pick with its index; clicking
+        /// outside, the close button or Escape (CloseChooser) closes it without.
+        /// </summary>
+        public void Choose(string title, IReadOnlyList<Texture> pictures, IReadOnlyList<string> names, int current, Action<int> pick)
+        {
+            CloseChooser();
+            chooser = new VisualElement();
+            chooser.AddToClassList("overlay");
+            chooser.AddToClassList("chooser");
+            chooser.RegisterCallback<PointerDownEvent>(e =>
+            {
+                if (e.target == chooser) CloseChooser();
+                e.StopPropagation();
+            });
+            var card = El.Box("card", "chooser-card");
+            var head = El.Box("chooser-head");
+            head.Add(El.Text(title, "chooser-title", "bold"));
+            head.Add(El.Btn("×", "Close (Esc)", CloseChooser, "chooser-close"));
+            card.Add(head);
+            var grid = new ScrollView();
+            grid.AddToClassList("chooser-scroll");
+            grid.contentContainer.AddToClassList("chooser-grid");
+            for (int i = 0; i < pictures.Count; i++)
+            {
+                int at = i;
+                var tile = El.Box("chooser-tile");
+                if (i == current) tile.AddToClassList("current");
+                tile.style.backgroundImage = Background.FromRenderTexture(pictures[i] as RenderTexture);
+                var label = El.Text(names[i], "garage-label");
+                label.pickingMode = PickingMode.Ignore;
+                tile.Add(label);
+                tile.RegisterCallback<PointerDownEvent>(e =>
+                {
+                    e.StopPropagation();
+                    CloseChooser();
+                    pick(at);
+                });
+                grid.Add(tile);
+            }
+            card.Add(grid);
+            chooser.Add(card);
+            root.Add(chooser);
+        }
+
+        public void CloseChooser()
+        {
+            chooser?.RemoveFromHierarchy();
+            chooser = null;
         }
 
         /// <summary>Centre the prompt and notice (left 50%, translate -50%).</summary>

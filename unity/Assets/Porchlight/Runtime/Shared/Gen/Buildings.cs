@@ -169,6 +169,8 @@ namespace Porchlight.Gen
                     double clearance = Raster.RoadReach(e.kind, p);
                     if (Geo.PolylineDistance(ring, e.points) < clearance - 1e-6) return new List<string> { $"building {b.id} stands on road {e.id}'s sidewalk" };
                 }
+                foreach (var bulb in Raster.Bulbs(model.roads.edges))
+                    if (Geo.DistToPolyline(bulb.at, ring) < Raster.BulbReach(p) - 1e-6) return new List<string> { $"building {b.id} stands on the sidewalk round road {bulb.edge}'s cul-de-sac" };
                 int d = (int)b.facing;
                 var (dx, dy) = Grid.DIRS4[d];
                 var own = new HashSet<int>();
@@ -226,6 +228,7 @@ namespace Porchlight.Gen
                 foreach (var q in e.points) if (q.x > x0 - near && q.x < x1 + near && q.y > y0 - near && q.y < y1 + near) { inside = true; break; }
                 if (inside || Geo.PolylineDistance(box, e.points) < near) roads.Add(e);
             }
+            var bulbs = Raster.Bulbs(model.roads.edges);
             foreach (int t in tiles)
             {
                 int x = t % w;
@@ -237,6 +240,7 @@ namespace Porchlight.Gen
                 };
                 double gap = double.PositiveInfinity;
                 foreach (var e in roads) gap = Math.Min(gap, Geo.PolylineDistance(square, e.points) - Raster.RoadReach(e.kind, p) - SMOOTHING_SLACK);
+                foreach (var bulb in bulbs) gap = Math.Min(gap, Geo.DistToPolyline(bulb.at, square) - Raster.BulbReach(p) - SMOOTHING_SLACK);
                 o[t] = gap;
             }
             return o;

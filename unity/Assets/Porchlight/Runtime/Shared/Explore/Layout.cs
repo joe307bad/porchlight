@@ -2,7 +2,8 @@
 // roads with sidewalks, every building on its footprint facing its street,
 // yards with fences, sheds, gardens and driveways, community gardens, parked
 // cars (along the parking lane between each road and its sidewalks, and in
-// driveways), the sidewalk network townsfolk walk, and (Ports) the docks and
+// driveways), the cul-de-sacs' round bulbs, the sidewalk network townsfolk walk
+// (round each bulb too), and (Ports) the docks and
 // the airport. Pure.
 
 using System;
@@ -118,6 +119,8 @@ namespace Porchlight.Explore
         public List<RoadStroke> roads;
         public List<LayoutBridge> bridges;
         public SidewalkNetwork sidewalks;
+        /// <summary>The cul-de-sacs' bulbs (Raster.Bulbs; each one's edge is its street's index in roads).</summary>
+        public List<Bulb> bulbs = new List<Bulb>();
         public List<Dock> docks = new List<Dock>();
         /// <summary>A loop round the open water of each lake big enough, for boats to sail (closed: its last point is its first).</summary>
         public List<List<Vec2>> boatLoops = new List<List<Vec2>>();
@@ -183,7 +186,8 @@ namespace Porchlight.Explore
             layout.cars.AddRange(ParkCars(model, roads, layout.use));
             layout.roads = roads;
             layout.bridges = bridges;
-            layout.sidewalks = SidewalkNetworkOf(roads);
+            layout.bulbs = Raster.Bulbs(model.roads.edges);
+            layout.sidewalks = SidewalkNetworkOf(roads, layout.bulbs, Raster.BulbRadius(model.@params));
             Ports.Add(model, layout);
             return layout;
         }
@@ -530,9 +534,18 @@ namespace Porchlight.Explore
             return o;
         }
 
-        static SidewalkNetwork SidewalkNetworkOf(List<RoadStroke> roads)
+        static SidewalkNetwork SidewalkNetworkOf(List<RoadStroke> roads, List<Bulb> bulbs, double bulbRadius)
         {
             var net = new SidewalkNetwork();
+            // Round a bulb, the sidewalk keeps the distance it keeps beside a street from its asphalt.
+            double roundBulb = bulbRadius + PARKING + SIDEWALK / 2;
+            Bulb? BulbAt(int road, bool atEnd)
+            {
+                foreach (var b in bulbs) if (b.edge == road && b.atEnd == atEnd) return b;
+                return null;
+            }
+            // Where each street's sidewalks meet the ring round its bulb, by (road, at its end, side).
+            var meets = new Dictionary<(int, bool, int), Vec2>();
             var lines = new List<(List<Vec2> points, int side, int road)>();
             double widest = 0;
             for (int road = 0; road < roads.Count; road++)
@@ -574,10 +587,58 @@ namespace Porchlight.Explore
                         }
                     }
                 }
+                // Into a cul-de-sac, only as far as the sidewalk round its bulb.
+                var startBulb = BulbAt(road, false);
+                var endBulb = BulbAt(road, true);
+                double bulbFrom = startBulb != null ? LeaveCircle(points, at, startBulb.Value.at, roundBulb, false) : 0;
+                double bulbTo = endBulb != null ? LeaveCircle(points, at, endBulb.Value.at, roundBulb, true) : length;
+                from = Math.Max(from, bulbFrom);
+                to = Math.Min(to, bulbTo);
+                if (to <= from) continue;
                 var trimmed = from > 0 || to < length ? Geo.SubPolyline(points, from, to) : points;
                 if (trimmed.Count < 2) continue;
                 var tat = ArcPositions(trimmed);
-                if (tat[tat.Count - 1] > 0.5) net.paths.Add(new SidewalkPath { points = trimmed, at = tat, side = side, road = road });
+                if (!(tat[tat.Count - 1] > 0.5)) continue;
+                net.paths.Add(new SidewalkPath { points = trimmed, at = tat, side = side, road = road });
+                if (startBulb != null && from == bulbFrom) meets[(road, false, side)] = trimmed[0];
+                if (endBulb != null && to == bulbTo) meets[(road, true, side)] = trimmed[trimmed.Count - 1];
+            }
+            // And the sidewalk round each bulb, from one side of its street the long way to the other.
+            foreach (var b in bulbs)
+            {
+                var r = roads[b.edge];
+                double length = Geo.PolylineLength(r.points);
+                var mouth = Geo.SubPolyline(r.points, b.atEnd ? Math.Max(0, length - roundBulb) : 0, b.atEnd ? length : Math.Min(length, roundBulb));
+                var towardStreet = b.atEnd ? mouth[0] : mouth[mouth.Count - 1];
+                double street = DetMath.Atan2(towardStreet.y - b.at.y, towardStreet.x - b.at.x);
+                // From where the street's sidewalks meet the ring (or would, were the street straight).
+                double beside = Math.Min(roundBulb, r.width / 2 + PARKING + SIDEWALK / 2);
+                double gap = DetMath.Atan2(beside, Math.Sqrt(roundBulb * roundBulb - beside * beside));
+                double AngleOf(int side, double guess)
+                {
+                    if (!meets.TryGetValue((b.edge, b.atEnd, side), out var q)) return guess;
+                    double a = DetMath.Atan2(q.y - b.at.y, q.x - b.at.x);
+                    while (a < street) a += Math.PI * 2;
+                    while (a >= street + Math.PI * 2) a -= Math.PI * 2;
+                    return a;
+                }
+                // The sidewalk on a street's left (side 1) meets the ring clockwise of the
+                // street in y-down space when it leaves the bulb, anticlockwise arriving.
+                int first = b.atEnd ? 1 : -1;
+                double a0 = AngleOf(first, street + gap);
+                double a1 = AngleOf(-first, street + Math.PI * 2 - gap);
+                if (!(a1 > a0)) (a0, a1) = (street + gap, street + Math.PI * 2 - gap);
+                var ring = new List<Vec2>();
+                int steps = Math.Max(8, (int)Math.Ceiling((a1 - a0) * roundBulb / 0.3));
+                for (int k = 0; k <= steps; k++)
+                {
+                    double a = a0 + (a1 - a0) * k / steps;
+                    ring.Add(new Vec2(b.at.x + DetMath.Cos(a) * roundBulb, b.at.y + DetMath.Sin(a) * roundBulb));
+                }
+                // Exactly onto the sidewalks' ends.
+                if (meets.TryGetValue((b.edge, b.atEnd, first), out var m0)) ring[0] = m0;
+                if (meets.TryGetValue((b.edge, b.atEnd, -first), out var m1)) ring[ring.Count - 1] = m1;
+                net.paths.Add(new SidewalkPath { points = ring, at = ArcPositions(ring), side = 1, road = b.edge });
             }
             var ends = new List<Vec2>();
             foreach (var p in net.paths)
@@ -648,6 +709,31 @@ namespace Porchlight.Explore
                 net.links.Add(near);
             }
             return net;
+        }
+
+        /// <summary>
+        /// How far along `points` (from its start, or back from its end) it last
+        /// leaves the circle of radius r round c: the arc position there.
+        /// </summary>
+        static double LeaveCircle(List<Vec2> points, List<double> at, Vec2 c, double r, bool fromEnd)
+        {
+            int n = points.Count;
+            for (int step = 0; step + 1 < n; step++)
+            {
+                int k = fromEnd ? n - 1 - step : step;
+                int k2 = fromEnd ? k - 1 : k + 1;
+                var a = points[k];
+                var b = points[k2];
+                if (Geo.Dist(b, c) < r) continue;
+                // Where a (inside, or on the way out) to b crosses the circle.
+                double dx = b.x - a.x, dy = b.y - a.y;
+                double fx = a.x - c.x, fy = a.y - c.y;
+                double qa = dx * dx + dy * dy, qb = 2 * (fx * dx + fy * dy), qc = fx * fx + fy * fy - r * r;
+                double t = qa < 1e-12 ? 0 : (-qb + Math.Sqrt(Math.Max(0, qb * qb - 4 * qa * qc))) / (2 * qa);
+                t = Math.Max(0, Math.Min(1, t));
+                return at[k] + (at[k2] - at[k]) * t;
+            }
+            return fromEnd ? 0 : at[n - 1];
         }
 
         static List<double> ArcPositions(List<Vec2> points)

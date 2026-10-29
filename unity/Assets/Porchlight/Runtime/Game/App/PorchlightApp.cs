@@ -72,9 +72,8 @@ namespace Porchlight.App
         bool started;
         /// <summary>The town behind the sign-in card: someone wandering its streets.</summary>
         ExploreView attract;
-        /// <summary>The pictures in the boxes by the minimap, which box is picked, and the car model to bring round.</summary>
+        /// <summary>The pictures in the boxes by the minimap, and the car model to bring round.</summary>
         Portraits portraits;
-        string picked;
         int carModel;
         double playersAt;
 
@@ -467,10 +466,9 @@ namespace Porchlight.App
             iso.OnAutoChange = SyncAutoWalkButton;
             iso.OnTake = car => net?.Take(car);
             iso.OnNightChange = () => controls.dayNight.text = iso.IsNight ? "Day" : "Night";
-            iso.OnCycle = Cycle;
             portraits = new Portraits(ModelLibrary.Instance);
-            overlay.OnPersonBox = () => Pick(picked == "person" ? null : "person");
-            overlay.OnCarBox = BringCar;
+            overlay.OnPersonBox = ChooseLook;
+            overlay.OnCarBox = ChooseCar;
             iso.OnPadAction = action =>
             {
                 if (action == PadAction.Menu)
@@ -481,10 +479,13 @@ namespace Porchlight.App
                 }
                 if (!exploring) return;
                 if (action == PadAction.Car) ToggleCar();
-                if (action == PadAction.Auto) ToggleAutoWalk();
-                if (action == PadAction.CloseUp) ToggleCloseUp();
                 if (action == PadAction.Night) ToggleNight();
                 if (action == PadAction.NewCharacter) NewLook();
+                if (action == PadAction.Center)
+                {
+                    iso.CenterBehind();
+                    SyncCloseUpButton();
+                }
             };
         }
 
@@ -631,35 +632,38 @@ namespace Porchlight.App
 
         // The boxes by the minimap: your character and your car.
 
-        void Pick(string box)
-        {
-            picked = box;
-            if (iso != null) iso.Cycling = box != null;
-            overlay?.SetGarage(portraits.person, portraits.car, picked);
-        }
-
-        /// <summary>The car box: your car (in place of any other) in the nearest parking lane.</summary>
-        void BringCar()
+        /// <summary>The character box: a grid of everyone to be, and you become the one picked.</summary>
+        void ChooseLook()
         {
             if (iso == null) return;
-            Pick("car");
-            if (!iso.SpawnCar(carModel)) overlay.Notify("No room for a car near here. Try by a street.");
-            else overlay.Notify(null);
+            var looks = Catalog.CHARACTERS;
+            overlay.Choose("Choose your character", portraits.LookStills(), looks.Select((_, i) => $"Person {i + 1}").ToList(),
+                Array.IndexOf(looks, iso.LookModel), i =>
+                {
+                    var look = iso.ChangeLook(looks[i]);
+                    if (look != null) net?.LookChanged(look);
+                });
         }
 
-        /// <summary>Tab or a bumper with a box picked: the next character, or the next car.</summary>
-        void Cycle(int step)
+        /// <summary>The car box: a grid of every car, and the one picked is yours, brought to the nearest parking lane (in place of any other).</summary>
+        void ChooseCar()
         {
-            if (iso == null || picked == null) return;
-            if (picked == "person")
+            if (iso == null) return;
+            var names = Catalog.CARS.Take(Catalog.CarCount).Select(CarName).ToList();
+            overlay.Choose("Choose your car", portraits.CarStills(), names, carModel, i =>
             {
-                var look = iso.CycleLook(step);
-                if (look != null) net?.LookChanged(look);
-                return;
-            }
-            int n = Catalog.CarCount;
-            carModel = ((carModel + step) % n + n) % n;
-            if (iso.HasCar) iso.ChangeCar(carModel);
+                carModel = i;
+                if (iso.HasCar) iso.ChangeCar(carModel);
+                else if (!iso.SpawnCar(carModel)) overlay.Notify("No room for a car near here. Try by a street.");
+                else overlay.Notify(null);
+            });
+        }
+
+        /// <summary>"cars/suv-luxury" as "Suv luxury".</summary>
+        static string CarName(string model)
+        {
+            string n = model.Substring(model.LastIndexOf('/') + 1).Replace('-', ' ');
+            return char.ToUpper(n[0]) + n.Substring(1);
         }
 
         void UpdateGarage()
@@ -673,7 +677,7 @@ namespace Porchlight.App
             if (!garageShown)
             {
                 garageShown = true;
-                overlay.SetGarage(portraits.person, portraits.car, picked);
+                overlay.SetGarage(portraits.person, portraits.car);
             }
         }
 
@@ -720,6 +724,11 @@ namespace Porchlight.App
         {
             if (iso == null) return;
             iso.SetCameraMode(iso.Mode == CameraMode.Close ? CameraMode.Iso : CameraMode.Close);
+            SyncCloseUpButton();
+        }
+
+        void SyncCloseUpButton()
+        {
             bool close = iso.Mode == CameraMode.Close;
             controls.closeUp.text = close ? "Overview" : "Close up";
             controls.closeUp.EnableInClassList("active", close);
@@ -743,10 +752,9 @@ namespace Porchlight.App
                 if (code == Key.T) ToggleAutoWalk();
                 if (code == Key.V && !repeat) ToggleCloseUp();
                 if (code == Key.C) NewLook();
-                if (code == Key.Tab && !repeat && picked != null) Cycle(input.ShiftHeld ? -1 : 1);
                 if (code == Key.Escape)
                 {
-                    if (picked != null) Pick(null);
+                    if (overlay.Choosing) overlay.CloseChooser();
                     else LeaveExplore();
                 }
                 return;

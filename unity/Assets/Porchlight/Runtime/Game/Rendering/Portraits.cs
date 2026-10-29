@@ -1,9 +1,11 @@
 // Pictures of your character and your car for the boxes beside the minimap:
 // each model stands well away from the town on its own layer, lit by its own
 // light and filmed by its own small camera into a render texture the UI shows.
-// The character idles as it does in the street.
+// The character idles as it does in the street. For the pickers, a still of
+// every character and every car, filmed the same way once and kept.
 
 using System;
+using System.Linq;
 using Porchlight.Explore;
 using UnityEngine;
 using UnityEngine.Rendering.Universal;
@@ -29,6 +31,15 @@ namespace Porchlight.Rendering
         GameObject carModel;
         string look;
         int carIndex = -1;
+        /// <summary>The stills, once asked for; and what's filming them (gone once they're taken).</summary>
+        RenderTexture[] lookStills, carStills;
+        GameObject stills;
+        readonly System.Collections.Generic.List<(Avatar avatar, Walker at)> stillAvatars = new System.Collections.Generic.List<(Avatar, Walker)>();
+        int stillFrames;
+        /// <summary>Frames to film the stills for: the characters settle into their idle first.</summary>
+        const int STILL_FRAMES = 4;
+        /// <summary>How far apart the stills' subjects stand (each camera sees only its own).</summary>
+        const float STILL_SPACING = 8;
 
         /// <summary>The layer the portraits are on (left out of the town's camera).</summary>
         public static int Layer
@@ -61,10 +72,10 @@ namespace Porchlight.Rendering
             return rt;
         }
 
-        Camera Film(RenderTexture target, Vector3 subject, float lookHeight, float distance)
+        Camera Film(RenderTexture target, Vector3 subject, float lookHeight, float distance, Transform parent = null)
         {
             var go = new GameObject("portrait camera");
-            go.transform.SetParent(root.transform, false);
+            go.transform.SetParent(parent ?? root.transform, false);
             var cam = go.AddComponent<Camera>();
             cam.targetTexture = target;
             cam.cullingMask = 1 << layer;
@@ -82,10 +93,10 @@ namespace Porchlight.Rendering
             return cam;
         }
 
-        void Light(Vector3 at)
+        void Light(Vector3 at, Transform parent = null)
         {
             var go = new GameObject("portrait light");
-            go.transform.SetParent(root.transform, false);
+            go.transform.SetParent(parent ?? root.transform, false);
             go.transform.localPosition = at + new Vector3(-1.2f, 2.2f, -1.6f);
             var l = go.AddComponent<Light>();
             l.type = LightType.Point;
@@ -122,16 +133,78 @@ namespace Porchlight.Rendering
             OnLayer(carModel);
         }
 
-        /// <summary>Keep the character idling; film only while the boxes are on screen.</summary>
+        /// <summary>A still of each of Catalog.CHARACTERS, in order (filmed over the next few frames).</summary>
+        public RenderTexture[] LookStills()
+        {
+            if (lookStills != null) return lookStills;
+            lookStills = new RenderTexture[Catalog.CHARACTERS.Length];
+            for (int i = 0; i < lookStills.Length; i++)
+            {
+                var at = new Vector3(i * STILL_SPACING, 0, 40);
+                var a = new Avatar(library.Character(Catalog.CHARACTERS[i]), Avatar.PERSON_HEIGHT, 0, StillsRoot());
+                a.SnapYaw(standing.heading);
+                OnLayer(a.root);
+                stillAvatars.Add((a, new Walker(null, at.x, -at.z) { heading = standing.heading }));
+                lookStills[i] = Texture("look " + i);
+                Film(lookStills[i], at + new Vector3(0, 0.2f, 0), 0.2f, 0.95f, stills.transform);
+                Light(at, stills.transform);
+            }
+            return lookStills;
+        }
+
+        /// <summary>A still of each of the first Catalog.CarCount of Catalog.CARS (the cars), in order.</summary>
+        public RenderTexture[] CarStills()
+        {
+            if (carStills != null) return carStills;
+            carStills = new RenderTexture[Catalog.CarCount];
+            for (int i = 0; i < carStills.Length; i++)
+            {
+                var at = new Vector3(i * STILL_SPACING, 0, 60);
+                var m = library.Get(Catalog.CARS[i]);
+                double s = Props.CarScale(m);
+                var go = Props.Place(m, StillsRoot(), at.x, -at.z, 0.6, s, s, s, castShadows: false);
+                OnLayer(go);
+                carStills[i] = Texture("car " + i);
+                Film(carStills[i], at + new Vector3(0, 0.15f, 0), 0.15f, 2.1f, stills.transform);
+                Light(at, stills.transform);
+            }
+            return carStills;
+        }
+
+        Transform StillsRoot()
+        {
+            if (stills == null)
+            {
+                stills = new GameObject("stills");
+                stills.transform.SetParent(root.transform, false);
+            }
+            // Whatever was just added gets its own few frames.
+            stillFrames = 0;
+            return stills.transform;
+        }
+
+        /// <summary>Keep the character idling; film only while the boxes are on screen (and the stills until they're taken).</summary>
         public void Update(double dt, bool showing)
         {
             personCamera.enabled = carCamera.enabled = showing;
             if (showing) avatar?.Update(standing, dt);
+            if (stills == null) return;
+            foreach (var (a, at) in stillAvatars) a.Update(at, dt);
+            if (++stillFrames < STILL_FRAMES) return;
+            foreach (var (a, _) in stillAvatars) a.Dispose();
+            stillAvatars.Clear();
+            UnityEngine.Object.Destroy(stills);
+            stills = null;
         }
 
         public void Dispose()
         {
             UnityEngine.Object.Destroy(root);
+            foreach (var rt in (lookStills ?? new RenderTexture[0]).Concat(carStills ?? new RenderTexture[0]))
+            {
+                rt.Release();
+                UnityEngine.Object.Destroy(rt);
+            }
             person.Release();
             car.Release();
             UnityEngine.Object.Destroy(person);

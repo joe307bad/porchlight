@@ -29,7 +29,7 @@ static class Program
     static int Towns(int count)
     {
         int failed = 0;
-        long buildings = 0, driveways = 0, beds = 0, parked = 0, airports = 0, planes = 0, docks = 0, boats = 0, loops = 0;
+        long buildings = 0, driveways = 0, beds = 0, parked = 0, airports = 0, planes = 0, docks = 0, boats = 0, loops = 0, culs = 0;
         var sw = Stopwatch.StartNew();
         for (int i = 0; i < count; i++)
         {
@@ -43,6 +43,7 @@ static class Program
                 // The street scene too: parking lanes, driveways and gardens.
                 var layout = Porchlight.Explore.Layout.Build(a);
                 buildings += a.buildings.Count;
+                culs += Raster.Bulbs(a.roads.edges).Count;
                 parked += layout.cars.Count;
                 if (a.airport != null) airports++;
                 docks += layout.docks.Count;
@@ -64,6 +65,12 @@ static class Program
                     if (u == Porchlight.Explore.Use.DRIVEWAY) driveways++;
                     if (u == Porchlight.Explore.Use.GARDEN) beds++;
                 }
+                string culs2 = CulDeSacs(a, layout);
+                if (culs2 != null)
+                {
+                    failed++;
+                    Console.WriteLine($"FAIL {seed}: {culs2}");
+                }
                 string shared = i % 4 == 0 ? Shared(a, layout) : null;
                 if (shared != null)
                 {
@@ -83,7 +90,7 @@ static class Program
                 Console.WriteLine($"FAIL {seed}: {e.Message}");
             }
         }
-        Console.WriteLine($"{count - failed}/{count} towns ok in {sw.Elapsed.TotalSeconds:0.0} s: {buildings} buildings, {driveways} driveway tiles, {beds} garden beds, {parked} parked cars; {airports} airports, {planes} planes, {docks} docks, {boats} moored boats, {loops} boat loops");
+        Console.WriteLine($"{count - failed}/{count} towns ok in {sw.Elapsed.TotalSeconds:0.0} s: {buildings} buildings, {driveways} driveway tiles, {beds} garden beds, {parked} parked cars, {culs} cul-de-sacs; {airports} airports, {planes} planes, {docks} docks, {boats} moored boats, {loops} boat loops");
         return failed == 0 ? 0 : 1;
     }
 
@@ -117,6 +124,39 @@ static class Program
         foreach (var loop in layout.boatLoops)
             foreach (var q in loop)
                 if (!Wet(q.x, q.y)) return $"a boat loop runs aground at ({q.x:0.0}, {q.y:0.0})";
+        return null;
+    }
+
+    /// <summary>
+    /// Every cul-de-sac's bulb is street underfoot, and its sidewalk round joins
+    /// the street's own sidewalks at both ends, so townsfolk walk round it.
+    /// </summary>
+    static string CulDeSacs(TownModel model, Porchlight.Explore.IsoLayout layout)
+    {
+        int w = model.width;
+        var net = layout.sidewalks;
+        foreach (var b in layout.bulbs)
+        {
+            int x = (int)Math.Floor(b.at.x), y = (int)Math.Floor(b.at.y);
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++)
+                    if (model.tiles.overlay[(y + dy) * w + x + dx] != Overlay.ROAD_STREET) return $"cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0}) isn't all street";
+            int ring = net.paths.FindIndex(q => q.road == b.edge && q.points.Count > 8 && Porchlight.Core.Geo.Dist(q.points[q.points.Count / 2], b.at) < Raster.BulbRadius(model.@params) + 1);
+            if (ring < 0) return $"no sidewalk round the cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0})";
+            foreach (int end in new[] { ring * 2, ring * 2 + 1 })
+            {
+                var q = net.paths[ring].points[end % 2 == 0 ? 0 : net.paths[ring].points.Count - 1];
+                if (net.links[end].Count == 0) return $"the sidewalk round the cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0}) leads nowhere";
+                for (int k = 0; k < net.paths.Count * 2; k++)
+                {
+                    var path = net.paths[k >> 1];
+                    if (k >> 1 == ring || path.road != b.edge) continue;
+                    var e = path.points[k % 2 == 0 ? 0 : path.points.Count - 1];
+                    if (Porchlight.Core.Geo.Dist(e, q) < 0.01 && !net.links[end].Contains(k))
+                        return $"the sidewalk round the cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0}) doesn't join its street's";
+                }
+            }
+        }
         return null;
     }
 

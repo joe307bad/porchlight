@@ -872,9 +872,6 @@ Label {
     border-color: #767676;
 }
 
-.garage-box.picked {
-    border-color: #c2412d;
-}
 
 .garage-label {
     font-size: 10px;
@@ -882,4 +879,62 @@ Label {
     background-color: rgba(20, 19, 17, 0.6);
     -unity-text-align: middle-center;
     padding: 1px 0;
+}
+
+/* Choosing a character or a car: a grid of them over the view. */
+.chooser {
+    background-color: rgba(10, 10, 9, 0.55);
+}
+
+.chooser-card {
+    width: 560px;
+    max-width: 100%;
+    max-height: 90%;
+    padding: 18px 18px 14px 18px;
+}
+
+.chooser-head {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.chooser-title {
+    font-size: 18px;
+}
+
+.chooser-close {
+    font-size: 16px;
+    padding: 2px 9px;
+}
+
+.chooser-scroll {
+    flex-shrink: 1;
+}
+
+.chooser-grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+.chooser-tile {
+    width: 96px;
+    height: 96px;
+    margin: 0 8px 8px 0;
+    border-width: 2px;
+    border-color: #444038;
+    border-radius: 6px;
+    background-color: #2b2a27;
+    -unity-background-scale-mode: scale-and-crop;
+    justify-content: flex-end;
+    overflow: hidden;
+}
+
+.chooser-tile:hover {
+    border-color: #767676;
+}
+
+.chooser-tile.current {
+    border-color: #c2412d;
 }

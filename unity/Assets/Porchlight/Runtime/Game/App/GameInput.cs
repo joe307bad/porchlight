@@ -63,6 +63,15 @@ namespace Porchlight.App
         const double REPEAT_DELAY = 0.5;
         const double REPEAT_RATE = 1 / 30.0;
 
+        /// <summary>
+        /// Firefox on macOS reports a Bluetooth Xbox One S pad (id "045e-02fd-…") as a
+        /// standard gamepad but with its own button numbers: for each of Button's,
+        /// the standard index it comes in at (-1: it doesn't). It gives Y and LB one
+        /// number (read as Y), RB and View another (read as RB, the way to the nearest
+        /// player), has no triggers, and puts Menu past the 16 buttons the Input System reads.
+        /// </summary>
+        static readonly int[] FirefoxXboxBluetooth = { 1, 2, 3, 5, -1, 8, -1, -1, -1, -1, 11, -1, 12, 13, 14, 15 };
+
         /// <summary>The keys the game listens for.</summary>
         static readonly Key[] Keys =
         {
@@ -172,13 +181,18 @@ namespace Porchlight.App
                 g.leftTrigger, g.rightTrigger, g.selectButton, g.startButton, g.leftStickButton, g.rightStickButton,
                 g.dpad.up, g.dpad.down, g.dpad.left, g.dpad.right,
             };
-            for (int i = 0; i < controls.Length; i++) s.now[i] = controls[i].isPressed;
+            bool firefoxXbox = (g.description.product ?? "").StartsWith("045e-02fd");
+            for (int i = 0; i < controls.Length; i++)
+            {
+                int from = firefoxXbox ? FirefoxXboxBluetooth[i] : i;
+                s.now[i] = from >= 0 && controls[from].isPressed;
+            }
             s.was = padWas;
             padWas = s.now;
             s.move = Stick(g.leftStick.ReadUnprocessedValue());
             s.look = Stick(g.rightStick.ReadUnprocessedValue());
-            s.lt = Level(g.leftTrigger.ReadUnprocessedValue());
-            s.rt = Level(g.rightTrigger.ReadUnprocessedValue());
+            s.lt = firefoxXbox ? 0 : Level(g.leftTrigger.ReadUnprocessedValue());
+            s.rt = firefoxXbox ? 0 : Level(g.rightTrigger.ReadUnprocessedValue());
             pad = s;
         }
 

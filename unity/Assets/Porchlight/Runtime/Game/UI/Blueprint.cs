@@ -701,6 +701,18 @@ namespace Porchlight.UI
                         }
                         p.Stroke();
                     }
+                    // The cul-de-sacs' bulbs: a disc of sidewalk, then of street.
+                    var bulbs = Porchlight.Gen.Raster.Bulbs(model.roads.edges);
+                    foreach (var (radius, color) in new[] { (Porchlight.Gen.Raster.BulbHalfWidth(model.@params) + 0.45, BlueprintStyle.Sidewalk), (Porchlight.Gen.Raster.BulbRadius(model.@params), BlueprintStyle.Road(RoadKind.Street)) })
+                    {
+                        p.fillColor = color;
+                        foreach (var bulb in bulbs)
+                        {
+                            p.BeginPath();
+                            p.Arc(S(bulb.at), L(radius), new Angle(0), new Angle(360));
+                            p.Fill();
+                        }
+                    }
                     break;
                 }
                 case "bridges":
