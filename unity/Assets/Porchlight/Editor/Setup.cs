@@ -294,6 +294,9 @@ namespace Porchlight.EditorTools
             if (Application.isBatchMode) return;
             EditorApplication.delayCall += () =>
             {
+                // Every street sign and name tag is a TextMeshPro: don't stamp its "T" icon
+                // over each one in the Scene and Game views when gizmos are on.
+                GizmoUtility.SetIconEnabled(typeof(TMPro.TextMeshPro), false);
                 // Only the library: the rest of the setup is committed, and Run() would
                 // replace the open scene.
                 if (!Library.UpToDate()) Library.Build();
