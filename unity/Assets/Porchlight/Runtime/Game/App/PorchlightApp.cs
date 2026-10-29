@@ -654,7 +654,7 @@ namespace Porchlight.App
             {
                 carModel = i;
                 if (iso.HasCar) iso.ChangeCar(carModel);
-                else if (!iso.SpawnCar(carModel)) overlay.Notify("No room for a car near here. Try by a street.");
+                else if (!iso.SpawnCar(carModel)) overlay.Flash("No room for a car near here. Try by a street.");
                 else overlay.Notify(null);
             });
         }

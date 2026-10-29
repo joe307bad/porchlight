@@ -57,6 +57,8 @@ namespace Porchlight.App
         void SetHud(string street, List<Step> steps);
         void SetPrompt(string text);
         void Notify(string text);
+        /// <summary>A notice that goes away by itself after a few seconds.</summary>
+        void Flash(string text);
         Action<Vec2> OnMinimapPick { set; }
     }
 
@@ -634,7 +636,7 @@ namespace Porchlight.App
                     best = o.key;
                 }
             }
-            if (best == null) Notify("No one else is in town");
+            if (best == null) overlay.Flash("No one else is in town");
             else Find(best);
         }
 
@@ -918,7 +920,7 @@ namespace Porchlight.App
             var car = cars[driving.Value].car;
             if (car.Airborne)
             {
-                Notify("Land first: ease back to come down on open ground");
+                overlay.Flash("Land first: ease back to come down on open ground");
                 return;
             }
             Vec2 spot;
@@ -928,7 +930,7 @@ namespace Porchlight.App
                 var dry = Vehicle.ExitSpot(car, (x, y) => Player.Standable(x, y, open, world.model, world.solids, walkPaved));
                 if (dry == null)
                 {
-                    Notify("Pull in beside a dock or the shore to get out");
+                    overlay.Flash("Pull in beside a dock or the shore to get out");
                     return;
                 }
                 spot = dry.Value;

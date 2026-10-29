@@ -335,8 +335,24 @@ namespace Porchlight.UI
 
         public void Notify(string text)
         {
+            flashing?.Pause();
+            flashing = null;
             notice.text = text ?? "";
             notice.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        IVisualElementScheduledItem flashing;
+        const long FLASH_MS = 3000;
+
+        /// <summary>A notice that clears itself after a few seconds (unless something else is said first).</summary>
+        public void Flash(string text)
+        {
+            Notify(text);
+            flashing = notice.schedule.Execute(() =>
+            {
+                flashing = null;
+                Notify(null);
+            }).StartingIn(FLASH_MS);
         }
 
         public void SetHud(string streetName, List<Step> steps)
