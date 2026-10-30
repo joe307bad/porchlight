@@ -4,10 +4,12 @@
 // after you've read it). What it says is shown a line at a time (a line "sender: Hello" is spoken by whoever plays
 // the sender, "you: …" by you); its ordinary choices are yours to pick; and a
 // choice whose text starts with @ is a wait, picked by itself once the town
-// says it's met (@talk sender: you've spoken to them, @park drop: your car is
-// stopped in their spot, @wait 3: three seconds on). The story changes the
-// town through its EXTERNAL functions, which the world (IMissionWorld) carries
-// out. Pure: the game supplies the world.
+// says it's met (@talk sender: you've spoken to them, @parked drop: your car
+// is stopped in their spot, @idle sender: their errands are done, @wait 3:
+// three seconds on). The story changes the town through its EXTERNAL
+// functions, generic building blocks the world (IMissionWorld) carries out:
+// what a mission is about lives in its story, not here. Pure: the game
+// supplies the world.
 
 using System;
 using System.Collections.Generic;
@@ -16,29 +18,51 @@ using Ink.Runtime;
 
 namespace Porchlight.Missions
 {
-    /// <summary>What a mission can do to the town, and ask of it.</summary>
+    /// <summary>
+    /// What a mission can do to the town, and ask of it: small building blocks
+    /// (a house for a role, someone at it, their errands one step at a time, a
+    /// spot to park in, the way there), which the story puts together into
+    /// whatever the mission is. Nothing here knows what any mission is about.
+    /// </summary>
     public interface IMissionWorld
     {
         /// <summary>The line telling you what to do next ("" or null: none).</summary>
         void Objective(string text);
+        /// <summary>A prompt to show while its condition holds (always, no_car, near or near_driving a role).</summary>
+        void Hint(string when, string role, string text);
+        /// <summary>Every hint goes.</summary>
+        void ClearHints();
+        /// <summary>Tune how the town plays the mission (talk_reach, park_reach, walk_speed and so on).</summary>
+        void Setting(string name, double value);
         /// <summary>
-        /// Choose a house for a role: one whose front door is min..max tiles from the
-        /// player ("" near) or from another role's house. Returns its street's name.
+        /// Choose a building for a role: of the kind asked ("" any), its front door
+        /// min..max tiles from the player ("" near) or from another role's, with room
+        /// to park outside if asked. Returns its street's name.
         /// </summary>
-        string House(string role, string near, double min, double max);
-        /// <summary>Someone waiting on the pavement outside the role's house. Returns their name.</summary>
-        string Npc(string role);
-        /// <summary>Directions to the role (their spot once it's marked, else them, else their door); "" stops.</summary>
-        void Guide(string role);
-        /// <summary>Mark the spot to park in outside the role's house.</summary>
-        void Parking(string role);
-        /// <summary>The role's person carries this many boxes from their house to your car.</summary>
-        void Load(string role, int boxes);
-        /// <summary>The role's person carries every box in your car into their house.</summary>
-        void Unload(string role);
-        /// <summary>The role's person goes indoors, and their spot is cleared.</summary>
-        void Dismiss(string role);
-        /// <summary>Is this wait met yet? talk, park, loaded or unloaded, for a role.</summary>
+        string Place(string role, string kind, string near, double min, double max, bool parking);
+        /// <summary>Someone on the pavement outside the role's building, called name, looking like look ("" any). Returns their name.</summary>
+        string Spawn(string role, string name, string look);
+        /// <summary>Queue: the role's person walks to inside, door, kerb or car.</summary>
+        void Walk(string role, string to);
+        /// <summary>Queue: the role's person waits this long where they are.</summary>
+        void Pause(string role, double seconds);
+        /// <summary>Queue: the role's person has a thing (a model, size tiles across) in their arms.</summary>
+        void Hold(string role, string model, double size);
+        /// <summary>Queue: what the role's person holds goes onto your car.</summary>
+        void PutInCar(string role);
+        /// <summary>Queue: the role's person takes the last thing put on your car into their arms.</summary>
+        void TakeFromCar(string role);
+        /// <summary>Queue: what the role's person holds is put down, and gone.</summary>
+        void PutDown(string role);
+        /// <summary>The role's person drops what they're doing, goes indoors and is gone.</summary>
+        void Leave(string role);
+        /// <summary>Mark the spot to park in outside the role's building.</summary>
+        void MarkSpot(string role);
+        /// <summary>The role's marked spot goes.</summary>
+        void ClearSpot(string role);
+        /// <summary>Directions to the role's spot, person or house, called label; "" role stops.</summary>
+        void Guide(string role, string to, string label);
+        /// <summary>Is this wait met yet? talk, parked or idle, for a role.</summary>
         bool Met(string wait, string role);
         /// <summary>Who plays the role, for their lines (null: no such role).</summary>
         string NameOf(string role);
@@ -53,7 +77,7 @@ namespace Porchlight.Missions
 
     public struct MissionWait
     {
-        /// <summary>talk, park, loaded, unloaded or wait.</summary>
+        /// <summary>talk, parked, idle or wait.</summary>
         public string kind;
         public string role;
         /// <summary>For @wait: how many seconds.</summary>
@@ -62,6 +86,9 @@ namespace Porchlight.Missions
 
     public sealed class MissionScript
     {
+        /// <summary>The waits the town knows (@talk role, @parked role, @idle role, @wait seconds).</summary>
+        static readonly string[] WAITS = { "talk", "parked", "idle", "wait" };
+
         readonly Story story;
         readonly IMissionWorld world;
         MissionLine line;
@@ -90,19 +117,30 @@ namespace Porchlight.Missions
         {
             this.world = world;
             story = new Story(json);
-            story.allowExternalFunctionFallbacks = true;
+            // A story's stand-in functions are for Inky: here, an EXTERNAL the town
+            // doesn't know stops the mission (on its first line) rather than
+            // quietly doing nothing.
+            story.allowExternalFunctionFallbacks = false;
             story.onError += (message, type) =>
             {
                 if (type == Ink.ErrorType.Error) Fail(message);
             };
             Bind("objective", a => { world.Objective(Str(a, 0)); return null; });
-            Bind("house", a => world.House(Str(a, 0), Str(a, 1), Num(a, 2), Num(a, 3)) ?? "");
-            Bind("npc", a => world.Npc(Str(a, 0)) ?? "");
-            Bind("guide", a => { world.Guide(Str(a, 0)); return null; });
-            Bind("parking", a => { world.Parking(Str(a, 0)); return null; });
-            Bind("load", a => { world.Load(Str(a, 0), (int)Math.Round(Num(a, 1))); return null; });
-            Bind("unload", a => { world.Unload(Str(a, 0)); return null; });
-            Bind("dismiss", a => { world.Dismiss(Str(a, 0)); return null; });
+            Bind("hint", a => { world.Hint(Str(a, 0), Str(a, 1), Str(a, 2)); return null; });
+            Bind("clear_hints", a => { world.ClearHints(); return null; });
+            Bind("setting", a => { world.Setting(Str(a, 0), Num(a, 1)); return null; });
+            Bind("place", a => world.Place(Str(a, 0), Str(a, 1), Str(a, 2), Num(a, 3), Num(a, 4), Num(a, 5) != 0) ?? "");
+            Bind("spawn", a => world.Spawn(Str(a, 0), Str(a, 1), Str(a, 2)) ?? "");
+            Bind("walk", a => { world.Walk(Str(a, 0), Str(a, 1)); return null; });
+            Bind("pause", a => { world.Pause(Str(a, 0), Num(a, 1)); return null; });
+            Bind("hold", a => { world.Hold(Str(a, 0), Str(a, 1), Num(a, 2)); return null; });
+            Bind("put_in_car", a => { world.PutInCar(Str(a, 0)); return null; });
+            Bind("take_from_car", a => { world.TakeFromCar(Str(a, 0)); return null; });
+            Bind("put_down", a => { world.PutDown(Str(a, 0)); return null; });
+            Bind("leave", a => { world.Leave(Str(a, 0)); return null; });
+            Bind("mark_spot", a => { world.MarkSpot(Str(a, 0)); return null; });
+            Bind("clear_spot", a => { world.ClearSpot(Str(a, 0)); return null; });
+            Bind("guide", a => { world.Guide(Str(a, 0), Str(a, 1), Str(a, 2)); return null; });
             Pump();
         }
 
@@ -177,7 +215,13 @@ namespace Porchlight.Missions
                 string text = c.text.Trim();
                 if (text.StartsWith("@"))
                 {
-                    waits.Add(ParseWait(text));
+                    var w = ParseWait(text);
+                    if (Array.IndexOf(WAITS, w.kind) < 0)
+                    {
+                        Fail($"no such wait '{text}' (@talk, @parked, @idle or @wait)");
+                        return;
+                    }
+                    waits.Add(w);
                     waitIndex.Add(c.index);
                 }
                 else
