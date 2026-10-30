@@ -27,6 +27,7 @@ browser ──https──> Caddy ──┬── /            the game: Unity We
 
 The auth service is also the game server: Colyseus on the same port, under `/mp`.
 
+- **Missions:** `/mp/missions` lists the ink stories in `server/missions` and serves each one compiled. Files are read fresh on every request, and the folder is mounted into the container, so a changed mission is live without rebuilding the image or the game.
 - **Rooms:** everyone exploring the same town (seed and params) shares a room, up to 100 players. Past that, a second copy of the town opens.
 - **Characters:** one account (one Google sign-in) has up to 8 characters. Several of them can be played at once from different tabs or devices, so two people can share an account. After sign-in, explore mode asks **Who's playing?** (`/mp/characters`). The choice is remembered for that tab only.
 - **Auth:** joining checks the same `pl_session` cookie. It goes along because `/mp` is same-origin. The room also checks the character belongs to that account. Nothing new is stored in the page.

@@ -58,6 +58,10 @@ services:
       # Created by deploy.sh; the server migrates it on start (and retries
       # until it's there, so sign-in never waits on it).
       DATABASE_URL: postgres://porchlight:${GAME_DB_PASSWORD}@postgres:5432/porchlight
+    # The missions (ink), read afresh on every request: the deploy's copy of
+    # server/missions, or a file edited on the box, is live at once.
+    volumes:
+      - ../../server/missions:/app/missions:ro
 
   keycloak:
     build:

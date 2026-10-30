@@ -1,7 +1,8 @@
 // The whole app: sign in (when the page is
 // served by the auth service), grow a town from the seed in the URL, show its
 // blueprint with the sidebar, and on Explore walk it in 3D with everyone else
-// in the same town. One of these sits in the only scene (Boot.unity).
+// in the same town, and play missions (ink stories the server hands out).
+// One of these sits in the only scene (Boot.unity).
 
 using System;
 using System.Collections.Generic;
@@ -88,6 +89,16 @@ namespace Porchlight.App
         string joining;
         double joiningUntil;
         const double JOIN_FIND_MS = 30000;
+
+        // Missions
+        MissionPlay mission;
+        MissionPanel missionPanel;
+        List<MissionInfo> missions;
+        /// <summary>Loading, or why there aren't any (null: the list is shown).</summary>
+        string missionsStatus;
+        bool missionsAsked;
+        /// <summary>The mission being fetched to start (only the latest Start counts).</summary>
+        string missionStarting;
 
         void Awake()
         {
@@ -394,6 +405,7 @@ namespace Porchlight.App
                 OnExplore = () => _ = Explore(),
                 OnBack = LeaveExplore,
                 OnResetParams = ResetParams,
+                OnMissionsRefresh = RefreshMissions,
             }, SetSidebarOpen);
             if (user != null)
             {
@@ -437,6 +449,7 @@ namespace Porchlight.App
                 iso.viewport = ScreenRect(isoHost);
                 if (exploring) ZoomWithWheel();
                 iso.Update();
+                UpdateMission();
                 UpdateGarage();
                 UpdatePlayers();
             }
@@ -510,6 +523,7 @@ namespace Porchlight.App
             if (exploring && iso != null)
             {
                 // A new town: drop the old walk and start afresh at the new town's spawn point.
+                EndMission(null);
                 iso.SetTown(model);
                 isoTown = model;
                 SpawnCharacter();
@@ -559,6 +573,7 @@ namespace Porchlight.App
             iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
             iso.OnTake = car => net?.Take(car);
             portraits = new Portraits(ModelLibrary.Instance);
+            missionPanel = new MissionPanel(isoHost);
             overlay.OnPersonBox = ChooseLook;
             overlay.OnCarBox = ChooseCar;
             iso.OnPadAction = action =>
@@ -619,6 +634,7 @@ namespace Porchlight.App
                 iso.SetBackground(false);
                 if (isoTown != model)
                 {
+                    EndMission(null);
                     iso.SetTown(model);
                     isoTown = model;
                     SpawnCharacter();
@@ -627,6 +643,7 @@ namespace Porchlight.App
                 // Same town as last time: carry on as the same character, where you left off.
                 // Online: who's playing (asked once), then into this town's room.
                 Connect(EnterTown);
+                if (!missionsAsked) RefreshMissions();
             }
             catch (Exception err)
             {
@@ -856,6 +873,8 @@ namespace Porchlight.App
             if (exploring)
             {
                 if (Typing()) return;
+                // A conversation takes the keys (Enter also starts one, beside someone waiting to talk).
+                if (code != Key.Escape && mission != null && mission.OnKey(code)) return;
                 if (code == Key.N) ToggleNight();
                 if (code == Key.R) ToggleWalkMode();
                 if (code == Key.T) ToggleAutoWalk();
@@ -872,6 +891,89 @@ namespace Porchlight.App
             }
             if (Typing()) return;
             if (code == Key.Backquote) SetDebugOpen(!panel.IsOpen);
+        }
+
+        // Missions: the list from the server, and the one being played.
+
+        /// <summary>Fetch the missions (again): a new or edited one on the server shows up with no new build of the game.</summary>
+        void RefreshMissions()
+        {
+            missionsAsked = true;
+            missionsStatus = "Loading…";
+            ShowMissions();
+            MissionCatalog.List(platform, origin, (list, err) =>
+            {
+                missions = list;
+                missionsStatus = err;
+                ShowMissions();
+            });
+        }
+
+        void ShowMissions() => sidebar.SetMissions(missions, missionsStatus, mission?.id, StartMission, () => EndMission("Mission abandoned"));
+
+        /// <summary>Fetch the mission's story as the server has it now, and start it (in place of any other).</summary>
+        void StartMission(string id)
+        {
+            if (iso == null || !exploring) return;
+            missionStarting = id;
+            overlay.Flash("Starting the mission…");
+            MissionCatalog.Get(platform, origin, id, (info, story, err) =>
+            {
+                if (missionStarting != id) return;
+                missionStarting = null;
+                if (!exploring || iso?.world == null) return;
+                if (story == null)
+                {
+                    overlay.Notify($"Couldn't start the mission: {err}");
+                    return;
+                }
+                EndMission(null);
+                try
+                {
+                    mission = new MissionPlay(id, info.title, story, iso, ModelLibrary.Instance, input);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogException(e);
+                    overlay.Notify($"Couldn't start the mission: {e.Message}");
+                    return;
+                }
+                overlay.Flash($"Mission: {info.title}");
+                ShowMissions();
+            });
+        }
+
+        /// <summary>Stop the mission being played (and say so, unless `notice` is null).</summary>
+        void EndMission(string notice)
+        {
+            if (mission == null) return;
+            mission.Dispose();
+            mission = null;
+            overlay?.SetObjective(null, null);
+            missionPanel?.Hide();
+            if (notice != null) overlay?.Flash(notice);
+            ShowMissions();
+        }
+
+        void UpdateMission()
+        {
+            if (mission == null || !exploring) return;
+            mission.Update(Time.deltaTime);
+            var script = mission.script;
+            if (script.Done)
+            {
+                if (script.Error != null)
+                {
+                    Debug.LogWarning($"porchlight: mission {mission.id} stopped: {script.Error}");
+                    string title = mission.title;
+                    EndMission(null);
+                    overlay.Notify($"{title} stopped: {script.Error}");
+                }
+                else EndMission($"Mission complete: {mission.title}");
+                return;
+            }
+            overlay.SetObjective(mission.title, mission.CurrentObjective);
+            missionPanel.Show(script.Line, script.Choices, mission.Highlighted, input.Connected, mission.Advance, mission.Choose);
         }
 
         /// <summary>

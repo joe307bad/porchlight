@@ -3,6 +3,7 @@
 //
 //   dotnet run --project "unity/Tools~/Checks" -- towns [count]     # grow towns with every invariant checked
 //   dotnet run --project "unity/Tools~/Checks" -- net '<json>'      # play the real game server (NetCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- mission <file>    # play a compiled mission (MissionCheck.cs)
 
 using System;
 using System.Collections.Generic;
@@ -16,8 +17,9 @@ static class Program
     static int Main(string[] args)
     {
         if (args.Length > 1 && args[0] == "net") return NetCheck.Run(args[1]);
+        if (args.Length > 1 && args[0] == "mission") return MissionCheck.Run(args[1]);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
-        Console.Error.WriteLine("usage: towns [count] | net '<json from Tools~/net/server.ts>'");
+        Console.Error.WriteLine("usage: towns [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
     }
 

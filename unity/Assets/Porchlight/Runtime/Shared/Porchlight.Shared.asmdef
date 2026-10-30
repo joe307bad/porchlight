@@ -1,7 +1,9 @@
 {
     "name": "Porchlight.Shared",
     "rootNamespace": "Porchlight",
-    "references": [],
+    "references": [
+        "Ink.Runtime"
+    ],
     "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,

@@ -8,9 +8,11 @@
 // players come and go through the network (NetHost); in a shared town one
 // client runs the traffic and townsfolk and the rest follow it (WorldSync), so
 // everyone sees the same. You have one car of your own at a time, and can ask
-// for the way to another player (Find). Walk up to a townsperson and they stop
-// to look at you; jump then asks them along, and they follow the way you go
-// (riding along in whatever you drive) until you face them and jump again.
+// for the way to another player (Find), or be shown the way somewhere by a
+// mission (Guide; MissionPlay runs the mission's people and parking spots).
+// Walk up to a townsperson and they stop to look at you; jump then asks them
+// along, and they follow the way you go (riding along in whatever you drive)
+// until you face them and jump again.
 
 using System;
 using System.Collections.Generic;
@@ -262,6 +264,16 @@ namespace Porchlight.App
         Palette findPalette;
         /// <summary>The finder's target left the town.</summary>
         public Action OnFindLost;
+        /// <summary>Where a mission is showing the way to (Guide), and what to call it.</summary>
+        Func<Vec2?> guideTo;
+        string guideName;
+        /// <summary>Besides you, who opens doors by walking up to them (a mission's people).</summary>
+        public readonly List<Vec2> DoorOpeners = new List<Vec2>();
+        bool inDialogue;
+        /// <summary>The pad's A, before it's a jump: true if it was used (to talk to someone).</summary>
+        public Func<bool> OnPadA;
+        /// <summary>A prompt that wins over the view's own (null: none).</summary>
+        public Func<string> PromptOverride;
         /// <summary>The sign-in screen's town: no controls, an auto walk and a slowly turning camera.</summary>
         public bool Attract;
         Func<double, double, bool> canDrive = (x, y) => false;
@@ -331,10 +343,12 @@ namespace Porchlight.App
             waypoint = null;
             overlay.SetWaypoint(null);
             overlay.CloseMap();
+            guideTo = null;
             findRoute = new List<Vec2>();
             findSteps = null;
             ClearFindPath();
             ClearRoute();
+            DoorOpeners.Clear();
             avatars.Clear();
             people.Clear();
             followers.Clear();
@@ -660,7 +674,22 @@ namespace Porchlight.App
                 waypoint = null;
                 overlay.SetWaypoint(null);
             }
-            if (key != null) return;
+            if (key != null || guideTo != null) return;
+            findRoute = new List<Vec2>();
+            findSteps = null;
+            ClearFindPath();
+        }
+
+        /// <summary>
+        /// Show the way to wherever `to` says (asked again every second, as it may move),
+        /// as to another player; null stops. Your waypoint, or finding a player, wins while there is one.
+        /// </summary>
+        public void Guide(Func<Vec2?> to, string name)
+        {
+            guideTo = to;
+            guideName = name;
+            findTimer = 0;
+            if (to != null || finding != null || waypoint != null) return;
             findRoute = new List<Vec2>();
             findSteps = null;
             ClearFindPath();
@@ -690,8 +719,8 @@ namespace Porchlight.App
 
         public void CloseMap() => overlay.CloseMap();
 
-        /// <summary>Where you're being shown the way to: your waypoint, or the player you're finding.</summary>
-        Vec2? FindTarget => waypoint ?? (finding != null ? PositionOf(finding) : null);
+        /// <summary>Where you're being shown the way to: your waypoint, the player you're finding, or where a mission's guiding you.</summary>
+        Vec2? FindTarget => waypoint ?? (finding != null ? PositionOf(finding) : guideTo?.Invoke());
 
         /// <summary>The way to the nearest other player, or (already showing one) stop.</summary>
         public void FindNearest()
@@ -736,7 +765,7 @@ namespace Porchlight.App
         void UpdateFind(double dt)
         {
             findTimer -= dt;
-            if ((finding == null && waypoint == null) || player == null || world == null) return;
+            if ((finding == null && waypoint == null && guideTo == null) || player == null || world == null) return;
             var from = new Vec2(player.x, player.y);
             if (waypoint != null && Geo.Dist(from, waypoint.Value) < WAYPOINT_REACHED)
             {
@@ -748,11 +777,11 @@ namespace Porchlight.App
             findTimer = 1;
             var target = FindTarget;
             if (target == null) return;
-            string name = waypoint != null ? "your waypoint" : others.FirstOrDefault(o => o.key == finding).name ?? "them";
+            string name = waypoint != null ? "your waypoint" : finding != null ? others.FirstOrDefault(o => o.key == finding).name ?? "them" : guideName;
             if (waypoint == null && Geo.Dist(from, target.Value) < 1.5)
             {
                 findRoute = new List<Vec2>();
-                findSteps = new List<Step> { new Step { kind = StepKind.Arrive, text = $"You're with {name}", distance = 0 } };
+                findSteps = new List<Step> { new Step { kind = StepKind.Arrive, text = finding != null ? $"You're with {name}" : $"You're at {name}", distance = 0 } };
                 ClearFindPath();
                 return;
             }
@@ -809,14 +838,22 @@ namespace Porchlight.App
             GetOut();
             if (driving != null) return false;
             var near = new Vec2(player.x, player.y);
-            var busy = new List<Vec2>();
-            for (int i = 0; i < world.parked.Count; i++) if (!takenParked.Contains(i)) busy.Add(new Vec2(world.parked[i].x, world.parked[i].y));
-            busy.AddRange(othersParkedAt.Values);
-            if (traffic != null) foreach (var c in traffic.Positions()) busy.Add(new Vec2(c.x, c.y));
+            var busy = CarsAbout();
             var spot = SpotBeside(busy) ?? Vehicle.CarSpotNear(near, world.layout.roads, Layout.PARKING / 2, canDrive, busy);
             if (spot == null) return false;
             AddCar(new Vehicle(model, spot.Value.x, spot.Value.y, spot.Value.heading));
             return true;
+        }
+
+        /// <summary>Where the town's cars are, besides yours: parked (by the town or other players) and in traffic.</summary>
+        public List<Vec2> CarsAbout()
+        {
+            var busy = new List<Vec2>();
+            if (world == null) return busy;
+            for (int i = 0; i < world.parked.Count; i++) if (!takenParked.Contains(i)) busy.Add(new Vec2(world.parked[i].x, world.parked[i].y));
+            busy.AddRange(othersParkedAt.Values);
+            if (traffic != null) foreach (var c in traffic.Positions()) busy.Add(new Vec2(c.x, c.y));
+            return busy;
         }
 
         /// <summary>
@@ -851,6 +888,28 @@ namespace Porchlight.App
         }
 
         public bool HasCar => cars.Count > 0;
+
+        /// <summary>Your car (null: none yet), and whether you're at its wheel.</summary>
+        public Vehicle OwnVehicle => cars.Count > 0 ? cars[0].car : null;
+        public bool DrivingMyCar => driving == 0;
+
+        /// <summary>Could a car be here (on a road, its parking lanes, a driveway…)?</summary>
+        public bool CanDriveAt(double x, double y) => canDrive(x, y);
+
+        public bool InRoom => room != null;
+
+        /// <summary>Talking to someone: the keys and the pad are the conversation's, and you stand still.</summary>
+        public bool InDialogue
+        {
+            get => inDialogue;
+            set
+            {
+                inDialogue = value;
+                if (!value) return;
+                held.Clear();
+                space = false;
+            }
+        }
 
         public int CarModel => cars.Count > 0 ? cars[0].car.model : -1;
 
@@ -1459,7 +1518,7 @@ namespace Porchlight.App
 
         void OnKeyDown(Key code, bool repeat)
         {
-            if (background || Attract) return;
+            if (background || Attract || inDialogue) return;
             if (code == Key.LeftShift || code == Key.RightShift) shift = true;
             if (code == Key.Q || code == Key.E)
             {
@@ -1532,6 +1591,13 @@ namespace Porchlight.App
                 if (s.Pressed(Button.Menu)) OnPadAction?.Invoke(PadAction.Menu);
                 return;
             }
+            if (inDialogue)
+            {
+                // The conversation reads the pad itself (MissionPlay).
+                padState = PadState.Idle;
+                if (s.Pressed(Button.Menu)) OnPadAction?.Invoke(PadAction.Menu);
+                return;
+            }
             if (overlay.MapOpen)
             {
                 // The big map: the left stick moves the reticle, A sets a waypoint there, Y clears it, X goes back to the town map, B or Start closes.
@@ -1558,7 +1624,7 @@ namespace Porchlight.App
             }
             padState = s;
             // The one place the pad's buttons are given their jobs (A jump, and A held or RT for turbo, are read in Tick).
-            if (s.Pressed(Button.A)) Jump();
+            if (s.Pressed(Button.A) && !(OnPadA?.Invoke() ?? false)) Jump();
             var actions = new[] { (Button.B, PadAction.Car), (Button.X, PadAction.Center), (Button.Y, PadAction.Night), (Button.View, PadAction.NewCharacter) };
             foreach (var (b, action) in actions) if (s.Pressed(b)) OnPadAction?.Invoke(action);
             if (s.Pressed(Button.Menu)) ToggleMap();
@@ -1720,6 +1786,7 @@ namespace Porchlight.App
                 var d = world.doors[i];
                 var at = d.at;
                 bool near = p != null && !InCar && Math.Abs(p.x - at.x) < DOOR_REACH && Math.Abs(p.y - at.y) < DOOR_REACH && Numbers.Hypot(p.x - at.x, p.y - at.y) < DOOR_REACH;
+                foreach (var o in DoorOpeners) near = near || Numbers.Hypot(o.x - at.x, o.y - at.y) < DOOR_REACH;
                 double target = near ? 1 : 0;
                 if (d.open == target) continue;
                 d.open = target > d.open ? Math.Min(1, d.open + dt * DOOR_SPEED) : Math.Max(0, d.open - dt * DOOR_SPEED);
@@ -2003,6 +2070,8 @@ namespace Porchlight.App
                 else if (noticing != null) overlay.SetPrompt($"Press {jump} to ask them along");
                 else overlay.SetPrompt(null);
             }
+            string over = PromptOverride?.Invoke();
+            if (over != null) overlay.SetPrompt(over);
         }
 
         string NameOf(Pick pick)

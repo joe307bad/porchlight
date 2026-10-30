@@ -1,8 +1,9 @@
 // What the 3D view shows over the town: the minimap in the bottom-left corner
 // (the town the same way up as the blueprint, the camera's view outlined, the
 // player, auto-walk's route and flag, other players in blue; click to jump
-// there), the street panel top right (the street you're on and, while
-// auto-walking, the turn-by-turn directions), a one-line prompt bottom centre,
+// there), the street panel top right (a mission's objective, the street you're
+// on and, while auto-walking or being shown the way, the turn-by-turn
+// directions), a one-line prompt bottom centre,
 // and a notice about the connection top centre. Beside the minimap, two boxes:
 // your character and your car. Clicking either opens a grid of every
 // character or car to pick from (a car picked is brought round). Start (or M)
@@ -32,6 +33,9 @@ namespace Porchlight.UI
         readonly VisualElement minimap;
         readonly VisualElement minimapOverlay;
         readonly VisualElement hud;
+        readonly VisualElement hudObjective;
+        readonly Label hudMission, hudObjectiveText;
+        readonly VisualElement hudNameRow;
         readonly Label hudName;
         readonly VisualElement hudSteps;
         readonly Label prompt;
@@ -255,7 +259,20 @@ namespace Porchlight.UI
             hud = new VisualElement();
             hud.AddToClassList("street-hud");
             hud.pickingMode = PickingMode.Ignore;
+            hudObjective = new VisualElement();
+            hudObjective.AddToClassList("hud-objective");
+            hudMission = new Label();
+            hudMission.AddToClassList("hud-objective-mission");
+            hudMission.AddToClassList("bold");
+            hudObjectiveText = new Label();
+            hudObjectiveText.AddToClassList("hud-objective-text");
+            hudObjectiveText.AddToClassList("semibold");
+            hudObjective.Add(hudMission);
+            hudObjective.Add(hudObjectiveText);
+            hudObjective.style.display = DisplayStyle.None;
+            hud.Add(hudObjective);
             var nameRow = new VisualElement();
+            hudNameRow = nameRow;
             nameRow.AddToClassList("street-hud-name");
             var sign = new VisualElement();
             sign.AddToClassList("street-hud-sign");
@@ -564,13 +581,36 @@ namespace Porchlight.UI
             }).StartingIn(FLASH_MS);
         }
 
+        string objectiveMission, objectiveText;
+        bool hudHasStreet;
+
+        /// <summary>A mission's name and what to do next, at the top of the street panel (null: none).</summary>
+        public void SetObjective(string mission, string text)
+        {
+            if (mission == objectiveMission && text == objectiveText) return;
+            objectiveMission = mission;
+            objectiveText = text;
+            bool on = mission != null;
+            hudObjective.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
+            hudMission.text = on ? mission.ToUpperInvariant() : "";
+            hudObjectiveText.text = text ?? "";
+            hudObjectiveText.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
+            ShowHud();
+        }
+
+        void ShowHud()
+        {
+            hud.style.display = hudHasStreet || objectiveMission != null ? DisplayStyle.Flex : DisplayStyle.None;
+            hudNameRow.style.display = hudHasStreet ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
         public void SetHud(string streetName, List<Step> steps)
         {
             string key = $"{streetName}|{(steps == null ? "" : string.Join("|", steps.Select(s => $"{s.text}:{Directions.FormatDistance(s.distance)}")))}";
             if (key == shownHud) return;
             shownHud = key;
-            bool show = streetName != null || steps != null;
-            hud.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+            hudHasStreet = streetName != null || steps != null;
+            ShowHud();
             hudName.text = streetName ?? (steps != null ? "Making your way to the street" : "");
             hudSteps.Clear();
             hudSteps.style.display = steps == null ? DisplayStyle.None : DisplayStyle.Flex;

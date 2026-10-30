@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- The engine-free half of the Unity project (core, model, generator,
-       explore logic, network client) on plain .NET: see Program.cs. -->
+       explore logic, network client, missions, and the ink runtime they run on) on plain .NET: see Program.cs. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -13,5 +13,6 @@
   <ItemGroup>
     <Compile Include="*.cs" />
     <Compile Include="../../Assets/Porchlight/Runtime/Shared/**/*.cs" />
+    <Compile Include="../../Assets/Ink/Runtime/**/*.cs" />
   </ItemGroup>
 </Project>

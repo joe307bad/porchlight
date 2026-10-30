@@ -1,10 +1,11 @@
 // The right-hand sidebar, the app's one menu in both modes. At the top, who
 // you're playing as, the seed, and Regenerate and Explore / Back to map. Below,
-// three sections, one open at a time: Controls (every controller button and
+// four sections, one open at a time: Controls (every controller button and
 // key), Players (who else is in the town: tick one to be shown the way to
-// them) and Map settings (a slider for every generator setting, the handful
-// most people want first). The open section's heading stays pinned at the top
-// as you scroll through it, so it can always be closed.
+// them), Missions (from the server; Refresh fetches them again) and Map
+// settings (a slider for every generator setting, the handful most people want
+// first). The open section's heading stays pinned at the top as you scroll
+// through it, so it can always be closed.
 
 using System;
 using System.Collections.Generic;
@@ -24,6 +25,7 @@ namespace Porchlight.UI
         public Action OnExplore;
         public Action OnBack;
         public Action OnResetParams;
+        public Action OnMissionsRefresh;
     }
 
     public static class El
@@ -146,6 +148,8 @@ namespace Porchlight.UI
         readonly VisualElement links;
         readonly List<(VisualElement body, Label arrow, VisualElement head, string title)> sections = new List<(VisualElement, Label, VisualElement, string)>();
         string playersShown;
+        readonly VisualElement missionsList;
+        string missionsShown;
         Action<string> onFind;
         bool exploring;
         string accountName, characterName;
@@ -214,6 +218,14 @@ namespace Porchlight.UI
             // Players: everyone else in the town.
             playersList = new VisualElement();
 
+            // Missions: from the server, fetched again with Refresh.
+            var missions = new VisualElement();
+            var refresh = El.Link("Refresh", () => h.OnMissionsRefresh?.Invoke());
+            refresh.tooltip = "Fetch the missions again from the server (new and changed ones need no update to the game)";
+            missions.Add(refresh);
+            missionsList = new VisualElement();
+            missions.Add(missionsList);
+
             // Map settings: every slider in one list, the ones most people want first.
             var settings = new VisualElement();
             var sliders = El.Box("sb-sliders");
@@ -239,6 +251,7 @@ namespace Porchlight.UI
             body.Add(top);
             body.Add(Section("Controls", controls));
             body.Add(Section("Players", playersList));
+            body.Add(Section("Missions", missions));
             body.Add(Section("Map settings", settings));
             root.Add(scroll);
             pinned = El.Box("sb-section-head", "sb-pinned");
@@ -438,6 +451,52 @@ namespace Porchlight.UI
                 playersList.Add(row);
             }
             if (players.Count > 0 || finding != null) Debug.Log($"Porchlight: {players.Count} other player(s) here{(finding != null ? ", finding " + finding : "")}");
+        }
+
+        /// <summary>
+        /// The missions, each with its summary and Start (or, the one being played,
+        /// Abandon); a broken one shows its errors. A status line instead while
+        /// they're loading or if the server can't be reached.
+        /// </summary>
+        public void SetMissions(List<Porchlight.App.MissionInfo> missions, string status, string playing, Action<string> start, Action abandon)
+        {
+            string shown = $"{status}#{playing}#" + (missions == null ? "" : string.Join("|", missions.Select(m => $"{m.id}:{m.title}:{m.summary}:{m.error}")));
+            if (shown == missionsShown) return;
+            missionsShown = shown;
+            missionsList.Clear();
+            if (status != null || missions == null || missions.Count == 0)
+            {
+                var note = El.Text(status ?? "No missions on the server yet.", "help-text");
+                note.style.whiteSpace = WhiteSpace.Normal;
+                missionsList.Add(note);
+            }
+            if (missions == null) return;
+            foreach (var m in missions)
+            {
+                var row = El.Box("mission-row");
+                bool on = m.id == playing;
+                var title = El.Text(on ? $"{m.title} · playing" : m.title, "mission-title", "semibold");
+                row.Add(title);
+                if (!string.IsNullOrEmpty(m.summary))
+                {
+                    var summary = El.Text(m.summary, "help-text", "mission-summary");
+                    summary.style.whiteSpace = WhiteSpace.Normal;
+                    row.Add(summary);
+                }
+                if (m.error != null)
+                {
+                    var error = El.Text($"Can't be played: {m.error}", "mission-error");
+                    error.style.whiteSpace = WhiteSpace.Normal;
+                    row.Add(error);
+                }
+                else if (on) row.Add(El.Btn("Abandon", "Stop this mission", () => abandon?.Invoke(), "mission-button"));
+                else
+                {
+                    string id = m.id;
+                    row.Add(El.Btn(playing != null ? "Start instead" : "Start", playing != null ? "Abandon the mission you're on and start this one" : "Start this mission", () => start?.Invoke(id), "btn-primary", "mission-button"));
+                }
+                missionsList.Add(row);
+            }
         }
 
         static double Snap(double v, ParamSpec spec) => Math.Min(spec.max, Math.Max(spec.min, Numbers.Round((v - spec.min) / spec.step) * spec.step + spec.min));

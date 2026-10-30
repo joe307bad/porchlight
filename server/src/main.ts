@@ -19,5 +19,6 @@ await startGameServer({
   sessionSecret: config.sessionSecret,
   persistence,
   handler: createHandler(config),
+  missionsDir: process.env.MISSIONS_DIR || undefined,
 });
 console.log(`porchlight auth + game on :${config.port} for ${config.appUrl} (issuer ${config.issuer})`);

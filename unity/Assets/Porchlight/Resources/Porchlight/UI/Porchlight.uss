@@ -1142,3 +1142,124 @@ Label {
     color: #f4f1ea;
     font-size: 13px;
 }
+
+/* Missions: the sidebar's list, the objective atop the street panel, and the conversation. */
+.mission-row {
+    margin-bottom: 12px;
+}
+
+.mission-title {
+    font-size: 13px;
+    color: #efe6cf;
+}
+
+.mission-summary {
+    margin: 2px 0 6px 0;
+}
+
+.mission-error {
+    margin: 2px 0 0 0;
+    font-size: 12px;
+    color: #e0806e;
+}
+
+.mission-button {
+    align-self: flex-start;
+    padding: 6px 14px;
+    font-size: 13px;
+}
+
+.hud-objective {
+    padding-bottom: 6px;
+}
+
+.hud-objective-mission {
+    font-size: 10px;
+    letter-spacing: 0.9px;
+    color: #ff8a3d;
+}
+
+.hud-objective-text {
+    margin-top: 2px;
+    font-size: 14px;
+    color: #f4f1ea;
+    white-space: normal;
+}
+
+.dialogue {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 92px;
+    align-items: center;
+    padding: 0 16px;
+}
+
+.dialogue-card {
+    width: 520px;
+    max-width: 100%;
+    padding: 12px 16px 10px 16px;
+    border-width: 1px;
+    border-color: #444038;
+    border-radius: 10px;
+    background-color: rgba(28, 27, 24, 0.95);
+}
+
+.dialogue-speaker {
+    margin-bottom: 4px;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    color: #ff8a3d;
+}
+
+.dialogue-speaker.you {
+    color: #7fb7e6;
+}
+
+.dialogue-text {
+    font-size: 15px;
+    color: #f4f1ea;
+    white-space: normal;
+}
+
+.dialogue-choices {
+    margin-top: 2px;
+}
+
+.dialogue-choice {
+    flex-direction: row;
+    align-items: center;
+    margin: 0 0 4px 0;
+    padding: 7px 10px;
+    border-width: 1px;
+    border-color: #444038;
+    border-radius: 6px;
+    background-color: #1d1c1a;
+    -unity-text-align: middle-left;
+}
+
+.dialogue-choice:hover, .dialogue-choice.highlighted {
+    border-color: #ff8a3d;
+    background-color: rgba(255, 106, 0, 0.18);
+}
+
+.dialogue-choice-key {
+    width: 18px;
+    margin-right: 8px;
+    font-size: 12px;
+    color: #a99f88;
+}
+
+.dialogue-choice-text {
+    flex-shrink: 1;
+    font-size: 14px;
+    color: #f4f1ea;
+    white-space: normal;
+}
+
+.dialogue-hint {
+    margin-top: 6px;
+    font-size: 11px;
+    color: #a99f88;
+    -unity-text-align: middle-right;
+}

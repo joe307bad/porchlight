@@ -3,6 +3,7 @@
 // session cookie comes along:
 //
 //   /mp/characters...          the account's characters (accounts.ts)
+//   /mp/missions...            the missions, compiled from server/missions (../missions.ts)
 //   /mp/matchmake/...          Colyseus matchmaking (POST, then a WebSocket)
 //   /mp/<process>/<room>       the room's WebSocket
 //
@@ -12,6 +13,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import type { AddressInfo } from 'node:net';
 import { Server, matchMaker } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
+import { createMissionRoutes, DEFAULT_MISSIONS_DIR, MissionStore } from '../missions.ts';
 import { createCharacterRoutes, type GameDeps } from './accounts.ts';
 import { CityRoom, configureCityRoom, isOnline, townOf } from './CityRoom.ts';
 import type { Persistence } from './persistence.ts';
@@ -26,6 +28,8 @@ export interface GameServerOptions {
   handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   /** Let Colyseus handle SIGTERM / SIGINT (save every room, then exit). Off in tests. */
   handleSignals?: boolean;
+  /** Where the missions' .ink files are (default server/missions). */
+  missionsDir?: string;
 }
 
 export interface GameServer {
@@ -38,6 +42,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   const deps: GameDeps = { persistence: opts.persistence, sessionSecret: opts.sessionSecret, appUrl: opts.appUrl, isOnline, townOf };
   configureCityRoom(deps);
   const characters = createCharacterRoutes(deps);
+  const missions = createMissionRoutes(new MissionStore(opts.missionsDir ?? DEFAULT_MISSIONS_DIR));
 
   const httpServer = createServer();
   const server = new Server({
@@ -50,7 +55,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       app.disable('x-powered-by');
       app.use((req: IncomingMessage, res: ServerResponse) => {
         void (async () => {
-          if (!(await characters(req, res))) await opts.handler(req, res);
+          if (!(await missions(req, res)) && !(await characters(req, res))) await opts.handler(req, res);
         })();
       });
     },

@@ -2,14 +2,15 @@
 
 The game: grow a town from a seed, see its blueprint, then walk and drive its streets with everyone else exploring the same town. It's a Unity 6000.6.5f1 project in C#, using URP, the Input System, UI Toolkit, TextMeshPro and glTFast. It builds for the web (WebGL) and is set up for consoles and desktop.
 
-The server is `server/`, Node and Colyseus. It handles sign-in, the characters, and the shared town rooms.
+The server is `server/`, Node and Colyseus. It handles sign-in, the characters, the shared town rooms, and the missions: [ink](https://github.com/inkle/ink) stories in `server/missions` that the server compiles and the game plays, so new ones need no new build (see `server/missions/README.md`).
 
 ## Layout
 
 | Folder | What's in it |
 | --- | --- |
-| `Assets/Porchlight/Runtime/Shared` | Engine-free C#: the town generator, the explore simulation (walking, driving, traffic, directions), and the network client (msgpack, the Colyseus schema decoder, rooms). It builds on plain .NET too, so `Tools~/Checks` can test it without Unity. |
-| `Assets/Porchlight/Runtime/Game` | The Unity side. `Rendering`: the 3D town as GameObjects, people, cars, the sky and lights. `UI`: the blueprint, sidebar, overlay, sign-in and character picker (UI Toolkit). `App`: the explore view, input, and the app itself (`PorchlightApp`). `Net`: multiplayer, accounts, and the platform layer. |
+| `Assets/Porchlight/Runtime/Shared` | Engine-free C#: the town generator, the explore simulation (walking, driving, traffic, directions), the network client (msgpack, the Colyseus schema decoder, rooms), and missions as they play (`Missions/`, running ink). It builds on plain .NET too, so `Tools~/Checks` can test it without Unity. |
+| `Assets/Porchlight/Runtime/Game` | The Unity side. `Rendering`: the 3D town as GameObjects, people, cars, the sky and lights. `UI`: the blueprint, sidebar, overlay, sign-in, character picker and a mission's conversation (UI Toolkit). `App`: the explore view, input, a mission's people and parking spots (`MissionPlay`), and the app itself (`PorchlightApp`). `Net`: multiplayer, accounts, the mission list, and the platform layer. |
+| `Assets/Ink` | ink's runtime engine, as it is upstream (MIT), which plays the missions. |
 | `Assets/Porchlight/Models` | The Kenney and RG Poly models (glTF), imported by glTFast. |
 | `Assets/Porchlight/Editor` | `Setup.cs`, which sets up the project and makes the builds (the **Porchlight** menu, or batch mode). `Library.cs` turns the models into the game's prefabs. |
 | `Assets/Porchlight/Resources/Porchlight` | Fonts, the UI's stylesheet (`UI/Porchlight.uss`) and panel settings, and the generated model library. |
@@ -50,6 +51,9 @@ dotnet run --project "unity/Tools~/Checks" -- towns 60     # towns grow with eve
 
 node unity/Tools~/net/server.ts                              # a game server; prints a line of JSON
 dotnet run --project "unity/Tools~/Checks" -- net '<that line>'   # two C# clients play it
+
+(cd server && node scripts/mission.ts delivery) > /tmp/delivery.json
+dotnet run --project "unity/Tools~/Checks" -- mission /tmp/delivery.json   # a mission plays to its end
 ```
 
 To smoke-test the whole app without a window, build macOS (**Porchlight ▸ Build macOS**) and run it like this:

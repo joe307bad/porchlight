@@ -22,6 +22,7 @@
     "@colyseus/ws-transport": "^0.17.13",
     "drizzle-orm": "^0.45.4",
     "express": "^5.3.0",
+    "inkjs": "2.3.2",
     "jose": "^6.1.0",
     "pg": "^8.23.1"
   },
