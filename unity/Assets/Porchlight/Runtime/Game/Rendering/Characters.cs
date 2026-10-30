@@ -152,9 +152,6 @@ namespace Porchlight.Rendering
 
         ArmWave wave;
 
-        /// <summary>Hold the pose where it is (a town left standing while the next fades in).</summary>
-        public void Freeze() => animator.speed = 0;
-
         /// <summary>Wave (a raised right hand, side to side) while `on`; the arm eases up and back down.</summary>
         public void SetWaving(bool on)
         {

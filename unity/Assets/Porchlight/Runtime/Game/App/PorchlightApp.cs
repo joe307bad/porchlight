@@ -72,15 +72,8 @@ namespace Porchlight.App
         /// <summary>The map keeps your character in view until you pan or zoom it yourself.</summary>
         bool followOnMap = true;
         bool started;
-        /// <summary>The town behind the sign-in card: someone wandering its streets.</summary>
+        /// <summary>The town behind the sign-in card: a random one each time the page loads, by day or night.</summary>
         ExploreView attract;
-        /// <summary>Behind the sign-in card, a new town every ATTRACT_EVERY seconds, faded in over the last (a capture of it), day and night in turn.</summary>
-        const float ATTRACT_EVERY = 15, ATTRACT_FADE = 3;
-        bool attractNight, attractSwapping;
-        float attractNext;
-        VisualElement attractFade;
-        RenderTexture attractShot;
-        /// <summary>The card's title: the button's blue by day, white by night, easing over as the towns change.</summary>
         /// <summary>The pictures in the boxes by the minimap, and the car model to bring round.</summary>
         Portraits portraits;
         int carModel;
@@ -139,9 +132,6 @@ namespace Porchlight.App
             camera3d.allowMSAA = true;
             camera3d.enabled = false;
             camera3d.cullingMask = ~(1 << Portraits.Layer);
-            // A town fading out on the sign-in screen is drawn on its own, not with the new one.
-            int fading = LayerMask.NameToLayer(ExploreView.FADING_LAYER);
-            if (fading >= 0) camera3d.cullingMask &= ~(1 << fading);
         }
 
         void BuildUi()
@@ -207,7 +197,7 @@ namespace Porchlight.App
             });
         }
 
-        /// <summary>Behind the sign-in card: a fresh little town, by day or night; then another, and another.</summary>
+        /// <summary>Behind the sign-in card: a fresh little town, by day or night.</summary>
         void StartAttract()
         {
             try
@@ -215,16 +205,13 @@ namespace Porchlight.App
                 var host = new VisualElement();
                 host.style.display = DisplayStyle.None;
                 root.Add(host);
-                // The last town, held over the next as it fades away (under the card, which comes after).
-                attractFade = new VisualElement { pickingMode = PickingMode.Ignore };
-                attractFade.style.position = Position.Absolute;
-                attractFade.style.left = attractFade.style.top = attractFade.style.right = attractFade.style.bottom = 0;
-                attractFade.style.display = DisplayStyle.None;
-                root.Add(attractFade);
                 attract = new ExploreView(camera3d, ModelLibrary.Instance, new ExploreOverlay(host) { Dpr = dpr }, input) { Attract = true };
-                // Day or night to start with, then each in turn.
-                attractNight = new Rng(RandomSeed()).Chance(0.5);
-                NextAttractTown();
+                // A little town, seen close: light enough for phones and weak machines, its
+                // edge about 35 tiles out from the middle, past the ~24 the view's corners reach as it turns.
+                var p = GenParams.Defaults;
+                p.width = p.height = 96;
+                attract.SetTown(Generator.Generate(RandomSeed(), GenParams.Normalize(p)));
+                attract.SetNightNow(new Rng(RandomSeed()).Chance(0.5));
             }
             catch (Exception err)
             {
@@ -232,67 +219,6 @@ namespace Porchlight.App
                 Debug.LogException(err);
                 attract = null;
             }
-        }
-
-        /// <summary>The next town (no one of yours in it: just the town going about its day). `fade`: keep the last one standing to fade out.</summary>
-        void NextAttractTown(bool fade = false)
-        {
-            var p = GenParams.Defaults;
-            // A little town, seen close: light enough for phones and weak machines, its
-            // edge about 35 tiles out from the middle, past the ~24 the view's corners reach as it turns.
-            p.width = p.height = 96;
-            var town = Generator.Generate(RandomSeed(), GenParams.Normalize(p));
-            if (fade) attract.SetTownFading(town);
-            else attract.SetTown(town);
-            attract.SetNightNow(attractNight);
-            attractNight = !attractNight;
-            attractNext = Time.realtimeSinceStartup + ATTRACT_EVERY;
-        }
-
-        /// <summary>
-        /// Build the next town and fade it in over the last, which is still drawn live
-        /// (into a picture under the card, from the camera as it keeps turning) until
-        /// it's gone. Without the Fading layer, the towns just change.
-        /// </summary>
-        System.Collections.IEnumerator SwapAttractTown()
-        {
-            attractSwapping = true;
-            bool live = ExploreView.CanFade;
-            if (live && (attractShot == null || attractShot.width != Screen.width || attractShot.height != Screen.height))
-            {
-                if (attractShot != null) attractShot.Release();
-                attractShot = new RenderTexture(Screen.width, Screen.height, 24, RenderTextureFormat.ARGB32) { name = "last town" };
-            }
-            try
-            {
-                NextAttractTown(live);
-            }
-            catch (Exception err)
-            {
-                Debug.LogException(err);
-                attractNext = Time.realtimeSinceStartup + ATTRACT_EVERY;
-                live = false;
-            }
-            if (!live)
-            {
-                attractSwapping = false;
-                yield break;
-            }
-            attract.RenderFading(attractShot);
-            attractFade.style.backgroundImage = Background.FromRenderTexture(attractShot);
-            attractFade.style.opacity = 1;
-            attractFade.style.display = DisplayStyle.Flex;
-            for (float t = 0; t < ATTRACT_FADE; t += Time.unscaledDeltaTime)
-            {
-                yield return null;
-                if (attract == null) yield break;
-                attract.RenderFading(attractShot);
-                attractFade.style.opacity = 1 - Mathf.SmoothStep(0, 1, t / ATTRACT_FADE);
-            }
-            attractFade.style.display = DisplayStyle.None;
-            attractFade.style.backgroundImage = StyleKeyword.None;
-            attract.EndFade();
-            attractSwapping = false;
         }
 
         void Start2()
@@ -440,7 +366,6 @@ namespace Porchlight.App
             {
                 attract.viewport = new Rect(0, 0, Screen.width, Screen.height);
                 attract.Update();
-                if (!attractSwapping && Time.realtimeSinceStartup >= attractNext) StartCoroutine(SwapAttractTown());
             }
             if (!started) return;
             root.EnableInClassList("narrow", Screen.width / dpr <= 720);

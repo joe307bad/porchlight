@@ -85,7 +85,7 @@ namespace Porchlight.Rendering
         /// `roomLight`: inside a building, where its ceiling light is.
         /// </summary>
         public void Update(double dusk, bool night, bool fog, double fogNear, double fogFar, Vector3 focus,
-            IReadOnlyList<Lamp> lamps, IReadOnlyList<double> levels, Vector3? roomLight, bool withHeavens = true)
+            IReadOnlyList<Lamp> lamps, IReadOnlyList<double> levels, Vector3? roomLight)
         {
             float d = (float)dusk;
             var sky = Color.Lerp(DaySky, NightSky, d);
@@ -101,7 +101,7 @@ namespace Porchlight.Rendering
             RenderSettings.fogStartDistance = (float)fogNear;
             RenderSettings.fogEndDistance = (float)fogFar;
 
-            if (withHeavens) heavens.Update(d, night, fog, (float)fogNear, focus, roomLight != null);
+            heavens.Update(d, night, fog, (float)fogNear, focus, roomLight != null);
 
             Materials.WindowGlow(Mathf.Clamp01(d * 1.2f - 0.1f), Warm);
 

@@ -1419,66 +1419,6 @@ namespace Porchlight.App
         /// <summary>Night or day straight away, without the fade.</summary>
         public double Dusk => dusk;
 
-        // The sign-in screen's change of towns: the last one left standing (on the
-        // Fading layer, which the camera leaves out) and drawn on its own, lit as it
-        // was, from wherever the camera is now, while the next fades in over it.
-
-        /// <summary>The layer a town fading out is moved to (Editor/Setup.cs adds it).</summary>
-        public const string FADING_LAYER = "Fading";
-        TownWorld fadingWorld;
-        Fleet fadingFleet;
-        readonly List<Avatar> fadingAvatars = new List<Avatar>();
-        bool fadingNight;
-        double fadingDusk;
-        double[] fadingLamps = new double[0];
-
-        /// <summary>Whether a town can be faded out live (the Fading layer exists).</summary>
-        public static bool CanFade => LayerMask.NameToLayer(FADING_LAYER) >= 0;
-
-        /// <summary>Like SetTown, but keep the old town standing, still, for RenderFading to draw until EndFade.</summary>
-        public void SetTownFading(TownModel model)
-        {
-            EndFade();
-            int layer = LayerMask.NameToLayer(FADING_LAYER);
-            if (world != null && layer >= 0)
-            {
-                fadingWorld = world;
-                fadingFleet = fleet;
-                fadingAvatars.AddRange(avatars);
-                foreach (var a in avatars) a.Freeze();
-                fadingNight = night;
-                fadingDusk = dusk;
-                fadingLamps = world.lamps.Select(l => dusk).ToArray();
-                foreach (var t in world.root.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
-                world = null;
-                fleet = null;
-                avatars.Clear();
-            }
-            SetTown(model);
-            // The camera keeps on round the new town's middle; carry the old one along so
-            // its middle sits there too, and it fades out where it was on screen.
-            if (fadingWorld != null)
-            {
-                var was = fadingWorld.model.center;
-                fadingWorld.root.transform.position += WorldOf(model.center.x, 0, model.center.y) - WorldOf(was.x, 0, was.y);
-            }
-        }
-
-        /// <summary>Draw the old town into `target` from where the camera is now, in its own light (call after Update).</summary>
-        public void RenderFading(RenderTexture target)
-        {
-            if (fadingWorld == null || world == null) return;
-            var request = new UnityEngine.Rendering.RenderPipeline.StandardRequest { destination = target };
-            if (!UnityEngine.Rendering.RenderPipeline.SupportsRenderRequest(camera, request)) return;
-            int mask = camera.cullingMask;
-            camera.cullingMask = 1 << LayerMask.NameToLayer(FADING_LAYER);
-            sky.Update(fadingDusk, fadingNight, mode == CameraMode.Close, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), fadingWorld.lamps, fadingLamps, null, withHeavens: false);
-            UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(camera, request);
-            camera.cullingMask = mask;
-            // Back to this town's light for the frame itself.
-            sky.Update(dusk, night, mode == CameraMode.Close, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, null, withHeavens: false);
-        }
-
         /// <summary>Zoom to `z` (MIN_ZOOM: as far out as play goes), clamped.</summary>
         public void SetZoom(double z) => zoom = Math.Min(MAX_ZOOM, Math.Max(MIN_ZOOM, z));
 
@@ -1493,18 +1433,6 @@ namespace Porchlight.App
             UnityEngine.Rendering.RenderPipeline.SubmitRenderRequest(camera, request);
             camera.ResetAspect();
             camera.rect = rect;
-        }
-
-        /// <summary>Done fading: the old town goes.</summary>
-        public void EndFade()
-        {
-            if (fadingWorld == null) return;
-            fadingFleet?.Dispose();
-            foreach (var a in fadingAvatars) a.Dispose();
-            fadingAvatars.Clear();
-            fadingWorld.Dispose();
-            fadingWorld = null;
-            fadingFleet = null;
         }
 
         public void SetNightNow(bool on)
@@ -1996,7 +1924,7 @@ namespace Porchlight.App
             double yawTarget = fixedView?.yaw ?? targetYaw;
             double zoomTarget = fixedView?.zoom ?? (Attract ? ATTRACT_ZOOM : zoom);
             double pitchTarget = fixedView?.pitch ?? (Attract ? ATTRACT_PITCH : TargetPitch);
-            // Behind the sign-in card the turn is steady, and goes on unbroken from town to town.
+            // Behind the sign-in card the turn is steady.
             yaw += Orbit.ShortestTurn(yaw, yawTarget) * (snap || Attract ? 1 : Orbit.EaseBy(5, dt));
             shownZoom += (zoomTarget - shownZoom) * (snap ? 1 : Math.Min(1, dt * (fixedView != null ? 5 : 10)));
             var target = fixedView?.focus
