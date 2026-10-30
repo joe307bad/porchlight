@@ -5,7 +5,9 @@
 // auto-walking, the turn-by-turn directions), a one-line prompt bottom centre,
 // and a notice about the connection top centre. Beside the minimap, two boxes:
 // your character and your car. Clicking either opens a grid of every
-// character or car to pick from (a car picked is brought round).
+// character or car to pick from (a car picked is brought round). Start (or M)
+// opens the big map over the view: the whole town, a reticle the stick moves
+// and A drops a waypoint at (or click anywhere), and the way there dotted in blue.
 
 using System;
 using System.Collections.Generic;
@@ -16,6 +18,7 @@ using Porchlight.Explore;
 using Porchlight.Model;
 using Porchlight.Rendering;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 
 namespace Porchlight.UI
@@ -52,6 +55,171 @@ namespace Porchlight.UI
         public Action<Vec2> OnMinimapPick
         {
             set => onPick = value;
+        }
+
+        VisualElement bigMap, bigMapPicture, bigMapMarks;
+        Label bigMapHint;
+        Vec2 reticle;
+        Vec2? waypoint;
+        Action<Vec2> onWaypoint;
+
+        public Action<Vec2> OnWaypointPick
+        {
+            set => onWaypoint = value;
+        }
+
+        public bool MapOpen => bigMap != null && bigMap.style.display == DisplayStyle.Flex;
+
+        public Vec2 Reticle => reticle;
+
+        public void SetWaypoint(Vec2? at)
+        {
+            waypoint = at;
+            minimapOverlay.MarkDirtyRepaint();
+            bigMapMarks?.MarkDirtyRepaint();
+        }
+
+        public void OpenMap()
+        {
+            if (model == null) return;
+            CloseChooser();
+            if (bigMap == null) BuildBigMap();
+            reticle = waypoint ?? player ?? new Vec2(model.width / 2.0, model.height / 2.0);
+            bigMapPicture.style.backgroundImage = new StyleBackground(baseTexture);
+            bigMap.style.display = DisplayStyle.Flex;
+            bigMapHint.text = Gamepad.current != null
+                ? "Left stick moves the cross · A sets a waypoint · Y clears it · X back to the town map · B or Start closes"
+                : "Click to set a waypoint · M or Esc closes";
+            FitBigMap();
+        }
+
+        public void CloseMap()
+        {
+            if (bigMap != null) bigMap.style.display = DisplayStyle.None;
+        }
+
+        public void MoveReticle(Vec2 by)
+        {
+            if (model == null) return;
+            reticle = new Vec2(Math.Min(model.width, Math.Max(0, reticle.x + by.x)), Math.Min(model.height, Math.Max(0, reticle.y + by.y)));
+            bigMapMarks?.MarkDirtyRepaint();
+        }
+
+        void BuildBigMap()
+        {
+            bigMap = new VisualElement();
+            bigMap.AddToClassList("overlay");
+            bigMap.AddToClassList("bigmap-backdrop");
+            bigMap.RegisterCallback<PointerDownEvent>(e =>
+            {
+                if (e.target == bigMap) CloseMap();
+                e.StopPropagation();
+            });
+            var frame = new VisualElement();
+            frame.AddToClassList("bigmap");
+            bigMapPicture = new VisualElement();
+            bigMapPicture.AddToClassList("bigmap-picture");
+            bigMapMarks = new VisualElement { pickingMode = PickingMode.Ignore };
+            bigMapMarks.style.position = Position.Absolute;
+            bigMapMarks.style.left = bigMapMarks.style.top = bigMapMarks.style.right = bigMapMarks.style.bottom = 0;
+            bigMapMarks.generateVisualContent += DrawBigMap;
+            bigMapPicture.Add(bigMapMarks);
+            bigMapPicture.RegisterCallback<PointerDownEvent>(e =>
+            {
+                if (model == null) return;
+                var r = bigMapPicture.contentRect;
+                reticle = new Vec2(e.localPosition.x / r.width * model.width, e.localPosition.y / r.height * model.height);
+                onWaypoint?.Invoke(reticle);
+                bigMapMarks.MarkDirtyRepaint();
+                e.StopPropagation();
+            });
+            frame.Add(bigMapPicture);
+            bigMapHint = new Label();
+            bigMapHint.AddToClassList("bigmap-hint");
+            frame.Add(bigMapHint);
+            bigMap.Add(frame);
+            bigMap.style.display = DisplayStyle.None;
+            root.Add(bigMap);
+            root.RegisterCallback<GeometryChangedEvent>(_ => FitBigMap());
+        }
+
+        /// <summary>As big as the view allows, keeping the town's shape.</summary>
+        void FitBigMap()
+        {
+            if (bigMapPicture == null || model == null) return;
+            float w = root.layout.width, h = root.layout.height;
+            if (float.IsNaN(w) || float.IsNaN(h)) return;
+            float k = Math.Max(1, Math.Min((w - 64) / model.width, (h - 120) / model.height));
+            bigMapPicture.style.width = model.width * k;
+            bigMapPicture.style.height = model.height * k;
+        }
+
+        void DrawBigMap(MeshGenerationContext ctx)
+        {
+            if (model == null) return;
+            var rect = bigMapMarks.contentRect;
+            float k = rect.width / model.width;
+            Vector2 P(Vec2 q) => new Vector2((float)q.x * k, (float)q.y * k);
+            var painter = ctx.painter2D;
+            // The way there, in blue dots.
+            if (route != null && route.Count > 1)
+            {
+                painter.fillColor = Coords.Hex(0x3b9be0);
+                foreach (var q in Geo.SamplePolyline(route, Math.Max(0.4, 7 / k)))
+                {
+                    painter.BeginPath();
+                    painter.Arc(P(q), 2.2f, 0, 360);
+                    painter.Fill();
+                }
+            }
+            if (waypoint != null) Waypoint(painter, P(waypoint.Value), 1);
+            foreach (var o in others) Dot(painter, P(o), 5, Coords.Hex(0x3b82c4));
+            if (player != null) Dot(painter, P(player.Value), 6, Coords.Hex(0xc2412d));
+            // The reticle: a ring with a cross through it.
+            var c = P(reticle);
+            painter.strokeColor = new Color(1, 1, 1, 0.95f);
+            painter.lineWidth = 2;
+            painter.BeginPath();
+            painter.Arc(c, 10, 0, 360);
+            painter.Stroke();
+            painter.BeginPath();
+            painter.MoveTo(c + new Vector2(-16, 0));
+            painter.LineTo(c + new Vector2(-5, 0));
+            painter.MoveTo(c + new Vector2(5, 0));
+            painter.LineTo(c + new Vector2(16, 0));
+            painter.MoveTo(c + new Vector2(0, -16));
+            painter.LineTo(c + new Vector2(0, -5));
+            painter.MoveTo(c + new Vector2(0, 5));
+            painter.LineTo(c + new Vector2(0, 16));
+            painter.Stroke();
+        }
+
+        static void Dot(Painter2D painter, Vector2 at, float r, Color fill)
+        {
+            painter.BeginPath();
+            painter.Arc(at, r, 0, 360);
+            painter.fillColor = fill;
+            painter.Fill();
+            painter.lineWidth = 2;
+            painter.strokeColor = Coords.Hex(0xfff8e8);
+            painter.Stroke();
+        }
+
+        /// <summary>A waypoint: a blue pin standing on its spot, `s` times its size on the big map.</summary>
+        static void Waypoint(Painter2D painter, Vector2 at, float s)
+        {
+            var top = at + new Vector2(0, -16 * s);
+            painter.strokeColor = Coords.Hex(0xfff8e8);
+            painter.lineWidth = 2 * s;
+            painter.BeginPath();
+            painter.MoveTo(at);
+            painter.LineTo(top);
+            painter.Stroke();
+            painter.BeginPath();
+            painter.Arc(top, 5 * s, 0, 360);
+            painter.fillColor = Coords.Hex(0x3b9be0);
+            painter.Fill();
+            painter.Stroke();
         }
 
         public ExploreOverlay(VisualElement host)
@@ -294,6 +462,7 @@ namespace Porchlight.UI
             goal = g;
             route = r;
             minimapOverlay.MarkDirtyRepaint();
+            if (MapOpen) bigMapMarks.MarkDirtyRepaint();
         }
 
         void DrawMinimapOverlay(MeshGenerationContext ctx)
@@ -344,6 +513,7 @@ namespace Porchlight.UI
                 painter.ClosePath();
                 painter.Fill();
             }
+            if (waypoint != null) Waypoint(painter, P(waypoint.Value), 0.6f * dev);
             foreach (var o in others)
             {
                 painter.BeginPath();

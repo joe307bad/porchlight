@@ -18,14 +18,13 @@ namespace Porchlight.App
             var gate = new VisualElement { name = "signin" };
             gate.AddToClassList("overlay");
             var card = El.Box("card", "signin-card");
-            card.Add(El.Text("Porchlight", "signin-title", "bold"));
-            card.Add(El.Text("Grow a town from a seed, then walk its streets.", "signin-text"));
+            card.Add(El.Text("Porchlight", "signin-title"));
             UnityEngine.UIElements.Button button = null;
             button = El.Btn(provider == "google" ? "Sign in with Google" : "Sign in", null, () =>
             {
                 button.SetEnabled(false);
                 signIn();
-            }, "signin-button", "semibold");
+            }, "signin-button", "semibold", "press");
             card.Add(button);
             var err = El.Text(error ?? "", "signin-error");
             if (string.IsNullOrEmpty(error)) err.AddToClassList("hidden");
@@ -91,7 +90,7 @@ namespace Porchlight.App
                 foreach (var c in characters)
                 {
                     var row = El.Box("picker-row");
-                    row.Add(El.Btn(c.name, null, () => Done(c), "picker-play", "semibold"));
+                    row.Add(El.Btn(c.name, null, () => Done(c), "picker-play", "semibold", "press"));
                     row.Add(El.Btn("×", $"Delete {c.name}", () =>
                     {
                         if (!platform.Confirm($"Delete {c.name}? Where they were and how they look will be gone.")) return;
@@ -126,7 +125,7 @@ namespace Porchlight.App
                 });
             }
 
-            create = El.Btn("Create", null, Submit, "picker-create", "semibold");
+            create = El.Btn("Create", null, Submit, "picker-create", "semibold", "press");
             name.RegisterCallback<KeyDownEvent>(e =>
             {
                 if (e.keyCode == UnityEngine.KeyCode.Return || e.keyCode == UnityEngine.KeyCode.KeypadEnter) Submit();

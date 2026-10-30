@@ -54,6 +54,8 @@ namespace Porchlight.Rendering
         /// <summary>Half the width of the point under the box, and how far down it reaches.</summary>
         const float POINT_WIDTH = 0.16f, POINT_DEPTH = 0.2f;
         const float SCALE = 0.32f;
+        /// <summary>Past this far from the camera (world units, the map view's own distance) a tag stops getting smaller on screen.</summary>
+        const float SHOWN_FROM = 60;
 
         readonly GameObject root;
         readonly TextMeshPro text;
@@ -130,11 +132,32 @@ namespace Porchlight.Rendering
             return mesh;
         }
 
+        /// <summary>
+        /// Over the spot at map (x, y), h up. Seen from afar it keeps the size it has
+        /// SHOWN_FROM away, so a player is easy to spot anywhere in the town; past the fog
+        /// (or the far clip) it's drawn nearer along the same line of sight, scaled to
+        /// look the same, so it's never fogged or clipped away.
+        /// </summary>
         public void Place(double x, double h, double y)
         {
-            root.transform.localPosition = Coords.Map(x, y, h);
+            var at = root.transform.parent != null ? root.transform.parent.TransformPoint(Coords.Map(x, y, h)) : Coords.Map(x, y, h);
             var cam = Camera.main;
-            if (cam != null) root.transform.rotation = cam.transform.rotation;
+            if (cam == null)
+            {
+                root.transform.position = at;
+                return;
+            }
+            var eye = cam.transform.position;
+            var ray = at - eye;
+            float d = ray.magnitude;
+            float limit = cam.farClipPlane * 0.9f;
+            if (RenderSettings.fog) limit = Mathf.Min(limit, RenderSettings.fogStartDistance * 0.95f);
+            limit = Mathf.Max(limit, cam.nearClipPlane * 4);
+            float shown = Mathf.Min(d, limit);
+            float grow = Mathf.Max(1, d / SHOWN_FROM);
+            root.transform.position = d > 1e-4f ? eye + ray * (shown / d) : at;
+            root.transform.rotation = cam.transform.rotation;
+            root.transform.localScale = Vector3.one * (SCALE * grow * (d > 1e-4f ? shown / d : 1));
         }
 
         public void Dispose()

@@ -67,28 +67,28 @@ namespace Porchlight.App
         /// Firefox on macOS reports a Bluetooth Xbox One S pad (id "045e-02fd-…") as a
         /// standard gamepad but with its own button numbers: for each of Button's,
         /// the standard index it comes in at (-1: it doesn't). It gives Y and LB one
-        /// number (FIREFOX_Y_OR_LB: a tap is read as LB, a hold as Y), RB and View
+        /// number (FIREFOX_Y_OR_LB: a tap is read as Y, a hold as LB), RB and View
         /// another (read as RB, the way to the nearest player), has no triggers, and
         /// puts Menu past the 16 buttons the Input System reads.
         /// </summary>
         static readonly int[] FirefoxXboxBluetooth = { 1, 2, 3, -1, -1, 8, -1, -1, -1, -1, 11, -1, 12, 13, 14, 15 };
         const int FIREFOX_Y_OR_LB = 5;
-        /// <summary>Seconds Firefox's shared Y / LB button is held before it counts as Y.</summary>
-        const double Y_HOLD = 0.4;
+        /// <summary>Seconds Firefox's shared Y / LB button is held before it counts as LB.</summary>
+        const double LB_HOLD = 0.4;
 
         /// <summary>The keys the game listens for.</summary>
         static readonly Key[] Keys =
         {
             Key.W, Key.A, Key.S, Key.D, Key.UpArrow, Key.DownArrow, Key.LeftArrow, Key.RightArrow,
             Key.Q, Key.E, Key.Z, Key.X, Key.PageUp, Key.PageDown, Key.F, Key.G, Key.B, Key.Space,
-            Key.N, Key.R, Key.T, Key.V, Key.C, Key.Escape, Key.Backquote, Key.LeftShift, Key.RightShift, Key.Enter, Key.Tab,
+            Key.N, Key.R, Key.T, Key.V, Key.C, Key.M, Key.Escape, Key.Backquote, Key.LeftShift, Key.RightShift, Key.Enter, Key.Tab,
         };
 
         readonly Dictionary<Key, double> repeatAt = new Dictionary<Key, double>();
         PadState pad = PadState.Idle;
         bool[] padWas = new bool[Button.Count];
         double sharedDownAt = -1;
-        bool sharedWasY;
+        bool sharedWasLB;
 
         /// <summary>Told of each key going down: (key, repeat).</summary>
         public event Action<Key, bool> KeyDown;
@@ -204,9 +204,9 @@ namespace Porchlight.App
         }
 
         /// <summary>
-        /// Firefox's one button for Y and LB as two: let go within Y_HOLD and it's an LB
-        /// press, held on past that it's a Y press (each for one frame: the game only
-        /// asks either whether it was just pressed).
+        /// Firefox's one button for Y and LB as two: let go within LB_HOLD and it's a Y
+        /// press (day or night), held on past that it's an LB press (each for one frame:
+        /// the game only asks either whether it was just pressed).
         /// </summary>
         void SplitYAndLB(PadState s, bool down)
         {
@@ -214,16 +214,16 @@ namespace Porchlight.App
             if (down && sharedDownAt < 0)
             {
                 sharedDownAt = now;
-                sharedWasY = false;
+                sharedWasLB = false;
             }
-            if (down && !sharedWasY && now - sharedDownAt >= Y_HOLD)
+            if (down && !sharedWasLB && now - sharedDownAt >= LB_HOLD)
             {
-                s.now[Button.Y] = true;
-                sharedWasY = true;
+                s.now[Button.LB] = true;
+                sharedWasLB = true;
             }
             if (!down && sharedDownAt >= 0)
             {
-                if (!sharedWasY) s.now[Button.LB] = true;
+                if (!sharedWasLB) s.now[Button.Y] = true;
                 sharedDownAt = -1;
             }
         }

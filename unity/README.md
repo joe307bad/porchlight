@@ -21,10 +21,10 @@ The server is `server/`, Node and Colyseus. It handles sign-in, the characters, 
 
 Everything is Unity's own; there are no custom shaders:
 
-- **Models:** glTFast imports the models. **Porchlight ▸ Set Up Project** runs `Editor/Library.cs`, which turns each model into a prefab with URP Lit materials and records its bounds. For the city kits, it also masks each colour map's window glass so the windows can glow at night. All of this goes in `Assets/Porchlight/Generated` and `Resources/Porchlight/Library.asset`, which are gitignored.
+- **Models:** glTFast imports the models. **Porchlight ▸ Set Up Project** runs `Editor/Library.cs`, which turns each model into a prefab with URP Lit materials and records its bounds. For the city kits, it also masks each colour map's window glass so the windows can glow at night, and cuts the tall kits' big panes into a grid of smaller ones. All of this goes in `Assets/Porchlight/Generated` and `Resources/Porchlight/Library.asset`, which are gitignored.
 - **People:** the characters share one armature. Their clips (`people/animations.glb`) are rebound to it, and an Animator controller blends idle, walk and run by pace, with jump, fall and land in the air.
 - **The town:** GameObjects. What never moves is combined with static batching. Procedural parts (ground, roads, walls) are meshes coloured through a palette texture, so they draw with URP Lit like everything else.
-- **Light:** a directional sun with URP soft shadows, Trilight ambient, and linear fog for the close-up camera. A global volume adds bloom and Neutral tonemapping. At night, bulbs and windows glow, and a few real point lights follow the street lamps nearest the camera.
+- **Light:** a directional sun with URP soft shadows, Trilight ambient, and linear fog for the close-up camera. Clouds by day and twinkling stars by night are particle-material quads on a shell round the camera, drawn first and nearer than the fog (plus flat clouds over the town for the orbit camera). A global volume adds bloom and Neutral tonemapping. At night, bulbs and windows glow, and a few real point lights follow the street lamps nearest the camera.
 - **Showing through buildings:** two URP Render Objects passes. One draws you (and the car you drive) in orange wherever you're hidden. The other draws name tags (TextMeshPro) over everything.
 
 ## Running it

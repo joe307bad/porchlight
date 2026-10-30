@@ -79,6 +79,7 @@ namespace Porchlight.EditorTools
             playerLayer = Layer(layers, Porchlight.Rendering.Avatar.PLAYER_LAYER, 8);
             labelsLayer = Layer(layers, NameTag.LABELS_LAYER, 9);
             Layer(layers, Portraits.PORTRAIT_LAYER, 10);
+            Layer(layers, Porchlight.App.ExploreView.FADING_LAYER, 11);
             tags.ApplyModifiedPropertiesWithoutUndo();
         }
 

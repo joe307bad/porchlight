@@ -1,8 +1,10 @@
-// The right-hand sidebar, the app's one menu in both modes: Regenerate and
-// Explore / Back to map, the seed, the handful of params most people want and,
-// folded away below them, a slider for every other generator setting. On the
-// map it adds layers and view/export actions; while exploring, the explore
-// controls and who else is in the town (tick one to be shown the way to them).
+// The right-hand sidebar, the app's one menu in both modes. At the top, who
+// you're playing as, the seed, and Regenerate and Explore / Back to map. Below,
+// three sections, one open at a time: Controls (every controller button and
+// key), Players (who else is in the town: tick one to be shown the way to
+// them) and Map settings (a slider for every generator setting, the handful
+// most people want first). The open section's heading stays pinned at the top
+// as you scroll through it, so it can always be closed.
 
 using System;
 using System.Collections.Generic;
@@ -22,18 +24,6 @@ namespace Porchlight.UI
         public Action OnExplore;
         public Action OnBack;
         public Action OnResetParams;
-        public Action<string, bool> OnLayerToggle;
-        public Action OnFitView;
-        public Action OnExportJson;
-        public Action OnExportPng;
-        public Action OnToggleDebug;
-    }
-
-    /// <summary>The explore-mode buttons (index.html's #explore-controls).</summary>
-    public sealed class ExploreControls
-    {
-        public Button turnLeft, turnRight, tiltDown, tiltUp, closeUp, lookAhead, car, autoWalk, dayNight, walkMode, newChar;
-        public VisualElement root;
     }
 
     public static class El
@@ -88,34 +78,6 @@ namespace Porchlight.UI
             b.Add(l);
             return b;
         }
-
-        /// <summary>A details/summary: a heading that opens and closes its body.</summary>
-        public static (VisualElement root, VisualElement body) Details(string title, bool open = false)
-        {
-            var root = new VisualElement();
-            var head = new VisualElement();
-            head.AddToClassList("fold-head");
-            var arrow = new Label(open ? "▼" : "▶");
-            arrow.AddToClassList("fold-arrow");
-            var label = new Label(title.ToUpperInvariant());
-            label.AddToClassList("bold");
-            label.style.fontSize = 11;
-            label.style.color = new Color(0xa9 / 255f, 0x9f / 255f, 0x88 / 255f);
-            head.Add(arrow);
-            head.Add(label);
-            var body = new VisualElement();
-            body.AddToClassList("fold-body");
-            body.style.display = open ? DisplayStyle.Flex : DisplayStyle.None;
-            head.RegisterCallback<ClickEvent>(_ =>
-            {
-                bool now = body.style.display == DisplayStyle.None;
-                body.style.display = now ? DisplayStyle.Flex : DisplayStyle.None;
-                arrow.text = now ? "▼" : "▶";
-            });
-            root.Add(head);
-            root.Add(body);
-            return (root, body);
-        }
     }
 
     public sealed class Sidebar
@@ -140,25 +102,57 @@ namespace Porchlight.UI
             new MainSlider { id = "rivers", label = "Rivers", hint = "Number of rivers", spec = ParamSpec.Get("riverCount"), keys = new[] { "riverCount" }, format = v => Numbers.NumberToString(v) },
         };
 
+        /// <summary>
+        /// The controls, each with its controller button and its key (null: none).
+        /// Pad icons: A B X Y, LB RB LT RT, LS RS (sticks), DL DR DU DD (d-pad), View, Menu.
+        /// </summary>
+        static readonly (string what, string[] pad, string[] keys)[] CONTROLS =
+        {
+            ("Walk, steer", new[] { "LS" }, new[] { "W", "A", "S", "D" }),
+            ("Jump", new[] { "A" }, new[] { "Space" }),
+            ("Sprint, boost", new[] { "RT" }, new[] { "Shift" }),
+            ("Drive, brake", new[] { "RT", "LT" }, new[] { "W", "S" }),
+            ("Get in or out", new[] { "B" }, new[] { "G" }),
+            ("Day or night", new[] { "Y" }, new[] { "N" }),
+            ("Turn the camera", new[] { "RS", "DL", "DR" }, new[] { "Q", "E" }),
+            ("Tilt the camera", new[] { "RS" }, new[] { "Z", "X" }),
+            ("Zoom", new[] { "DU", "DD" }, new[] { "Scroll" }),
+            ("Camera behind you", new[] { "X" }, new[] { "V" }),
+            ("Look down the street", null, new[] { "F" }),
+            ("Auto walk or drive", null, new[] { "T" }),
+            ("Streets only", null, new[] { "R" }),
+            ("New character", new[] { "View" }, new[] { "C" }),
+            ("Ask someone along, or send them off", new[] { "A" }, new[] { "Space" }),
+            ("Choose a character", new[] { "LB" }, null),
+            ("The way to a player", new[] { "RB" }, null),
+            ("Big map: set a waypoint", new[] { "Menu", "A" }, new[] { "M", "Click" }),
+            ("Clear the waypoint (on the big map)", new[] { "Y" }, null),
+            ("Back to the town map", new[] { "X" }, new[] { "Esc" }),
+        };
+
         public readonly VisualElement root;
         readonly VisualElement body;
         GenParams parameters;
         readonly Dictionary<string, (Slider input, Label output, MainSlider slider)> inputs = new Dictionary<string, (Slider, Label, MainSlider)>();
-        readonly Dictionary<string, Toggle> layerBoxes = new Dictionary<string, Toggle>();
         public readonly TextField seedInput;
         readonly Button exploreButton;
-        readonly Button debugButton;
-        readonly VisualElement mapOnlyLayers, mapOnlyTools, exploreSection;
-        readonly VisualElement playersSection, playersList;
+        readonly ScrollView scroll;
+        /// <summary>The open section's heading, pinned over the top once it's scrolled off (click to close the section).</summary>
+        readonly VisualElement pinned;
+        readonly Label pinnedLabel;
+        readonly VisualElement playersList;
+        readonly VisualElement top;
+        readonly Label playingName, playingDetail;
+        readonly VisualElement links;
+        readonly List<(VisualElement body, Label arrow, VisualElement head, string title)> sections = new List<(VisualElement, Label, VisualElement, string)>();
         string playersShown;
         Action<string> onFind;
         bool exploring;
-        VisualElement characterRow;
-        Label characterName;
-        string playingAs;
+        string accountName, characterName;
+        Action onSwitch, onSignOut;
         readonly Action<bool> setOpen;
 
-        public Sidebar(VisualElement host, GenParams initial, ISet<string> visible, SidebarHandlers h, ExploreControls exploreControls, Action<bool> setOpen)
+        public Sidebar(VisualElement host, GenParams initial, SidebarHandlers h, Action<bool> setOpen)
         {
             this.setOpen = setOpen;
             parameters = initial.Clone();
@@ -166,7 +160,6 @@ namespace Porchlight.UI
             root.name = "sidebar";
 
             seedInput = El.ClickToFocus(new TextField { name = "seed", isDelayed = false });
-            seedInput.AddToClassList("mono");
             seedInput.tooltip = "Edit and press Enter to load this seed";
             seedInput.RegisterCallback<KeyDownEvent>(e =>
             {
@@ -174,100 +167,206 @@ namespace Porchlight.UI
                 string value = seedInput.value.Trim();
                 if (value.Length > 0) h.OnSeed?.Invoke(value);
             }, TrickleDown.TrickleDown);
+
+            // The top: who you're playing as, the seed, and the two big buttons.
+            top = El.Box("sb-top");
+            top.Add(El.Text("Playing as", "sb-head-label", "semibold"));
+            playingName = El.Text("", "sb-playing-name", "semibold");
+            top.Add(playingName);
+            playingDetail = El.Text("", "sb-playing-detail");
+            top.Add(playingDetail);
+            links = El.Box("sb-links");
+            top.Add(links);
             var seedRow = El.Box("sb-seed");
-            seedRow.Add(El.Text("Seed"));
+            seedRow.Add(El.Text("Seed", "sb-seed-label"));
             seedRow.Add(seedInput);
-
-            var sliders = El.Box("sb-sliders");
-            foreach (var slider in MAIN_SLIDERS) sliders.Add(SliderRow(slider, h));
-
-            // Every setting, a fold per stage.
-            var all = new VisualElement();
-            all.Add(El.Text("ALL SETTINGS", "section-title", "bold"));
-            foreach (var group in ParamSpec.Groups)
-            {
-                var (fold, foldBody) = El.Details(group);
-                var groupSliders = El.Box("sb-sliders");
-                foreach (var spec in ParamSpec.All)
-                {
-                    if (spec.group != group) continue;
-                    var one = new MainSlider { id = spec.key, label = spec.label, hint = $"{spec.label} ({Numbers.NumberToString(spec.min)} to {Numbers.NumberToString(spec.max)})", spec = spec, keys = new[] { spec.key }, format = FormatFor(spec) };
-                    groupSliders.Add(SliderRow(one, h));
-                }
-                foldBody.Add(groupSliders);
-                all.Add(fold);
-            }
-
-            var regen = El.Btn("Regenerate", "Build a new town from a fresh seed", () => h.OnRegenerate?.Invoke(), "btn-regenerate");
+            top.Add(seedRow);
+            var regen = El.Btn("Regenerate", "Build a new town from a fresh seed", () => h.OnRegenerate?.Invoke(), "btn-regenerate", "press");
             exploreButton = El.Btn("Explore", "Spawn as a random character and walk the town", () =>
             {
                 if (exploring) h.OnBack?.Invoke();
                 else h.OnExplore?.Invoke();
-            }, "btn-primary");
-            var reset = El.Link("Reset to defaults", () => h.OnResetParams?.Invoke());
+            }, "btn-primary", "press");
+            var actions = El.Box("sb-actions");
+            regen.AddToClassList("first");
+            actions.Add(regen);
+            actions.Add(exploreButton);
+            top.Add(actions);
 
-            var layerList = El.Box("sb-layers");
-            foreach (var layer in BlueprintView.LAYERS)
+            // Controls: what every button and key does.
+            var controls = El.Box("ctl-list");
+            foreach (var (what, pad, keys) in CONTROLS)
             {
-                if (layer.debug) continue;
-                var box = new Toggle { text = layer.label, value = visible.Contains(layer.id), focusable = false };
-                box.AddToClassList("check");
-                string id = layer.id;
-                box.RegisterValueChangedCallback(e => h.OnLayerToggle?.Invoke(id, e.newValue));
-                layerList.Add(box);
-                layerBoxes[layer.id] = box;
+                var row = El.Box("ctl-row");
+                var icons = El.Box("ctl-icons");
+                var padIcons = El.Box("ctl-pad");
+                foreach (var p in pad ?? new string[0]) padIcons.Add(PadIcon(p));
+                icons.Add(padIcons);
+                var keyIcons = El.Box("ctl-keys");
+                foreach (var k in keys ?? new string[0]) keyIcons.Add(Keycap(k));
+                icons.Add(keyIcons);
+                row.Add(icons);
+                row.Add(El.Text(what, "ctl-text"));
+                controls.Add(row);
             }
-            var (layersRoot, layersBody) = El.Details("Layers");
-            layersBody.Add(layerList);
-            mapOnlyLayers = layersRoot;
+            controls.Add(El.Text("Click the minimap to jump there, or the boxes beside it to choose your character or car.", "help-text"));
 
-            debugButton = El.Btn("Debug", "Show the debug views (`)", () => h.OnToggleDebug?.Invoke());
-            mapOnlyTools = El.Box("sb-tools");
-            mapOnlyTools.Add(El.Btn("Fit", "Fit the whole map in view (double-click the map)", () => h.OnFitView?.Invoke()));
-            mapOnlyTools.Add(El.Btn("JSON", "Download the TownModel as JSON", () => h.OnExportJson?.Invoke()));
-            mapOnlyTools.Add(El.Btn("PNG", "Download the blueprint as a PNG", () => h.OnExportPng?.Invoke()));
-            mapOnlyTools.Add(debugButton);
+            // Players: everyone else in the town.
+            playersList = new VisualElement();
+
+            // Map settings: every slider in one list, the ones most people want first.
+            var settings = new VisualElement();
+            var sliders = El.Box("sb-sliders");
+            foreach (var slider in MAIN_SLIDERS) sliders.Add(SliderRow(slider, h));
+            var shown = new HashSet<string>(MAIN_SLIDERS.SelectMany(m => m.keys));
+            foreach (var spec in ParamSpec.All)
+            {
+                if (shown.Contains(spec.key)) continue;
+                var one = new MainSlider { id = spec.key, label = spec.label, hint = $"{spec.label} ({Numbers.NumberToString(spec.min)} to {Numbers.NumberToString(spec.max)})", spec = spec, keys = new[] { spec.key }, format = FormatFor(spec) };
+                sliders.Add(SliderRow(one, h));
+            }
+            settings.Add(sliders);
+            settings.Add(El.Link("Reset to defaults", () => h.OnResetParams?.Invoke()));
 
             var collapse = new Button(() => this.setOpen(root.parent.ClassListContains("sidebar-closed"))) { focusable = false, text = "›" };
             collapse.AddToClassList("sb-collapse");
             collapse.tooltip = "Hide or show the sidebar";
 
-            var scroll = new ScrollView(ScrollViewMode.Vertical);
+            scroll = new ScrollView(ScrollViewMode.Vertical);
             scroll.AddToClassList("sb-scroll");
             body = El.Box("sb-body");
             scroll.Add(body);
-            var header = new VisualElement();
-            header.Add(El.Text("Porchlight", "sb-title", "bold"));
-            header.Add(El.Text("Town generator", "sb-subtitle"));
-            body.Add(header);
-            var actions = El.Box("sb-actions");
-            regen.AddToClassList("first");
-            actions.Add(regen);
-            actions.Add(exploreButton);
-            body.Add(actions);
-            exploreSection = new VisualElement();
-            exploreSection.Add(El.Text("EXPLORE", "section-title", "bold"));
-            exploreSection.Add(exploreControls.root);
-            playersSection = new VisualElement();
-            playersSection.Add(El.Text("PLAYERS HERE", "section-title", "bold"));
-            playersList = new VisualElement();
-            playersSection.Add(playersList);
-            exploreSection.Add(playersSection);
-            body.Add(exploreSection);
-            body.Add(seedRow);
-            var shape = new VisualElement();
-            shape.Add(El.Text("SHAPE", "section-title", "bold"));
-            shape.Add(sliders);
-            shape.Add(reset);
-            body.Add(shape);
-            body.Add(all);
-            body.Add(mapOnlyLayers);
-            body.Add(mapOnlyTools);
+            body.Add(top);
+            body.Add(Section("Controls", controls));
+            body.Add(Section("Players", playersList));
+            body.Add(Section("Map settings", settings));
             root.Add(scroll);
+            pinned = El.Box("sb-section-head", "sb-pinned");
+            pinnedLabel = El.Text("", "sb-head-label", "semibold");
+            pinned.Add(pinnedLabel);
+            var pinnedArrow = El.Text("›", "sb-section-arrow");
+            pinnedArrow.style.rotate = new Rotate(90);
+            pinned.Add(pinnedArrow);
+            pinned.style.display = DisplayStyle.None;
+            pinned.RegisterCallback<ClickEvent>(_ =>
+            {
+                int open = OpenIndex();
+                Open(-1);
+                if (open >= 0) scroll.schedule.Execute(() => scroll.ScrollTo(sections[open].head));
+            });
+            root.Add(pinned);
+            scroll.verticalScroller.valueChanged += _ => Pin();
+            scroll.RegisterCallback<GeometryChangedEvent>(_ => Pin());
             root.Add(collapse);
             SetParams(initial);
+            SetPlayers(new List<(string, string)>(), null, null);
+            ShowDetail("");
+            SyncPlaying();
             SetExploring(false);
             root.RegisterCallback<GeometryChangedEvent>(_ => collapse.text = root.parent != null && root.parent.ClassListContains("sidebar-closed") ? "‹" : "›");
+        }
+
+        /// <summary>One of the sidebar's sections: a heading that opens it and closes the others.</summary>
+        VisualElement Section(string title, VisualElement content)
+        {
+            var section = El.Box("sb-section");
+            var head = El.Box("sb-section-head");
+            head.Add(El.Text(title, "sb-head-label", "semibold"));
+            var arrow = El.Text("›", "sb-section-arrow");
+            head.Add(arrow);
+            var sectionBody = El.Box("sb-section-body");
+            sectionBody.Add(content);
+            sectionBody.style.display = DisplayStyle.None;
+            int index = sections.Count;
+            sections.Add((sectionBody, arrow, head, title));
+            head.RegisterCallback<ClickEvent>(_ => Open(sections[index].body.style.display == DisplayStyle.None ? index : -1));
+            section.Add(head);
+            section.Add(sectionBody);
+            return section;
+        }
+
+        /// <summary>Open section `index` (-1: none), closing the rest.</summary>
+        void Open(int index)
+        {
+            for (int i = 0; i < sections.Count; i++)
+            {
+                bool on = i == index;
+                sections[i].body.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
+                sections[i].body.parent.EnableInClassList("open", on);
+            }
+            Pin();
+        }
+
+        int OpenIndex() => sections.FindIndex(x => x.body.style.display == DisplayStyle.Flex);
+
+        /// <summary>Pin the open section's heading over the top while its own is scrolled out of sight and its body still shows.</summary>
+        void Pin()
+        {
+            int open = OpenIndex();
+            var view = scroll.contentViewport.worldBound;
+            bool show = false;
+            if (open >= 0)
+            {
+                var (sectionBody, _, head, title) = sections[open];
+                var hb = head.worldBound;
+                show = hb.yMax < view.yMin + 1 && sectionBody.worldBound.yMax > view.yMin + hb.height;
+                pinnedLabel.text = title;
+            }
+            pinned.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+        }
+
+        /// <summary>A controller button, drawn in its own shape: round face buttons, pill bumpers, triggers, sticks, the d-pad.</summary>
+        static VisualElement PadIcon(string name)
+        {
+            string text = name;
+            var e = El.Box("pad");
+            switch (name)
+            {
+                case "A": case "B": case "X": case "Y":
+                    e.AddToClassList("pad-face");
+                    e.AddToClassList("pad-" + name.ToLowerInvariant());
+                    break;
+                case "LB": case "RB":
+                    e.AddToClassList("pad-bumper");
+                    break;
+                case "LT": case "RT":
+                    e.AddToClassList("pad-trigger");
+                    break;
+                case "LS": case "RS":
+                    e.AddToClassList("pad-stick");
+                    text = name.Substring(0, 1);
+                    break;
+                case "DL": case "DR": case "DU": case "DD":
+                    e.AddToClassList("pad-dpad");
+                    text = name == "DL" ? "←" : name == "DR" ? "→" : name == "DU" ? "↑" : "↓";
+                    break;
+                default:
+                    // View: two overlapping windows; Menu: three lines.
+                    e.AddToClassList("pad-small");
+                    e.tooltip = name;
+                    if (name == "View")
+                    {
+                        e.Add(El.Box("pad-view", "pad-view-back"));
+                        e.Add(El.Box("pad-view", "pad-view-front"));
+                    }
+                    else for (int i = 0; i < 3; i++) e.Add(El.Box("pad-menu-line"));
+                    return e;
+            }
+            var label = El.Text(text, "pad-label", "semibold");
+            label.pickingMode = PickingMode.Ignore;
+            e.Add(label);
+            return e;
+        }
+
+        /// <summary>A keyboard key: a keycap with a lip along its bottom.</summary>
+        static VisualElement Keycap(string name)
+        {
+            var e = El.Box("keycap");
+            if (name.Length > 1) e.AddToClassList("keycap-wide");
+            var label = El.Text(name, "keycap-label", "semibold");
+            label.pickingMode = PickingMode.Ignore;
+            e.Add(label);
+            return e;
         }
 
         VisualElement SliderRow(MainSlider slider, SidebarHandlers h)
@@ -275,7 +374,7 @@ namespace Porchlight.UI
             var input = new Slider((float)slider.spec.min, (float)slider.spec.max) { focusable = false };
             input.AddToClassList("range");
             input.showInputField = false;
-            var output = El.Text("", "sb-slider-value", "mono");
+            var output = El.Text("", "sb-slider-value");
             var s = slider;
             input.RegisterValueChangedCallback(e => output.text = s.format(Snap(e.newValue, s.spec)));
             input.RegisterCallback<PointerCaptureOutEvent>(_ => Commit(input, s, h));
@@ -308,14 +407,15 @@ namespace Porchlight.UI
         public void SetPlayers(List<(string key, string name)> players, string finding, Action<string> find)
         {
             onFind = find;
-            string shown = string.Join("|", players.Select(p => p.key + ":" + p.name)) + "#" + finding;
+            string shown = (exploring ? "e" : "m") + string.Join("|", players.Select(p => p.key + ":" + p.name)) + "#" + finding;
             if (shown == playersShown) return;
             playersShown = shown;
             playersList.Clear();
             if (players.Count == 0)
             {
-                var none = El.Text("No one else is in this town yet. When someone joins your seed, tick them here for the way to them.", "help-text");
-                none.style.whiteSpace = WhiteSpace.Normal;
+                var none = El.Text(exploring
+                    ? "No one else is in this town yet. When someone joins your seed, tick them here for the way to them."
+                    : "Explore the town to see who else is in it.", "help-text");
                 playersList.Add(none);
             }
             foreach (var (key, name) in players)
@@ -337,12 +437,10 @@ namespace Porchlight.UI
                 row.Add(El.Text(label, "player-name"));
                 playersList.Add(row);
             }
-            Debug.Log($"Porchlight: {players.Count} other player(s) here{(finding != null ? ", finding " + finding : "")}");
+            if (players.Count > 0 || finding != null) Debug.Log($"Porchlight: {players.Count} other player(s) here{(finding != null ? ", finding " + finding : "")}");
         }
 
         static double Snap(double v, ParamSpec spec) => Math.Min(spec.max, Math.Max(spec.min, Numbers.Round((v - spec.min) / spec.step) * spec.step + spec.min));
-
-        double lastCommitted = double.NaN;
 
         void Commit(Slider input, MainSlider s, SidebarHandlers h)
         {
@@ -350,7 +448,6 @@ namespace Porchlight.UI
             input.SetValueWithoutNotify((float)v);
             if (v == parameters[s.keys[0]]) return;
             foreach (var key in s.keys) parameters[key] = v;
-            lastCommitted = v;
             h.OnParamsChange?.Invoke(parameters.Clone());
         }
 
@@ -364,49 +461,59 @@ namespace Porchlight.UI
             }
         }
 
+        /// <summary>The character you're playing as online (null: playing alone), and how to switch.</summary>
         public void SetCharacter(string name, Action onSwitch)
         {
-            characterRow?.RemoveFromHierarchy();
-            var button = El.Link(name != null ? "Switch" : "Play online", onSwitch);
-            playingAs = name;
-            characterName = El.Text(name != null ? $"Playing as {name}" : "Playing alone", "sb-account-name");
-            characterRow = El.Box("sb-account");
-            characterRow.Add(characterName);
-            characterRow.Add(button);
-            body.Add(characterRow);
+            characterName = name;
+            this.onSwitch = onSwitch;
+            ShowDetail(name != null ? "" : "Playing alone");
+            SyncPlaying();
         }
 
         public void SetOnline(string state, int here, string why)
         {
-            if (characterName == null || playingAs == null) return;
-            string detail = state == "joining" ? "joining…" : state == "online" ? (here == 1 ? "just you here" : $"{here} here") : $"offline: {why}";
-            characterName.text = $"Playing as {playingAs} · {detail}";
-            characterName.tooltip = characterName.text;
+            if (characterName == null) return;
+            ShowDetail(state == "joining" ? "Joining…" : state == "online" ? (here == 1 ? "Just you here" : $"{here} here") : $"Offline: {why}");
         }
 
-        VisualElement accountRow, joinRows;
+        /// <summary>The line under your name (hidden when empty).</summary>
+        void ShowDetail(string text)
+        {
+            playingDetail.text = text;
+            playingDetail.tooltip = text;
+            playingDetail.style.display = string.IsNullOrEmpty(text) ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        VisualElement joinRows;
 
         /// <summary>Under your name: "Join <name>" for each of your characters playing somewhere right now (null: none).</summary>
         public void SetJoins(List<(string name, Action join)> playing)
         {
             joinRows?.RemoveFromHierarchy();
             joinRows = null;
-            if (playing == null || playing.Count == 0 || accountRow == null) return;
+            if (playing == null || playing.Count == 0) return;
             joinRows = El.Box("sb-joins");
             foreach (var (name, join) in playing)
-                joinRows.Add(El.Btn($"Join {name}", $"Go to {name}'s town, and be shown the way to them", join, "btn-primary"));
-            body.Insert(body.IndexOf(accountRow) + 1, joinRows);
+                joinRows.Add(El.Btn($"Join {name}", $"Go to {name}'s town, and be shown the way to them", join, "btn-primary", "press"));
+            top.Insert(top.IndexOf(links) + 1, joinRows);
         }
 
         public void SetAccount(string name, string email, Action onSignOut)
         {
-            var row = El.Box("sb-account");
-            accountRow = row;
-            var n = El.Text(name, "sb-account-name");
-            n.tooltip = email ?? name;
-            row.Add(n);
-            row.Add(El.Link("Sign out", onSignOut));
-            body.Add(row);
+            accountName = name;
+            this.onSignOut = onSignOut;
+            playingName.tooltip = email ?? name;
+            SyncPlaying();
+        }
+
+        /// <summary>Your character's name (or, until you've picked one, your account's), and the links under it.</summary>
+        void SyncPlaying()
+        {
+            playingName.text = characterName ?? accountName ?? "Guest";
+            links.Clear();
+            if (onSwitch != null) links.Add(El.Link(characterName != null ? "Switch character" : "Play online", onSwitch));
+            if (onSignOut != null) links.Add(El.Link("Sign out", onSignOut));
+            links.style.display = links.childCount > 0 ? DisplayStyle.Flex : DisplayStyle.None;
         }
 
         public void SetSeed(string seed) => seedInput.SetValueWithoutNotify(seed);
@@ -420,9 +527,7 @@ namespace Porchlight.UI
         public void SetExploring(bool on)
         {
             exploring = on;
-            exploreSection.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
-            mapOnlyLayers.style.display = on ? DisplayStyle.None : DisplayStyle.Flex;
-            mapOnlyTools.style.display = on ? DisplayStyle.None : DisplayStyle.Flex;
+            if (!on) SetPlayers(new List<(string, string)>(), null, onFind);
             SyncExploreButton(false);
         }
 
@@ -430,69 +535,6 @@ namespace Porchlight.UI
         {
             exploreButton.text = loading ? "Loading…" : exploring ? "Back to map" : "Explore";
             exploreButton.tooltip = exploring ? "Back to the blueprint (Esc)" : "Spawn as a random character and walk the town";
-        }
-
-        public void SetDebugOpen(bool open) => debugButton.EnableInClassList("active", open);
-
-        /// <summary>The explore-mode controls (index.html), built here so the sidebar can hold them.</summary>
-        public static ExploreControls BuildExploreControls()
-        {
-            var c = new ExploreControls { root = new VisualElement() };
-            var grid4 = El.Box("grid4");
-            c.turnLeft = El.Btn("⟲ Turn", "Turn the camera round the player (Q)", null);
-            c.turnRight = El.Btn("Turn ⟳", "Turn the camera round the player (E)", null);
-            c.tiltDown = El.Btn("Tilt ↓", "Tilt the camera down toward the horizon (Z)", null);
-            c.tiltUp = El.Btn("Tilt ↑", "Tilt the camera up toward looking straight down (X)", null);
-            c.tiltUp.AddToClassList("last");
-            foreach (var b in new[] { c.turnLeft, c.turnRight, c.tiltDown, c.tiltUp }) grid4.Add(b);
-            c.root.Add(grid4);
-            var grid2 = El.Box("grid2");
-            c.closeUp = El.Btn("Close up", "Switch to a close-up camera just behind your character (V)", null);
-            c.lookAhead = El.Btn("Look ahead", "Look down the street you're walking (F)", null);
-            c.car = El.Btn("Get in car", "Get into the nearest car (or ride in another player's), or out again (G or B)", null);
-            c.autoWalk = El.Btn("Auto walk", "Wander the sidewalks on your own; arrow keys then turn round or cross the street (T)", null);
-            c.dayNight = El.Btn("Night", "Toggle day and night (N)", null);
-            c.walkMode = El.Btn("Walk: anywhere", "Walk anywhere, or stay on roads and sidewalks (R)", null);
-            c.newChar = El.Btn("New character", "Become someone else (C)", null);
-            var all = new[] { c.closeUp, c.lookAhead, c.car, c.autoWalk, c.dayNight, c.walkMode, c.newChar };
-            for (int i = 0; i < all.Length; i++)
-            {
-                if (i % 2 == 0) all[i].AddToClassList("left");
-                grid2.Add(all[i]);
-            }
-            c.root.Add(grid2);
-            var (help, helpBody) = El.Details("Controls");
-            help.style.marginTop = 6;
-            var rows = new (string key, string text)[]
-            {
-                ("WASD / arrows", "Walk (walk up to a door to go in)"),
-                ("Q / E", "Turn the camera"),
-                ("Z / X", "Tilt the camera"),
-                ("Scroll", "Zoom"),
-                ("F", "Look down the street"),
-                ("V", "Close up (W/S walk, A/D turn)"),
-                ("G / B", "Get in / out of a car (W/S drive, A/D steer), or ride with another player"),
-                ("T", "Auto walk or drive with directions; then arrows: back = turn round, towards road = cross"),
-                ("N", "Day / night"),
-                ("R", "Streets only"),
-                ("C", "New character"),
-                ("Space", "Jump"),
-                ("Shift", "Sprint (in a car: boost)"),
-                ("Minimap", "Click to jump there"),
-                ("You / Car boxes", "By the minimap: click either to choose your character or car from a grid (the car is brought to the nearest street, one car at a time)"),
-                ("Players here", "Tick someone in the sidebar for a dotted path and directions to them"),
-                ("Esc", "Back to the map"),
-                ("Controller", "Left stick walk / steer · A jump, hold A or RT sprint · at the wheel RT drive, hold A boost, LT brake · right stick turn and tilt · d-pad left / right turn, up / down zoom · B in / out of a car · X camera behind you · Y day / night · RB the way to the nearest player · LB choose a character (again for the next; RB for cars, A to pick, B to close) · View new character · Menu back to the map"),
-            };
-            foreach (var (key, text) in rows)
-            {
-                var row = El.Box("help-row");
-                row.Add(El.Text(key, "help-key", "mono"));
-                row.Add(El.Text(text, "help-text"));
-                helpBody.Add(row);
-            }
-            c.root.Add(help);
-            return c;
         }
     }
 

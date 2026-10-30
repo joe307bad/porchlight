@@ -45,6 +45,7 @@ namespace Porchlight.Gen
             new LotsStage(),
             new BuildingsStage(),
             new RasterizeStage(),
+            new DocksStage(),
         };
 
         public static TownModel Generate(string seed, GenParams @params, bool check = false, string until = null)

@@ -41,7 +41,6 @@ namespace Porchlight.App
         VisualElement isoHost;
         Sidebar sidebar;
         DebugPanel panel;
-        ExploreControls controls;
         Label hoverLabel, statusLabel;
         VisualElement footer;
         float dpr = 1;
@@ -69,9 +68,18 @@ namespace Porchlight.App
         /// <summary>Asked who's playing (choosing to play alone counts).</summary>
         bool asked;
         double lastFollow;
+        /// <summary>The map keeps your character in view until you pan or zoom it yourself.</summary>
+        bool followOnMap = true;
         bool started;
         /// <summary>The town behind the sign-in card: someone wandering its streets.</summary>
         ExploreView attract;
+        /// <summary>Behind the sign-in card, a new town every ATTRACT_EVERY seconds, faded in over the last (a capture of it), day and night in turn.</summary>
+        const float ATTRACT_EVERY = 15, ATTRACT_FADE = 3;
+        bool attractNight, attractSwapping;
+        float attractNext;
+        VisualElement attractFade;
+        RenderTexture attractShot;
+        /// <summary>The card's title: the button's blue by day, white by night, easing over as the towns change.</summary>
         /// <summary>The pictures in the boxes by the minimap, and the car model to bring round.</summary>
         Portraits portraits;
         int carModel;
@@ -120,6 +128,9 @@ namespace Porchlight.App
             camera3d.allowMSAA = true;
             camera3d.enabled = false;
             camera3d.cullingMask = ~(1 << Portraits.Layer);
+            // A town fading out on the sign-in screen is drawn on its own, not with the new one.
+            int fading = LayerMask.NameToLayer(ExploreView.FADING_LAYER);
+            if (fading >= 0) camera3d.cullingMask &= ~(1 << fading);
         }
 
         void BuildUi()
@@ -133,6 +144,8 @@ namespace Porchlight.App
             root = doc.rootVisualElement;
             root.styleSheets.Add(Resources.Load<StyleSheet>("Porchlight/UI/Porchlight"));
             root.AddToClassList("root");
+            // Inter throughout (the stylesheet says so too; this holds wherever it isn't reached).
+            root.style.unityFontDefinition = FontDefinition.FromFont(Resources.Load<Font>("Porchlight/Fonts/Inter-Regular"));
             root.style.flexGrow = 1;
             root.pickingMode = PickingMode.Ignore;
         }
@@ -175,7 +188,7 @@ namespace Porchlight.App
                     return;
                 }
                 StartAttract();
-                SignInGate.Show(root, provider, error ?? err, () =>
+                var gate = SignInGate.Show(root, provider, error ?? err, () =>
                 {
                     string returnTo = platform.PathName + platform.Search + platform.Hash;
                     platform.Navigate("/auth/login?returnTo=" + Uri.EscapeDataString(returnTo));
@@ -183,7 +196,7 @@ namespace Porchlight.App
             });
         }
 
-        /// <summary>Behind the sign-in card: a fresh little town, by day or night, and someone out for a walk in it.</summary>
+        /// <summary>Behind the sign-in card: a fresh little town, by day or night; then another, and another.</summary>
         void StartAttract()
         {
             try
@@ -191,16 +204,16 @@ namespace Porchlight.App
                 var host = new VisualElement();
                 host.style.display = DisplayStyle.None;
                 root.Add(host);
-                var p = GenParams.Defaults;
-                // A little town, seen close: light enough for phones and weak machines, its
-                // edge about 35 tiles out from the middle, past the ~24 the view's corners reach as it turns.
-                p.width = p.height = 96;
+                // The last town, held over the next as it fades away (under the card, which comes after).
+                attractFade = new VisualElement { pickingMode = PickingMode.Ignore };
+                attractFade.style.position = Position.Absolute;
+                attractFade.style.left = attractFade.style.top = attractFade.style.right = attractFade.style.bottom = 0;
+                attractFade.style.display = DisplayStyle.None;
+                root.Add(attractFade);
                 attract = new ExploreView(camera3d, ModelLibrary.Instance, new ExploreOverlay(host) { Dpr = dpr }, input) { Attract = true };
-                attract.SetTown(Generator.Generate(RandomSeed(), GenParams.Normalize(p)));
-                attract.Spawn(Catalog.RandomLook(new Rng(RandomSeed())));
-                attract.SetAuto(true);
-                // Some visits by day, some by night.
-                attract.SetNightNow(new Rng(RandomSeed()).Chance(0.5));
+                // Day or night to start with, then each in turn.
+                attractNight = new Rng(RandomSeed()).Chance(0.5);
+                NextAttractTown();
             }
             catch (Exception err)
             {
@@ -210,12 +223,101 @@ namespace Porchlight.App
             }
         }
 
+        /// <summary>The next town (no one of yours in it: just the town going about its day). `fade`: keep the last one standing to fade out.</summary>
+        void NextAttractTown(bool fade = false)
+        {
+            var p = GenParams.Defaults;
+            // A little town, seen close: light enough for phones and weak machines, its
+            // edge about 35 tiles out from the middle, past the ~24 the view's corners reach as it turns.
+            p.width = p.height = 96;
+            var town = Generator.Generate(RandomSeed(), GenParams.Normalize(p));
+            if (fade) attract.SetTownFading(town);
+            else attract.SetTown(town);
+            attract.SetNightNow(attractNight);
+            attractNight = !attractNight;
+            attractNext = Time.realtimeSinceStartup + ATTRACT_EVERY;
+        }
+
+        /// <summary>
+        /// Build the next town and fade it in over the last, which is still drawn live
+        /// (into a picture under the card, from the camera as it keeps turning) until
+        /// it's gone. Without the Fading layer, the towns just change.
+        /// </summary>
+        System.Collections.IEnumerator SwapAttractTown()
+        {
+            attractSwapping = true;
+            bool live = ExploreView.CanFade;
+            if (live && (attractShot == null || attractShot.width != Screen.width || attractShot.height != Screen.height))
+            {
+                if (attractShot != null) attractShot.Release();
+                attractShot = new RenderTexture(Screen.width, Screen.height, 24, RenderTextureFormat.ARGB32) { name = "last town" };
+            }
+            try
+            {
+                NextAttractTown(live);
+            }
+            catch (Exception err)
+            {
+                Debug.LogException(err);
+                attractNext = Time.realtimeSinceStartup + ATTRACT_EVERY;
+                live = false;
+            }
+            if (!live)
+            {
+                attractSwapping = false;
+                yield break;
+            }
+            attract.RenderFading(attractShot);
+            attractFade.style.backgroundImage = Background.FromRenderTexture(attractShot);
+            attractFade.style.opacity = 1;
+            attractFade.style.display = DisplayStyle.Flex;
+            for (float t = 0; t < ATTRACT_FADE; t += Time.unscaledDeltaTime)
+            {
+                yield return null;
+                if (attract == null) yield break;
+                attract.RenderFading(attractShot);
+                attractFade.style.opacity = 1 - Mathf.SmoothStep(0, 1, t / ATTRACT_FADE);
+            }
+            attractFade.style.display = DisplayStyle.None;
+            attractFade.style.backgroundImage = StyleKeyword.None;
+            attract.EndFade();
+            attractSwapping = false;
+        }
+
         void Start2()
         {
             online = user != null;
             BuildApp();
             started = true;
             if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE") == "1") _ = Smoke();
+            var shot = Environment.GetEnvironmentVariable("PORCHLIGHT_SHOT");
+            if (!string.IsNullOrEmpty(shot)) _ = Shot(shot);
+        }
+
+        /// <summary>
+        /// A picture of a town for sharing (PORCHLIGHT_SHOT=file.png, PORCHLIGHT_SHOT_SEED
+        /// optional): explore it at night, zoomed all the way out, settle, save 2400×1260, quit.
+        /// </summary>
+        async Task Shot(string path)
+        {
+            var s = Environment.GetEnvironmentVariable("PORCHLIGHT_SHOT_SEED");
+            if (!string.IsNullOrEmpty(s)) Regenerate(s, @params);
+            await Explore();
+            iso.SetNightNow(true);
+            iso.SetZoom(0);
+            double until = platform.Now() + 6000;
+            while (platform.Now() < until) await Task.Yield();
+            var rt = new RenderTexture(2400, 1260, 24, RenderTextureFormat.ARGB32) { antiAliasing = 4 };
+            iso.Capture(rt);
+            var tex = new Texture2D(rt.width, rt.height, TextureFormat.RGB24, false);
+            var was = RenderTexture.active;
+            RenderTexture.active = rt;
+            tex.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+            tex.Apply();
+            RenderTexture.active = was;
+            System.IO.File.WriteAllBytes(path, tex.EncodeToPNG());
+            Debug.Log($"shot: town {seed} saved to {path}");
+            Application.Quit(0);
         }
 
         /// <summary>A headless run through the app (PORCHLIGHT_SMOKE=1): explore, walk a while, back to the map, quit.</summary>
@@ -250,7 +352,11 @@ namespace Porchlight.App
 
             map = new BlueprintView { name = "map" };
             map.WheelDelta = () => input.WheelDeltaY;
-            map.OnViewChanged = () => autoFit = false;
+            map.OnViewChanged = () =>
+            {
+                autoFit = false;
+                followOnMap = false;
+            };
             map.OnHover = world => hoverLabel.text = DescribeTile(model, world);
             map.OnDoubleClick = Fit;
             map.RegisterCallback<PointerDownEvent>(_ => Unfocus(), TrickleDown.TrickleDown);
@@ -278,10 +384,9 @@ namespace Porchlight.App
             panel.SetOpen(false);
             root.Add(panel.root);
 
-            controls = Sidebar.BuildExploreControls();
             var host = new VisualElement();
             root.Add(host);
-            sidebar = new Sidebar(host, @params, map.visibleLayers, new SidebarHandlers
+            sidebar = new Sidebar(host, @params, new SidebarHandlers
             {
                 OnParamsChange = ChangeParams,
                 OnRegenerate = () => Regenerate(RandomSeed(), @params),
@@ -289,29 +394,12 @@ namespace Porchlight.App
                 OnExplore = () => _ = Explore(),
                 OnBack = LeaveExplore,
                 OnResetParams = ResetParams,
-                OnLayerToggle = ToggleLayer,
-                OnFitView = Fit,
-                OnExportJson = () => Export.Json(platform, model),
-                OnExportPng = () => StartCoroutine(Export.Png(platform, model, map.visibleLayers, panelSettings)),
-                OnToggleDebug = () => SetDebugOpen(!panel.IsOpen),
-            }, controls, SetSidebarOpen);
+            }, SetSidebarOpen);
             if (user != null)
             {
                 sidebar.SetAccount(user.name, user.email, () => platform.PostForm("/auth/logout"));
                 OfferJoins();
             }
-
-            controls.walkMode.clicked += ToggleWalkMode;
-            controls.autoWalk.clicked += ToggleAutoWalk;
-            controls.car.clicked += ToggleCar;
-            controls.dayNight.clicked += ToggleNight;
-            controls.newChar.clicked += NewLook;
-            controls.turnLeft.clicked += () => iso?.Rotate(-1);
-            controls.turnRight.clicked += () => iso?.Rotate(1);
-            controls.lookAhead.clicked += () => iso?.LookAlongWalk();
-            controls.closeUp.clicked += ToggleCloseUp;
-            controls.tiltDown.clicked += () => iso?.Tilt(-1);
-            controls.tiltUp.clicked += () => iso?.Tilt(1);
 
             // Small screens start with the map, not the controls.
             if (Screen.width / dpr <= 720) SetSidebarOpen(false);
@@ -340,6 +428,7 @@ namespace Porchlight.App
             {
                 attract.viewport = new Rect(0, 0, Screen.width, Screen.height);
                 attract.Update();
+                if (!attractSwapping && Time.realtimeSinceStartup >= attractNext) StartCoroutine(SwapAttractTown());
             }
             if (!started) return;
             root.EnableInClassList("narrow", Screen.width / dpr <= 720);
@@ -430,7 +519,6 @@ namespace Porchlight.App
             {
                 // Regenerated from the map: stop the old town's auto-walk running behind it.
                 iso.SetAuto(false);
-                SyncAutoWalkButton();
             }
         }
 
@@ -460,7 +548,6 @@ namespace Porchlight.App
         void SetDebugOpen(bool open)
         {
             panel.SetOpen(open);
-            sidebar.SetDebugOpen(open);
             platform.Save(DEBUG_KEY, open ? "1" : "0");
         }
 
@@ -470,10 +557,7 @@ namespace Porchlight.App
         {
             overlay = new ExploreOverlay(isoHost) { Dpr = dpr };
             iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
-            iso.OnCarChange = SyncCarButton;
-            iso.OnAutoChange = SyncAutoWalkButton;
             iso.OnTake = car => net?.Take(car);
-            iso.OnNightChange = () => controls.dayNight.text = iso.IsNight ? "Day" : "Night";
             portraits = new Portraits(ModelLibrary.Instance);
             overlay.OnPersonBox = ChooseLook;
             overlay.OnCarBox = ChooseCar;
@@ -486,14 +570,11 @@ namespace Porchlight.App
                     return;
                 }
                 if (!exploring) return;
+                if (action == PadAction.BackToMap) LeaveExplore();
                 if (action == PadAction.Car) ToggleCar();
                 if (action == PadAction.Night) ToggleNight();
                 if (action == PadAction.NewCharacter) NewLook();
-                if (action == PadAction.Center)
-                {
-                    iso.CenterBehind();
-                    SyncCloseUpButton();
-                }
+                if (action == PadAction.Center) iso.CenterBehind();
                 // LB: the characters' grid, then on through them; RB (with a grid open): the cars', then on through those.
                 if (action == PadAction.Characters) StepChooser("look", ChooseLook);
                 if (action == PadAction.Cars) StepChooser("car", ChooseCar);
@@ -505,7 +586,6 @@ namespace Porchlight.App
         void SpawnCharacter()
         {
             iso?.Spawn(Catalog.RandomLook(new Rng(RandomSeed())));
-            SyncAutoWalkButton();
         }
 
         /// <summary>A new look for your character (C): online, it's saved with them.</summary>
@@ -563,6 +643,7 @@ namespace Porchlight.App
 
         void LeaveExplore()
         {
+            iso?.CloseMap();
             exploring = false;
             root.RemoveFromClassList("exploring");
             sidebar.SetExploring(false);
@@ -574,10 +655,12 @@ namespace Porchlight.App
             // Mark where the character is on the blueprint and bring it into view.
             var at = iso?.PlayerPosition;
             map.marker = at;
+            followOnMap = true;
             if (at != null)
             {
                 autoFit = false;
-                map.CenterOn(at.Value);
+                // The map was hidden, so it has no size until the next layout: centre it then.
+                map.CenterOnceLaidOut(at.Value);
             }
             map.Redraw();
         }
@@ -653,14 +736,6 @@ namespace Porchlight.App
             CharacterPicker.Forget(platform);
             asked = false;
             Connect(EnterTown);
-        }
-
-        void SyncAutoWalkButton()
-        {
-            bool on = iso?.IsAuto ?? false;
-            string what = iso != null && iso.IsDriving ? "auto drive" : "auto walk";
-            controls.autoWalk.text = on ? $"Stop {what}" : char.ToUpper(what[0]) + what.Substring(1);
-            controls.autoWalk.EnableInClassList("active", on);
         }
 
         /// <summary>Night or day: online, for everyone in the town (the room says when it's done).</summary>
@@ -758,48 +833,21 @@ namespace Porchlight.App
         {
             if (iso == null) return;
             iso.SetAuto(!iso.IsAuto);
-            SyncAutoWalkButton();
         }
 
         /// <summary>Into the nearest car, or out of this one.</summary>
-        void ToggleCar()
-        {
-            if (iso == null) return;
-            if (!iso.ToggleCar())
-            {
-                // No car near enough to get into, or nowhere to get out.
-                controls.car.AddToClassList("nudge");
-                timers.After(400, () => controls.car.RemoveFromClassList("nudge"));
-            }
-        }
-
-        /// <summary>In or out of a car: the car button follows, and auto walk becomes auto drive (or back).</summary>
-        void SyncCarButton(bool driving)
-        {
-            controls.car.text = driving ? "Get out" : "Get in car";
-            controls.car.EnableInClassList("active", driving);
-            SyncAutoWalkButton();
-        }
+        void ToggleCar() => iso?.ToggleCar();
 
         void ToggleCloseUp()
         {
             if (iso == null) return;
             iso.SetCameraMode(iso.Mode == CameraMode.Close ? CameraMode.Iso : CameraMode.Close);
-            SyncCloseUpButton();
-        }
-
-        void SyncCloseUpButton()
-        {
-            bool close = iso.Mode == CameraMode.Close;
-            controls.closeUp.text = close ? "Overview" : "Close up";
-            controls.closeUp.EnableInClassList("active", close);
         }
 
         void ToggleWalkMode()
         {
             if (iso == null) return;
             iso.SetStreetsOnly(!iso.IsStreetsOnly);
-            controls.walkMode.text = iso.IsStreetsOnly ? "Walk: streets only" : "Walk: anywhere";
         }
 
         void OnKeyDown(Key code, bool repeat)
@@ -813,9 +861,11 @@ namespace Porchlight.App
                 if (code == Key.T) ToggleAutoWalk();
                 if (code == Key.V && !repeat) ToggleCloseUp();
                 if (code == Key.C) NewLook();
+                if (code == Key.M && !repeat) iso.ToggleMap();
                 if (code == Key.Escape)
                 {
-                    if (overlay.Choosing) overlay.CloseChooser();
+                    if (iso.MapOpen) iso.CloseMap();
+                    else if (overlay.Choosing) overlay.CloseChooser();
                     else LeaveExplore();
                 }
                 return;
@@ -840,7 +890,7 @@ namespace Porchlight.App
             map.marker = at;
             map.route = iso.Route;
             map.goal = iso.Goal;
-            if (!map.IsInView(at.Value, 0.12))
+            if (followOnMap && map.ViewW > 0 && !map.IsInView(at.Value, 0.12))
             {
                 autoFit = false;
                 map.CenterOn(at.Value);

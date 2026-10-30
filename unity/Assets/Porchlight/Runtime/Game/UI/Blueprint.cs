@@ -44,6 +44,16 @@ namespace Porchlight.UI
             _ => Coords.Hex(0x3e5a7d),
         };
         public static readonly Color BuildingEdge = Coords.Hex(0x2e241d);
+        public static readonly Color Airfield = Coords.Rgb(150, 160, 104, 0.45f);
+        public static readonly Color AirfieldEdge = Coords.Rgb(96, 104, 64, 0.8f);
+        public static readonly Color Runway = Coords.Hex(0x4a4640);
+        public static readonly Color RunwayMark = Coords.Hex(0xf4e9cf);
+        public static readonly Color Apron = Coords.Hex(0x8a8478);
+        public static readonly Color Hangar = Coords.Hex(0x7d8a96);
+        public static readonly Color Pier = Coords.Hex(0xb08455);
+        public static readonly Color PierEdge = Coords.Hex(0x5b3a1e);
+        public static readonly Color Boat = Coords.Hex(0xfff8e8);
+        public static readonly Color BoatEdge = Coords.Hex(0x3d5a70);
         public static readonly Color Door = Coords.Hex(0xf4e9cf);
         public static readonly Color Plaza = Coords.Hex(0xe8d9b0);
         public static readonly Color PlazaEdge = Coords.Hex(0xa48b5c);
@@ -135,6 +145,7 @@ namespace Porchlight.UI
             new LayerInfo { id = "lots", label = "Lots", defaultOn = true },
             new LayerInfo { id = "roads", label = "Roads", defaultOn = true },
             new LayerInfo { id = "bridges", label = "Bridges", defaultOn = true },
+            new LayerInfo { id = "ports", label = "Airport & docks", defaultOn = true },
             new LayerInfo { id = "buildings", label = "Buildings", defaultOn = true },
             new LayerInfo { id = "landmarks", label = "Landmarks", defaultOn = true },
             new LayerInfo { id = "gates", label = "Center & gates", defaultOn = true },
@@ -270,6 +281,24 @@ namespace Porchlight.UI
             var p = camera.WorldToScreen(at);
             double w = ViewW, h = ViewH;
             return p.x > w * margin && p.x < w * (1 - margin) && p.y > h * margin && p.y < h * (1 - margin);
+        }
+
+        /// <summary>CenterOn, now if the map has a size, or else as soon as it's laid out (just after it's shown).</summary>
+        public void CenterOnceLaidOut(Vec2 at)
+        {
+            if (ViewW > 0 && ViewH > 0)
+            {
+                CenterOn(at);
+                return;
+            }
+            void Once(GeometryChangedEvent e)
+            {
+                if (ViewW <= 0 || ViewH <= 0) return;
+                UnregisterCallback<GeometryChangedEvent>(Once);
+                CenterOn(at);
+                Redraw();
+            }
+            RegisterCallback<GeometryChangedEvent>(Once);
         }
 
         public void CenterOn(Vec2 at)
@@ -589,6 +618,20 @@ namespace Porchlight.UI
 
         static float Px => 1f;
 
+        void Box(Painter2D p, (double x0, double y0, double x1, double y1) r, Color fill, Color? edge) => Box(p, r.x0, r.y0, r.x1, r.y1, fill, edge);
+
+        /// <summary>A map rectangle, filled and (if `edge`) outlined.</summary>
+        void Box(Painter2D p, double x0, double y0, double x1, double y1, Color fill, Color? edge)
+        {
+            p.BeginPath();
+            Polygon(p, new[] { S(x0, y0), S(x1, y0), S(x1, y1), S(x0, y1) });
+            p.fillColor = fill;
+            p.Fill();
+            if (edge == null) return;
+            p.strokeColor = edge.Value;
+            p.Stroke();
+        }
+
         void DrawLayer(string id, MeshGenerationContext ctx)
         {
             if (model == null) return;
@@ -735,6 +778,40 @@ namespace Porchlight.UI
                         p.strokeColor = BlueprintStyle.BridgeDeck;
                         p.lineWidth = L(width + 0.4);
                         p.Stroke();
+                    }
+                    break;
+                }
+                case "ports":
+                {
+                    // The airport: its grounds, the runway with its centre line, taxiway and apron, hangars and tower.
+                    var a = model.airport;
+                    if (a != null)
+                    {
+                        p.lineWidth = 1;
+                        Box(p, a.x0, a.y0, a.x1, a.y1, BlueprintStyle.Airfield, BlueprintStyle.AirfieldEdge);
+                        foreach (var paved in new[] { Porchlight.Gen.Airfield.Apron(a), Porchlight.Gen.Airfield.Taxiway(a), Porchlight.Gen.Airfield.CarPark(a) }.Concat(Porchlight.Gen.Airfield.Links(a)))
+                            Box(p, Porchlight.Gen.Airfield.Rect(a, paved), BlueprintStyle.Apron, null);
+                        var runway = Porchlight.Gen.Airfield.Rect(a, Porchlight.Gen.Airfield.Runway(a));
+                        Box(p, runway, BlueprintStyle.Runway, null);
+                        bool alongX = runway.x1 - runway.x0 > runway.y1 - runway.y0;
+                        var centre = alongX
+                            ? new List<Vector2> { S(runway.x0 + 1, (runway.y0 + runway.y1) / 2), S(runway.x1 - 1, (runway.y0 + runway.y1) / 2) }
+                            : new List<Vector2> { S((runway.x0 + runway.x1) / 2, runway.y0 + 1), S((runway.x0 + runway.x1) / 2, runway.y1 - 1) };
+                        p.strokeColor = BlueprintStyle.RunwayMark;
+                        p.lineWidth = Math.Max(1, L(0.15));
+                        p.BeginPath();
+                        Dashed(p, centre, L(1.2), L(0.8));
+                        p.Stroke();
+                        p.lineWidth = 1;
+                        foreach (var hall in Porchlight.Gen.Airfield.Hangars(a).Append(Porchlight.Gen.Airfield.Tower(a)))
+                            Box(p, Porchlight.Gen.Airfield.Rect(a, hall), BlueprintStyle.Hangar, BlueprintStyle.BuildingEdge);
+                    }
+                    // The docks: each pier's deck and the boats moored along it.
+                    p.lineWidth = 1;
+                    foreach (var d in model.docks)
+                    {
+                        Box(p, Porchlight.Gen.Piers.Deck(d), BlueprintStyle.Pier, BlueprintStyle.PierEdge);
+                        foreach (var m in d.boats) Box(p, Porchlight.Gen.Piers.Footprint(m), BlueprintStyle.Boat, BlueprintStyle.BoatEdge);
                     }
                     break;
                 }

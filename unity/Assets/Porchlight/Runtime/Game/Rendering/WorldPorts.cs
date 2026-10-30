@@ -141,10 +141,10 @@ namespace Porchlight.Rendering
         /// <summary>Plank piers on posts, from the shore out over the water.</summary>
         void AddDocks()
         {
-            if (layout.docks.Count == 0) return;
+            if (model.docks.Count == 0) return;
             var b = new MeshBuilder(palette);
-            const double DECK = 0.05, THICK = 0.04, HALF = 0.42;
-            foreach (var dock in layout.docks)
+            const double DECK = 0.05, THICK = 0.04, HALF = Piers.DECK_HALF;
+            foreach (var dock in model.docks)
             {
                 var (fx, fy) = Grid.DIRS4[(int)dock.facing];
                 var first = dock.tiles[0];
@@ -153,7 +153,8 @@ namespace Porchlight.Rendering
                 double ax = first.x + 0.5 - fx * 0.5, ay = first.y + 0.5 - fy * 0.5;
                 double bx = last.x + 0.5 + fx * 0.5, by = last.y + 0.5 + fy * 0.5;
                 double rx = -fy * HALF, ry = fx * HALF;
-                b.Box(Math.Min(ax, bx) - Math.Abs(rx), Math.Min(ay, by) - Math.Abs(ry), Math.Max(ax, bx) + Math.Abs(rx), Math.Max(ay, by) + Math.Abs(ry), DECK - THICK, DECK, P.post, P.deck);
+                var deck = Piers.Deck(dock);
+                b.Box(deck.x0, deck.y0, deck.x1, deck.y1, DECK - THICK, DECK, P.post, P.deck);
                 // Planks across, a shade apart.
                 double length = Numbers.Hypot(bx - ax, by - ay);
                 for (double s = 0.06; s < length; s += 0.16)

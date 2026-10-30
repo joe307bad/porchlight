@@ -220,14 +220,32 @@ namespace Porchlight.Explore
         }
     }
 
-    /// <summary>A townsperson strolling the sidewalks (now and then crossing the road), or heading for them.</summary>
+    /// <summary>
+    /// A townsperson strolling the sidewalks (now and then crossing the road), or
+    /// heading for them. Walk up to one and they stop and look at you; ask them
+    /// along and they wave and follow you about (the view walks them, along the
+    /// way you went) until you send them off, when they turn away and stroll on.
+    /// </summary>
     public sealed class Pedestrian : Walker
     {
+        /// <summary>How far behind you a follower keeps (tiles, along the way you walked).</summary>
+        public const double FOLLOW_GAP = 0.7;
+        const double FOLLOW_ACCEL = 8;
+        const double WAVE_TIME = 1.4;
+
         SidewalkWalk walk;
         readonly Rng rng;
         double pause;
         readonly double pace;
         double going;
+        /// <summary>Someone they've stopped to look at (set each step by the view), or null.</summary>
+        public Vec2? lookAt;
+        /// <summary>Following you about (the view walks them with Follow, not Update).</summary>
+        public bool following;
+        /// <summary>Seconds of waving still to go (the view raises their arm meanwhile).</summary>
+        public double waving;
+        /// <summary>Seconds left, after being sent off, before they'll stop for you again.</summary>
+        public double aloof;
 
         Pedestrian(string look, SidewalkWalk walk, Vec2 at, Rng rng, double scale) : base(look, at.x, at.y, scale)
         {
@@ -258,8 +276,79 @@ namespace Porchlight.Explore
             going = speed;
         }
 
+        /// <summary>Asked along: wave, then follow.</summary>
+        public void Join()
+        {
+            following = true;
+            waving = WAVE_TIME;
+            going = 0;
+        }
+
+        /// <summary>Sent off: turn away from `from` and carry on strolling from here.</summary>
+        public void Leave(Vec2 from, SidewalkNetwork net)
+        {
+            following = false;
+            waving = 0;
+            lookAt = null;
+            if (net.paths.Count > 0) walk = SidewalkWalk.Join(net, rng, new Vec2(x, y));
+            heading = DetMath.Atan2(x - from.x, y - from.y);
+            pause = 0.7;
+            going = 0;
+            speed = 0;
+            aloof = 6;
+        }
+
+        /// <summary>
+        /// One step behind you: walk to `target` (a point on the way you went, FOLLOW_GAP
+        /// back), as fast as you're going if need be, and while standing look at `you`.
+        /// </summary>
+        public void Follow(Vec2 target, Vec2 you, double hurry, double dt)
+        {
+            if (waving > 0)
+            {
+                waving -= dt;
+                heading = DetMath.Atan2(you.x - x, you.y - y);
+                Moved(0, 0, dt);
+                return;
+            }
+            double dx = target.x - x, dy = target.y - y;
+            double d = Numbers.Hypot(dx, dy);
+            // Up to your pace (and a little over, to catch up), easing off as they reach the spot.
+            double want = d < 0.05 ? 0 : Math.Min(Math.Max(pace, hurry * 1.15), d * 4 + 0.3);
+            going += Math.Max(-FOLLOW_ACCEL * dt, Math.Min(FOLLOW_ACCEL * dt, want - going));
+            double step = Math.Min(d, Math.Max(0, going) * dt);
+            if (step < 1e-5)
+            {
+                going = Math.Min(going, d / Math.Max(1e-6, dt));
+                Moved(0, 0, dt);
+                if (Numbers.Hypot(you.x - x, you.y - y) > 1e-3) heading += Orbit.ShortestTurn(heading, DetMath.Atan2(you.x - x, you.y - y)) * Math.Min(1, dt * 6);
+                return;
+            }
+            Moved(dx / d * step, dy / d * step, dt);
+            x += dx / d * step;
+            y += dy / d * step;
+        }
+
+        /// <summary>Put them down at (x, y), standing still (when you get out of a car, or jump across the map).</summary>
+        public void Place(double px, double py)
+        {
+            x = px;
+            y = py;
+            going = 0;
+            speed = 0;
+            lift = 0;
+        }
+
         public void Update(double dt)
         {
+            if (lookAt != null)
+            {
+                // Stopped to look at you.
+                going = 0;
+                Moved(0, 0, dt);
+                heading += Orbit.ShortestTurn(heading, DetMath.Atan2(lookAt.Value.x - x, lookAt.Value.y - y)) * Math.Min(1, dt * 8);
+                return;
+            }
             if (pause > 0) pause -= dt;
             else if (!walk.IsCrossing)
             {

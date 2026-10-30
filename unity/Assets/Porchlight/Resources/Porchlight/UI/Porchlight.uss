@@ -16,7 +16,6 @@
 
 .bold {
     -unity-font-definition: url("project://database/Assets/Porchlight/Resources/Porchlight/Fonts/Inter-SemiBold.ttf");
-    -unity-font-style: bold;
 }
 
 .semibold {
@@ -54,7 +53,7 @@ Label {
     padding: 5px 9px;
     border-width: 1px;
     border-color: #555555;
-    border-radius: 5px;
+    border-radius: 0;
     background-color: #1d1c1a;
     color: #efe6cf;
     font-size: 12px;
@@ -75,8 +74,8 @@ Label {
 
 .btn-regenerate, .btn-primary {
     border-width: 0;
-    border-radius: 6px;
-    background-color: #c2412d;
+    border-radius: 0;
+    background-color: #2f6fd6;
     color: #ffffff;
     font-size: 14px;
     padding: 10px 12px;
@@ -84,7 +83,7 @@ Label {
 }
 
 .btn-regenerate:hover {
-    background-color: #d5482f;
+    background-color: #3b7fe6;
 }
 
 .btn-primary {
@@ -144,7 +143,6 @@ Label {
 
 .sb-body {
     padding: 18px 18px 24px 18px;
-    min-height: 100%;
 }
 
 .sb-body > * {
@@ -172,19 +170,9 @@ Label {
     -unity-text-align: middle-center;
 }
 
-.sb-title {
-    font-size: 20px;
-    letter-spacing: 0.4px;
-}
-
-.sb-subtitle {
-    margin-top: 2px;
-    font-size: 12px;
-    color: #a99f88;
-}
-
 .sb-actions {
     flex-direction: row;
+    margin-top: 14px;
 }
 
 .sb-actions > .btn {
@@ -201,11 +189,10 @@ Label {
 .sb-seed {
     flex-direction: row;
     align-items: center;
-    font-size: 12px;
-    color: #a99f88;
+    margin-top: 14px;
 }
 
-.sb-seed > Label {
+.sb-seed-label {
     margin-right: 8px;
     color: #a99f88;
     font-size: 12px;
@@ -224,13 +211,6 @@ Label {
     background-color: #1d1c1a;
     color: #efe6cf;
     font-size: 13px;
-}
-
-.section-title {
-    margin-bottom: 10px;
-    font-size: 11px;
-    letter-spacing: 0.9px;
-    color: #a99f88;
 }
 
 .sb-slider {
@@ -281,35 +261,6 @@ Label {
 
 .range .unity-base-slider__dragger-border {
     display: none;
-}
-
-/* Collapsible sections (details / summary). */
-.fold-head {
-    flex-direction: row;
-    align-items: center;
-    font-size: 11px;
-    letter-spacing: 0.9px;
-    color: #a99f88;
-}
-
-.fold-arrow {
-    width: 12px;
-    font-size: 9px;
-    color: #a99f88;
-}
-
-.fold-body {
-    margin-top: 10px;
-}
-
-.sb-layers {
-    flex-direction: row;
-    flex-wrap: wrap;
-}
-
-.sb-layers > .check {
-    width: 50%;
-    margin-bottom: 6px;
 }
 
 .check {
@@ -378,97 +329,20 @@ Label {
     color: #ffffff;
 }
 
-.sb-tools {
-    flex-direction: row;
-    flex-wrap: wrap;
-    margin-top: auto;
-}
-
-.sb-tools > .btn {
-    margin: 0 6px 6px 0;
-}
-
-.grid4 {
-    flex-direction: row;
-    margin-bottom: 8px;
-}
-
-.grid4 > .btn {
-    flex-grow: 1;
-    flex-basis: 0;
-    padding: 6px 4px;
-    margin-right: 6px;
-}
-
-.grid4 > .btn.last {
-    margin-right: 0;
-}
-
-.grid2 {
-    flex-direction: row;
-    flex-wrap: wrap;
-}
-
-.grid2 > .btn {
-    width: 48.5%;
-    padding: 6px 4px;
-    margin-bottom: 6px;
-}
-
-.grid2 > .btn.left {
-    margin-right: 3%;
-}
-
-.help-row {
-    flex-direction: row;
-    margin-bottom: 4px;
-}
-
-.help-key {
-    width: 98px;
-    margin-right: 10px;
-    font-size: 11px;
-    color: #efe6cf;
-    white-space: nowrap;
-}
-
 .help-text {
     flex-shrink: 1;
     flex-grow: 1;
     font-size: 12px;
     color: #a99f88;
+    white-space: normal;
 }
 
 .sb-joins {
-    padding-top: 8px;
+    padding-top: 10px;
 }
 .sb-joins > .btn {
     margin-top: 4px;
 }
-.sb-account {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    padding-top: 12px;
-    border-top-width: 1px;
-    border-top-color: #444038;
-    font-size: 13px;
-}
-
-.sb-account-name {
-    flex-shrink: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    margin-right: 10px;
-    font-size: 13px;
-}
-
-.sb-account > .link {
-    margin: 0;
-    flex-shrink: 0;
-}
-
 /* Footer: hover readout and status. */
 #footer {
     position: absolute;
@@ -630,9 +504,7 @@ Label {
 }
 
 .signin-card {
-    opacity: 1;
-    background-color: #1f1e1b;
-    width: 360px;
+    width: 340px;
     max-width: 100%;
     align-items: stretch;
 }
@@ -642,27 +514,24 @@ Label {
 }
 
 .signin-title {
-    margin-bottom: 6px;
-    font-size: 26px;
-}
-
-.signin-text {
-    margin-bottom: 22px;
-    font-size: 14px;
-    color: #a99f88;
+    margin-bottom: 24px;
+    font-size: 40px;
+    -unity-font-definition: url("project://database/Assets/Porchlight/Resources/Porchlight/Fonts/TimesNewNormal-Regular.ttf");
+    color: #ffffff;
+    text-shadow: 4px 4px 0 #000000;
 }
 
 .signin-button {
     padding: 11px 16px;
     border-width: 0;
-    border-radius: 8px;
-    background-color: #c2412d;
+    border-radius: 0;
+    background-color: #2f6fd6;
     color: #ffffff;
     font-size: 15px;
 }
 
 .signin-button:hover {
-    background-color: #d5482f;
+    background-color: #3b7fe6;
 }
 
 .signin-error, .picker-error {
@@ -698,7 +567,7 @@ Label {
     margin: 0 6px 0 0;
     padding: 10px 14px;
     border-width: 0;
-    border-radius: 8px;
+    border-radius: 0;
     background-color: #c2412d;
     color: #ffffff;
     font-size: 13px;
@@ -714,7 +583,7 @@ Label {
     margin: 0;
     border-width: 1px;
     border-color: #444038;
-    border-radius: 8px;
+    border-radius: 0;
     background-color: rgba(0, 0, 0, 0);
     color: #a99f88;
     font-size: 18px;
@@ -747,7 +616,7 @@ Label {
     margin: 0;
     padding: 9px 14px;
     border-width: 0;
-    border-radius: 8px;
+    border-radius: 0;
     background-color: #3b3934;
     color: #efe6cf;
     font-size: 13px;
@@ -838,7 +707,7 @@ Label {
     padding: 2px;
     height: 18px;
     border-width: 0;
-    border-radius: 2px;
+    border-radius: 0;
     background-color: #424242;
     color: #ebebeb;
     font-size: 11px;
@@ -846,11 +715,6 @@ Label {
 
 .hidden {
     display: none;
-}
-
-/* A button that couldn't do what it says (no car near enough): a little shake. */
-.btn.nudge {
-    translate: 3px 0;
 }
 
 /* Your character and your car, beside the minimap. */
@@ -913,6 +777,7 @@ Label {
 .chooser-close {
     font-size: 16px;
     padding: 2px 9px;
+    border-radius: 0;
 }
 
 .chooser-scroll {
@@ -948,4 +813,332 @@ Label {
 .chooser-tile.highlighted {
     border-color: #f2e6c9;
     border-width: 3px;
+}
+
+/* Pressable buttons: a lip along the bottom that the button sinks into while
+   held, and rises back out of when let go. Height lost from the lip comes back
+   as margin, so nothing around it moves. */
+.press {
+    border-bottom-width: 3px;
+    border-bottom-color: rgba(0, 0, 0, 0.35);
+    margin-bottom: 0;
+    translate: 0 0;
+    transition-property: translate, border-bottom-width, margin-bottom, background-color;
+    transition-duration: 0.07s, 0.07s, 0.07s, 0.12s;
+    transition-timing-function: ease-out;
+}
+
+.press:hover {
+    translate: 0 -1px;
+}
+
+.press:active {
+    translate: 0 2px;
+    border-bottom-width: 1px;
+    margin-bottom: 2px;
+}
+
+.press:disabled {
+    translate: 0 0;
+}
+
+.btn.press {
+    border-bottom-color: #0d0c0b;
+}
+
+.btn-regenerate.press {
+    border-bottom-color: #1d4690;
+}
+
+.btn-primary.press {
+    border-bottom-color: #285233;
+}
+
+.signin-button.press {
+    border-bottom-color: #1d4690;
+}
+
+.picker-play.press, .picker-create.press {
+    border-bottom-color: #7e2a1d;
+}
+
+/* The sidebar's top: who you're playing as, the seed, and the big buttons. */
+.sb-top {
+    padding-bottom: 18px;
+    border-bottom-width: 1px;
+    border-bottom-color: #383530;
+}
+
+.sb-head-label {
+    font-size: 11px;
+    letter-spacing: 0.9px;
+    color: #a99f88;
+    -unity-text-align: middle-left;
+}
+
+.sb-playing-name {
+    margin-top: 4px;
+    font-size: 20px;
+    color: #efe6cf;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sb-playing-detail {
+    margin-top: 2px;
+    font-size: 12px;
+    color: #a99f88;
+}
+
+.sb-links {
+    flex-direction: row;
+}
+
+.sb-links > .link {
+    margin: 6px 14px 0 0;
+}
+
+/* The sections: one open at a time, each under a heading that opens it. */
+.sb-body > .sb-section {
+    margin-bottom: 0;
+}
+
+.sb-section {
+    border-bottom-width: 1px;
+    border-bottom-color: #383530;
+}
+
+.sb-section-head {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 0;
+}
+
+.sb-section-head:hover > .sb-head-label, .sb-section-head:hover > .sb-section-arrow {
+    color: #efe6cf;
+}
+
+.sb-section-arrow {
+    font-size: 16px;
+    color: #a99f88;
+    rotate: 0deg;
+    transition-property: rotate;
+    transition-duration: 0.15s;
+}
+
+.sb-section.open > .sb-section-head > .sb-section-arrow {
+    rotate: 90deg;
+}
+
+.sb-section-body {
+    padding-bottom: 16px;
+}
+
+.sb-sub-label {
+    margin: 16px 0 10px 0;
+    font-size: 11px;
+    letter-spacing: 0.9px;
+    color: #a99f88;
+}
+
+/* Controls: a controller button and a key for each. */
+.ctl-row {
+    flex-direction: row;
+    align-items: center;
+    margin-bottom: 7px;
+}
+
+.ctl-icons {
+    flex-direction: row;
+    width: 150px;
+    flex-shrink: 0;
+}
+
+.ctl-pad {
+    flex-direction: row;
+    align-items: center;
+    width: 66px;
+}
+
+.ctl-keys {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    width: 84px;
+}
+
+.ctl-text {
+    flex-shrink: 1;
+    font-size: 12px;
+    color: #efe6cf;
+}
+
+.ctl-list > .help-text {
+    margin-top: 8px;
+}
+
+.pad {
+    align-items: center;
+    justify-content: center;
+    margin-right: 3px;
+    height: 20px;
+    background-color: #3a3833;
+    border-width: 1px;
+    border-color: #55524a;
+}
+
+.pad-label {
+    font-size: 10px;
+    color: #efe6cf;
+    -unity-text-align: middle-center;
+}
+
+.pad-face {
+    width: 20px;
+    border-radius: 10px;
+    background-color: #24231f;
+    border-width: 1.5px;
+}
+
+.pad-a { border-color: #6cbf4a; }
+.pad-a > .pad-label { color: #8fdc6c; }
+.pad-b { border-color: #d9493b; }
+.pad-b > .pad-label { color: #f07364; }
+.pad-x { border-color: #3f86d9; }
+.pad-x > .pad-label { color: #6fa9f0; }
+.pad-y { border-color: #e2b23a; }
+.pad-y > .pad-label { color: #f2cd63; }
+
+.pad-bumper {
+    width: 26px;
+    height: 14px;
+    border-top-left-radius: 7px;
+    border-top-right-radius: 7px;
+    border-bottom-left-radius: 3px;
+    border-bottom-right-radius: 3px;
+}
+
+.pad-trigger {
+    width: 20px;
+    height: 22px;
+    border-top-left-radius: 10px;
+    border-top-right-radius: 10px;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
+
+.pad-stick {
+    width: 20px;
+    border-radius: 10px;
+    border-width: 3px;
+    border-color: #55524a;
+    background-color: #2a2925;
+}
+
+.pad-dpad {
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+}
+
+.pad-small {
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+}
+
+.pad-view {
+    position: absolute;
+    width: 6px;
+    height: 5px;
+    border-width: 1px;
+    border-color: #efe6cf;
+    border-radius: 1px;
+}
+
+.pad-view-back {
+    left: 3px;
+    top: 3px;
+}
+
+.pad-view-front {
+    left: 5px;
+    top: 6px;
+    background-color: #3a3833;
+}
+
+.pad-menu-line {
+    width: 7px;
+    height: 1px;
+    margin: 1px 0;
+    background-color: #efe6cf;
+}
+
+.keycap {
+    align-items: center;
+    justify-content: center;
+    min-width: 19px;
+    height: 19px;
+    margin: 0 3px 2px 0;
+    padding: 0 4px;
+    border-width: 1px;
+    border-bottom-width: 3px;
+    border-color: #4c4943;
+    border-bottom-color: #2c2a26;
+    border-radius: 4px;
+    background-color: #34322d;
+}
+
+.keycap-label {
+    font-size: 10px;
+    color: #efe6cf;
+    -unity-text-align: middle-center;
+}
+
+.keycap-wide {
+    padding: 0 6px;
+}
+
+/* The sign-in card: no card at all, just the title and the button over the town. */
+.signin-card {
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 0;
+}
+
+/* The open section's heading, pinned over the top of the sidebar once it has scrolled away. */
+.sb-pinned {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 14px 18px;
+    background-color: #1f1e1b;
+    border-bottom-width: 1px;
+    border-bottom-color: #383530;
+}
+
+/* The big map (Start, or M): the whole town over the view, to set a waypoint on. */
+.bigmap-backdrop {
+    background-color: rgba(10, 10, 9, 0.6);
+}
+
+.bigmap {
+    align-items: center;
+}
+
+.bigmap-picture {
+    border-width: 2px;
+    border-color: #444038;
+    background-color: #2b2a27;
+    -unity-background-scale-mode: stretch-to-fill;
+}
+
+.bigmap-hint {
+    margin-top: 12px;
+    padding: 6px 12px;
+    background-color: rgba(28, 27, 24, 0.92);
+    color: #f4f1ea;
+    font-size: 13px;
 }

@@ -46,7 +46,7 @@ static class Program
                 culs += Raster.Bulbs(a.roads.edges).Count;
                 parked += layout.cars.Count;
                 if (a.airport != null) airports++;
-                docks += layout.docks.Count;
+                docks += a.docks.Count;
                 loops += layout.boatLoops.Count;
                 foreach (var c in layout.cars)
                 {
@@ -95,8 +95,9 @@ static class Program
     }
 
     /// <summary>
-    /// The airport has 8-10 planes, all on its apron; docks run out over open
-    /// water, their boats float, and the boats' loops keep to the water.
+    /// The airport has 8-10 planes, all on its apron; docks run out from dry
+    /// land over open water, apart; moored boats float clear of the shore, the
+    /// docks and each other; and a sailing boat anywhere on a loop does too.
     /// </summary>
     static string Ports(TownModel model, Porchlight.Explore.IsoLayout layout)
     {
@@ -118,13 +119,72 @@ static class Program
             if (a == null || c.x < a.x0 || c.x > a.x1 + 1 || c.y < a.y0 || c.y > a.y1 + 1) return $"a plane off the airfield at ({c.x:0.0}, {c.y:0.0})";
         }
         if (model.airport != null && (planes < 8 || planes > 10)) return $"{planes} planes at the airport";
-        foreach (var d in layout.docks)
+        // Docks: from dry land next to the water, out over it, the end clear of the shore.
+        var decks = new List<(double x0, double y0, double x1, double y1)>();
+        foreach (var d in model.docks)
+        {
+            if (Wet(d.shore.x + 0.5, d.shore.y + 0.5)) return $"dock {d.id} starts in the water at ({d.shore.x}, {d.shore.y})";
+            var (fx, fy) = Porchlight.Core.Grid.DIRS4[(int)d.facing];
             foreach (var t in d.tiles)
                 if (!Wet(t.x + 0.5, t.y + 0.5)) return $"a dock on land at ({t.x}, {t.y})";
+            var end = d.tiles[d.tiles.Count - 1];
+            for (int k = 1; k <= 2; k++)
+                if (!Wet(end.x + 0.5 + fx * k, end.y + 0.5 + fy * k)) return $"dock {d.id} runs up to the shore at ({end.x}, {end.y})";
+            var deck = Piers.Deck(d);
+            foreach (var e in decks) if (Overlap(deck, e)) return $"two docks meet at ({end.x}, {end.y})";
+            decks.Add(deck);
+        }
+        // Moored boats, as the street scene has them: one per berth, on open water, clear of the docks and each other.
+        var moored = new List<(double x0, double y0, double x1, double y1)>();
+        foreach (var c in layout.cars)
+        {
+            if (c.vehicle <= 0 || Porchlight.Explore.Catalog.KindOf(c.vehicle - 1) != Porchlight.Explore.VehicleKind.Boat) continue;
+            var box = BoatBox(c.x, c.y, c.angle, 0);
+            if (!OverWater(model, box)) return $"a moored boat touches land or a bridge at ({c.x:0.0}, {c.y:0.0})";
+            foreach (var deck in decks) if (Overlap(box, deck)) return $"a moored boat runs into a dock at ({c.x:0.0}, {c.y:0.0})";
+            foreach (var other in moored) if (Overlap(box, other)) return $"two moored boats overlap at ({c.x:0.0}, {c.y:0.0})";
+            moored.Add(box);
+        }
+        int berths = 0;
+        foreach (var d in model.docks) berths += d.boats.Count;
+        if (berths != moored.Count) return $"{moored.Count} moored boats for {berths} berths";
+        // Sailing boats: anywhere on a loop (where they start, and sail), a boat fits clear of the shore, the docks and the moored boats.
         foreach (var loop in layout.boatLoops)
-            foreach (var q in loop)
+            for (int k = 0; k + 1 < loop.Count; k++)
+            {
+                var q = loop[k];
                 if (!Wet(q.x, q.y)) return $"a boat loop runs aground at ({q.x:0.0}, {q.y:0.0})";
+                var box = BoatBox(q.x, q.y, Math.Atan2(loop[k + 1].y - q.y, loop[k + 1].x - q.x), Piers.MARGIN);
+                if (!OverWater(model, box)) return $"a sailing boat would touch the shore or a bridge at ({q.x:0.0}, {q.y:0.0})";
+                foreach (var deck in decks) if (Overlap(box, deck)) return $"a sailing boat would hit a dock at ({q.x:0.0}, {q.y:0.0})";
+                foreach (var other in moored) if (Overlap(box, other)) return $"a sailing boat would hit a moored one at ({q.x:0.0}, {q.y:0.0})";
+            }
         return null;
+    }
+
+    /// <summary>The box round a boat at (x, y) heading `angle`, grown by `grow`.</summary>
+    static (double x0, double y0, double x1, double y1) BoatBox(double x, double y, double angle, double grow)
+    {
+        double c = Math.Abs(Math.Cos(angle)), s = Math.Abs(Math.Sin(angle));
+        double hx = c * Piers.BOAT_HALF_LENGTH + s * Piers.BOAT_HALF_WIDTH + grow, hy = s * Piers.BOAT_HALF_LENGTH + c * Piers.BOAT_HALF_WIDTH + grow;
+        return (x - hx, y - hy, x + hx, y + hy);
+    }
+
+    static bool Overlap((double x0, double y0, double x1, double y1) a, (double x0, double y0, double x1, double y1) b) =>
+        a.x0 < b.x1 - 1e-9 && b.x0 < a.x1 - 1e-9 && a.y0 < b.y1 - 1e-9 && b.y0 < a.y1 - 1e-9;
+
+    /// <summary>Whether every tile under the box is water with no bridge over it.</summary>
+    static bool OverWater(TownModel model, (double x0, double y0, double x1, double y1) box)
+    {
+        int w = model.width;
+        for (int y = (int)Math.Floor(box.y0); y < box.y1 - 1e-9; y++)
+            for (int x = (int)Math.Floor(box.x0); x < box.x1 - 1e-9; x++)
+            {
+                if (x < 0 || y < 0 || x >= w || y >= model.height) return false;
+                int i = y * w + x;
+                if (!Terrain.IsWater(model.tiles.terrain[i]) || model.tiles.overlay[i] != Overlay.NONE) return false;
+            }
+        return true;
     }
 
     /// <summary>
@@ -245,6 +305,17 @@ static class Program
         for (int i = 0; i < a.tiles.terrain.Length; i++)
             if (a.tiles.terrain[i] != b.tiles.terrain[i] || a.tiles.overlay[i] != b.tiles.overlay[i] || a.tiles.buildingId[i] != b.tiles.buildingId[i]) return "tiles";
         if (a.spawn.x != b.spawn.x || a.spawn.y != b.spawn.y) return "spawn";
+        if (a.docks.Count != b.docks.Count) return "docks";
+        for (int i = 0; i < a.docks.Count; i++)
+        {
+            Dock p = a.docks[i], q = b.docks[i];
+            if (p.shore.x != q.shore.x || p.shore.y != q.shore.y || p.facing != q.facing || p.tiles.Count != q.tiles.Count || p.boats.Count != q.boats.Count) return "docks";
+            for (int k = 0; k < p.boats.Count; k++)
+                if (p.boats[k].x != q.boats[k].x || p.boats[k].y != q.boats[k].y || p.boats[k].facing != q.boats[k].facing) return "moored boats";
+        }
+        var ap = a.airport;
+        var aq = b.airport;
+        if ((ap == null) != (aq == null) || ap != null && (ap.x0 != aq.x0 || ap.y0 != aq.y0 || ap.x1 != aq.x1 || ap.y1 != aq.y1 || ap.front != aq.front || ap.entranceU != aq.entranceU)) return "airport";
         return null;
     }
 }

@@ -166,6 +166,29 @@ namespace Porchlight.Model
         public double entranceU;
     }
 
+    /// <summary>A boat tied up at a dock: where it floats, and which way its bow points.</summary>
+    public struct Mooring
+    {
+        public double x, y;
+        public Facing facing;
+    }
+
+    /// <summary>
+    /// A pier out from the shore over a lake, with the boats moored along it.
+    /// Piers (Gen) says where its deck and each boat's footprint are.
+    /// </summary>
+    public sealed class Dock
+    {
+        public int id;
+        /// <summary>The dry tile it starts from.</summary>
+        public TilePos shore;
+        /// <summary>The pier's tiles, from the shore out.</summary>
+        public List<TilePos> tiles;
+        /// <summary>Which way it runs out over the water.</summary>
+        public Facing facing;
+        public List<Mooring> boats;
+    }
+
     /// <summary>Derived fields kept for the debug views.</summary>
     public sealed class DebugFields
     {
@@ -233,6 +256,8 @@ namespace Porchlight.Model
         public List<Landmark> landmarks = new List<Landmark>();
         /// <summary>Null on a map with no room for one.</summary>
         public Airport airport;
+        /// <summary>Piers out over the lakes, each with its boats (DocksStage).</summary>
+        public List<Dock> docks = new List<Dock>();
 
         public TileGrid tiles;
         public Vec2 spawn;

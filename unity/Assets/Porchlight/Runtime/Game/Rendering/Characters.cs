@@ -4,7 +4,9 @@
 // faster as they hurry, and jump, fall and land in the air. Around that, the
 // body leans into speeding up and into turns, and squashes and stretches on
 // take-off and landing. You're drawn on the Player layer, which the renderer
-// shows through anything in front of you (the x-ray outline).
+// shows through anything in front of you (the x-ray outline). The kit has no
+// wave, so a townsperson waves by having their right arm raised over the
+// Animator's pose (ArmWave, after the Animator has run).
 
 using System;
 using Porchlight.Explore;
@@ -146,6 +148,23 @@ namespace Porchlight.Rendering
             double sy = 1 + stretch - squash;
             float side = (float)(1 / Math.Sqrt(sy));
             body.localScale = new Vector3(side, (float)sy, side);
+        }
+
+        ArmWave wave;
+
+        /// <summary>Hold the pose where it is (a town left standing while the next fades in).</summary>
+        public void Freeze() => animator.speed = 0;
+
+        /// <summary>Wave (a raised right hand, side to side) while `on`; the arm eases up and back down.</summary>
+        public void SetWaving(bool on)
+        {
+            if (!on && wave == null) return;
+            if (wave == null)
+            {
+                wave = root.AddComponent<ArmWave>();
+                if (!wave.Bind(root.transform)) return;
+            }
+            wave.on = on;
         }
 
         public void SnapYaw(double yaw)

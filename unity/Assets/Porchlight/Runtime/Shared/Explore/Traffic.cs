@@ -34,6 +34,11 @@ namespace Porchlight.Explore
         public bool taken;
         /// <summary>The lake loop a boat sails (layout.boatLoops), s along it; -1 for a car on the roads.</summary>
         public int loop = -1;
+        /// <summary>The road it turns onto at the junction ahead, once it's close (-1: not chosen yet).</summary>
+        public int next = -1;
+        /// <summary>The road it just came off, and which way it drove it, while it's still rounding the corner (-1: none).</summary>
+        public int prev = -1;
+        public int prevDir;
     }
 
     public sealed class Traffic
@@ -47,6 +52,8 @@ namespace Porchlight.Explore
         const double SAIL = 1.6;
         /// <summary>A loop at least this long (tiles) gets a second boat.</summary>
         const double TWO_BOATS = 60;
+        /// <summary>How far either side of a junction a car curves from one road onto the next (tiles).</summary>
+        const double CORNER = 0.9;
 
         public readonly List<TrafficCar> cars = new List<TrafficCar>();
         readonly List<RoadStroke> roads;
@@ -181,6 +188,7 @@ namespace Porchlight.Explore
             car.dir = along >= 0 ? 1 : -1;
             car.side = car.dir;
             car.wait = 0;
+            car.next = car.prev = -1;
         }
 
         public void Update(double dt, IReadOnlyList<Vec2> obstacles)
@@ -202,6 +210,7 @@ namespace Porchlight.Explore
                 {
                     car.dir = -car.dir;
                     car.wait = 0;
+                    car.next = car.prev = -1;
                 }
                 car.side += Numbers.Sign(car.dir - car.side) * Math.Min(Math.Abs(car.dir - car.side), dt * 2);
                 car.s += car.dir * car.speed * dt;
@@ -242,48 +251,113 @@ namespace Porchlight.Explore
             car.y = p.y;
         }
 
+        /// <summary>The node at the end of the road the car is driving toward.</summary>
+        int NodeAhead(int road, int dir) => dir == 1 ? roads[road].to : roads[road].from;
+
+        /// <summary>A road to turn onto at `node` (-1 at a dead end).</summary>
+        int PickNext(int road, int node)
+        {
+            var options = byNode.TryGetValue(node, out var l) ? l.FindAll(i => i != road) : new List<int>();
+            return options.Count == 0 ? -1 : rng.Pick(options);
+        }
+
         void TurnAtJunction(TrafficCar car)
         {
-            var r = roads[car.road];
-            int node = car.s > lengths[car.road] ? r.to : r.from;
-            var options = byNode.TryGetValue(node, out var l) ? l.FindAll(i => i != car.road) : new List<int>();
-            if (options.Count == 0)
+            int node = car.s > lengths[car.road] ? roads[car.road].to : roads[car.road].from;
+            int next = car.next >= 0 ? car.next : PickNext(car.road, node);
+            car.next = -1;
+            if (next < 0)
             {
                 car.s = Math.Min(lengths[car.road], Math.Max(0, car.s));
                 car.dir = -car.dir;
+                car.prev = -1;
                 return;
             }
-            int next = rng.Pick(options);
             var nr = roads[next];
+            car.prev = car.road;
+            car.prevDir = car.dir;
             car.road = next;
             car.dir = nr.from == node ? 1 : -1;
             car.side = car.dir;
             car.s = car.dir == 1 ? 0 : lengths[next];
         }
 
-        void Place(TrafficCar car, double dt)
+        /// <summary>The middle of the car's lane `d` tiles along a road from the end it starts at (driving way `dir`, on side `side`), and the way along it.</summary>
+        (Vec2 at, Vec2 along) Lane(int road, int dir, double side, double d)
         {
-            var r = roads[car.road];
-            var p = AutoDrive.PointAt(r.points, at[car.road], car.s);
-            var q = AutoDrive.PointAt(r.points, at[car.road], Math.Max(0, Math.Min(lengths[car.road], car.s + 0.25 * car.dir)));
+            var r = roads[road];
+            double s = dir == 1 ? d : lengths[road] - d;
+            s = Math.Max(0, Math.Min(lengths[road], s));
+            var p = AutoDrive.PointAt(r.points, at[road], s);
+            double s2 = Math.Max(0, Math.Min(lengths[road], s + 0.25 * dir));
+            var q = AutoDrive.PointAt(r.points, at[road], s2);
             double tx = q.x - p.x, ty = q.y - p.y;
             double l = Numbers.Hypot(tx, ty);
-            if (l > 1e-6)
+            if (l < 1e-6)
             {
-                tx /= l;
-                ty /= l;
-                double want = DetMath.Atan2(ty, tx);
-                car.heading += dt != 0 ? Orbit.ShortestTurn(car.heading, want) * Math.Min(1, dt * 4) : Orbit.ShortestTurn(car.heading, want);
+                // At the very end: look back along the road instead.
+                q = AutoDrive.PointAt(r.points, at[road], Math.Max(0, Math.Min(lengths[road], s - 0.25 * dir)));
+                tx = p.x - q.x;
+                ty = p.y - q.y;
+                l = Numbers.Hypot(tx, ty);
             }
-            else
+            if (l < 1e-6) return (p, new Vec2(0, 0));
+            tx /= l;
+            ty /= l;
+            double lane = (r.width / 4) * side * dir;
+            return (new Vec2(p.x - ty * lane, p.y + tx * lane), new Vec2(tx, ty));
+        }
+
+        /// <summary>
+        /// Where the car is drawn: along its lane, but through a junction on a curve
+        /// from one road's lane into the next one's, rather than snapping round on the spot.
+        /// </summary>
+        void Place(TrafficCar car, double dt)
+        {
+            double len = lengths[car.road];
+            double done = car.dir == 1 ? car.s : len - car.s;
+            double rest = len - done;
+            if (car.next < 0 && rest < CORNER) car.next = PickNext(car.road, NodeAhead(car.road, car.dir));
+            if (car.prev >= 0 && done >= CORNER) car.prev = -1;
+            var (p, t) = Lane(car.road, car.dir, car.side, done);
+            if (car.next >= 0 && rest < CORNER)
             {
-                tx = Math.Cos(car.heading);
-                ty = Math.Sin(car.heading);
+                int node = NodeAhead(car.road, car.dir);
+                int nextDir = roads[car.next].from == node ? 1 : -1;
+                double reach = Reach(car.road, car.next);
+                if (rest < reach) (p, t) = Corner(car.road, car.dir, car.next, nextDir, reach, (reach - rest) / (2 * reach));
             }
-            double lane = (r.width / 4) * car.side;
-            double ux = tx * car.dir, uy = ty * car.dir;
-            car.x = p.x - uy * lane;
-            car.y = p.y + ux * lane;
+            else if (car.prev >= 0)
+            {
+                double reach = Reach(car.prev, car.road);
+                if (done < reach) (p, t) = Corner(car.prev, car.prevDir, car.road, car.dir, reach, 0.5 + done / (2 * reach));
+            }
+            if (t.x != 0 || t.y != 0)
+            {
+                double want = DetMath.Atan2(t.y, t.x);
+                car.heading += dt != 0 ? Orbit.ShortestTurn(car.heading, want) * Math.Min(1, dt * 10) : Orbit.ShortestTurn(car.heading, want);
+            }
+            car.x = p.x;
+            car.y = p.y;
+        }
+
+        /// <summary>How far either side of the junction the curve between two roads starts: shorter on short roads.</summary>
+        double Reach(int a, int b) => Math.Max(1e-3, Math.Min(CORNER, Math.Min(lengths[a], lengths[b]) / 2));
+
+        /// <summary>A point `t` (0 to 1) along the curve from road `a`'s lane, `reach` before its end, to road `b`'s, `reach` past its start.</summary>
+        (Vec2 at, Vec2 along) Corner(int a, int aDir, int b, int bDir, double reach, double t)
+        {
+            double lenA = lengths[a];
+            var from = Lane(a, aDir, aDir, lenA - reach).at;
+            var inEnd = Lane(a, aDir, aDir, lenA).at;
+            var outStart = Lane(b, bDir, bDir, 0).at;
+            var to = Lane(b, bDir, bDir, reach).at;
+            var mid = new Vec2((inEnd.x + outStart.x) / 2, (inEnd.y + outStart.y) / 2);
+            double u = 1 - t;
+            var p = new Vec2(u * u * from.x + 2 * u * t * mid.x + t * t * to.x, u * u * from.y + 2 * u * t * mid.y + t * t * to.y);
+            double dx = 2 * u * (mid.x - from.x) + 2 * t * (to.x - mid.x), dy = 2 * u * (mid.y - from.y) + 2 * t * (to.y - mid.y);
+            double l = Numbers.Hypot(dx, dy);
+            return (p, l < 1e-9 ? new Vec2(0, 0) : new Vec2(dx / l, dy / l));
         }
 
         static double BlockedAhead(TrafficCar car, IReadOnlyList<Vec2> obstacles)

@@ -121,7 +121,6 @@ namespace Porchlight.Explore
         public SidewalkNetwork sidewalks;
         /// <summary>The cul-de-sacs' bulbs (Raster.Bulbs; each one's edge is its street's index in roads).</summary>
         public List<Bulb> bulbs = new List<Bulb>();
-        public List<Dock> docks = new List<Dock>();
         /// <summary>A loop round the open water of each lake big enough, for boats to sail (closed: its last point is its first).</summary>
         public List<List<Vec2>> boatLoops = new List<List<Vec2>>();
     }
@@ -210,6 +209,8 @@ namespace Porchlight.Explore
                 return tiles.overlay[t] == Overlay.NONE && ter != Terrain.WATER_SHALLOW && ter != Terrain.WATER_DEEP;
             }
             var C = model.center;
+            // The docks' landings stay open yard or green, to walk out onto the pier.
+            var landings = Ports.Landings(model);
             var buildingOnLot = new Dictionary<int, Building>();
             foreach (var b in model.buildings) buildingOnLot[b.lotId] = b;
 
@@ -227,7 +228,7 @@ namespace Porchlight.Explore
                     bool inner = Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / model.townRadius < p.innerCity;
                     if (!buildingOnLot.TryGetValue(lot.id, out var b))
                     {
-                        bool garden = !inner && builtLots >= 2 && Hash(lot.id, 1) < 0.45;
+                        bool garden = !inner && builtLots >= 2 && Hash(lot.id, 1) < 0.45 && !lotTiles.Exists(landings.Contains);
                         foreach (int t in lotTiles) use[t] = garden ? Use.COMMUNITY_GARDEN : Use.GREEN;
                         if (garden) foreach (int t in lotTiles) fences.AddRange(FenceAround(t, own, w, h, Street));
                         continue;
@@ -272,13 +273,13 @@ namespace Porchlight.Explore
                     if ((style == HouseStyle.House || style == HouseStyle.Workshop) && yard.Count >= 3)
                     {
                         int far = -1;
-                        foreach (int t in yard) if (use[t] == Use.YARD && (far < 0 || BackDistance(t, house, w) > BackDistance(far, house, w))) far = t;
+                        foreach (int t in yard) if (use[t] == Use.YARD && !landings.Contains(t) && (far < 0 || BackDistance(t, house, w) > BackDistance(far, house, w))) far = t;
                         if (far >= 0 && Hash(rndSeed, 1) < 0.65) use[far] = Use.SHED;
                     }
                     if (small && !inner && Hash(rndSeed, 2) < p.gardens)
                     {
                         // Beds beside and behind the house: yard touching it, never in front.
-                        var beds = yard.FindAll(t => use[t] == Use.YARD && Touches(t, footprint, w) && FrontDistance(t, house, w) <= 0);
+                        var beds = yard.FindAll(t => use[t] == Use.YARD && !landings.Contains(t) && Touches(t, footprint, w) && FrontDistance(t, house, w) <= 0);
                         Numbers.StableSort(beds, (a, c) => BackDistance(c, house, w) - BackDistance(a, house, w));
                         int count = Math.Max(2, (int)Math.Round(p.gardens * 6));
                         for (int k = 0; k < Math.Min(count, beds.Count); k++) use[beds[k]] = Use.GARDEN;

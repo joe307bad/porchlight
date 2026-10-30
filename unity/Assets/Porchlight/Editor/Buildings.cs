@@ -6,7 +6,9 @@
 // part of its own, which the town makes see-through when the room is shown; and
 // what was found is kept with the model: the room, its doors and windows, the
 // rest of the glass, and the walls at walking height. A building with no door
-// on its room gets one, in the middle of the room's front wall.
+// on its room gets one, in the middle of the room's front wall. The tall kits'
+// big panes (towers' curtain walls, factories' strip windows) are cut into a
+// grid of smaller ones, with dark mullions between, so they read as many windows.
 // Everything here is in the prefab root's space: the kits' fronts face -z.
 
 using System;
@@ -28,6 +30,10 @@ namespace Porchlight.EditorTools
         /// <summary>How far a door or window may stand off its wall's line.</summary>
         const float ON_WALL = 0.05f;
         const float FLAT = 0.005f;
+        /// <summary>Panes this big either way (in the tall kits) are cut into a grid of about this size, with mullions and transoms this thick.</summary>
+        const float GRID_FROM = 0.3f, GRID_WIDE = 0.15f, GRID_TALL = 0.2f, MULLION = 0.022f, TRANSOM = 0.028f;
+        /// <summary>Where the kits' colour maps are dark grey.</summary>
+        static readonly Vector2 DarkGrey = new Vector2(3.5f / 16, 0.375f);
 
         struct Vert
         {
@@ -86,18 +92,29 @@ namespace Porchlight.EditorTools
 
             var ground = new ModelLibrary.Ground { room = room, storey = STOREY };
             var groundGlass = new List<Tri>();
+            bool tall = name.StartsWith("commercial/") || name.StartsWith("industrial/");
+            int frame = Array.FindIndex(materials, m => m != glassMaterial && m != null && m.GetTexture("_BaseMap") == glassMaterial.GetTexture("_BaseMap"));
+            var inRest = new HashSet<Tri>(rest);
+            var gridded = new HashSet<Tri>();
+            var grids = new List<Tri>();
             foreach (var p in panels.Where(p => p.glass && !p.tris.Any(inLeaf.Contains)))
             {
                 int side = SideOf(p, room);
                 // Glass behind a doorway (where one had to be made) is cut through like the wall.
-                if (doors.Any(d => d.facesZ == p.facesZ && Mathf.Abs(d.plane - p.plane) < 0.04f && d.a0 < p.a1 && p.a0 < d.a1)) continue;
+                if (doors.Any(d => d.facesZ == p.facesZ && Mathf.Abs(d.plane - p.plane) < 0.04f && d.a0 < p.a1 && p.a0 < d.a1 && p.y0 < d.y1)) continue;
                 if (side >= 0 && p.y1 <= STOREY + 0.02f)
                 {
                     ground.windows.Add(new ModelLibrary.Pane { side = side, plane = p.plane, a0 = p.a0, a1 = p.a1, y0 = p.y0, y1 = p.y1 });
                     groundGlass.AddRange(p.tris);
                 }
+                else if (tall && frame >= 0 && (p.a1 - p.a0 >= GRID_FROM || p.y1 - p.y0 >= GRID_FROM) && p.tris.All(inRest.Contains))
+                {
+                    ground.panes.AddRange(Grid(p, frame, grids));
+                    gridded.UnionWith(p.tris);
+                }
                 else ground.panes.Add(new ModelLibrary.Pane { side = Facing(p), plane = p.plane, a0 = p.a0, a1 = p.a1, y0 = p.y0, y1 = p.y1 });
             }
+            if (gridded.Count > 0) rest = rest.Where(t => !gridded.Contains(t)).Concat(grids).ToList();
             var inGlass = new HashSet<Tri>(groundGlass);
             rest = rest.Where(t => !inGlass.Contains(t)).ToList();
             ground.walls = Merge(Section(rest.Concat(groundGlass), WAIST));
@@ -326,8 +343,7 @@ namespace Porchlight.EditorTools
         {
             float mid = (room.x + room.z) / 2, z = room.y - 0.012f;
             float x0 = mid - 0.07f, x1 = mid + 0.07f, top = 0.27f;
-            var uv = new Vector2(3.5f / 16, 0.375f);
-            Vert V(float x, float y) => new Vert { p = new Vector3(x, y, z), n = Vector3.back, uv = uv };
+            Vert V(float x, float y) => new Vert { p = new Vector3(x, y, z), n = Vector3.back, uv = DarkGrey };
             var a = V(x0, 0);
             var b = V(x0, top);
             var c = V(x1, top);
@@ -336,6 +352,43 @@ namespace Porchlight.EditorTools
             door.tris.Add(new Tri { a = a, b = b, c = c });
             door.tris.Add(new Tri { a = a, b = c, c = d });
             return door;
+        }
+
+        /// <summary>
+        /// Cut a big pane into a grid of smaller ones (into `o`): the glass keeps its
+        /// submesh, the bars between go in `frame`'s, coloured from the kit's dark grey.
+        /// What's returned is each small pane.
+        /// </summary>
+        static List<ModelLibrary.Pane> Grid(Panel p, int frame, List<Tri> o)
+        {
+            float w = p.a1 - p.a0, h = p.y1 - p.y0;
+            int across = Mathf.Max(1, Mathf.RoundToInt(w / GRID_WIDE)), down = Mathf.Max(1, Mathf.RoundToInt(h / GRID_TALL));
+            float Lat(Vert v) => p.facesZ ? v.p.x : v.p.z;
+            // Each column's and row's glass, less half a bar where it meets the next.
+            float A0(int i) => p.a0 + w * i / across + (i > 0 ? MULLION / 2 : 0);
+            float A1(int i) => p.a0 + w * (i + 1) / across - (i < across - 1 ? MULLION / 2 : 0);
+            float Y0(int j) => p.y0 + h * j / down + (j > 0 ? TRANSOM / 2 : 0);
+            float Y1(int j) => p.y0 + h * (j + 1) / down - (j < down - 1 ? TRANSOM / 2 : 0);
+            List<Vert> Bar(List<Vert> poly) => poly.Select(v => new Vert { p = v.p, n = v.n, uv = DarkGrey }).ToList();
+            foreach (var t in p.tris)
+            {
+                var tri = new List<Vert> { t.a, t.b, t.c };
+                for (int i = 0; i < across; i++)
+                {
+                    var column = Clip(Clip(tri, v => A0(i) - Lat(v)), v => Lat(v) - A1(i));
+                    for (int j = 0; j < down && column.Count >= 3; j++)
+                    {
+                        Emit(o, t.sub, Clip(Clip(column, v => Y0(j) - v.p.y), v => v.p.y - Y1(j)));
+                        if (j < down - 1) Emit(o, frame, Bar(Clip(Clip(column, v => Y1(j) - v.p.y), v => v.p.y - Y0(j + 1))));
+                    }
+                    if (i < across - 1) Emit(o, frame, Bar(Clip(Clip(tri, v => A1(i) - Lat(v)), v => Lat(v) - A0(i + 1))));
+                }
+            }
+            var panes = new List<ModelLibrary.Pane>();
+            for (int i = 0; i < across; i++)
+                for (int j = 0; j < down; j++)
+                    panes.Add(new ModelLibrary.Pane { side = Facing(p), plane = p.plane, a0 = A0(i), a1 = A1(i), y0 = Y0(j), y1 = Y1(j) });
+            return panes;
         }
 
         // The room ----------------------------------------------------------------------------

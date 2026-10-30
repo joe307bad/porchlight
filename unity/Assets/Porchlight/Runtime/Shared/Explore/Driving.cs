@@ -27,6 +27,9 @@ namespace Porchlight.Explore
         const double DRAG = 1.4;
         const double STEER_RATE = 2.1;
         const double FULL_STEER_SPEED = 1.6;
+        /// <summary>How fast the wheel turns to where it's steered (full lock per second), so a key tap doesn't snap the car round.</summary>
+        const double WHEEL_RATE = 4;
+        const double WHEEL_RETURN = 6;
         public const double CAR_HALF_LENGTH = 0.5;
         public const double CAR_HALF_WIDTH = 0.22;
 
@@ -73,6 +76,8 @@ namespace Porchlight.Explore
         public double altitude;
         /// <summary>A plane's lean into a turn, and its nose up (radians): for drawing it.</summary>
         public double bank, pitch;
+        /// <summary>Where the wheel is (-1 to 1), easing after the steering input.</summary>
+        public double wheel;
 
         public Vehicle(int model, double x, double y, double heading)
         {
@@ -113,6 +118,9 @@ namespace Porchlight.Explore
         /// </summary>
         public void Drive(double throttle, double steer, double dt, Func<double, double, bool> open, bool boost = false, Func<double, double, double> floor = null)
         {
+            double rate = Math.Abs(steer) < Math.Abs(wheel) || steer * wheel < 0 ? WHEEL_RETURN : WHEEL_RATE;
+            wheel += Math.Max(-rate * dt, Math.Min(rate * dt, steer - wheel));
+            steer = wheel;
             if (kind == VehicleKind.Plane && Airborne)
             {
                 Fly(throttle, steer, dt, open, floor, boost);

@@ -1,8 +1,8 @@
 // The town's light, all Unity's own: a directional sun casting URP's soft
 // shadows, a three-colour ambient (sky, horizon, ground), linear fog for the
-// close-up camera, bloom and tonemapping on a global volume, and at night
-// the street lamps: every bulb glows and lights the ground under it. Day and
-// night blend by `dusk` (0 day, 1 night).
+// close-up camera, bloom and tonemapping on a global volume, clouds and stars
+// (Heavens), and at night the street lamps: every bulb glows and lights the
+// ground under it. Day and night blend by `dusk` (0 day, 1 night).
 
 using System;
 using System.Collections.Generic;
@@ -29,6 +29,7 @@ namespace Porchlight.Rendering
         readonly Light sun;
         readonly Light room;
         readonly Volume volume;
+        readonly Heavens heavens;
 
         public Sky(Camera camera)
         {
@@ -63,6 +64,8 @@ namespace Porchlight.Rendering
             var data = camera.GetUniversalAdditionalCameraData();
             data.renderPostProcessing = true;
             data.renderShadows = true;
+
+            heavens = new Heavens(camera, root.transform);
         }
 
         Light Point(string name, float range)
@@ -81,8 +84,8 @@ namespace Porchlight.Rendering
         /// Light the scene for this frame. `focus`: what the camera looks at (world);
         /// `roomLight`: inside a building, where its ceiling light is.
         /// </summary>
-        public void Update(double dusk, bool fog, double fogNear, double fogFar, Vector3 focus,
-            IReadOnlyList<Lamp> lamps, IReadOnlyList<double> levels, Vector3? roomLight)
+        public void Update(double dusk, bool night, bool fog, double fogNear, double fogFar, Vector3 focus,
+            IReadOnlyList<Lamp> lamps, IReadOnlyList<double> levels, Vector3? roomLight, bool withHeavens = true)
         {
             float d = (float)dusk;
             var sky = Color.Lerp(DaySky, NightSky, d);
@@ -97,6 +100,8 @@ namespace Porchlight.Rendering
             RenderSettings.fogColor = sky;
             RenderSettings.fogStartDistance = (float)fogNear;
             RenderSettings.fogEndDistance = (float)fogFar;
+
+            if (withHeavens) heavens.Update(d, night, fog, (float)fogNear, focus, roomLight != null);
 
             Materials.WindowGlow(Mathf.Clamp01(d * 1.2f - 0.1f), Warm);
 
@@ -117,6 +122,10 @@ namespace Porchlight.Rendering
             }
         }
 
-        public void Dispose() => UnityEngine.Object.Destroy(root);
+        public void Dispose()
+        {
+            heavens.Dispose();
+            UnityEngine.Object.Destroy(root);
+        }
     }
 }
