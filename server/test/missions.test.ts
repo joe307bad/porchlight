@@ -24,7 +24,15 @@ test('every mission in server/missions compiles, with a title and a summary', as
 const BLOCKS = [
   'objective', 'hint', 'clear_hints', 'setting', 'place', 'spawn', 'walk', 'pause', 'hold',
   'put_in_car', 'take_from_car', 'put_down', 'leave', 'mark_spot', 'clear_spot', 'guide',
+  'look', 'put_you', 'chase', 'countdown',
 ];
+const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'countdown', 'wait'];
+const SETTINGS = [
+  'talk_reach', 'talk_reach_car', 'park_reach', 'park_speed', 'park_angle', 'car_reach', 'walk_speed',
+  'your_pace', 'chase_speed', 'chase_speed_car', 'catch_reach', 'catch_time',
+];
+// What a person (or you) can look like: the game's characters and animals.
+const LOOKS = /^(people\/(character-[\w-]+|policeman-a-4-1)|animals\/animal-(penguin|lion|tiger|elephant|giraffe|panda|polar|monkey|koala|parrot))$/;
 
 /** Binds a stand-in town to a story: it keeps track of who's where and what's held or on the car, and throws on misuse. */
 function standInTown(story: InstanceType<typeof Story>) {
@@ -32,7 +40,8 @@ function standInTown(story: InstanceType<typeof Story>) {
   const present = new Set<string>();
   const marked = new Set<string>();
   const holding = new Set<string>();
-  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked };
+  const chases = new Set<string>();
+  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, look: '', clock: false };
   const oneOf = (what: string, value: string, known: string[]) => {
     if (!known.includes(value)) throw new Error(`no such ${what} '${value}' (${known.join(', ')})`);
   };
@@ -51,18 +60,19 @@ function standInTown(story: InstanceType<typeof Story>) {
   bind('objective', () => {});
   bind('hint', (when: string) => oneOf('condition', when, ['always', 'no_car', 'near', 'near_driving']));
   bind('clear_hints', () => {});
-  bind('setting', (name: string) =>
-    oneOf('setting', name, ['talk_reach', 'talk_reach_car', 'park_reach', 'park_speed', 'park_angle', 'car_reach', 'walk_speed']));
+  bind('setting', (name: string) => oneOf('setting', name, SETTINGS));
   bind('place', (role: string, kind: string, near: string) => {
-    oneOf('kind of building', kind, ['', 'house', 'workshop', 'shop', 'office', 'hall', 'church']);
+    oneOf('kind of building', kind, ['', 'house', 'workshop', 'shop', 'office', 'hall', 'church', 'zoo']);
+    assert.ok(!chases.has(role), `'${role}' is a chase`);
     if (near !== '') isPlaced(near);
     placed.add(role);
     present.delete(role);
     marked.delete(role);
     return `${role} street`;
   });
-  bind('spawn', (role: string, name: string) => {
+  bind('spawn', (role: string, name: string, look: string) => {
     isPlaced(role);
+    assert.ok(look === '' || LOOKS.test(look), `no such look '${look}'`);
     present.add(role);
     holding.delete(role);
     town.names.set(role, name);
@@ -98,6 +108,7 @@ function standInTown(story: InstanceType<typeof Story>) {
   bind('leave', (role: string) => {
     present.delete(role);
     holding.delete(role);
+    chases.delete(role);
   });
   bind('mark_spot', (role: string) => {
     isPlaced(role);
@@ -108,6 +119,29 @@ function standInTown(story: InstanceType<typeof Story>) {
     if (role === '') return;
     isPlaced(role);
     oneOf('guide', to, ['spot', 'person', 'house']);
+  });
+  bind('look', (model: string) => {
+    assert.ok(model === '' || LOOKS.test(model), `no such look '${model}'`);
+    town.look = model;
+  });
+  bind('put_you', (role: string, at: string) => {
+    isPlaced(role);
+    oneOf('place', at, ['inside', 'door', 'kerb']);
+  });
+  bind('chase', (role: string, name: string, count: number, car: string, look: string) => {
+    assert.ok(role && !placed.has(role), `a chase needs a role that isn't a building's`);
+    assert.ok(count >= 1 && count <= 8, 'a chase is 1 to 8 cars');
+    assert.match(car, /^cars\//, `no such car '${car}'`);
+    assert.ok(look === '' || LOOKS.test(look), `no such look '${look}'`);
+    chases.add(role);
+    town.names.set(role, name);
+    return name;
+  });
+  bind('countdown', (seconds: number, _label: string, when: string, role: string) => {
+    town.clock = seconds > 0;
+    if (seconds <= 0) return;
+    oneOf('condition', when, ['always', 'inside', 'outside']);
+    if (when !== 'always') isPlaced(role);
   });
   return town;
 }
@@ -120,7 +154,7 @@ test('every mission uses only the game\'s building blocks, and waits it knows', 
       assert.ok(BLOCKS.includes(name), `${m.id}: EXTERNAL ${name} isn't one of the game's building blocks`);
     }
     for (const [, wait] of source.matchAll(/^\s*[+*]\s*\[@(\w+)/gm)) {
-      assert.ok(['talk', 'parked', 'idle', 'wait'].includes(wait), `${m.id}: @${wait} isn't a wait the game knows`);
+      assert.ok(WAITS.includes(wait), `${m.id}: @${wait} isn't a wait the game knows`);
     }
   }
 });
@@ -155,6 +189,44 @@ test('the delivery mission plays through three runs against a stand-in town', as
   assert.ok(town.log.filter((l) => l.startsWith('put_in_car(')).length >= 6);
   assert.notEqual(town.names.get('sender'), town.names.get('drop'));
   assert.ok(lines.includes('All 3 deliveries done. The neighbourhood owes you one.'));
+});
+
+test('the chase plays through, caught once and then free, against a stand-in town', async () => {
+  const mission = await new MissionStore(DEFAULT_MISSIONS_DIR).get('chase');
+  assert.ok(mission?.story);
+  const story = new Story(mission.story);
+  story.allowExternalFunctionFallbacks = false;
+  const town = standInTown(story);
+  const waits: string[] = [];
+  const lines: string[] = [];
+  let caughtOnce = false;
+  for (let guard = 0; guard < 500 && (story.canContinue || story.currentChoices.length > 0); guard++) {
+    while (story.canContinue) lines.push(story.Continue()!.trim());
+    if (story.currentChoices.length === 0) break;
+    // Out of the zoo; caught the first time, and the second time free.
+    const choices = story.currentChoices as { text: string; index: number }[];
+    const want = choices.some((c) => c.text === '@caught police') && !caughtOnce ? '@caught police' : choices.find((c) => c.text !== '@caught police')!.text;
+    const pick = choices.find((c) => c.text === want)!;
+    const [wait, role] = pick.text.slice(1).split(' ');
+    if (wait === 'outside') assert.ok(town.placed.has(role), `@outside ${role} with no such place`);
+    if (wait === 'caught') {
+      assert.ok(town.chases.has(role), `@caught ${role} with no chase on`);
+      caughtOnce = true;
+    }
+    if (wait === 'countdown') assert.ok(town.clock, '@countdown with no countdown running');
+    waits.push(`@${wait}`);
+    story.ChooseChoiceIndex(pick.index);
+  }
+  assert.equal(story.canContinue, false);
+  assert.equal(story.currentChoices.length, 0);
+  assert.deepEqual(waits, ['@outside', '@caught', '@outside', '@countdown']);
+  // A penguin all the way, and yourself again at the end; the police called off.
+  assert.ok(town.log.includes('look(animals/animal-penguin)'));
+  assert.equal(town.look, '');
+  assert.equal(town.chases.size, 0);
+  assert.equal(town.clock, false);
+  assert.equal(town.log.filter((l) => l.startsWith('put_you(zoo, inside)')).length, 2);
+  assert.ok(lines.some((l) => l.startsWith('A whole minute on the loose, and caught 1 time')), lines.join('\n'));
 });
 
 test('a broken mission is listed with its errors, and not served', async () => {

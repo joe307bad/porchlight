@@ -63,6 +63,8 @@ namespace Porchlight.Explore
         SidewalkWalk auto;
         public bool sprinting;
         public bool jumpHeld;
+        /// <summary>How fast they walk and run, against a person's usual (a mission can slow you down).</summary>
+        public double pace = 1;
         double vx, vy;
         double buffered;
 
@@ -149,7 +151,7 @@ namespace Porchlight.Explore
                 y = next.y;
                 return;
             }
-            double top = PLAYER_SPEED * (sprinting ? SPRINT : 1);
+            double top = PLAYER_SPEED * pace * (sprinting ? SPRINT : 1);
             double tx = dir != null ? dir.Value.x * top : 0;
             double ty = dir != null ? dir.Value.y * top : 0;
             bool air = lift > 0;

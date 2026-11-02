@@ -16,8 +16,10 @@ static class MissionCheck
     sealed class Town : IMissionWorld
     {
         static readonly string[] HINTS = { "always", "no_car", "near", "near_driving" };
-        static readonly string[] SETTINGS = { "talk_reach", "talk_reach_car", "park_reach", "park_speed", "park_angle", "car_reach", "walk_speed" };
-        static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church" };
+        static readonly string[] SETTINGS = { "talk_reach", "talk_reach_car", "park_reach", "park_speed", "park_angle", "car_reach", "walk_speed",
+            "your_pace", "chase_speed", "chase_speed_car", "catch_reach", "catch_time" };
+        static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church", "zoo" };
+        static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
         static readonly string[] PLACES = { "inside", "door", "kerb", "car" };
         static readonly string[] GUIDES = { "spot", "person", "house" };
 
@@ -31,6 +33,11 @@ static class MissionCheck
         readonly HashSet<string> asked = new HashSet<string>();
         /// <summary>How many things ride on the car, once everyone's errands so far are done.</summary>
         int cargo;
+        /// <summary>Who's after you, and how often they've caught you (once is enough here).</summary>
+        readonly HashSet<string> chases = new HashSet<string>();
+        int catches;
+        bool clock;
+        string look = "";
 
         static void OneOf(string what, string value, string[] known)
         {
@@ -63,12 +70,13 @@ static class MissionCheck
         public string Place(string role, string kind, string near, double min, double max, bool parking)
         {
             OneOf("kind of building", kind, KINDS);
+            if (chases.Contains(role)) throw new Exception($"'{role}' is a chase");
             if (near != "") Placed(near);
             placed.Add(role);
             present.Remove(role);
             marked.Remove(role);
             log.Add($"place {role} {kind} {(near == "" ? "you" : near)} {min}..{max}{(parking ? " parking" : "")}");
-            return role == "drop" ? "Elm Street" : "Mill Road";
+            return kind == "zoo" ? "the zoo" : role == "drop" ? "Elm Street" : "Mill Road";
         }
         public string Spawn(string role, string name, string look)
         {
@@ -124,6 +132,7 @@ static class MissionCheck
         {
             present.Remove(role);
             holding.Remove(role);
+            chases.Remove(role);
             log.Add($"leave {role}");
         }
         public void MarkSpot(string role)
@@ -146,6 +155,37 @@ static class MissionCheck
             }
             log.Add(role == "" ? "guide off" : $"guide {role} {to}: {label}");
         }
+        public void Look(string model)
+        {
+            look = model;
+            log.Add(model == "" ? "look as yourself" : $"look like {model}");
+        }
+        public void PutYou(string role, string at)
+        {
+            Placed(role);
+            OneOf("place", at, PLACES);
+            log.Add($"put you {at} {role}");
+        }
+        public string Chase(string role, string name, int count, string car, string model)
+        {
+            if (role == "" || placed.Contains(role)) throw new Exception("a chase needs a role that isn't a building's");
+            if (count < 1 || count > 8) throw new Exception("a chase is 1 to 8 cars");
+            if (!car.StartsWith("cars/")) throw new Exception($"no such car '{car}'");
+            chases.Add(role);
+            names[role] = name;
+            log.Add($"chase {role} = {name}: {count} x {car}");
+            return name;
+        }
+        public void Countdown(double seconds, string label, string when, string role)
+        {
+            clock = seconds > 0;
+            if (clock)
+            {
+                OneOf("condition", when, COUNTDOWNS);
+                if (when != "always") Placed(role);
+            }
+            log.Add(clock ? $"countdown {seconds}s {label} ({when} {role})" : "countdown off");
+        }
         public string NameOf(string role) => names.TryGetValue(role, out var n) ? n : null;
 
         /// <summary>
@@ -156,11 +196,18 @@ static class MissionCheck
         {
             if (wait == "parked" && !marked.Contains(role)) return false;
             if ((wait == "talk" || wait == "idle") && !present.Contains(role)) return false;
-            return !asked.Add($"{wait} {role} {log.Count}");
+            if ((wait == "inside" || wait == "outside") && !placed.Contains(role)) return false;
+            if (wait == "caught" && (!chases.Contains(role) || catches > 0)) return false;
+            if (wait == "countdown" && !clock) return false;
+            if (asked.Add($"{wait} {role} {log.Count}")) return false;
+            if (wait == "caught") catches++;
+            return true;
         }
 
         /// <summary>Things left on the car at the end.</summary>
         public int Cargo => cargo;
+        /// <summary>Still looking like something else, or chased, at the end.</summary>
+        public string Loose => look != "" ? $"still looking like {look}" : chases.Count > 0 ? $"still chased by {string.Join(", ", chases)}" : clock ? "a countdown still running" : null;
     }
 
     public static int Run(string path)
@@ -199,6 +246,7 @@ static class MissionCheck
             return 1;
         }
         if (town.Cargo != 0) Console.Error.WriteLine($"warning: {town.Cargo} thing(s) left on the car at the end");
+        if (town.Loose != null) Console.Error.WriteLine($"warning: {town.Loose} at the end");
         Console.WriteLine("mission: played to its end");
         return 0;
     }

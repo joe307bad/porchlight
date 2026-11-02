@@ -5,8 +5,10 @@
 // the sender, "you: …" by you); its ordinary choices are yours to pick; and a
 // choice whose text starts with @ is a wait, picked by itself once the town
 // says it's met (@talk sender: you've spoken to them, @parked drop: your car
-// is stopped in their spot, @idle sender: their errands are done, @wait 3:
-// three seconds on). The story changes the town through its EXTERNAL
+// is stopped in their spot, @idle sender: their errands are done, @inside zoo
+// and @outside zoo: you're in or out of the role's grounds, @caught police:
+// the role's chasers have had you, @countdown: the countdown's run out, @wait
+// 3: three seconds on). The story changes the town through its EXTERNAL
 // functions, generic building blocks the world (IMissionWorld) carries out:
 // what a mission is about lives in its story, not here. Pure: the game
 // supplies the world.
@@ -62,7 +64,18 @@ namespace Porchlight.Missions
         void ClearSpot(string role);
         /// <summary>Directions to the role's spot, person or house, called label; "" role stops.</summary>
         void Guide(string role, string to, string label);
-        /// <summary>Is this wait met yet? talk, parked or idle, for a role.</summary>
+        /// <summary>You look like this (a character or an animal) until the mission's over; "" yourself again.</summary>
+        void Look(string model);
+        /// <summary>You're put at the role's place: inside, at its door or on the pavement in front (out of any car).</summary>
+        void PutYou(string role, string at);
+        /// <summary>
+        /// A role that's a chase: `count` cars (a model) after you, each with someone at the
+        /// wheel looking like look, called name between them. Leave(role) calls them off. Returns their name.
+        /// </summary>
+        string Chase(string role, string name, int count, string car, string look);
+        /// <summary>A countdown from `seconds`, shown called label, running while `when` holds (always, inside or outside a role); 0 seconds stops it.</summary>
+        void Countdown(double seconds, string label, string when, string role);
+        /// <summary>Is this wait met yet? talk, parked, idle, inside, outside or caught for a role, or countdown.</summary>
         bool Met(string wait, string role);
         /// <summary>Who plays the role, for their lines (null: no such role).</summary>
         string NameOf(string role);
@@ -77,7 +90,7 @@ namespace Porchlight.Missions
 
     public struct MissionWait
     {
-        /// <summary>talk, parked, idle or wait.</summary>
+        /// <summary>talk, parked, idle, inside, outside, caught, countdown or wait.</summary>
         public string kind;
         public string role;
         /// <summary>For @wait: how many seconds.</summary>
@@ -86,8 +99,8 @@ namespace Porchlight.Missions
 
     public sealed class MissionScript
     {
-        /// <summary>The waits the town knows (@talk role, @parked role, @idle role, @wait seconds).</summary>
-        static readonly string[] WAITS = { "talk", "parked", "idle", "wait" };
+        /// <summary>The waits the town knows (@talk, @parked, @idle, @inside, @outside and @caught a role, @countdown, @wait seconds).</summary>
+        static readonly string[] WAITS = { "talk", "parked", "idle", "inside", "outside", "caught", "countdown", "wait" };
 
         readonly Story story;
         readonly IMissionWorld world;
@@ -141,6 +154,10 @@ namespace Porchlight.Missions
             Bind("mark_spot", a => { world.MarkSpot(Str(a, 0)); return null; });
             Bind("clear_spot", a => { world.ClearSpot(Str(a, 0)); return null; });
             Bind("guide", a => { world.Guide(Str(a, 0), Str(a, 1), Str(a, 2)); return null; });
+            Bind("look", a => { world.Look(Str(a, 0)); return null; });
+            Bind("put_you", a => { world.PutYou(Str(a, 0), Str(a, 1)); return null; });
+            Bind("chase", a => world.Chase(Str(a, 0), Str(a, 1), (int)Math.Round(Num(a, 2)), Str(a, 3), Str(a, 4)) ?? "");
+            Bind("countdown", a => { world.Countdown(Num(a, 0), Str(a, 1), Str(a, 2), Str(a, 3)); return null; });
             Pump();
         }
 
@@ -218,7 +235,7 @@ namespace Porchlight.Missions
                     var w = ParseWait(text);
                     if (Array.IndexOf(WAITS, w.kind) < 0)
                     {
-                        Fail($"no such wait '{text}' (@talk, @parked, @idle or @wait)");
+                        Fail($"no such wait '{text}' (@{string.Join(", @", WAITS)})");
                         return;
                     }
                     waits.Add(w);

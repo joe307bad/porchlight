@@ -274,11 +274,56 @@ namespace Porchlight.App
             var renderers = FindObjectsByType<Renderer>();
             Debug.Log($"smoke: {frames / ((platform.Now() - start) / 1000):0} fps, {renderers.Length} renderers ({renderers.Count(r => r.isPartOfStaticBatch)} static-batched), {UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / 1048576} MB allocated, {UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() / 1048576} MB reserved, {GC.GetTotalMemory(false) / 1048576} MB managed");
             Debug.Log($"smoke: after auto walk player={iso?.PlayerPosition} auto={iso?.IsAuto}");
+            iso?.SetAuto(false);
+            var story = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_MISSION");
+            if (!string.IsNullOrEmpty(story)) await SmokeMission(System.IO.File.ReadAllText(story));
             LeaveExplore();
             Regenerate(RandomSeed(), @params);
             Debug.Log($"smoke: regenerated {seed}: {statusLabel.text}");
             Debug.Log("smoke: done");
             Application.Quit(0);
+        }
+
+        /// <summary>
+        /// The smoke run plays a mission too (PORCHLIGHT_SMOKE_MISSION: a story as the server
+        /// compiles it, the chase): out of the zoo, caught by the police and put back, out again.
+        /// </summary>
+        async Task SmokeMission(string story)
+        {
+            async Task<bool> Until(Func<bool> met, double seconds)
+            {
+                double end = platform.Now() + seconds * 1000;
+                while (platform.Now() < end && mission != null)
+                {
+                    // Reading on at once, as a player pressing Enter would.
+                    if (mission.script.Line != null) mission.script.Advance();
+                    if (met()) return true;
+                    await Task.Yield();
+                }
+                return false;
+            }
+            string Objective() => mission?.CurrentObjective ?? "(no mission)";
+            bool InZoo() => iso.PlayerPosition is Vec2 p && iso.world.model.zoo is Zoo z && Menagerie.Inside(z, p);
+            var zoo = iso.world.model.zoo;
+            if (zoo == null)
+            {
+                Debug.Log("smoke: mission: no zoo in this town");
+                return;
+            }
+            mission = new MissionPlay("smoke", "Smoke", story, iso, ModelLibrary.Instance, input);
+            bool ok = await Until(() => Objective().StartsWith("Get out"), 5);
+            Debug.Log($"smoke: mission: '{Objective()}' ok={ok} in zoo={InZoo()} look={iso.LookOverride}");
+            iso.PutPlayer(Menagerie.RoadEnd(zoo), 0);
+            ok = await Until(() => Objective().StartsWith("Keep away"), 5);
+            Debug.Log($"smoke: mission: out of the zoo: '{Objective()}' ok={ok}, {mission?.Chasing} cars after you");
+            double start = platform.Now();
+            ok = await Until(() => Objective().StartsWith("Get out"), 45);
+            Debug.Log($"smoke: mission: caught={ok} after {(platform.Now() - start) / 1000:0.0} s, in zoo={InZoo()}, {mission?.Chasing} cars after you");
+            iso.PutPlayer(Menagerie.RoadEnd(zoo), 0);
+            await Until(() => false, 3);
+            Debug.Log($"smoke: mission: out again: '{Objective()}', {mission?.Chasing} cars after you, error={mission?.script.Error}");
+            EndMission(null);
+            Debug.Log($"smoke: mission: ended, look={iso.LookOverride ?? "(yourself)"}");
         }
 
         void BuildApp()

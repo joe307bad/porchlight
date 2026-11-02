@@ -1,4 +1,4 @@
-// Stage 4: main roads. A* from each gate (and the airport) to the center over the cost field,
+// Stage 4: main roads. A* from each gate (and the airport, and the zoo's gate) to the center over the cost field,
 // along the tile grid with a penalty per turn, so roads run straight. Cells
 // already on a road are cheap and cells beside one are penalised, so later
 // roads merge into earlier ones. Each stretch of new road becomes a graph edge;
@@ -145,6 +145,13 @@ namespace Porchlight.Gen
                 var inLane = new HashSet<int>(lane);
                 // Running alongside another road is worse for this one: it would sooner join it.
                 if (lane.Count > 0) Route(lane[0], to => inLane.Contains(to) ? 1 : onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY * 4 : 0));
+            }
+            // And one up to the zoo's gate, from just past the tile kept clear round it.
+            if (model.zoo != null)
+            {
+                var at = Menagerie.RoadEnd(model.zoo);
+                int cell = Grid.Index((int)Math.Floor(at.x), (int)Math.Floor(at.y), w);
+                if (Grid.InBounds((int)Math.Floor(at.x), (int)Math.Floor(at.y), w, h) && !float.IsPositiveInfinity(cost[cell])) Route(cell, Step);
             }
 
             Vec2 Center(int c) => new Vec2((c % w) + 0.5, c / w + 0.5);

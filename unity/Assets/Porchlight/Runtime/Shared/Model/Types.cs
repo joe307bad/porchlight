@@ -32,8 +32,10 @@ namespace Porchlight.Model
         /// <summary>The airport's grounds: taxiway, apron, hangars and car park, and the grass between.</summary>
         public const byte AIRPORT = 6;
         public const byte RUNWAY = 7;
+        /// <summary>The zoo's grounds, inside its fence.</summary>
+        public const byte ZOO = 8;
 
-        public static readonly string[] Names = { "NONE", "ROAD_MAIN", "ROAD_STREET", "PATH", "BRIDGE", "PLAZA", "AIRPORT", "RUNWAY" };
+        public static readonly string[] Names = { "NONE", "ROAD_MAIN", "ROAD_STREET", "PATH", "BRIDGE", "PLAZA", "AIRPORT", "RUNWAY", "ZOO" };
     }
 
     public enum RoadKind { Main, Street, Path }
@@ -166,6 +168,17 @@ namespace Porchlight.Model
         public double entranceU;
     }
 
+    /// <summary>
+    /// The town's zoo: a fenced rectangle of tiles (x1, y1 exclusive), its gate in
+    /// the middle of its `front` side, facing the town. Menagerie (Gen) says where
+    /// its paths and pens are.
+    /// </summary>
+    public sealed class Zoo
+    {
+        public int x0, y0, x1, y1;
+        public Facing front;
+    }
+
     /// <summary>A boat tied up at a dock: where it floats, and which way its bow points.</summary>
     public struct Mooring
     {
@@ -256,6 +269,8 @@ namespace Porchlight.Model
         public List<Landmark> landmarks = new List<Landmark>();
         /// <summary>Null on a map with no room for one.</summary>
         public Airport airport;
+        /// <summary>Null on a map with no room for one.</summary>
+        public Zoo zoo;
         /// <summary>Piers out over the lakes, each with its boats (DocksStage).</summary>
         public List<Dock> docks = new List<Dock>();
 

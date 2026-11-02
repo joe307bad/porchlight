@@ -4,6 +4,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- towns [count]     # grow towns with every invariant checked
 //   dotnet run --project "unity/Tools~/Checks" -- net '<json>'      # play the real game server (NetCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- mission <file>    # play a compiled mission (MissionCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- chase [count]     # set chasers after someone (ChaseCheck.cs)
 
 using System;
 using System.Collections.Generic;
@@ -18,8 +19,9 @@ static class Program
     {
         if (args.Length > 1 && args[0] == "net") return NetCheck.Run(args[1]);
         if (args.Length > 1 && args[0] == "mission") return MissionCheck.Run(args[1]);
+        if (args.Length > 0 && args[0] == "chase") return ChaseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
-        Console.Error.WriteLine("usage: towns [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
+        Console.Error.WriteLine("usage: towns [count] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
     }
 
@@ -31,7 +33,7 @@ static class Program
     static int Towns(int count)
     {
         int failed = 0;
-        long buildings = 0, driveways = 0, beds = 0, parked = 0, airports = 0, planes = 0, docks = 0, boats = 0, loops = 0, culs = 0;
+        long buildings = 0, driveways = 0, beds = 0, parked = 0, airports = 0, zoos = 0, planes = 0, docks = 0, boats = 0, loops = 0, culs = 0;
         var sw = Stopwatch.StartNew();
         for (int i = 0; i < count; i++)
         {
@@ -48,6 +50,7 @@ static class Program
                 culs += Raster.Bulbs(a.roads.edges).Count;
                 parked += layout.cars.Count;
                 if (a.airport != null) airports++;
+                if (a.zoo != null) zoos++;
                 docks += a.docks.Count;
                 loops += layout.boatLoops.Count;
                 foreach (var c in layout.cars)
@@ -66,6 +69,12 @@ static class Program
                 {
                     if (u == Porchlight.Explore.Use.DRIVEWAY) driveways++;
                     if (u == Porchlight.Explore.Use.GARDEN) beds++;
+                }
+                string zoo = Zoo(a, layout);
+                if (zoo != null)
+                {
+                    failed++;
+                    Console.WriteLine($"FAIL {seed}: {zoo}");
                 }
                 string culs2 = CulDeSacs(a, layout);
                 if (culs2 != null)
@@ -92,7 +101,7 @@ static class Program
                 Console.WriteLine($"FAIL {seed}: {e.Message}");
             }
         }
-        Console.WriteLine($"{count - failed}/{count} towns ok in {sw.Elapsed.TotalSeconds:0.0} s: {buildings} buildings, {driveways} driveway tiles, {beds} garden beds, {parked} parked cars, {culs} cul-de-sacs; {airports} airports, {planes} planes, {docks} docks, {boats} moored boats, {loops} boat loops");
+        Console.WriteLine($"{count - failed}/{count} towns ok in {sw.Elapsed.TotalSeconds:0.0} s: {buildings} buildings, {driveways} driveway tiles, {beds} garden beds, {parked} parked cars, {culs} cul-de-sacs; {airports} airports, {zoos} zoos, {planes} planes, {docks} docks, {boats} moored boats, {loops} boat loops");
         return failed == 0 ? 0 : 1;
     }
 
@@ -318,6 +327,36 @@ static class Program
         var ap = a.airport;
         var aq = b.airport;
         if ((ap == null) != (aq == null) || ap != null && (ap.x0 != aq.x0 || ap.y0 != aq.y0 || ap.x1 != aq.x1 || ap.y1 != aq.y1 || ap.front != aq.front || ap.entranceU != aq.entranceU)) return "airport";
+        var zp = a.zoo;
+        var zq = b.zoo;
+        if ((zp == null) != (zq == null) || zp != null && (zp.x0 != zq.x0 || zp.y0 != zq.y0 || zp.x1 != zq.x1 || zp.y1 != zq.y1 || zp.front != zq.front)) return "zoo";
+        return null;
+    }
+
+    /// <summary>
+    /// Every town big enough has a zoo, with nothing built or driven on it, and
+    /// a sidewalk close outside its gate (a mission's role there walks to it).
+    /// </summary>
+    static string Zoo(TownModel model, Porchlight.Explore.IsoLayout layout)
+    {
+        var z = model.zoo;
+        if (z == null) return Math.Min(model.width, model.height) >= 96 ? "no zoo" : null;
+        int w = model.width;
+        foreach (int i in Menagerie.Tiles(z, w, model.height))
+        {
+            if (model.tiles.buildingId[i] >= 0) return $"a building on the zoo at {i % w},{i / w}";
+            if (model.tiles.overlay[i] != Overlay.ZOO) return $"zoo tile {i % w},{i / w} is {Overlay.Names[model.tiles.overlay[i]]}";
+            if (layout.use[i] != Porchlight.Explore.Use.ZOO) return $"zoo tile {i % w},{i / w} is used for something else";
+        }
+        var drive = Porchlight.Explore.Vehicle.Drivable(model, layout);
+        var inside = Menagerie.Visitor(z);
+        if (drive(inside.x, inside.y)) return "a car could drive into the zoo";
+        var gate = Menagerie.Gate(z);
+        var dv = Menagerie.AlongV(z);
+        var outside = new Porchlight.Core.Vec2(gate.x + dv.x * 0.35, gate.y + dv.y * 0.35);
+        double nearest = double.PositiveInfinity;
+        foreach (var path in layout.sidewalks.paths) nearest = Math.Min(nearest, Porchlight.Core.Geo.ClosestOnPolyline(outside, path.points).d);
+        if (nearest > 6) return $"no sidewalk near the zoo's gate ({nearest:0.0} tiles)";
         return null;
     }
 }

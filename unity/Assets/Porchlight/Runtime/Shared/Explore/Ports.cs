@@ -2,7 +2,7 @@
 // and moored boats, and each lake big enough a loop round its open water,
 // clear of the shore, the docks, their boats and the bridges, for boats to
 // sail. The airport gets its hangars and tower, a row or two of planes on the
-// apron, and cars in its car park. Pure.
+// apron, and cars in its car park. The zoo's grounds are walked, not driven. Pure.
 
 using System;
 using System.Collections.Generic;
@@ -25,6 +25,7 @@ namespace Porchlight.Explore
         public static void Add(TownModel model, IsoLayout layout)
         {
             if (model.airport != null) AddAirport(model, layout);
+            foreach (int t in Menagerie.Tiles(model.zoo, model.width, model.height)) layout.use[t] = Use.ZOO;
             AddDocks(model, layout);
         }
 

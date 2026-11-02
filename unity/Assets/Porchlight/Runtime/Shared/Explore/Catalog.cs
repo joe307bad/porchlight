@@ -80,6 +80,45 @@ namespace Porchlight.Explore
 
         public const string PEOPLE_CLIPS = "people/animations";
 
+        /// <summary>
+        /// Animals (Kenney's Cube Pets): the zoo's, and anyone a mission makes one of
+        /// (look). Each is rigged by its parts and carries its own clips; with how tall
+        /// it stands (tiles) and how fast it ambles about its pen (tiles a second).
+        /// </summary>
+        static readonly (string name, double height, double pace)[] ANIMAL_TABLE =
+        {
+            ("penguin", 0.24, 0.35),
+            ("lion", 0.34, 0.45),
+            ("tiger", 0.34, 0.5),
+            ("elephant", 0.62, 0.3),
+            ("giraffe", 0.8, 0.35),
+            ("panda", 0.32, 0.25),
+            ("polar", 0.36, 0.35),
+            ("monkey", 0.26, 0.55),
+            ("koala", 0.22, 0.2),
+            ("parrot", 0.18, 0.4),
+        };
+        public static readonly string[] ANIMALS = ANIMAL_TABLE.Select(a => $"animals/animal-{a.name}").ToArray();
+
+        public static bool IsAnimal(string look) => System.Array.IndexOf(ANIMALS, look) >= 0;
+
+        /// <summary>How tall an animal stands (tiles), or 0 for anything else.</summary>
+        public static double AnimalHeight(string look)
+        {
+            int i = System.Array.IndexOf(ANIMALS, look);
+            return i < 0 ? 0 : ANIMAL_TABLE[i].height;
+        }
+
+        /// <summary>How fast an animal ambles about its pen (tiles a second).</summary>
+        public static double AnimalPace(string look)
+        {
+            int i = System.Array.IndexOf(ANIMALS, look);
+            return i < 0 ? 0 : ANIMAL_TABLE[i].pace;
+        }
+
+        /// <summary>Anything a person or animal can look like: a character or an animal.</summary>
+        public static bool IsLook(string look) => IsCharacter(look) || IsAnimal(look);
+
         static string[] Nature(params string[] names) => names.Select(n => $"nature/{n}").ToArray();
 
         /// <summary>Broadleaf trees, green: in town and out.</summary>
