@@ -1,18 +1,27 @@
 // A mission being played in the explore view: the town's side of its story
-// (MissionScript runs the ink). Each role the story names ("sender", "drop")
-// is a house: its front door, the pavement in front of it, its street, and
-// once asked for, a person waiting there and a spot marked in the parking lane
-// outside. The people walk their errands (in at the door, out with a box, to
-// your car's kerb side; or the other way), boxes ride on your car's roof, and
-// the story's waits are checked against all of it: you've talked to someone
-// (walk or drive up to them, Enter or A), your car is stopped in a spot, an
-// errand's done. Local to this player: no one else sees a mission's people.
+// (MissionScript runs the ink). It knows no mission: it carries out the
+// story's building blocks, and the story puts them together. Each role the
+// story names ("sender", "drop") is a building: its front door, the pavement
+// in front of it, its street, and once asked for, a person waiting there and
+// a spot marked in the parking lane outside. The story queues a person's
+// errands a step at a time (walk inside, to the kerb or to your car; wait;
+// hold something; put it on your car or take it off; put it down), and the
+// waits are checked against all of it: you've talked to someone (walk or
+// drive up to them, Enter or A), your car is stopped in a spot, someone's
+// errands are done, you're in or out of a role's grounds. A role can be the
+// zoo rather than a building (its gate its door). A mission can make you look
+// like someone (or something) else and put you somewhere; a chase is a role
+// too, cars with someone at the wheel that drive after you (Chaser) until
+// they've been close enough for long enough; and a countdown runs while
+// you're where it says. Local to this player: no one else sees a mission's
+// people, or what it's made you.
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using Porchlight.Core;
 using Porchlight.Explore;
+using Porchlight.Gen;
 using Porchlight.Missions;
 using Porchlight.Rendering;
 using UnityEngine;
@@ -23,69 +32,115 @@ namespace Porchlight.App
 {
     public sealed class MissionPlay : IMissionWorld
     {
-        /// <summary>How close you come to someone to talk: on foot, and from the driver's seat.</summary>
-        const double TALK_REACH = 1.1;
-        const double TALK_REACH_CAR = 1.9;
-        /// <summary>Parked: the car's middle this close to the spot's, near enough stopped, and lined up with the kerb (either way round).</summary>
-        const double PARK_REACH = 0.45;
-        const double PARK_SPEED = 0.12;
-        const double PARK_ANGLE = 0.45;
-        /// <summary>How far your car may stand from its spot while boxes go in and out of it.</summary>
-        const double CAR_STAYS = 0.8;
-        const double WALK_SPEED = 1.0;
-        /// <summary>How long someone is indoors fetching (or putting down) a box.</summary>
-        const double INDOORS = 1.1;
-        /// <summary>A box's side (tiles: about 40 cm).</summary>
-        const double BOX = 0.1;
-        /// <summary>The pavement in front of a house is no further than this from its door.</summary>
+        /// <summary>The pavement in front of a building is no further than this from its door.</summary>
         const double KERB_REACH = 6;
         const double SPOT_REACH = 3.5;
+        /// <summary>How near you come to a role for its "near" hints to show.</summary>
+        const double HINT_REACH = 3;
+        /// <summary>With no spot marked, how much further from the kerb your car may stand for someone to walk to it.</summary>
+        const double KERB_CAR_EXTRA = 1.5;
         const int SPOT_COLOR = 0xff6a00;
-        static readonly string BOX_MODEL = "furniture/cardboardBoxClosed";
-        static readonly string[] FIRST_NAMES =
-        {
-            "Ada", "Bea", "Cal", "Dot", "Eli", "Fay", "Gus", "Hal", "Ivy", "Jo", "Kit", "Lou", "Mae", "Ned", "Oona", "Pip", "Ray", "Sam", "Tess", "Vi", "Wes", "Zara",
-            "Ines", "Omar", "Priya", "Kenji", "Lena", "Mateo", "Nia", "Rosa", "Theo", "Yusuf",
-        };
 
-        enum Act { Walk, ToCar, Indoors, PickUp, Stow, TakeOut, PutDown, Vanish, Then }
+        /// <summary>Where a person can walk to, in the order they pass them.</summary>
+        enum Where { Inside, Door, Kerb, Car }
+
+        enum Act { Walk, Pause, Hold, PutInCar, TakeFromCar, PutDown, Vanish }
 
         sealed class Step
         {
             public Act act;
-            /// <summary>Walk: where to, in order.</summary>
+            /// <summary>Walk: where to.</summary>
+            public Where to;
+            /// <summary>Walk: the points still to go (worked out as the walk starts).</summary>
             public List<Vec2> path;
-            public Action then;
+            /// <summary>Pause: how long.</summary>
+            public double seconds;
+            /// <summary>Hold: what, and how big.</summary>
+            public string model;
+            public double size;
+        }
+
+        /// <summary>A thing someone carries, or that rides on your car.</summary>
+        sealed class Item
+        {
+            public string model;
+            public double size;
+            public GameObject go;
         }
 
         sealed class Person
         {
             public string name;
+            public Role role;
             public Walker walker;
             public Avatar avatar;
-            /// <summary>The box in their arms, if any.</summary>
-            public GameObject box;
+            /// <summary>Where they last got to.</summary>
+            public Where at = Where.Kerb;
+            /// <summary>What's in their arms, if anything.</summary>
+            public Item item;
             public readonly Queue<Step> steps = new Queue<Step>();
             public double timer;
-            /// <summary>Gone in for good (dismissed): removed once indoors.</summary>
+            /// <summary>Gone in for good (left): removed once indoors.</summary>
             public bool leaving;
         }
 
         sealed class Role
         {
+            /// <summary>Its building (-1: the zoo).</summary>
             public int room;
+            /// <summary>Where "inside" is, for a role that isn't a building (else just in at the door).</summary>
+            public Vec2? within;
+            /// <summary>Whether a point is on its grounds (in its building's room, or the zoo).</summary>
+            public Func<Vec2, bool> holds;
             public Vec2 door, outward, kerb;
             public string street;
             public Person person;
             public string name;
             public Vehicle.Spot? spot;
             public GameObject mark;
-            public bool loaded, unloaded;
             /// <summary>Spoken to (since the story last asked).</summary>
             public bool talked;
             public Vec2 Outside => new Vec2(door.x + outward.x * 0.35, door.y + outward.y * 0.35);
-            public Vec2 Inside => new Vec2(door.x - outward.x * 0.4, door.y - outward.y * 0.4);
+            public Vec2 Inside => within ?? new Vec2(door.x - outward.x * 0.4, door.y - outward.y * 0.4);
+            public bool Marked => mark != null && spot != null;
+            public Vec2 Spot => new Vec2(spot.Value.x, spot.Value.y);
         }
+
+        sealed class HintLine
+        {
+            public string when, role, text;
+        }
+
+        enum Duty { Driving, After, Back }
+
+        /// <summary>One of a chase's cars, and who's at its wheel: out and after you once it's pulled up by you, and back in when you're away.</summary>
+        sealed class Cop
+        {
+            public Chaser chaser;
+            public CarView view;
+            public Renderer[] siren;
+            public Avatar officer;
+            public Walker walker;
+            public Duty duty;
+        }
+
+        sealed class Pursuit
+        {
+            public string name;
+            public readonly List<Cop> cops = new List<Cop>();
+            /// <summary>How long they've had you (an officer stood by you) without a break.</summary>
+            public double caught;
+        }
+
+        sealed class Clock
+        {
+            public double left;
+            public string label, when, role;
+            public bool running;
+        }
+
+        static readonly Color SirenRed = Coords.Hex(0xff2a2a);
+        static readonly Color SirenBlue = Coords.Hex(0x2a6bff);
 
         readonly ExploreView view;
         readonly ModelLibrary library;
@@ -93,20 +148,74 @@ namespace Porchlight.App
         readonly Rng rng;
         readonly Dictionary<string, Role> roles = new Dictionary<string, Role>();
         readonly List<Person> people = new List<Person>();
+        readonly List<HintLine> hints = new List<HintLine>();
+        /// <summary>What a mission can tune with setting(name, value), and what each is until it does.</summary>
+        readonly Dictionary<string, double> settings = new Dictionary<string, double>
+        {
+            // How close you come to someone to talk: on foot, and from the driver's seat.
+            ["talk_reach"] = 1.1,
+            ["talk_reach_car"] = 1.9,
+            // Parked: the car's middle this close to the spot's, near enough stopped, and lined up with the kerb (either way round).
+            ["park_reach"] = 0.45,
+            ["park_speed"] = 0.12,
+            ["park_angle"] = 0.45,
+            // How far your car may stand from a role's spot for their person to walk to it.
+            ["car_reach"] = 0.8,
+            ["walk_speed"] = 1.0,
+            // How fast you go on foot, against your usual.
+            ["your_pace"] = 1.0,
+            // A chase: how fast its cars go after you on foot, and while you drive (past a car's top speed, they use its boost).
+            ["chase_speed"] = 4.4,
+            ["chase_speed_car"] = 6.4,
+            // A chase car pulls up this far (tiles) from you, and its driver gets out and runs at you this fast
+            // (tiles a second), giving up once you're this far off.
+            ["pull_up"] = 1.6,
+            ["officer_speed"] = 3.0,
+            ["officer_reach"] = 5.0,
+            // How close an officer must stand (tiles from you), and for how long (seconds), to have you.
+            ["catch_reach"] = 0.45,
+            ["catch_time"] = 1.0,
+        };
+        readonly Dictionary<string, Pursuit> chases = new Dictionary<string, Pursuit>();
+        Clock clock;
         readonly Palette palette = new Palette();
-        static Material spotMaterial, beaconMaterial;
+        static Material spotMaterial, beaconMaterial, redMaterial, blueMaterial;
         GameObject cargoRoot;
-        readonly List<GameObject> cargo = new List<GameObject>();
+        readonly List<Item> cargo = new List<Item>();
         GameObject beacon;
+        /// <summary>The story's blue dot on the ground (dot), and where it is.</summary>
+        GameObject dot;
+        Func<Vec2?> dotAt;
         int highlighted;
 
         public readonly string id;
         public readonly string title;
         public readonly MissionScript script;
-        /// <summary>What to do next, as the story last said ("" for nothing).</summary>
-        public string CurrentObjective { get; private set; } = "";
+        string objective = "";
+
+        /// <summary>What to do next, as the story last said ("" for nothing), and how long's left on the countdown.</summary>
+        public string CurrentObjective
+        {
+            get
+            {
+                if (clock == null) return objective;
+                int s = (int)Math.Ceiling(clock.left);
+                string time = $"{clock.label} {s / 60}:{s % 60:00}{(clock.running ? "" : " (stopped)")}";
+                return objective.Length == 0 ? time : $"{objective} · {time}";
+            }
+        }
         /// <summary>Which of the conversation's choices the keys or pad are on.</summary>
         public int Highlighted => highlighted;
+        /// <summary>How many cars are after you.</summary>
+        public int Chasing => chases.Values.Sum(c => c.cops.Count);
+        /// <summary>How many of their officers are out of their cars, and how near you the nearest car has stopped (tiles, middle to middle).</summary>
+        public string Officers()
+        {
+            var you = view.PlayerPosition ?? default;
+            var cops = chases.Values.SelectMany(c => c.cops).ToList();
+            var stopped = cops.Where(c => c.chaser.PulledUp).Select(c => Geo.Dist(new Vec2(c.chaser.car.x, c.chaser.car.y), you)).DefaultIfEmpty(double.NaN).Min();
+            return $"{cops.Count(c => c.duty != Duty.Driving)} officers out, nearest stopped car {stopped:0.0} tiles off";
+        }
 
         public MissionPlay(string id, string title, string story, ExploreView view, ModelLibrary library, GameInput input)
         {
@@ -123,16 +232,24 @@ namespace Porchlight.App
             script = new MissionScript(story, this);
         }
 
-        /// <summary>Over: everyone it put in the town, its marks and its boxes go, and the view is as it was.</summary>
+        /// <summary>Over: everyone it put in the town, its marks and what rides on your car go, and the view is as it was.</summary>
         public void Dispose()
         {
             foreach (var p in people) DisposePerson(p);
             people.Clear();
             foreach (var r in roles.Values) ClearMark(r);
             roles.Clear();
+            foreach (var c in chases.Values) CallOff(c);
+            chases.Clear();
+            clock = null;
+            view.Obstacles.Clear();
+            view.LookOverride = null;
+            view.YourPace = 1;
+            hints.Clear();
             if (cargoRoot != null) UnityEngine.Object.Destroy(cargoRoot);
             cargo.Clear();
             if (beacon != null) UnityEngine.Object.Destroy(beacon);
+            if (dot != null) UnityEngine.Object.Destroy(dot);
             view.Guide(null, null);
             view.DoorOpeners.Clear();
             view.InDialogue = false;
@@ -140,43 +257,72 @@ namespace Porchlight.App
             if (view.OnPadA == (Func<bool>)TryTalk) view.OnPadA = null;
         }
 
-        // The story's functions (IMissionWorld).
+        // The story's building blocks (IMissionWorld).
 
-        public void Objective(string text) => CurrentObjective = text ?? "";
+        public void Objective(string text) => objective = text ?? "";
 
-        public string House(string role, string near, double min, double max)
+        public void Hint(string when, string role, string text)
         {
+            if (when != "always" && when != "no_car" && when != "near" && when != "near_driving")
+                throw new Exception($"no such condition '{when}' (always, no_car, near or near_driving)");
+            if (string.IsNullOrEmpty(text)) return;
+            hints.Add(new HintLine { when = when, role = role ?? "", text = text });
+        }
+
+        public void ClearHints() => hints.Clear();
+
+        public void Setting(string name, double value)
+        {
+            if (!settings.ContainsKey(name ?? "")) throw new Exception($"no such setting '{name}' ({string.Join(", ", settings.Keys)})");
+            settings[name] = value;
+            if (name == "your_pace") view.YourPace = Math.Max(0.1, value);
+        }
+
+        double S(string name) => settings[name];
+
+        public string Place(string role, string kind, string near, double min, double max, bool parking)
+        {
+            if (string.IsNullOrEmpty(role)) throw new Exception("a role needs a name");
+            if (kind == "zoo") return PlaceZoo(role, parking);
+            HouseStyle? style = null;
+            if (!string.IsNullOrEmpty(kind))
+            {
+                if (!Enum.TryParse(kind, true, out HouseStyle s) || !Enum.IsDefined(typeof(HouseStyle), s))
+                    throw new Exception($"no such kind of building '{kind}' ({string.Join(", ", Enum.GetNames(typeof(HouseStyle)).Select(n => n.ToLowerInvariant()))}, or zoo)");
+                style = s;
+            }
+            string what = string.IsNullOrEmpty(kind) ? "building" : kind.ToLowerInvariant();
             var world = view.world;
             Vec2 from = !string.IsNullOrEmpty(near) && roles.TryGetValue(near, out var other) ? other.door : view.PlayerPosition ?? world.model.spawn;
             var taken = new HashSet<int>(roles.Where(r => r.Key != role).Select(r => r.Value.room));
-            // Homes with a front door, nearest the distance asked for first (any in range in a random order).
-            var homes = new List<(int room, Door door, double miss)>();
+            // Buildings with a front door, nearest the distance asked for first (any in range in a random order).
+            var found = new List<(int room, Door door, double miss)>();
             for (int i = 0; i < world.rooms.Count; i++)
             {
                 var room = world.rooms[i];
-                if (room.style != HouseStyle.House || taken.Contains(i)) continue;
+                if ((style != null && room.style != style.Value) || taken.Contains(i)) continue;
                 var doors = Interiors.Doors(room);
                 if (doors.Count == 0) continue;
                 var door = doors.FirstOrDefault(d => d.side == room.facing);
                 if (door.width == 0) door = doors[0];
                 double d = Geo.Dist(from, door.at);
-                homes.Add((i, door, d < min ? min - d : d > max ? d - max : 0));
+                found.Add((i, door, d < min ? min - d : d > max ? d - max : 0));
             }
-            if (homes.Count == 0) throw new Exception("there are no houses in this town");
-            var order = rng.Shuffle(homes).OrderBy(h => h.miss).ToList();
+            if (found.Count == 0) throw new Exception($"there's no {what} in this town");
+            var order = rng.Shuffle(found).OrderBy(h => h.miss).ToList();
             foreach (var h in order.Take(40))
             {
-                var r = RoleAt(h.room, h.door);
+                var r = RoleAt(h.room, h.door, parking);
                 if (r == null) continue;
                 if (roles.TryGetValue(role, out var old)) Forget(old);
                 roles[role] = r;
                 return r.street;
             }
-            throw new Exception("couldn't find a house by a street with room to park");
+            throw new Exception(parking ? $"couldn't find a {what} by a street with room to park" : $"couldn't find a {what} by a street");
         }
 
-        /// <summary>A house as a role: its door, the pavement in front, the street, and room to park outside (or null without).</summary>
-        Role RoleAt(int room, Door door)
+        /// <summary>A building as a role: its door, the pavement in front, the street, and if asked, room to park outside (or null without).</summary>
+        Role RoleAt(int room, Door door, bool parking)
         {
             var world = view.world;
             var outside = new Vec2(door.at.x + door.outward.x * 0.35, door.at.y + door.outward.y * 0.35);
@@ -193,8 +339,39 @@ namespace Porchlight.App
             }
             if (best == null) return null;
             var r = new Role { room = room, door = door.at, outward = door.outward, kerb = kerb, street = StreetName(best.road) };
+            var inRoom = world.rooms[room];
+            r.holds = p => Interiors.InRoom(inRoom, p);
+            if (!parking) return r;
             r.spot = SpotFor(r);
             return r.spot == null ? null : r;
+        }
+
+        /// <summary>The zoo as a role: its gate its door, the path just inside by the penguins its "inside", its fence round its grounds.</summary>
+        string PlaceZoo(string role, bool parking)
+        {
+            var z = view.world.model.zoo ?? throw new Exception("there's no zoo in this town");
+            var gate = Menagerie.Gate(z);
+            var outward = Menagerie.AlongV(z);
+            var r = new Role { room = -1, door = gate, outward = outward, within = Menagerie.Visitor(z), holds = p => Menagerie.Inside(z, p), street = "the zoo" };
+            // The pavement nearest the gate, else just outside it.
+            r.kerb = new Vec2(gate.x + outward.x * 1.2, gate.y + outward.y * 1.2);
+            double bestD = KERB_REACH;
+            foreach (var path in view.world.sidewalks.paths)
+            {
+                var hit = Geo.ClosestOnPolyline(r.Outside, path.points);
+                if (hit.d >= bestD) continue;
+                bestD = hit.d;
+                r.kerb = hit.point;
+                r.street = StreetName(path.road);
+            }
+            if (parking)
+            {
+                r.spot = SpotFor(r);
+                if (r.spot == null) throw new Exception("no room to park outside the zoo");
+            }
+            if (roles.TryGetValue(role, out var old)) Forget(old);
+            roles[role] = r;
+            return r.street;
         }
 
         string StreetName(int road)
@@ -208,156 +385,345 @@ namespace Porchlight.App
         Vehicle.Spot? SpotFor(Role r)
         {
             var busy = view.CarsAbout();
-            foreach (var other in roles.Values) if (other.spot != null) busy.Add(new Vec2(other.spot.Value.x, other.spot.Value.y));
+            foreach (var other in roles.Values) if (other != r && other.spot != null) busy.Add(other.Spot);
             var spot = Vehicle.CarSpotNear(r.kerb, view.world.layout.roads, Layout.PARKING / 2, view.CanDriveAt, busy);
             if (spot == null || Geo.Dist(new Vec2(spot.Value.x, spot.Value.y), r.kerb) > SPOT_REACH) return null;
             return spot;
         }
 
-        public string Npc(string role)
+        public string Spawn(string role, string name, string look)
         {
             var r = RoleOf(role);
             if (r.person != null) GoIndoors(r.person);
-            var taken = new HashSet<string>(roles.Values.Where(o => o != r).Select(o => o.name));
-            var names = FIRST_NAMES.Where(n => !taken.Contains(n)).ToList();
-            string look;
-            do look = Catalog.RandomLook(rng); while (look == view.LookModel && Catalog.CHARACTERS.Length > 1);
+            if (string.IsNullOrEmpty(look))
+            {
+                do look = Catalog.RandomLook(rng); while (look == view.LookModel && Catalog.CHARACTERS.Length > 1);
+            }
+            else if (!Catalog.IsLook(look)) throw new Exception($"no such look '{look}'");
             var walker = new Walker(look, r.kerb.x, r.kerb.y);
             // Facing the street, from their door.
             walker.heading = DetMath.Atan2(r.kerb.x - r.door.x, r.kerb.y - r.door.y);
-            var avatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, rng.Next(), view.world.root.transform);
+            var avatar = new Avatar(library.Character(look), Avatar.HeightOf(look), rng.Next(), view.world.root.transform);
             avatar.SnapYaw(walker.heading);
-            var p = new Person { name = rng.Pick(names.Count > 0 ? names : FIRST_NAMES.ToList()), walker = walker, avatar = avatar };
+            var p = new Person { name = string.IsNullOrEmpty(name) ? "Someone" : name, role = r, walker = walker, avatar = avatar };
             people.Add(p);
             r.person = p;
             r.name = p.name;
-            r.loaded = r.unloaded = r.talked = false;
+            r.talked = false;
             return p.name;
         }
 
-        public void Guide(string role)
+        public void Walk(string role, string to) => PersonOf(role).steps.Enqueue(new Step { act = Act.Walk, to = WhereOf(to) });
+
+        public void Pause(string role, double seconds) => PersonOf(role).steps.Enqueue(new Step { act = Act.Pause, seconds = Math.Max(0, seconds) });
+
+        public void Hold(string role, string model, double size)
         {
-            if (string.IsNullOrEmpty(role) || !roles.TryGetValue(role, out var r))
-            {
-                view.Guide(null, null);
-                return;
-            }
-            string label = r.mark != null ? $"{r.name ?? "the house"}'s parking spot" : r.person != null ? r.name : $"the house on {r.street}";
-            view.Guide(() =>
-            {
-                if (r.mark != null && r.spot != null) return new Vec2(r.spot.Value.x, r.spot.Value.y);
-                if (r.person != null) return new Vec2(r.person.walker.x, r.person.walker.y);
-                return r.kerb;
-            }, label);
+            var p = PersonOf(role);
+            if (string.IsNullOrEmpty(model)) throw new Exception("hold what? (a model's name)");
+            library.Get(model);
+            if (size <= 0) throw new Exception("a thing to hold needs a size (tiles across)");
+            p.steps.Enqueue(new Step { act = Act.Hold, model = model, size = size });
         }
 
-        public void Parking(string role)
+        public void PutInCar(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.PutInCar });
+
+        public void TakeFromCar(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.TakeFromCar });
+
+        public void PutDown(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.PutDown });
+
+        public void Leave(string role)
+        {
+            if (chases.TryGetValue(role ?? "", out var c)) CallOff(c);
+            if (!roles.TryGetValue(role ?? "", out var r) || r.person == null) return;
+            GoIndoors(r.person);
+            r.person = null;
+        }
+
+        public void MarkSpot(string role)
         {
             var r = RoleOf(role);
             if (r.spot == null) r.spot = SpotFor(r);
-            if (r.spot == null) throw new Exception($"no room to park outside {role}'s house");
+            if (r.spot == null) throw new Exception($"no room to park outside {role}'s (place it with parking true)");
             ClearMark(r);
             r.mark = DrawSpot(r.spot.Value);
         }
 
-        public void Load(string role, int boxes)
+        public void ClearSpot(string role)
+        {
+            if (roles.TryGetValue(role ?? "", out var r)) ClearMark(r);
+        }
+
+        public void Guide(string role, string to, string label)
+        {
+            if (string.IsNullOrEmpty(role))
+            {
+                view.Guide(null, null);
+                return;
+            }
+            var r = RoleOf(role);
+            view.Guide(TargetOf(r, to, "guide"), string.IsNullOrEmpty(label) ? r.street : label);
+        }
+
+        /// <summary>Where a role's `to` is, as it moves: its spot, its person, its house (the pavement outside) or its door (just outside it).</summary>
+        static Func<Vec2?> TargetOf(Role r, string to, string what) => to switch
+        {
+            "spot" => () => r.Marked ? r.Spot : r.kerb,
+            "person" => () => r.person != null ? new Vec2(r.person.walker.x, r.person.walker.y) : r.kerb,
+            "house" => () => r.kerb,
+            "door" => () => r.Outside,
+            _ => throw new Exception($"{what} to what? '{to}' (spot, person, house or door)"),
+        };
+
+        public void Dot(string role, string to)
+        {
+            dotAt = string.IsNullOrEmpty(role) ? null : TargetOf(RoleOf(role), to, "dot");
+            if (dotAt != null && dot == null)
+            {
+                // As the way shown to somewhere ends: a flat blue disc on the ground.
+                var b = new MeshBuilder(new Palette());
+                b.Disc(new Vec2(0, 0), 0.3, 0.035, DOT_COLOR);
+                dot = new GameObject("mission dot");
+                dot.transform.SetParent(view.world.root.transform, false);
+                dot.AddComponent<MeshFilter>().sharedMesh = b.Build("mission dot");
+                var mr = dot.AddComponent<MeshRenderer>();
+                dotMaterial ??= Materials.Unlit(Coords.Hex(DOT_COLOR));
+                mr.sharedMaterial = dotMaterial;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+            UpdateDot();
+        }
+
+        const int DOT_COLOR = 0x3b9be0;
+        static Material dotMaterial;
+
+        void UpdateDot()
+        {
+            if (dot == null) return;
+            var at = dotAt?.Invoke();
+            dot.SetActive(at != null);
+            if (at != null) dot.transform.localPosition = Coords.Map(at.Value.x, at.Value.y);
+        }
+
+        public string NameOf(string role) => roles.TryGetValue(role, out var r) ? r.name : chases.TryGetValue(role, out var c) ? c.name : null;
+
+        public void Look(string model)
+        {
+            if (string.IsNullOrEmpty(model))
+            {
+                view.LookOverride = null;
+                return;
+            }
+            if (!Catalog.IsLook(model)) throw new Exception($"no such look '{model}'");
+            view.LookOverride = model;
+        }
+
+        public void PutYou(string role, string at)
         {
             var r = RoleOf(role);
-            var p = r.person ?? throw new Exception($"no one is at {role}'s house (call npc first)");
-            r.loaded = false;
-            for (int i = 0; i < Math.Max(1, boxes); i++)
-            {
-                Walk(p, r.kerb, r.Outside, r.Inside);
-                p.steps.Enqueue(new Step { act = Act.Indoors });
-                p.steps.Enqueue(new Step { act = Act.PickUp });
-                Walk(p, r.Outside, r.kerb);
-                p.steps.Enqueue(new Step { act = Act.ToCar });
-                p.steps.Enqueue(new Step { act = Act.Stow });
-            }
-            Walk(p, r.kerb);
-            p.steps.Enqueue(new Step { act = Act.Then, then = () => r.loaded = true });
+            var to = WhereOf(at);
+            if (to == Where.Car) throw new Exception("put you where? 'car' (inside, door or kerb)");
+            // Facing out, the way you'd go.
+            view.PutPlayer(PointOf(r, to), DetMath.Atan2(r.outward.x, r.outward.y));
         }
 
-        public void Unload(string role)
+        public string Chase(string role, string name, int count, string car, string look)
         {
-            var r = RoleOf(role);
-            var p = r.person ?? throw new Exception($"no one is at {role}'s house (call npc first)");
-            r.unloaded = false;
-            for (int i = 0; i < cargo.Count; i++)
+            if (string.IsNullOrEmpty(role)) throw new Exception("a chase needs a role's name");
+            if (roles.ContainsKey(role)) throw new Exception($"'{role}' is already a building's role");
+            int model = Array.IndexOf(Catalog.CARS, car ?? "");
+            if (model < 0 || !Catalog.IsCar(model)) throw new Exception($"no such car '{car}' (cars/police, cars/sedan, ...)");
+            if (string.IsNullOrEmpty(look)) look = Catalog.RandomLook(rng);
+            else if (!Catalog.IsLook(look)) throw new Exception($"no such look '{look}'");
+            if (count < 1 || count > 8) throw new Exception("a chase is 1 to 8 cars");
+            var you = view.PlayerPosition ?? throw new Exception("you're not in the town");
+            if (chases.TryGetValue(role, out var old)) CallOff(old);
+            var c = new Pursuit { name = string.IsNullOrEmpty(name) ? "Someone" : name };
+            chases[role] = c;
+            var busy = view.CarsAbout();
+            for (int i = 0; i < count; i++)
             {
-                p.steps.Enqueue(new Step { act = Act.ToCar });
-                p.steps.Enqueue(new Step { act = Act.TakeOut });
-                Walk(p, r.kerb, r.Outside, r.Inside);
-                p.steps.Enqueue(new Step { act = Act.Indoors });
-                p.steps.Enqueue(new Step { act = Act.PutDown });
-                Walk(p, r.Outside, r.kerb);
+                var spot = StartFor(you, busy);
+                if (spot == null) break;
+                busy.Add(new Vec2(spot.Value.x, spot.Value.y));
+                c.cops.Add(NewCop(model, spot.Value, look));
             }
-            p.steps.Enqueue(new Step { act = Act.Then, then = () => r.unloaded = true });
+            if (c.cops.Count == 0) throw new Exception("no street near you for a chase to start from");
+            return c.name;
         }
 
-        public void Dismiss(string role)
+        /// <summary>Somewhere for a chase's car to start (or start again): in a parking lane out of the way, else nearer, else further.</summary>
+        Vehicle.Spot? StartFor(Vec2 you, List<Vec2> busy)
         {
-            if (!roles.TryGetValue(role, out var r)) return;
-            ClearMark(r);
-            if (r.person != null) GoIndoors(r.person);
-            r.person = null;
+            var roads = view.world.layout.roads;
+            return Chaser.StartNear(you, 9, 16, roads, view.CanDriveAt, busy, rng)
+                ?? Chaser.StartNear(you, 5, 24, roads, view.CanDriveAt, busy, rng);
         }
 
-        public string NameOf(string role) => roles.TryGetValue(role, out var r) ? r.name : null;
+        Cop NewCop(int model, Vehicle.Spot at, string look)
+        {
+            var m = library.Get(Catalog.CARS[model]);
+            var cop = new Cop
+            {
+                chaser = new Chaser(new Vehicle(model, at.x, at.y, at.heading)),
+                view = new CarView(m, view.world.root.transform) { model = model },
+                officer = new Avatar(library.Character(look), Avatar.HeightOf(look), rng.Next(), view.world.root.transform),
+                walker = new Walker(look, at.x, at.y),
+            };
+            cop.officer.Visible = false;
+            // A light bar on the roof: red and blue, flashing.
+            double scale = CarView.ScaleOf(m);
+            cop.siren = new Renderer[2];
+            for (int k = 0; k < 2; k++)
+            {
+                var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                UnityEngine.Object.Destroy(go.GetComponent<Collider>());
+                go.name = "siren";
+                go.transform.SetParent(cop.view.root.transform, false);
+                go.transform.localPosition = new Vector3((k == 0 ? -1 : 1) * m.size.x * 0.17f, m.size.y * 0.98f, 0);
+                go.transform.localScale = Vector3.one * (float)(0.07 / scale);
+                var r = go.GetComponent<Renderer>();
+                redMaterial ??= Materials.Glowing(SirenRed);
+                blueMaterial ??= Materials.Glowing(SirenBlue);
+                r.sharedMaterial = k == 0 ? redMaterial : blueMaterial;
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                cop.siren[k] = r;
+            }
+            PlaceCop(cop);
+            return cop;
+        }
+
+        static void PlaceCop(Cop cop)
+        {
+            var car = cop.chaser.car;
+            var f = car.Forward;
+            cop.view.Place(car.x, car.y, DetMath.Atan2(f.x, f.y));
+        }
+
+        /// <summary>The chase is over: its cars and who was in them go (their name still voices the role's lines).</summary>
+        void CallOff(Pursuit c)
+        {
+            foreach (var cop in c.cops)
+            {
+                cop.view.Dispose();
+                cop.officer.Dispose();
+            }
+            c.cops.Clear();
+            c.caught = 0;
+        }
+
+        public void Countdown(double seconds, string label, string when, string role)
+        {
+            if (seconds <= 0)
+            {
+                clock = null;
+                return;
+            }
+            if (when != "always" && when != "inside" && when != "outside")
+                throw new Exception($"no such condition '{when}' (always, inside or outside)");
+            if (when != "always") RoleOf(role);
+            clock = new Clock { left = seconds, label = string.IsNullOrEmpty(label) ? "Time left" : label, when = when, role = role ?? "" };
+        }
+
+        /// <summary>You're on the role's grounds (on the ground: flying over doesn't count).</summary>
+        bool YouInside(Role r)
+        {
+            var you = view.PlayerPosition;
+            return you != null && view.YourHeight < 0.5 && r.holds != null && r.holds(you.Value);
+        }
 
         public bool Met(string wait, string role)
         {
-            if (!roles.TryGetValue(role, out var r)) return false;
+            if (wait == "countdown") return clock != null && clock.left <= 0;
+            if (wait == "caught")
+            {
+                if (!chases.TryGetValue(role ?? "", out var c) || c.caught < S("catch_time")) return false;
+                c.caught = 0;
+                return true;
+            }
+            if (!roles.TryGetValue(role ?? "", out var r)) return false;
             switch (wait)
             {
                 case "talk":
                     if (!r.talked) return false;
                     r.talked = false;
                     return true;
-                case "park":
+                case "parked":
                     return Parked(r);
-                case "loaded":
-                    return r.loaded;
-                case "unloaded":
-                    return r.unloaded;
+                case "idle":
+                    return r.person != null && r.person.steps.Count == 0;
+                case "inside":
+                    return YouInside(r);
+                case "outside":
+                    return view.PlayerPosition != null && !YouInside(r);
                 default:
                     return false;
             }
         }
 
         Role RoleOf(string role) =>
-            roles.TryGetValue(role ?? "", out var r) ? r : throw new Exception($"no house for '{role}' yet (call house first)");
+            roles.TryGetValue(role ?? "", out var r) ? r : throw new Exception($"no building for '{role}' yet (call place first)");
 
-        /// <summary>Your car stopped in the role's spot, lined up with the kerb.</summary>
+        Person PersonOf(string role) => RoleOf(role).person ?? throw new Exception($"no one plays '{role}' (call spawn first)");
+
+        static Where WhereOf(string to)
+        {
+            switch (to)
+            {
+                case "inside": return Where.Inside;
+                case "door": return Where.Door;
+                case "kerb": return Where.Kerb;
+                case "car": return Where.Car;
+                default: throw new Exception($"walk where? '{to}' (inside, door, kerb or car)");
+            }
+        }
+
+        /// <summary>Your car stopped in the role's marked spot, lined up with the kerb.</summary>
         bool Parked(Role r)
         {
             var car = view.OwnVehicle;
-            if (car == null || r.spot == null || car.kind != VehicleKind.Car) return false;
+            if (car == null || !r.Marked || car.kind != VehicleKind.Car) return false;
             var s = r.spot.Value;
-            if (Numbers.Hypot(car.x - s.x, car.y - s.y) > PARK_REACH || Math.Abs(car.speed) > PARK_SPEED) return false;
+            if (Numbers.Hypot(car.x - s.x, car.y - s.y) > S("park_reach") || Math.Abs(car.speed) > S("park_speed")) return false;
             double off = Math.Abs(Orbit.ShortestTurn(s.heading, car.heading));
-            return Math.Min(off, Math.PI - off) < PARK_ANGLE;
+            return Math.Min(off, Math.PI - off) < S("park_angle");
+        }
+
+        /// <summary>Your car near enough stopped by the role: in their spot if one's marked, else by the kerb outside.</summary>
+        bool CarThere(Role r)
+        {
+            var car = view.OwnVehicle;
+            if (car == null || car.kind != VehicleKind.Car || Math.Abs(car.speed) > S("park_speed") * 2) return false;
+            var at = r.Marked ? r.Spot : r.kerb;
+            double reach = r.Marked ? S("car_reach") : S("car_reach") + KERB_CAR_EXTRA;
+            return Numbers.Hypot(car.x - at.x, car.y - at.y) < reach;
         }
 
         // People's errands.
 
-        static void Walk(Person p, params Vec2[] points) => p.steps.Enqueue(new Step { act = Act.Walk, path = points.ToList() });
-
         void GoIndoors(Person p)
         {
-            var r = roles.Values.FirstOrDefault(o => o.person == p);
             p.steps.Clear();
             p.leaving = true;
-            if (p.box != null)
-            {
-                UnityEngine.Object.Destroy(p.box);
-                p.box = null;
-            }
-            if (r != null) Walk(p, r.kerb, r.Outside, r.Inside);
+            DropItem(p);
+            if (p.at != Where.Inside || p.avatar.Visible) p.steps.Enqueue(new Step { act = Act.Walk, to = Where.Inside });
             p.steps.Enqueue(new Step { act = Act.Vanish });
         }
 
-        /// <summary>Where someone hands boxes into your car: at its kerb side, by the back door.</summary>
+        static Vec2 PointOf(Role r, Where at) => at == Where.Inside ? r.Inside : at == Where.Door ? r.Outside : r.kerb;
+
+        /// <summary>The way from where they are to where they're going, past each place between (the car's own leg is walked separately, from the kerb).</summary>
+        static List<Vec2> PathTo(Person p, Where to)
+        {
+            var path = new List<Vec2>();
+            int a = (int)p.at, b = (int)(to == Where.Car ? Where.Kerb : to);
+            int dir = Math.Sign(b - a);
+            if (dir == 0) return path;
+            for (int i = a + dir; i != b + dir; i += dir) path.Add(PointOf(p.role, (Where)i));
+            return path;
+        }
+
+        /// <summary>Where someone puts things into your car: at its kerb side, by the back door.</summary>
         Vec2? CarSide(Vec2 from)
         {
             var car = view.OwnVehicle;
@@ -371,6 +737,7 @@ namespace Porchlight.App
         void StepPerson(Person p, double dt)
         {
             var w = p.walker;
+            var r = p.role;
             if (p.steps.Count == 0)
             {
                 w.Moved(0, 0, dt);
@@ -383,74 +750,74 @@ namespace Porchlight.App
             switch (step.act)
             {
                 case Act.Walk:
-                    if (WalkAlong(p, step.path, dt)) p.steps.Dequeue();
-                    return;
-                case Act.ToCar:
                 {
-                    // Only while your car is in its spot: otherwise they wait at the kerb.
-                    var r = roles.Values.FirstOrDefault(o => o.person == p);
-                    var car = view.OwnVehicle;
-                    bool there = car != null && r?.spot != null && Numbers.Hypot(car.x - r.spot.Value.x, car.y - r.spot.Value.y) < CAR_STAYS && Math.Abs(car.speed) < PARK_SPEED * 2;
-                    var side = there ? CarSide(r.kerb) : null;
-                    if (side == null)
+                    if (step.path == null)
                     {
-                        WalkAlong(p, new List<Vec2> { r?.kerb ?? new Vec2(w.x, w.y) }, dt);
-                        return;
+                        step.path = PathTo(p, step.to);
+                        if (p.at == Where.Inside) p.avatar.Visible = true;
                     }
-                    if (WalkAlong(p, new List<Vec2> { side.Value }, dt))
+                    if (step.path.Count > 0)
                     {
+                        WalkAlong(p, step.path, dt);
+                        if (step.path.Count > 0 || step.to == Where.Car) return;
+                    }
+                    if (step.to == Where.Car)
+                    {
+                        // Only while your car is there: otherwise they wait at the kerb.
+                        var side = CarThere(r) ? CarSide(r.kerb) : null;
+                        if (side == null)
+                        {
+                            WalkAlong(p, new List<Vec2> { r.kerb }, dt);
+                            return;
+                        }
+                        if (!WalkAlong(p, new List<Vec2> { side.Value }, dt)) return;
+                        var car = view.OwnVehicle;
                         w.heading = DetMath.Atan2(car.x - w.x, car.y - w.y);
-                        p.steps.Dequeue();
                     }
+                    p.at = step.to;
+                    if (p.at == Where.Inside) p.avatar.Visible = false;
+                    p.steps.Dequeue();
                     return;
                 }
-                case Act.Indoors:
+                case Act.Pause:
                     w.Moved(0, 0, dt);
-                    p.avatar.Visible = false;
                     p.timer += dt;
-                    if (p.timer < INDOORS) return;
+                    if (p.timer < step.seconds) return;
                     p.timer = 0;
-                    p.avatar.Visible = true;
-                    w.heading += Math.PI;
                     p.steps.Dequeue();
                     return;
-                case Act.PickUp:
-                    Carry(p);
+                case Act.Hold:
+                    if (p.item == null) Carry(p, step.model, step.size);
                     p.steps.Dequeue();
                     return;
-                case Act.Stow:
-                    if (p.box != null)
+                case Act.PutInCar:
+                    if (p.item != null)
                     {
-                        UnityEngine.Object.Destroy(p.box);
-                        p.box = null;
+                        var item = new Item { model = p.item.model, size = p.item.size };
+                        item.go = PlaceItem(item, cargoRoot.transform);
+                        cargo.Add(item);
+                        DropItem(p);
+                        PlaceCargo();
                     }
-                    AddCargo();
                     p.steps.Dequeue();
                     return;
-                case Act.TakeOut:
-                    if (cargo.Count > 0)
+                case Act.TakeFromCar:
+                    if (cargo.Count > 0 && p.item == null)
                     {
-                        UnityEngine.Object.Destroy(cargo[cargo.Count - 1]);
+                        var last = cargo[cargo.Count - 1];
                         cargo.RemoveAt(cargo.Count - 1);
-                        Carry(p);
+                        UnityEngine.Object.Destroy(last.go);
+                        Carry(p, last.model, last.size);
                     }
                     p.steps.Dequeue();
                     return;
                 case Act.PutDown:
-                    if (p.box != null)
-                    {
-                        UnityEngine.Object.Destroy(p.box);
-                        p.box = null;
-                    }
+                    DropItem(p);
                     p.steps.Dequeue();
                     return;
                 case Act.Vanish:
                     p.avatar.Visible = false;
                     p.steps.Dequeue();
-                    return;
-                case Act.Then:
-                    p.steps.Dequeue();
-                    step.then?.Invoke();
                     return;
             }
         }
@@ -459,7 +826,7 @@ namespace Porchlight.App
         bool WalkAlong(Person p, List<Vec2> path, double dt)
         {
             var w = p.walker;
-            double budget = WALK_SPEED * dt;
+            double budget = S("walk_speed") * dt;
             double moved = 0, mx = 0, my = 0;
             while (path.Count > 0 && budget > 1e-9)
             {
@@ -488,31 +855,30 @@ namespace Porchlight.App
             return path.Count == 0;
         }
 
-        ModelLibrary.Model Box => library.Get(BOX_MODEL);
-
-        GameObject PlaceBox(Transform parent)
+        GameObject PlaceItem(Item item, Transform parent)
         {
-            var m = Box;
-            double s = BOX / Math.Max(m.size.x, m.size.z);
+            var m = library.Get(item.model);
+            double s = item.size / Math.Max(m.size.x, m.size.z);
             return Props.Place(m, parent, 0, 0, 0, s, s, s);
         }
 
-        /// <summary>A box in their arms, held out in front at chest height.</summary>
-        void Carry(Person p)
+        /// <summary>A thing in their arms, held out in front at chest height.</summary>
+        void Carry(Person p, string model, double size)
         {
-            if (p.box != null) return;
-            p.box = PlaceBox(p.avatar.root.transform);
-            p.box.transform.localPosition = new Vector3(0, (float)(Avatar.PERSON_HEIGHT * 0.42), 0.075f);
+            if (p.item != null) return;
+            p.item = new Item { model = model, size = size };
+            p.item.go = PlaceItem(p.item, p.avatar.root.transform);
+            p.item.go.transform.localPosition = new Vector3(0, (float)(Avatar.PERSON_HEIGHT * 0.42), (float)(size * 0.75));
         }
 
-        /// <summary>A box onto your car's roof rack: rows of three along the roof, then a layer up.</summary>
-        void AddCargo()
+        static void DropItem(Person p)
         {
-            var box = PlaceBox(cargoRoot.transform);
-            cargo.Add(box);
-            PlaceCargo();
+            if (p.item == null) return;
+            if (p.item.go != null) UnityEngine.Object.Destroy(p.item.go);
+            p.item = null;
         }
 
+        /// <summary>What rides on your car's roof: rows of three along the roof, then a layer up.</summary>
         void PlaceCargo()
         {
             var car = view.OwnVehicle;
@@ -524,11 +890,12 @@ namespace Porchlight.App
             var f = car.Forward;
             cargoRoot.transform.localPosition = Coords.Map(car.x, car.y, roof + car.altitude);
             cargoRoot.transform.localRotation = Coords.Yaw(DetMath.Atan2(f.x, f.y));
+            double gap = cargo.Max(c => c.size);
             for (int i = 0; i < cargo.Count; i++)
             {
                 int row = i % 3, layer = i / 3;
-                cargo[i].transform.localPosition = new Vector3(0, (float)(layer * BOX), (float)((row - 1) * BOX * 1.15));
-                cargo[i].transform.localRotation = Quaternion.Euler(0, (i * 37) % 12 - 6, 0);
+                cargo[i].go.transform.localPosition = new Vector3(0, (float)(layer * gap), (float)((row - 1) * gap * 1.15));
+                cargo[i].go.transform.localRotation = Quaternion.Euler(0, (i * 37) % 12 - 6, 0);
             }
         }
 
@@ -570,7 +937,7 @@ namespace Porchlight.App
 
         void DisposePerson(Person p)
         {
-            if (p.box != null) UnityEngine.Object.Destroy(p.box);
+            DropItem(p);
             p.avatar.Dispose();
         }
 
@@ -606,7 +973,7 @@ namespace Porchlight.App
         {
             var you = view.PlayerPosition;
             if (you == null || view.InDialogue || view.InRoom) return null;
-            double reach = view.InCar ? TALK_REACH_CAR : TALK_REACH;
+            double reach = view.InCar ? S("talk_reach_car") : S("talk_reach");
             foreach (var w in script.Waits)
             {
                 if (w.kind != "talk" || !roles.TryGetValue(w.role, out var r) || r.person == null || r.person.steps.Count > 0) continue;
@@ -633,22 +1000,38 @@ namespace Porchlight.App
             return true;
         }
 
+        /// <summary>The prompt: how to talk to whoever's in reach, else the first of the story's hints whose condition holds.</summary>
         string Prompt()
         {
-            var pad = input.Connected;
             var r = TalkTarget();
-            if (r != null) return $"Press {(pad ? "A" : "Enter")} to talk to {r.name}";
-            foreach (var w in script.Waits)
-            {
-                if (w.kind != "park" || !roles.TryGetValue(w.role, out var spot) || spot.spot == null) continue;
-                if (view.OwnVehicle == null) return "You'll need a car: click the Car box by the minimap";
-                var you = view.PlayerPosition;
-                var s = spot.spot.Value;
-                if (you != null && Geo.Dist(you.Value, new Vec2(s.x, s.y)) < 3 && view.DrivingMyCar && !Parked(spot))
-                    return "Pull into the marked spot and stop, lined up with the kerb";
-            }
+            if (r != null) return $"Press {(input.Connected ? "A" : "Enter")} to talk to {r.name}";
+            foreach (var h in hints)
+                if (HintShows(h)) return h.text;
             return null;
         }
+
+        bool HintShows(HintLine h)
+        {
+            switch (h.when)
+            {
+                case "always":
+                    return true;
+                case "no_car":
+                    return view.OwnVehicle == null;
+                case "near":
+                case "near_driving":
+                {
+                    if (h.when == "near_driving" && !view.DrivingMyCar) return false;
+                    var you = view.PlayerPosition;
+                    return you != null && roles.TryGetValue(h.role, out var r) && Geo.Dist(you.Value, Locate(r)) < HINT_REACH;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        /// <summary>Where a role is, for being near it: their spot if marked, else their person, else the kerb outside.</summary>
+        static Vec2 Locate(Role r) => r.Marked ? r.Spot : r.person != null ? new Vec2(r.person.walker.x, r.person.walker.y) : r.kerb;
 
         // Each frame.
 
@@ -711,6 +1094,118 @@ namespace Porchlight.App
             }
             PlaceCargo();
             UpdateBeacon(WaitingToTalk(), dt);
+            UpdateDot();
+            UpdateChases(dt);
+            if (clock != null)
+            {
+                clock.running = clock.when == "always" || (roles.TryGetValue(clock.role, out var r) && YouInside(r) == (clock.when == "inside"));
+                // It doesn't run while you read.
+                if (clock.running && !view.InDialogue) clock.left = Math.Max(0, clock.left - dt);
+            }
+        }
+
+        /// <summary>The chases' cars after you, the one at the wheel out beside any that's pulled up by you, and whether they've had you.</summary>
+        void UpdateChases(double dt)
+        {
+            view.Obstacles.Clear();
+            var you = view.PlayerPosition;
+            if (you == null) return;
+            bool still = view.InDialogue;
+            double top = view.IsDriving ? S("chase_speed_car") : S("chase_speed");
+            var roads = view.world.layout.roads;
+            bool flash = (Time.realtimeSinceStartupAsDouble * 3) % 1 < 0.5;
+            // How far you reach out from where you are: yourself, or the car you're in.
+            double yours = view.IsDriving ? Vehicle.CAR_HALF_WIDTH : Player.PLAYER_RADIUS;
+            bool grounded = view.YourHeight < 0.8;
+            foreach (var c in chases.Values)
+            {
+                bool near = false;
+                foreach (var cop in c.cops)
+                {
+                    var car = cop.chaser.car;
+                    cop.chaser.pullUp = S("pull_up");
+                    // They wait while you read, as you do.
+                    if (!still) OnDuty(cop, you.Value, yours, grounded, top, dt, roads);
+                    if (cop.duty == Duty.Driving && cop.chaser.Lost)
+                    {
+                        var busy = view.CarsAbout();
+                        foreach (var o in c.cops) if (o != cop) busy.Add(new Vec2(o.chaser.car.x, o.chaser.car.y));
+                        var spot = StartFor(you.Value, busy);
+                        if (spot != null) cop.chaser.Restart(spot.Value);
+                    }
+                    PlaceCop(cop);
+                    cop.view.Lights(view.Dusk);
+                    Materials.SetGlow(cop.siren[0], SirenRed, flash ? 3f : 0.3f);
+                    Materials.SetGlow(cop.siren[1], SirenBlue, flash ? 0.3f : 3f);
+                    view.Obstacles.Add(new Vec2(car.x, car.y));
+                    cop.officer.Visible = cop.duty != Duty.Driving;
+                    if (cop.officer.Visible) cop.officer.Update(cop.walker, dt);
+                    near |= cop.duty == Duty.After && grounded
+                        && Geo.Dist(new Vec2(cop.walker.x, cop.walker.y), you.Value) - yours - Player.PLAYER_RADIUS < S("catch_reach");
+                }
+                c.caught = near ? c.caught + dt : 0;
+            }
+        }
+
+        /// <summary>
+        /// A moment of one cop's chase: at the wheel after you till the car's pulled up by you,
+        /// then out of the driver's door and running at you to stand by you, and back to the car
+        /// (and on after you) once you're away or up in the air.
+        /// </summary>
+        void OnDuty(Cop cop, Vec2 you, double yours, bool grounded, double top, double dt, IReadOnlyList<RoadStroke> roads)
+        {
+            var car = cop.chaser.car;
+            var w = cop.walker;
+            var at = new Vec2(w.x, w.y);
+            switch (cop.duty)
+            {
+                case Duty.Driving:
+                    cop.chaser.Step(you, top, dt, roads, view.CanDriveAt);
+                    if (cop.chaser.PulledUp && grounded)
+                    {
+                        var door = DoorOf(car);
+                        w.x = door.x;
+                        w.y = door.y;
+                        w.heading = DetMath.Atan2(you.x - w.x, you.y - w.y);
+                        cop.duty = Duty.After;
+                    }
+                    break;
+                case Duty.After:
+                    if (!grounded || Geo.Dist(at, you) > S("officer_reach")) cop.duty = Duty.Back;
+                    else
+                    {
+                        // Up to you, and no nearer than stood beside you.
+                        RunTo(w, you, yours + Player.PLAYER_RADIUS + 0.12, dt);
+                        w.heading = DetMath.Atan2(you.x - w.x, you.y - w.y);
+                    }
+                    break;
+                case Duty.Back:
+                    if (RunTo(w, DoorOf(car), 0, dt)) cop.duty = Duty.Driving;
+                    break;
+            }
+        }
+
+        /// <summary>Runs `w` toward `to`, stopping `short` of it; true once there.</summary>
+        bool RunTo(Walker w, Vec2 to, double @short, double dt)
+        {
+            double dx = to.x - w.x, dy = to.y - w.y, d = Numbers.Hypot(dx, dy) - @short;
+            if (d <= 0.02)
+            {
+                w.Moved(0, 0, dt);
+                return true;
+            }
+            double step = Math.Min(d, S("officer_speed") * dt) / (d + @short);
+            w.x += dx * step;
+            w.y += dy * step;
+            w.Moved(dx * step, dy * step, dt);
+            return false;
+        }
+
+        /// <summary>Just outside a car's driver's door.</summary>
+        static Vec2 DoorOf(Vehicle car)
+        {
+            var f = car.Forward;
+            return new Vec2(car.x + f.x * 0.05 + f.y * (car.halfWidth + 0.18), car.y + f.y * 0.05 - f.x * (car.halfWidth + 0.18));
         }
     }
 }

@@ -4,7 +4,7 @@
 // street fronts split into rows), their doors opening onto furnished rooms
 // behind see-through windows, fenced yards with sheds and vegetable beds, trees,
 // street lamps, street name signs, parked cars and the plaza fountain, and
-// (WorldPorts) the airport and the docks.
+// (WorldPorts) the airport and the docks, and (WorldZoo) the zoo.
 // One-of-a-kind geometry is combined by static batching; the many copies of
 // the same models are drawn with GPU instancing. The
 // map's (x, y) is Coords.Map's (x, -z).
@@ -147,6 +147,7 @@ namespace Porchlight.Rendering
             AddPlazaDecor(rng);
             AddParkedCars();
             AddAirport();
+            AddZoo();
             AddDocks();
             if (!sheds.Empty) sheds.Build("sheds", still);
             AddLamps(rng);

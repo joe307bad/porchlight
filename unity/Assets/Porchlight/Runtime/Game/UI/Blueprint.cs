@@ -50,6 +50,10 @@ namespace Porchlight.UI
         public static readonly Color RunwayMark = Coords.Hex(0xf4e9cf);
         public static readonly Color Apron = Coords.Hex(0x8a8478);
         public static readonly Color Hangar = Coords.Hex(0x7d8a96);
+        public static readonly Color Zoo = Coords.Rgb(120, 170, 96, 0.55f);
+        public static readonly Color ZooEdge = Coords.Hex(0x4a5e34);
+        public static readonly Color Pen = Coords.Hex(0xd9c48e);
+        public static readonly Color Pool = Coords.Hex(0x6ba6cf);
         public static readonly Color Pier = Coords.Hex(0xb08455);
         public static readonly Color PierEdge = Coords.Hex(0x5b3a1e);
         public static readonly Color Boat = Coords.Hex(0xfff8e8);
@@ -83,6 +87,7 @@ namespace Porchlight.UI
             new Color32(222, 204, 160, 255),
             new Color32(176, 172, 160, 255),
             new Color32(78, 80, 86, 255),
+            new Color32(138, 180, 102, 255),
         };
 
         public static readonly Color32 TileBuilding = new Color32(128, 64, 52, 255);
@@ -145,7 +150,7 @@ namespace Porchlight.UI
             new LayerInfo { id = "lots", label = "Lots", defaultOn = true },
             new LayerInfo { id = "roads", label = "Roads", defaultOn = true },
             new LayerInfo { id = "bridges", label = "Bridges", defaultOn = true },
-            new LayerInfo { id = "ports", label = "Airport & docks", defaultOn = true },
+            new LayerInfo { id = "ports", label = "Airport, zoo & docks", defaultOn = true },
             new LayerInfo { id = "buildings", label = "Buildings", defaultOn = true },
             new LayerInfo { id = "landmarks", label = "Landmarks", defaultOn = true },
             new LayerInfo { id = "gates", label = "Center & gates", defaultOn = true },
@@ -805,6 +810,19 @@ namespace Porchlight.UI
                         p.lineWidth = 1;
                         foreach (var hall in Porchlight.Gen.Airfield.Hangars(a).Append(Porchlight.Gen.Airfield.Tower(a)))
                             Box(p, Porchlight.Gen.Airfield.Rect(a, hall), BlueprintStyle.Hangar, BlueprintStyle.BuildingEdge);
+                    }
+                    // The zoo: its grounds, paths and pens (and the pools in them).
+                    var z = model.zoo;
+                    if (z != null)
+                    {
+                        p.lineWidth = 1;
+                        Box(p, z.x0, z.y0, z.x1, z.y1, BlueprintStyle.Zoo, BlueprintStyle.ZooEdge);
+                        foreach (var path in Porchlight.Gen.Menagerie.Paths()) Box(p, Porchlight.Gen.Menagerie.Rect(z, path), BlueprintStyle.Sidewalk, null);
+                        foreach (var pen in Porchlight.Gen.Menagerie.Pens())
+                        {
+                            Box(p, Porchlight.Gen.Menagerie.Rect(z, pen.box), BlueprintStyle.Pen, BlueprintStyle.ZooEdge);
+                            if (pen.pool) Box(p, Porchlight.Gen.Menagerie.Rect(z, Porchlight.Gen.Menagerie.Pool(pen)), BlueprintStyle.Pool, null);
+                        }
                     }
                     // The docks: each pier's deck and the boats moored along it.
                     p.lineWidth = 1;

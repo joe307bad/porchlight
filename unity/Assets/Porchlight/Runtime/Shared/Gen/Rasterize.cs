@@ -1,5 +1,5 @@
 // Stage 8: paint everything into the tile grid the 3D view uses. Terrain comes
-// from the heightmap and water, then the airport, roads and bridges, the
+// from the heightmap and water, then the airport and the zoo, roads and bridges, the
 // plaza, and buildings. A tile is walkable if a character could stand on it and reach it
 // from spawn.
 
@@ -21,7 +21,7 @@ namespace Porchlight.Gen
         static bool WalkableTerrain(byte t) => t == Terrain.GRASS || t == Terrain.DIRT || t == Terrain.SAND;
 
         static bool WalkableOverlay(byte o) =>
-            o == Overlay.ROAD_MAIN || o == Overlay.ROAD_STREET || o == Overlay.PATH || o == Overlay.BRIDGE || o == Overlay.PLAZA || o == Overlay.AIRPORT || o == Overlay.RUNWAY;
+            o == Overlay.ROAD_MAIN || o == Overlay.ROAD_STREET || o == Overlay.PATH || o == Overlay.BRIDGE || o == Overlay.PLAZA || o == Overlay.AIRPORT || o == Overlay.RUNWAY || o == Overlay.ZOO;
 
         public TownModel Run(TownModel model, Rng rng)
         {
@@ -67,6 +67,12 @@ namespace Porchlight.Gen
                     tiles.overlay[i] = Overlay.AIRPORT;
                 }
                 foreach (int i in Airfield.TilesIn(model.airport, Airfield.Runway(model.airport), w, h)) tiles.overlay[i] = Overlay.RUNWAY;
+            }
+            // The zoo's grounds.
+            foreach (int i in Menagerie.Tiles(model.zoo, w, h))
+            {
+                tiles.terrain[i] = Terrain.GRASS;
+                tiles.overlay[i] = Overlay.ZOO;
             }
 
             var road = Raster.RoadRaster(model);

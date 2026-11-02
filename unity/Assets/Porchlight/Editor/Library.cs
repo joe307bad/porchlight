@@ -3,6 +3,8 @@
 // with URP Lit materials, each building's window glass becomes a part of its
 // own (lit at night) and its ground floor is opened up (Buildings.cs), and the people share one Animator controller whose clips
 // are the kit's animations (people/animations.glb) bound to their armature.
+// The animals are rigged by their parts, each with its own clips, so each
+// gets a controller of its own that plays them the same way.
 // Everything it makes goes in Assets/Porchlight/Generated; run again to
 // rebuild (Porchlight ▸ Set Up Project does).
 
@@ -65,6 +67,7 @@ namespace Porchlight.EditorTools
             lib.models = Catalog.Statics.Select(name => StaticModel(name, converted, looks)).ToList();
             lib.peopleController = PeopleController();
             lib.people = Catalog.CHARACTERS.Select(name => PersonModel(name, converted, looks, lib.peopleController)).ToList();
+            lib.people.AddRange(Catalog.ANIMALS.Select(name => AnimalModel(name, converted, looks)));
             EditorUtility.SetDirty(lib);
             AssetDatabase.SaveAssets();
             Debug.Log($"Porchlight: library built ({lib.models.Count} models, {lib.people.Count} people, {lib.kits.Count} kits)");
@@ -77,7 +80,7 @@ namespace Porchlight.EditorTools
             if (lib == null) return false;
             var models = new HashSet<string>(lib.models.Select(m => m.name));
             var people = new HashSet<string>(lib.people.Select(p => p.name));
-            return Catalog.Statics.All(models.Contains) && Catalog.CHARACTERS.All(people.Contains)
+            return Catalog.Statics.All(models.Contains) && Catalog.CHARACTERS.All(people.Contains) && Catalog.ANIMALS.All(people.Contains)
                 && lib.models.Where(m => IsBuilding(m.name)).All(m => m.ground != null && m.ground.storey > 0);
         }
 
@@ -419,7 +422,82 @@ namespace Porchlight.EditorTools
             animator.applyRootMotion = false;
             animator.cullingMode = AnimatorCullingMode.CullUpdateTransforms;
             var prefab = Save(go, name);
-            return new ModelLibrary.Person { name = name, prefab = prefab, headY = headY, minY = bounds.min.y, maxY = bounds.max.y };
+            return new ModelLibrary.Person { name = name, prefab = prefab, headY = headY, minY = bounds.min.y, maxY = bounds.max.y, turn = 180 };
+        }
+
+        /// <summary>
+        /// An animal: its model, with an Animator on the root playing its own clips (idle,
+        /// walk and run by pace, as the people's do). They face +z in their files already.
+        /// </summary>
+        static ModelLibrary.Person AnimalModel(string name, Dictionary<Material, Material> converted, Dictionary<string, Material> looks)
+        {
+            var go = (GameObject)UnityEngine.Object.Instantiate(Source(name));
+            go.name = name.Split('/').Last();
+            foreach (var r in go.GetComponentsInChildren<Renderer>())
+            {
+                r.sharedMaterials = r.sharedMaterials.Select(m => Convert(m, converted, looks, "animals")).ToArray();
+                r.shadowCastingMode = ShadowCastingMode.On;
+            }
+            // glTFast's own Animator (or Animation) may sit below the root: its clips' paths start there.
+            var host = go.GetComponentsInChildren<Animator>().Select(a => a.transform).FirstOrDefault()
+                ?? go.GetComponentsInChildren<Animation>().Select(a => a.transform).FirstOrDefault() ?? go.transform;
+            string prefix = host == go.transform ? "" : AnimationUtility.CalculateTransformPath(host, go.transform);
+            foreach (var old in go.GetComponentsInChildren<Animator>()) UnityEngine.Object.DestroyImmediate(old);
+            foreach (var old in go.GetComponentsInChildren<Animation>()) UnityEngine.Object.DestroyImmediate(old);
+            var bounds = BoundsOf(go);
+            var animator = go.AddComponent<Animator>();
+            animator.runtimeAnimatorController = AnimalController(name, prefix);
+            animator.avatar = AvatarBuilder.BuildGenericAvatar(go, "");
+            animator.avatar.name = go.name;
+            string avatarPath = $"{Out}/Animation/{name.Replace('/', '-')}.asset";
+            AssetDatabase.DeleteAsset(avatarPath);
+            AssetDatabase.CreateAsset(animator.avatar, avatarPath);
+            animator.applyRootMotion = false;
+            animator.cullingMode = AnimatorCullingMode.CullUpdateTransforms;
+            var prefab = Save(go, name);
+            return new ModelLibrary.Person { name = name, prefab = prefab, headY = float.NaN, minY = bounds.min.y, maxY = bounds.max.y, turn = 0 };
+        }
+
+        /// <summary>The clips an animal plays, from its own file, by the names the controller uses.</summary>
+        static readonly (string from, string to, bool loop)[] AnimalClips =
+        {
+            ("idle", "idle", true),
+            ("walk", "walk", true),
+            ("run", "run", true),
+            ("gesture-positive", "jump", false),
+            ("static", "fall", true),
+            ("idle", "land", false),
+        };
+
+        /// <summary>An animal's clips as clips of our own (looping where they should), their paths from the model's root.</summary>
+        static RuntimeAnimatorController AnimalController(string name, string prefix)
+        {
+            string src = $"{Models}/{name}.glb";
+            var source = new Dictionary<string, AnimationClip>();
+            foreach (var c in AssetDatabase.LoadAllAssetsAtPath(src).OfType<AnimationClip>()) source[c.name] = c;
+            var clips = new Dictionary<string, AnimationClip>();
+            string safe = name.Replace('/', '-');
+            foreach (var (from, to, loop) in AnimalClips)
+            {
+                var clip = source.Values.FirstOrDefault(c => c.name == from) ?? source.Values.FirstOrDefault(c => c.name.EndsWith(from));
+                if (clip == null) throw new Exception($"{src} has no clip {from} (has {string.Join(", ", source.Keys)})");
+                var made = new AnimationClip { name = to, frameRate = clip.frameRate };
+                foreach (var b in AnimationUtility.GetCurveBindings(clip))
+                {
+                    string path = prefix.Length == 0 ? b.path : b.path.Length == 0 ? prefix : $"{prefix}/{b.path}";
+                    var nb = EditorCurveBinding.FloatCurve(path, b.type, b.propertyName);
+                    AnimationUtility.SetEditorCurve(made, nb, AnimationUtility.GetEditorCurve(clip, b));
+                }
+                made.EnsureQuaternionContinuity();
+                var settings = AnimationUtility.GetAnimationClipSettings(made);
+                settings.loopTime = loop;
+                AnimationUtility.SetAnimationClipSettings(made, settings);
+                string path2 = $"{Out}/Animation/{safe}-{to}.anim";
+                AssetDatabase.DeleteAsset(path2);
+                AssetDatabase.CreateAsset(made, path2);
+                clips[to] = made;
+            }
+            return Controller($"{Out}/Animation/{safe}.controller", clips);
         }
 
         static UnityEngine.Avatar shared;
@@ -479,10 +557,10 @@ namespace Porchlight.EditorTools
         /// Idle, walk and run blended by Speed (the walker's pace), played faster or
         /// slower by Cadence; jump, fall and land while Air.
         /// </summary>
-        static RuntimeAnimatorController PeopleController()
+        static RuntimeAnimatorController PeopleController() => Controller($"{Out}/Animation/People.controller", PeopleClips());
+
+        static RuntimeAnimatorController Controller(string path, Dictionary<string, AnimationClip> clips)
         {
-            var clips = PeopleClips();
-            string path = $"{Out}/Animation/People.controller";
             AssetDatabase.DeleteAsset(path);
             var c = AnimatorController.CreateAnimatorControllerAtPath(path);
             c.AddParameter("Speed", AnimatorControllerParameterType.Float);

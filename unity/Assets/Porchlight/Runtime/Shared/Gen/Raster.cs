@@ -29,7 +29,7 @@ namespace Porchlight.Gen
     {
         public byte[] water;
         public float[] slope;
-        /// <summary>Cost of entering each cell; Infinity where blocked (too steep, or the airport).</summary>
+        /// <summary>Cost of entering each cell; Infinity where blocked (too steep, the airport, or the zoo and a tile round it).</summary>
         public float[] cost;
     }
 
@@ -316,13 +316,14 @@ namespace Porchlight.Gen
             var slope = SlopeField(model, water);
             var near = Dilate(slope, w, h);
             var airport = Airfield.Mask(model.airport, w, h);
+            var zoo = Menagerie.Mask(model.zoo, w, h, Menagerie.ROAD_CLEAR);
             var cost = new float[w * h];
             for (int i = 0; i < cost.Length; i++)
             {
                 int x = i % w;
                 int y = (i - x) / w;
                 double border = Math.Max(0, BORDER_BAND - Math.Min(Math.Min(x, y), Math.Min(w - 1 - x, h - 1 - y))) * BORDER_PENALTY;
-                if (airport[i] != 0) cost[i] = float.PositiveInfinity;
+                if (airport[i] != 0 || zoo[i] != 0) cost[i] = float.PositiveInfinity;
                 else if (water[i] != 0) cost[i] = (float)(1 + p.bridgeCost + border);
                 else if (near[i] > p.maxRoadSlope) cost[i] = float.PositiveInfinity;
                 else

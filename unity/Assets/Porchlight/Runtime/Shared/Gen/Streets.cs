@@ -69,6 +69,7 @@ namespace Porchlight.Gen
             var slope = terrainInfo.slope;
             var cost = terrainInfo.cost;
             var airport = Airfield.Mask(model.airport, w, h);
+            var zoo = Menagerie.Mask(model.zoo, w, h, Menagerie.ROAD_CLEAR);
             var g = RoadGraphOps.BuilderFrom(model.roads);
             double Falloff(Vec2 pt) => Math.Max(0, 1 - Geo.Dist(pt, C) / R);
             var keep = new HashSet<int>();
@@ -83,7 +84,7 @@ namespace Porchlight.Gen
             {
                 if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) return false;
                 int i = Grid.Index(x, y, w);
-                return water[i] == 0 && airport[i] == 0 && slope[i] <= p.maxRoadSlope;
+                return water[i] == 0 && airport[i] == 0 && zoo[i] == 0 && slope[i] <= p.maxRoadSlope;
             }
             bool CellOk(Vec2 pt) => TileOk((int)Math.Floor(pt.x), (int)Math.Floor(pt.y));
             bool LandOk(Vec2 a, Vec2 b)

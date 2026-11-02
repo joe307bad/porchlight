@@ -77,6 +77,8 @@ namespace Porchlight.Rendering
             public GameObject prefab;
             /// <summary>Where the head starts, and the lowest and highest points standing (prefab space).</summary>
             public float headY, minY, maxY;
+            /// <summary>How far round (degrees) the model is turned to face +z: the people face backwards in their files.</summary>
+            public float turn = 180;
         }
 
         [Serializable]

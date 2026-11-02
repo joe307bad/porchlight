@@ -448,6 +448,13 @@ namespace Porchlight.UI
                 int x = i % w, y = i / w;
                 px[(h - 1 - y) * w + x] = rgb;
             }
+            // The zoo's pens and pools, as on the map.
+            if (m.zoo != null)
+                foreach (var pen in Porchlight.Gen.Menagerie.Pens())
+                {
+                    Fill(px, w, h, Porchlight.Gen.Menagerie.Rect(m.zoo, pen.box), BlueprintStyle.Pen);
+                    if (pen.pool) Fill(px, w, h, Porchlight.Gen.Menagerie.Rect(m.zoo, Porchlight.Gen.Menagerie.Pool(pen)), BlueprintStyle.Pool);
+                }
             baseTexture.SetPixels32(px);
             baseTexture.Apply(false);
             minimap.style.backgroundImage = new StyleBackground(baseTexture);
@@ -455,6 +462,14 @@ namespace Porchlight.UI
             minimap.style.width = w * scale;
             minimap.style.height = h * scale;
             Fit();
+        }
+
+        /// <summary>The minimap's tiles whose middles are in a map rectangle, in one colour.</summary>
+        static void Fill(Color32[] px, int w, int h, (double x0, double y0, double x1, double y1) r, Color c)
+        {
+            for (int y = Math.Max(0, (int)Math.Floor(r.y0)); y < Math.Min(h, (int)Math.Ceiling(r.y1)); y++)
+                for (int x = Math.Max(0, (int)Math.Floor(r.x0)); x < Math.Min(w, (int)Math.Ceiling(r.x1)); x++)
+                    if (x + 0.5 > r.x0 && x + 0.5 < r.x1 && y + 0.5 > r.y0 && y + 0.5 < r.y1) px[(h - 1 - y) * w + x] = c;
         }
 
         /// <summary>max-width: min(264px, 38vw), keeping the aspect.</summary>

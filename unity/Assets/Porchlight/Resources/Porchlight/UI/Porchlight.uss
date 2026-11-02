@@ -1144,6 +1144,10 @@ Label {
 }
 
 /* Missions: the sidebar's list, the objective atop the street panel, and the conversation. */
+.missions-refresh {
+    margin-bottom: 12px;
+}
+
 .mission-row {
     margin-bottom: 12px;
 }

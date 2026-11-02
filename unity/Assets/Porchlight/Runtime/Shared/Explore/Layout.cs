@@ -93,6 +93,8 @@ namespace Porchlight.Explore
         public const byte HANGAR = 8;
         /// <summary>A dock's pier, out over the water.</summary>
         public const byte DOCK = 9;
+        /// <summary>The zoo's grounds: walked, not driven.</summary>
+        public const byte ZOO = 10;
     }
 
     public struct BlockPlan

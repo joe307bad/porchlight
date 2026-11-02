@@ -349,6 +349,7 @@ namespace Porchlight.App
             ClearFindPath();
             ClearRoute();
             DoorOpeners.Clear();
+            Obstacles.Clear();
             avatars.Clear();
             people.Clear();
             followers.Clear();
@@ -401,14 +402,87 @@ namespace Porchlight.App
             var at = keep != null ? new Vec2(keep.x, keep.y) : world.model.spawn;
             bool wasAuto = keep?.IsAuto ?? false;
             playerAvatar?.Dispose();
-            player = new Player(look, at.x, at.y, PLAYER_SCALE);
+            player = new Player(look, at.x, at.y, PLAYER_SCALE) { pace = keep?.pace ?? 1 };
             if (keep != null) player.heading = keep.heading;
-            playerAvatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, 0, world.root.transform);
-            playerAvatar.SeeThrough();
-            playerAvatar.SnapYaw(player.heading);
+            DrawPlayer();
             if (wasAuto) player.StartAuto(world.sidewalks, autoRng);
             if (keep == null) snap = true;
         }
+
+        /// <summary>You as you're drawn: your character, or what a mission has made you look like.</summary>
+        void DrawPlayer()
+        {
+            playerAvatar?.Dispose();
+            string look = lookOverride ?? player.look;
+            playerAvatar = new Avatar(library.Character(look), Avatar.HeightOf(look), 0, world.root.transform);
+            playerAvatar.SeeThrough();
+            playerAvatar.SnapYaw(player.heading);
+        }
+
+        string lookOverride;
+
+        /// <summary>What you look like for now, in place of your character (a mission's: a character or an animal); null to be yourself. Others still see your character.</summary>
+        public string LookOverride
+        {
+            get => lookOverride;
+            set
+            {
+                if (value == lookOverride) return;
+                lookOverride = value;
+                if (player != null && world != null) DrawPlayer();
+            }
+        }
+
+        /// <summary>How fast you walk and run, against your usual.</summary>
+        public double YourPace
+        {
+            get => player?.pace ?? 1;
+            set
+            {
+                if (player != null) player.pace = value;
+            }
+        }
+
+        /// <summary>How high you are off the ground (tiles): up in a plane, or mid-jump.</summary>
+        public double YourHeight => player?.lift ?? 0;
+
+        /// <summary>
+        /// Put you here, facing `heading`, out of whatever you're in (a plane in the air
+        /// is left to come down where it is): a mission's doing, so nothing refuses.
+        /// </summary>
+        public void PutPlayer(Vec2 at, double heading)
+        {
+            if (player == null || world == null) return;
+            if (driving != null)
+            {
+                var car = cars[driving.Value].car;
+                car.speed = 0;
+                car.altitude = 0;
+                driving = null;
+                if (autoDrive != null)
+                {
+                    autoDrive = null;
+                    OnAutoChange?.Invoke();
+                }
+                OnCarChange?.Invoke(false);
+            }
+            if (riding != null)
+            {
+                riding = null;
+                OnCarChange?.Invoke(false);
+            }
+            held.Clear();
+            player.lift = 0;
+            player.rise = 0;
+            MoveTo(at.x, at.y);
+            // Online, the server moves you too (it would put you back where it last had you).
+            TeleportHook?.Invoke(at.x, at.y);
+            player.heading = heading;
+            playerAvatar?.SnapYaw(heading);
+        }
+
+        /// <summary>Besides yours, cars the town's traffic stops for (a mission's).</summary>
+        public readonly List<Vec2> Obstacles = new List<Vec2>();
 
         void Teleport(Vec2 at)
         {
@@ -1683,6 +1757,7 @@ namespace Porchlight.App
                 var obstacles = cars.Select(c => new Vec2(c.car.x, c.car.y)).ToList();
                 if (p != null && !InCar && room == null) obstacles.Add(new Vec2(p.x, p.y));
                 foreach (var o in others) obstacles.Add(PositionOf(o.key) ?? new Vec2(o.x, o.y));
+                obstacles.AddRange(Obstacles);
                 obstacles.AddRange(othersParkedAt.Values);
                 traffic?.Update(dt, obstacles);
             }
@@ -1919,6 +1994,7 @@ namespace Porchlight.App
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);
+            world.UpdateZoo(dt);
 
             Fixed? fixedView = room != null ? RoomView(room.Value) : (Fixed?)null;
             double yawTarget = fixedView?.yaw ?? targetYaw;

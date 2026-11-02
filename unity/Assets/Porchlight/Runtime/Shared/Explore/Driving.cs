@@ -20,10 +20,10 @@ namespace Porchlight.Explore
     {
         public const double TOP_SPEED = 5.2;
         const double REVERSE_SPEED = 1.6;
-        const double BOOST_SPEED = 1.7;
+        public const double BOOST_SPEED = 1.7;
         const double BOOST_ACCEL = 1.6;
         const double ACCEL = 3.2;
-        const double BRAKE = 7;
+        public const double BRAKE = 7;
         const double DRAG = 1.4;
         const double STEER_RATE = 2.1;
         const double FULL_STEER_SPEED = 1.6;
@@ -229,8 +229,8 @@ namespace Porchlight.Explore
 
         /// <summary>
         /// Where a car (or a plane on the ground) may go: anywhere on the map but buildings,
-        /// sheds, hangars and open water, and always on whatever is drawn as road, short of a
-        /// house or shed. The tiles alone aren't enough: roads are drawn along their smoothed
+        /// sheds, hangars, the zoo and open water, and always on whatever is drawn as road, short of a
+        /// house, a shed or the zoo. The tiles alone aren't enough: roads are drawn along their smoothed
         /// lines with a parking lane and sidewalk each side, so they run over the edges of
         /// water and airport tiles the raster leaves as they were, which stopped cars dead on
         /// open road.
@@ -246,7 +246,7 @@ namespace Porchlight.Explore
                 byte use = layout.use[i];
                 bool wet = Terrain.IsWater(tiles.terrain[i]);
                 byte over = tiles.overlay[i];
-                ok[i] = use == Use.HOUSE || use == Use.SHED || use == Use.HANGAR || (wet && over == Overlay.NONE) ? (byte)0 : (byte)1;
+                ok[i] = use == Use.HOUSE || use == Use.SHED || use == Use.HANGAR || use == Use.ZOO || (wet && over == Overlay.NONE) ? (byte)0 : (byte)1;
                 // Houses and sheds stand on the whole of their tiles: no road reaches into them.
                 hard[i] = use == Use.HOUSE || use == Use.SHED ? (byte)1 : (byte)0;
             }
@@ -262,6 +262,7 @@ namespace Porchlight.Explore
                 if (tile(x, y)) return true;
                 if (x <= 0.05 || y <= 0.05 || x >= w - 0.05 || y >= h - 0.05 || !paved(x, y)) return false;
                 if (hard[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), w)] == 1) return false;
+                if (Menagerie.Inside(model.zoo, new Vec2(x, y))) return false;
                 foreach (var r in halls) if (x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1) return false;
                 return true;
             };

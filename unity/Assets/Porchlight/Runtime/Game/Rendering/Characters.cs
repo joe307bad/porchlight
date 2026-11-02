@@ -1,4 +1,5 @@
-// Townsfolk, other players and you, as RG Poly's rigged Cartoon City people.
+// Townsfolk, other players and you, as RG Poly's rigged Cartoon City people
+// (or Kenney's Cube Pets animals, at the zoo or when a mission makes you one).
 // Each Avatar is an instance of a person prefab (ModelLibrary) whose Animator
 // plays the shared controller: idle, walk and run blended by pace, played
 // faster as they hurry, and jump, fall and land in the air. Around that, the
@@ -60,16 +61,19 @@ namespace Porchlight.Rendering
             body = new GameObject("body").transform;
             body.SetParent(root.transform, false);
             var model = UnityEngine.Object.Instantiate(person.prefab, body, false).transform;
-            // Sized by where the head starts, so a tall hat or a quiff doesn't make anyone smaller;
-            // turned round, as the people face backwards in their files.
+            // Sized by where the head starts, so a tall hat or a quiff doesn't make anyone smaller
+            // (an animal by how tall it stands); turned round as its file needs (the people face backwards).
             double h = !float.IsNaN(person.headY) ? person.headY / HEAD_SHARE : Math.Max(1e-3, person.maxY - person.minY);
             float k = (float)(height / h);
             model.localScale = Vector3.one * k;
             model.localPosition = new Vector3(0, -person.minY * k, 0);
-            model.localRotation = Quaternion.Euler(0, 180, 0);
+            model.localRotation = Quaternion.Euler(0, person.turn, 0);
             animator = model.GetComponent<Animator>();
             animator.Update((float)(phase * 2));
         }
+
+        /// <summary>How tall someone with this look is drawn (tiles): a person, or the animal's own height.</summary>
+        public static double HeightOf(string look) => Catalog.IsAnimal(look) ? Catalog.AnimalHeight(look) : PERSON_HEIGHT;
 
         /// <summary>Draw this one through walls (you).</summary>
         public void SeeThrough()
