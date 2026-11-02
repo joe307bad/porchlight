@@ -222,6 +222,7 @@ namespace Porchlight.UI
             var missions = new VisualElement();
             var refresh = El.Link("Refresh", () => h.OnMissionsRefresh?.Invoke());
             refresh.tooltip = "Fetch the missions again from the server (new and changed ones need no update to the game)";
+            refresh.AddToClassList("missions-refresh");
             missions.Add(refresh);
             missionsList = new VisualElement();
             missions.Add(missionsList);

@@ -17,11 +17,11 @@ static class MissionCheck
     {
         static readonly string[] HINTS = { "always", "no_car", "near", "near_driving" };
         static readonly string[] SETTINGS = { "talk_reach", "talk_reach_car", "park_reach", "park_speed", "park_angle", "car_reach", "walk_speed",
-            "your_pace", "chase_speed", "chase_speed_car", "catch_reach", "catch_time" };
+            "your_pace", "chase_speed", "chase_speed_car", "pull_up", "officer_speed", "officer_reach", "catch_reach", "catch_time" };
         static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church", "zoo" };
         static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
         static readonly string[] PLACES = { "inside", "door", "kerb", "car" };
-        static readonly string[] GUIDES = { "spot", "person", "house" };
+        static readonly string[] GUIDES = { "spot", "person", "house", "door" };
 
         public readonly List<string> log = new List<string>();
         readonly Dictionary<string, string> names = new Dictionary<string, string>();
@@ -154,6 +154,15 @@ static class MissionCheck
                 OneOf("guide", to, GUIDES);
             }
             log.Add(role == "" ? "guide off" : $"guide {role} {to}: {label}");
+        }
+        public void Dot(string role, string to)
+        {
+            if (role != "")
+            {
+                Placed(role);
+                OneOf("dot", to, GUIDES);
+            }
+            log.Add(role == "" ? "dot off" : $"dot {role} {to}");
         }
         public void Look(string model)
         {

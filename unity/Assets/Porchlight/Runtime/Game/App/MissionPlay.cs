@@ -111,7 +111,9 @@ namespace Porchlight.App
             public string when, role, text;
         }
 
-        /// <summary>One of a chase's cars, and who's at its wheel (out beside it once it's pulled up by you).</summary>
+        enum Duty { Driving, After, Back }
+
+        /// <summary>One of a chase's cars, and who's at its wheel: out and after you once it's pulled up by you, and back in when you're away.</summary>
         sealed class Cop
         {
             public Chaser chaser;
@@ -119,13 +121,14 @@ namespace Porchlight.App
             public Renderer[] siren;
             public Avatar officer;
             public Walker walker;
+            public Duty duty;
         }
 
         sealed class Pursuit
         {
             public string name;
             public readonly List<Cop> cops = new List<Cop>();
-            /// <summary>How long they've had you (one of them close enough) without a break.</summary>
+            /// <summary>How long they've had you (an officer stood by you) without a break.</summary>
             public double caught;
         }
 
@@ -164,7 +167,12 @@ namespace Porchlight.App
             // A chase: how fast its cars go after you on foot, and while you drive (past a car's top speed, they use its boost).
             ["chase_speed"] = 4.4,
             ["chase_speed_car"] = 6.4,
-            // How close one must come (tiles from the car's side to you), and for how long (seconds), to have you.
+            // A chase car pulls up this far (tiles) from you, and its driver gets out and runs at you this fast
+            // (tiles a second), giving up once you're this far off.
+            ["pull_up"] = 1.6,
+            ["officer_speed"] = 3.0,
+            ["officer_reach"] = 5.0,
+            // How close an officer must stand (tiles from you), and for how long (seconds), to have you.
             ["catch_reach"] = 0.45,
             ["catch_time"] = 1.0,
         };
@@ -175,6 +183,9 @@ namespace Porchlight.App
         GameObject cargoRoot;
         readonly List<Item> cargo = new List<Item>();
         GameObject beacon;
+        /// <summary>The story's blue dot on the ground (dot), and where it is.</summary>
+        GameObject dot;
+        Func<Vec2?> dotAt;
         int highlighted;
 
         public readonly string id;
@@ -197,6 +208,14 @@ namespace Porchlight.App
         public int Highlighted => highlighted;
         /// <summary>How many cars are after you.</summary>
         public int Chasing => chases.Values.Sum(c => c.cops.Count);
+        /// <summary>How many of their officers are out of their cars, and how near you the nearest car has stopped (tiles, middle to middle).</summary>
+        public string Officers()
+        {
+            var you = view.PlayerPosition ?? default;
+            var cops = chases.Values.SelectMany(c => c.cops).ToList();
+            var stopped = cops.Where(c => c.chaser.PulledUp).Select(c => Geo.Dist(new Vec2(c.chaser.car.x, c.chaser.car.y), you)).DefaultIfEmpty(double.NaN).Min();
+            return $"{cops.Count(c => c.duty != Duty.Driving)} officers out, nearest stopped car {stopped:0.0} tiles off";
+        }
 
         public MissionPlay(string id, string title, string story, ExploreView view, ModelLibrary library, GameInput input)
         {
@@ -230,6 +249,7 @@ namespace Porchlight.App
             if (cargoRoot != null) UnityEngine.Object.Destroy(cargoRoot);
             cargo.Clear();
             if (beacon != null) UnityEngine.Object.Destroy(beacon);
+            if (dot != null) UnityEngine.Object.Destroy(dot);
             view.Guide(null, null);
             view.DoorOpeners.Clear();
             view.InDialogue = false;
@@ -442,22 +462,47 @@ namespace Porchlight.App
                 return;
             }
             var r = RoleOf(role);
-            Func<Vec2?> target;
-            switch (to)
+            view.Guide(TargetOf(r, to, "guide"), string.IsNullOrEmpty(label) ? r.street : label);
+        }
+
+        /// <summary>Where a role's `to` is, as it moves: its spot, its person, its house (the pavement outside) or its door (just outside it).</summary>
+        static Func<Vec2?> TargetOf(Role r, string to, string what) => to switch
+        {
+            "spot" => () => r.Marked ? r.Spot : r.kerb,
+            "person" => () => r.person != null ? new Vec2(r.person.walker.x, r.person.walker.y) : r.kerb,
+            "house" => () => r.kerb,
+            "door" => () => r.Outside,
+            _ => throw new Exception($"{what} to what? '{to}' (spot, person, house or door)"),
+        };
+
+        public void Dot(string role, string to)
+        {
+            dotAt = string.IsNullOrEmpty(role) ? null : TargetOf(RoleOf(role), to, "dot");
+            if (dotAt != null && dot == null)
             {
-                case "spot":
-                    target = () => r.Marked ? r.Spot : r.kerb;
-                    break;
-                case "person":
-                    target = () => r.person != null ? new Vec2(r.person.walker.x, r.person.walker.y) : r.kerb;
-                    break;
-                case "house":
-                    target = () => r.kerb;
-                    break;
-                default:
-                    throw new Exception($"guide to what? '{to}' (spot, person or house)");
+                // As the way shown to somewhere ends: a flat blue disc on the ground.
+                var b = new MeshBuilder(new Palette());
+                b.Disc(new Vec2(0, 0), 0.3, 0.035, DOT_COLOR);
+                dot = new GameObject("mission dot");
+                dot.transform.SetParent(view.world.root.transform, false);
+                dot.AddComponent<MeshFilter>().sharedMesh = b.Build("mission dot");
+                var mr = dot.AddComponent<MeshRenderer>();
+                dotMaterial ??= Materials.Unlit(Coords.Hex(DOT_COLOR));
+                mr.sharedMaterial = dotMaterial;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             }
-            view.Guide(target, string.IsNullOrEmpty(label) ? r.street : label);
+            UpdateDot();
+        }
+
+        const int DOT_COLOR = 0x3b9be0;
+        static Material dotMaterial;
+
+        void UpdateDot()
+        {
+            if (dot == null) return;
+            var at = dotAt?.Invoke();
+            dot.SetActive(at != null);
+            if (at != null) dot.transform.localPosition = Coords.Map(at.Value.x, at.Value.y);
         }
 
         public string NameOf(string role) => roles.TryGetValue(role, out var r) ? r.name : chases.TryGetValue(role, out var c) ? c.name : null;
@@ -1049,6 +1094,7 @@ namespace Porchlight.App
             }
             PlaceCargo();
             UpdateBeacon(WaitingToTalk(), dt);
+            UpdateDot();
             UpdateChases(dt);
             if (clock != null)
             {
@@ -1068,15 +1114,19 @@ namespace Porchlight.App
             double top = view.IsDriving ? S("chase_speed_car") : S("chase_speed");
             var roads = view.world.layout.roads;
             bool flash = (Time.realtimeSinceStartupAsDouble * 3) % 1 < 0.5;
+            // How far you reach out from where you are: yourself, or the car you're in.
+            double yours = view.IsDriving ? Vehicle.CAR_HALF_WIDTH : Player.PLAYER_RADIUS;
+            bool grounded = view.YourHeight < 0.8;
             foreach (var c in chases.Values)
             {
                 bool near = false;
                 foreach (var cop in c.cops)
                 {
                     var car = cop.chaser.car;
+                    cop.chaser.pullUp = S("pull_up");
                     // They wait while you read, as you do.
-                    if (!still) cop.chaser.Step(you.Value, top, dt, roads, view.CanDriveAt);
-                    if (cop.chaser.Lost)
+                    if (!still) OnDuty(cop, you.Value, yours, grounded, top, dt, roads);
+                    if (cop.duty == Duty.Driving && cop.chaser.Lost)
                     {
                         var busy = view.CarsAbout();
                         foreach (var o in c.cops) if (o != cop) busy.Add(new Vec2(o.chaser.car.x, o.chaser.car.y));
@@ -1088,34 +1138,74 @@ namespace Porchlight.App
                     Materials.SetGlow(cop.siren[0], SirenRed, flash ? 3f : 0.3f);
                     Materials.SetGlow(cop.siren[1], SirenBlue, flash ? 0.3f : 3f);
                     view.Obstacles.Add(new Vec2(car.x, car.y));
-                    double reach = Reach(car, you.Value) - (view.IsDriving ? Vehicle.CAR_HALF_WIDTH : Player.PLAYER_RADIUS);
-                    bool close = reach < S("catch_reach") && view.YourHeight < 0.8;
-                    near |= close;
-                    // Pulled up by you: out they get, beside the driver's door, facing you.
-                    bool outOfCar = Math.Abs(car.speed) < 0.3 && Geo.Dist(new Vec2(car.x, car.y), you.Value) < 2.2;
-                    cop.officer.Visible = outOfCar;
-                    if (outOfCar)
-                    {
-                        var f = car.Forward;
-                        var w = cop.walker;
-                        w.x = car.x + f.x * 0.05 + f.y * (car.halfWidth + 0.18);
-                        w.y = car.y + f.y * 0.05 - f.x * (car.halfWidth + 0.18);
-                        w.Moved(0, 0, dt);
-                        w.heading = DetMath.Atan2(you.Value.x - w.x, you.Value.y - w.y);
-                        cop.officer.Update(w, dt);
-                    }
+                    cop.officer.Visible = cop.duty != Duty.Driving;
+                    if (cop.officer.Visible) cop.officer.Update(cop.walker, dt);
+                    near |= cop.duty == Duty.After && grounded
+                        && Geo.Dist(new Vec2(cop.walker.x, cop.walker.y), you.Value) - yours - Player.PLAYER_RADIUS < S("catch_reach");
                 }
                 c.caught = near ? c.caught + dt : 0;
             }
         }
 
-        /// <summary>How far a point is from a car's sides (0 if it's under it).</summary>
-        static double Reach(Vehicle car, Vec2 p)
+        /// <summary>
+        /// A moment of one cop's chase: at the wheel after you till the car's pulled up by you,
+        /// then out of the driver's door and running at you to stand by you, and back to the car
+        /// (and on after you) once you're away or up in the air.
+        /// </summary>
+        void OnDuty(Cop cop, Vec2 you, double yours, bool grounded, double top, double dt, IReadOnlyList<RoadStroke> roads)
+        {
+            var car = cop.chaser.car;
+            var w = cop.walker;
+            var at = new Vec2(w.x, w.y);
+            switch (cop.duty)
+            {
+                case Duty.Driving:
+                    cop.chaser.Step(you, top, dt, roads, view.CanDriveAt);
+                    if (cop.chaser.PulledUp && grounded)
+                    {
+                        var door = DoorOf(car);
+                        w.x = door.x;
+                        w.y = door.y;
+                        w.heading = DetMath.Atan2(you.x - w.x, you.y - w.y);
+                        cop.duty = Duty.After;
+                    }
+                    break;
+                case Duty.After:
+                    if (!grounded || Geo.Dist(at, you) > S("officer_reach")) cop.duty = Duty.Back;
+                    else
+                    {
+                        // Up to you, and no nearer than stood beside you.
+                        RunTo(w, you, yours + Player.PLAYER_RADIUS + 0.12, dt);
+                        w.heading = DetMath.Atan2(you.x - w.x, you.y - w.y);
+                    }
+                    break;
+                case Duty.Back:
+                    if (RunTo(w, DoorOf(car), 0, dt)) cop.duty = Duty.Driving;
+                    break;
+            }
+        }
+
+        /// <summary>Runs `w` toward `to`, stopping `short` of it; true once there.</summary>
+        bool RunTo(Walker w, Vec2 to, double @short, double dt)
+        {
+            double dx = to.x - w.x, dy = to.y - w.y, d = Numbers.Hypot(dx, dy) - @short;
+            if (d <= 0.02)
+            {
+                w.Moved(0, 0, dt);
+                return true;
+            }
+            double step = Math.Min(d, S("officer_speed") * dt) / (d + @short);
+            w.x += dx * step;
+            w.y += dy * step;
+            w.Moved(dx * step, dy * step, dt);
+            return false;
+        }
+
+        /// <summary>Just outside a car's driver's door.</summary>
+        static Vec2 DoorOf(Vehicle car)
         {
             var f = car.Forward;
-            double dx = p.x - car.x, dy = p.y - car.y;
-            double along = Math.Abs(dx * f.x + dy * f.y) - car.halfLength, across = Math.Abs(-dx * f.y + dy * f.x) - car.halfWidth;
-            return Numbers.Hypot(Math.Max(0, along), Math.Max(0, across));
+            return new Vec2(car.x + f.x * 0.05 + f.y * (car.halfWidth + 0.18), car.y + f.y * 0.05 - f.x * (car.halfWidth + 0.18));
         }
     }
 }

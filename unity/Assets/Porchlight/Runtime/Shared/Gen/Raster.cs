@@ -316,7 +316,7 @@ namespace Porchlight.Gen
             var slope = SlopeField(model, water);
             var near = Dilate(slope, w, h);
             var airport = Airfield.Mask(model.airport, w, h);
-            var zoo = Menagerie.Mask(model.zoo, w, h, 1);
+            var zoo = Menagerie.Mask(model.zoo, w, h, Menagerie.ROAD_CLEAR);
             var cost = new float[w * h];
             for (int i = 0; i < cost.Length; i++)
             {

@@ -475,6 +475,8 @@ namespace Porchlight.App
             player.lift = 0;
             player.rise = 0;
             MoveTo(at.x, at.y);
+            // Online, the server moves you too (it would put you back where it last had you).
+            TeleportHook?.Invoke(at.x, at.y);
             player.heading = heading;
             playerAvatar?.SnapYaw(heading);
         }

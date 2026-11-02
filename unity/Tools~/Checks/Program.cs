@@ -82,6 +82,12 @@ static class Program
                     failed++;
                     Console.WriteLine($"FAIL {seed}: {culs2}");
                 }
+                string turning = Turning(layout);
+                if (turning != null)
+                {
+                    failed++;
+                    Console.WriteLine($"FAIL {seed}: traffic: {turning}");
+                }
                 string shared = i % 4 == 0 ? Shared(a, layout) : null;
                 if (shared != null)
                 {
@@ -236,6 +242,36 @@ static class Program
     /// being packed and followed, a client taking over carries them on, and the
     /// player finder's route reaches its target.
     /// </summary>
+    /// <summary>
+    /// Town traffic turns round at a dead end as a car would, a minute of it: slowly, in a
+    /// swing out past the end and back, never swinging round faster than MAX_TURN (radians a
+    /// second; no spinning on the spot), nor sliding sideways.
+    /// </summary>
+    static string Turning(Porchlight.Explore.IsoLayout layout)
+    {
+        const double DT = 0.05, MAX_TURN = 2.6, MAX_SLIP = 0.6;
+        var traffic = new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng("turning"), Porchlight.Explore.Catalog.PickCarModel);
+        var cars = traffic.cars.FindAll(c => c.loop < 0);
+        var was = cars.ConvertAll(c => (c.x, c.y, c.heading));
+        for (double t = 0; t < 60; t += DT)
+        {
+            traffic.Update(DT, null);
+            for (int k = 0; k < cars.Count; k++)
+            {
+                var c = cars[k];
+                var (x, y, heading) = was[k];
+                was[k] = (c.x, c.y, c.heading);
+                // Past the first second (cars start out wherever they're put, some mid-turn), turning round.
+                if (t < 1 || (c.next != Porchlight.Explore.Traffic.ROUND && c.prev != Porchlight.Explore.Traffic.ROUND)) continue;
+                double turn = Math.Abs(Porchlight.Explore.Orbit.ShortestTurn(heading, c.heading)) / DT;
+                double slip = Math.Abs(-(c.x - x) * Math.Sin(c.heading) + (c.y - y) * Math.Cos(c.heading)) / DT;
+                if (turn > MAX_TURN) return $"car {k} swung round at {turn:0.0} rad/s turning round at ({c.x:0.0}, {c.y:0.0})";
+                if (slip > MAX_SLIP) return $"car {k} slid sideways at {slip:0.0} tiles/s turning round at ({c.x:0.0}, {c.y:0.0})";
+            }
+        }
+        return null;
+    }
+
     static string Shared(TownModel model, Porchlight.Explore.IsoLayout layout)
     {
         var traffic = new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng("t"), Porchlight.Explore.Catalog.PickCarModel);
@@ -357,6 +393,29 @@ static class Program
         double nearest = double.PositiveInfinity;
         foreach (var path in layout.sidewalks.paths) nearest = Math.Min(nearest, Porchlight.Core.Geo.ClosestOnPolyline(outside, path.points).d);
         if (nearest > 6) return $"no sidewalk near the zoo's gate ({nearest:0.0} tiles)";
+        // The fence stands clear of every sidewalk and street (their edges, not just their middles).
+        const double CLEAR = 0.05;
+        var sides = new[] { "back", "side", "side", "front", "front" };
+        int line = -1;
+        foreach (var (a, b) in Menagerie.Fence(z))
+        {
+            line++;
+            double len = Porchlight.Core.Geo.Dist(a, b);
+            for (double s = 0; s <= len; s += 0.1)
+            {
+                var p = Porchlight.Core.Geo.Lerp(a, b, s / len);
+                foreach (var path in layout.sidewalks.paths)
+                {
+                    double d = Porchlight.Core.Geo.ClosestOnPolyline(p, path.points).d - Porchlight.Explore.Layout.SIDEWALK / 2;
+                    if (d < CLEAR) return $"the zoo's {sides[line]} fence at ({p.x:0.0}, {p.y:0.0}) is {(d < 0 ? "on" : "up against")} a sidewalk ({d:0.00} tiles off)";
+                }
+                foreach (var road in layout.roads)
+                {
+                    double d = Porchlight.Core.Geo.ClosestOnPolyline(p, road.points).d - road.width / 2;
+                    if (d < CLEAR) return $"the zoo's {sides[line]} fence at ({p.x:0.0}, {p.y:0.0}) is {(d < 0 ? "on" : "up against")} a street ({d:0.00} tiles off)";
+                }
+            }
+        }
         return null;
     }
 }

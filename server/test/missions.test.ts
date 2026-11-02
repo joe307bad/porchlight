@@ -24,12 +24,12 @@ test('every mission in server/missions compiles, with a title and a summary', as
 const BLOCKS = [
   'objective', 'hint', 'clear_hints', 'setting', 'place', 'spawn', 'walk', 'pause', 'hold',
   'put_in_car', 'take_from_car', 'put_down', 'leave', 'mark_spot', 'clear_spot', 'guide',
-  'look', 'put_you', 'chase', 'countdown',
+  'dot', 'look', 'put_you', 'chase', 'countdown',
 ];
 const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'countdown', 'wait'];
 const SETTINGS = [
   'talk_reach', 'talk_reach_car', 'park_reach', 'park_speed', 'park_angle', 'car_reach', 'walk_speed',
-  'your_pace', 'chase_speed', 'chase_speed_car', 'catch_reach', 'catch_time',
+  'your_pace', 'chase_speed', 'chase_speed_car', 'pull_up', 'officer_speed', 'officer_reach', 'catch_reach', 'catch_time',
 ];
 // What a person (or you) can look like: the game's characters and animals.
 const LOOKS = /^(people\/(character-[\w-]+|policeman-a-4-1)|animals\/animal-(penguin|lion|tiger|elephant|giraffe|panda|polar|monkey|koala|parrot))$/;
@@ -118,7 +118,12 @@ function standInTown(story: InstanceType<typeof Story>) {
   bind('guide', (role: string, to: string) => {
     if (role === '') return;
     isPlaced(role);
-    oneOf('guide', to, ['spot', 'person', 'house']);
+    oneOf('guide', to, ['spot', 'person', 'house', 'door']);
+  });
+  bind('dot', (role: string, to: string) => {
+    if (role === '') return;
+    isPlaced(role);
+    oneOf('dot', to, ['spot', 'person', 'house', 'door']);
   });
   bind('look', (model: string) => {
     assert.ok(model === '' || LOOKS.test(model), `no such look '${model}'`);

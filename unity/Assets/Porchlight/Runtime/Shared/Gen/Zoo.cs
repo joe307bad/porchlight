@@ -2,8 +2,9 @@
 // its centre, the gates and the airport: a fenced rectangle with its gate on
 // the side facing the middle of town, a path in from the gate and one across,
 // and pens either side of them, each with its animals (the penguins' and the
-// polar bears' round a pool). The roads and streets (next) go round it, a tile
-// clear, and no lot is laid out on it. Menagerie says where each part of it is.
+// polar bears' round a pool). The roads and streets (next) go round it, clear
+// enough that the widest one's sidewalk misses its fence, and no lot is laid
+// out on it. Menagerie says where each part of it is.
 
 using System;
 using System.Collections.Generic;
@@ -146,6 +147,8 @@ namespace Porchlight.Gen
         public const double FENCE_IN = 0.15;
         /// <summary>The gate: the gap in the fence, either side of the middle of the front.</summary>
         public const double GATE_HALF = 0.8;
+        /// <summary>Tiles kept clear of streets round the zoo: a main road's sidewalk reaches nearly two from its middle.</summary>
+        public const int ROAD_CLEAR = 2;
         const double PATH_HALF = 0.6;
         const double MID = LENGTH / 2.0;
         const double CROSS = DEPTH / 2.0;
@@ -195,11 +198,19 @@ namespace Porchlight.Gen
         public static bool Inside(Zoo z, Vec2 p) =>
             z != null && p.x > z.x0 + FENCE_IN && p.x < z.x1 - FENCE_IN && p.y > z.y0 + FENCE_IN && p.y < z.y1 - FENCE_IN;
 
+        /// <summary>The fence's lines on the map (each from, to): the back, the sides, and the front either side of the gate.</summary>
+        public static (Vec2 a, Vec2 b)[] Fence(Zoo z)
+        {
+            double i = FENCE_IN, l = LENGTH - FENCE_IN, d = DEPTH - FENCE_IN;
+            (Vec2, Vec2) Line(double u0, double v0, double u1, double v1) => (ToWorld(z, u0, v0), ToWorld(z, u1, v1));
+            return new[] { Line(i, i, l, i), Line(i, i, i, d), Line(l, i, l, d), Line(i, d, MID - GATE_HALF, d), Line(MID + GATE_HALF, d, l, d) };
+        }
+
         /// <summary>The middle of the gate, on the fence's line.</summary>
         public static Vec2 Gate(Zoo z) => ToWorld(z, MID, DEPTH - FENCE_IN);
 
-        /// <summary>Where the road up to the gate ends: just past the tile kept clear round the zoo.</summary>
-        public static Vec2 RoadEnd(Zoo z) => ToWorld(z, MID, DEPTH + 1.5);
+        /// <summary>Where the road up to the gate ends: just past the tiles kept clear round the zoo.</summary>
+        public static Vec2 RoadEnd(Zoo z) => ToWorld(z, MID, DEPTH + ROAD_CLEAR + 0.5);
 
         /// <summary>Where a visitor stands just inside, on the path in from the gate, by the penguins.</summary>
         public static Vec2 Visitor(Zoo z) => ToWorld(z, MID, DEPTH - 2.6);

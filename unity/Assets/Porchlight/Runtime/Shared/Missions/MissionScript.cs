@@ -64,6 +64,8 @@ namespace Porchlight.Missions
         void ClearSpot(string role);
         /// <summary>Directions to the role's spot, person or house, called label; "" role stops.</summary>
         void Guide(string role, string to, string label);
+        /// <summary>A blue dot on the ground at the role's spot, person, house (the pavement outside) or door (just outside it), no way shown to it; dot("", "") clears it.</summary>
+        void Dot(string role, string to);
         /// <summary>You look like this (a character or an animal) until the mission's over; "" yourself again.</summary>
         void Look(string model);
         /// <summary>You're put at the role's place: inside, at its door or on the pavement in front (out of any car).</summary>
@@ -154,6 +156,7 @@ namespace Porchlight.Missions
             Bind("mark_spot", a => { world.MarkSpot(Str(a, 0)); return null; });
             Bind("clear_spot", a => { world.ClearSpot(Str(a, 0)); return null; });
             Bind("guide", a => { world.Guide(Str(a, 0), Str(a, 1), Str(a, 2)); return null; });
+            Bind("dot", a => { world.Dot(Str(a, 0), Str(a, 1)); return null; });
             Bind("look", a => { world.Look(Str(a, 0)); return null; });
             Bind("put_you", a => { world.PutYou(Str(a, 0), Str(a, 1)); return null; });
             Bind("chase", a => world.Chase(Str(a, 0), Str(a, 1), (int)Math.Round(Num(a, 2)), Str(a, 3), Str(a, 4)) ?? "");

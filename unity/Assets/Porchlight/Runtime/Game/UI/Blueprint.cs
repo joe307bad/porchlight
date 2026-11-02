@@ -87,6 +87,7 @@ namespace Porchlight.UI
             new Color32(222, 204, 160, 255),
             new Color32(176, 172, 160, 255),
             new Color32(78, 80, 86, 255),
+            new Color32(138, 180, 102, 255),
         };
 
         public static readonly Color32 TileBuilding = new Color32(128, 64, 52, 255);

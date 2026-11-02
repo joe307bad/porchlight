@@ -23,7 +23,7 @@ namespace Porchlight.Explore
         public const double BOOST_SPEED = 1.7;
         const double BOOST_ACCEL = 1.6;
         const double ACCEL = 3.2;
-        const double BRAKE = 7;
+        public const double BRAKE = 7;
         const double DRAG = 1.4;
         const double STEER_RATE = 2.1;
         const double FULL_STEER_SPEED = 1.6;

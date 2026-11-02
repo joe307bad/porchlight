@@ -10,7 +10,7 @@ EXTERNAL hint(when, role, text)
 EXTERNAL clear_hints()
 EXTERNAL setting(name, value)
 EXTERNAL place(role, kind, near, min, max, parking)
-EXTERNAL guide(role, to, label)
+EXTERNAL dot(role, to)
 EXTERNAL look(model)
 EXTERNAL put_you(role, at)
 EXTERNAL chase(role, name, count, car, model)
@@ -30,12 +30,18 @@ VAR caught = 0
 // How the town plays this mission. A penguin is slower than a person on foot
 // (a run is about as fast as a police car's crawl); the police drive a little
 // slower than flat out after you on foot, and use their boost once you're
-// driving. One that stays this close (tiles from its side) for a second has you.
+// driving. A car pulls up a little way off, and its officer jumps out and runs
+// at you: quicker than you waddle, slower than you run, and giving up once
+// you're well away. One that stands by you for three seconds has you (in a
+// car, that's your chance to drive off).
 ~ setting("your_pace", 0.62)
 ~ setting("chase_speed", 4.4)
 ~ setting("chase_speed_car", 6.4)
+~ setting("pull_up", 1.6)
+~ setting("officer_speed", 3.0)
+~ setting("officer_reach", 5.0)
 ~ setting("catch_reach", 0.45)
-~ setting("catch_time", 1.0)
+~ setting("catch_time", 3.0)
 ~ place("zoo", "zoo", "", 0, 1000, false)
 ~ look(PENGUIN)
 ~ put_you("zoo", "inside")
@@ -47,17 +53,17 @@ Someone's left the gate open...
 === escape ===
 ~ clear_hints()
 ~ hint("always", "", "Waddle out through the gate · hold Shift (or RT) to run")
-~ guide("zoo", "house", "the zoo gate")
+~ dot("zoo", "door")
 ~ objective("Get out of the zoo")
 + [@outside zoo] -> on_the_run
 
 === on_the_run ===
-~ guide("", "", "")
+~ dot("", "")
 ~ clear_hints()
 ~ chase("police", "Officer Pike", CARS, POLICE_CAR, OFFICER)
 ~ countdown(FREE_FOR, "Free for", "outside", "zoo")
 ~ objective("Keep away from the police")
-~ hint("always", "", "Don't let a police car sit beside you · any car or plane will do")
+~ hint("always", "", "Don't let an officer catch up with you · any car or plane will do")
 { caught == 0:
     Sirens! Someone's seen a penguin in the street.
 - else:
@@ -109,7 +115,7 @@ A whole minute on the loose<>
 ~ return
 === function place(role, kind, near, min, max, parking) ===
 ~ return "Zoo Lane"
-=== function guide(role, to, label) ===
+=== function dot(role, to) ===
 ~ return
 === function look(model) ===
 ~ return

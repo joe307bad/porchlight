@@ -1,7 +1,7 @@
 // Sets chasers (a mission's police) after a target in grown towns: one stood
 // outside the zoo's gate, and one walking along a sidewalk. Each chaser starts
 // in a parking lane 9 to 16 tiles off (and is sent in again from there if it
-// loses them) and must come within reach in time.
+// loses them) and must pull up within reach in time, never on top of them.
 //
 //   dotnet run --project "unity/Tools~/Checks" -- chase [count]
 
@@ -14,7 +14,9 @@ using Porchlight.Model;
 static class ChaseCheck
 {
     const double SPEED = 4.4;
-    const double REACH = 1.0;
+    /// <summary>Pulled up this close (tiles, middle to middle) has them (its driver gets out); driving on (not pulling up) nearer than TOO_CLOSE is on top of them.</summary>
+    const double REACH = 3.2;
+    const double TOO_CLOSE = 0.8;
     const double TIME = 40;
 
     public static int Run(int count)
@@ -65,14 +67,20 @@ static class ChaseCheck
                         if (again != null) chaser.Restart(again.Value);
                         restarts++;
                     }
-                    best = Math.Min(best, Geo.Dist(new Vec2(chaser.car.x, chaser.car.y), target));
-                    if (best < REACH) break;
+                    double d = Geo.Dist(new Vec2(chaser.car.x, chaser.car.y), target);
+                    if (chaser.Way.Count > 0) best = Math.Min(best, d);
+                    if (chaser.PulledUp && d < REACH) break;
                 }
-                if (best < REACH) took += t;
+                if (best < TOO_CLOSE)
+                {
+                    failed++;
+                    Console.WriteLine($"FAIL {seed}{(walking ? " walking" : "")}: came within {best:0.00} tiles, on top of them");
+                }
+                else if (chaser.PulledUp) took += t;
                 else
                 {
                     failed++;
-                    Console.WriteLine($"FAIL {seed}{(walking ? " walking" : "")}: closest {best:0.0} tiles in {TIME} s (from {Geo.Dist(new Vec2(start.Value.x, start.Value.y), Target(0)):0.0} tiles, ended at {chaser.car.x:0.0},{chaser.car.y:0.0})");
+                    Console.WriteLine($"FAIL {seed}{(walking ? " walking" : "")}: never pulled up by them, closest {best:0.0} tiles in {TIME} s (from {Geo.Dist(new Vec2(start.Value.x, start.Value.y), Target(0)):0.0} tiles, ended at {chaser.car.x:0.0},{chaser.car.y:0.0})");
                 }
             }
         }

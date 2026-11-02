@@ -1,5 +1,6 @@
 // Moving traffic on every through road: cars keep to the right-hand lane,
-// follow the road graph through junctions (U-turning at the map edge) and slow
+// follow the road graph through junctions (U-turning at dead ends, slowly,
+// in a swing out past the end and back in the other lane) and slow
 // down behind the car ahead, or for the player in their lane, turning round
 // if held up too long. A boat or two sails each lake's loop (Ports) among them.
 // Pure state.
@@ -34,9 +35,9 @@ namespace Porchlight.Explore
         public bool taken;
         /// <summary>The lake loop a boat sails (layout.boatLoops), s along it; -1 for a car on the roads.</summary>
         public int loop = -1;
-        /// <summary>The road it turns onto at the junction ahead, once it's close (-1: not chosen yet).</summary>
+        /// <summary>The road it turns onto at the junction ahead, once it's close (-1: not chosen yet; Traffic.ROUND: a dead end, it turns round).</summary>
         public int next = -1;
-        /// <summary>The road it just came off, and which way it drove it, while it's still rounding the corner (-1: none).</summary>
+        /// <summary>The road it just came off, and which way it drove it, while it's still rounding the corner (-1: none; Traffic.ROUND: coming out of a U-turn).</summary>
         public int prev = -1;
         public int prevDir;
     }
@@ -54,6 +55,11 @@ namespace Porchlight.Explore
         const double TWO_BOATS = 60;
         /// <summary>How far either side of a junction a car curves from one road onto the next (tiles).</summary>
         const double CORNER = 0.9;
+        /// <summary>How far back from a dead end a car starts its U-turn (tiles), and how slow it goes round (against cruising).</summary>
+        const double UTURN = 1.4;
+        const double UTURN_SPEED = 0.25;
+        /// <summary>TrafficCar.next / prev for a U-turn at a dead end.</summary>
+        public const int ROUND = -2;
 
         public readonly List<TrafficCar> cars = new List<TrafficCar>();
         readonly List<RoadStroke> roads;
@@ -204,7 +210,10 @@ namespace Porchlight.Explore
                 double blocked = BlockedAhead(car, obstacles);
                 double ahead = Math.Min(GapAhead(car), blocked);
                 double target = ahead < GAP ? 0 : ahead < GAP * 2 ? CRUISE * ((ahead - GAP) / GAP) : CRUISE;
+                if (TurningRound(car)) target = Math.Min(target, CRUISE * UTURN_SPEED);
                 car.speed += (target - car.speed) * Math.Min(1, dt * 3);
+                // Round the turn itself no faster than that, however it came in.
+                if (InUTurn(car)) car.speed = Math.Min(car.speed, CRUISE * UTURN_SPEED);
                 car.wait = blocked < GAP * 1.5 && car.speed < 0.2 ? car.wait + dt : 0;
                 if (car.wait > PATIENCE)
                 {
@@ -254,23 +263,50 @@ namespace Porchlight.Explore
         /// <summary>The node at the end of the road the car is driving toward.</summary>
         int NodeAhead(int road, int dir) => dir == 1 ? roads[road].to : roads[road].from;
 
-        /// <summary>A road to turn onto at `node` (-1 at a dead end).</summary>
+        /// <summary>A road to turn onto at `node` (ROUND at a dead end): never a stub too short to turn round at the end of.</summary>
         int PickNext(int road, int node)
         {
-            var options = byNode.TryGetValue(node, out var l) ? l.FindAll(i => i != road) : new List<int>();
-            return options.Count == 0 ? -1 : rng.Pick(options);
+            var options = byNode.TryGetValue(node, out var l) ? l.FindAll(i => i != road && !Stub(i, node)) : new List<int>();
+            return options.Count == 0 ? ROUND : rng.Pick(options);
+        }
+
+        /// <summary>A road that's a dead end beyond `node`, too short to turn round in.</summary>
+        bool Stub(int road, int node)
+        {
+            int far = roads[road].from == node ? roads[road].to : roads[road].from;
+            return lengths[road] < UTURN * 2 && !(byNode.TryGetValue(far, out var l) && l.Exists(i => i != road));
+        }
+
+        /// <summary>Partway round a U-turn.</summary>
+        bool InUTurn(TrafficCar car)
+        {
+            double done = car.dir == 1 ? car.s : lengths[car.road] - car.s;
+            double reach = TurnReach(car.road);
+            return (car.next == ROUND && lengths[car.road] - done < reach) || (car.prev == ROUND && done < reach);
+        }
+
+        /// <summary>Nearing a dead end it'll turn round at (slowing for it), or coming out of the turn.</summary>
+        bool TurningRound(TrafficCar car)
+        {
+            double done = car.dir == 1 ? car.s : lengths[car.road] - car.s;
+            double reach = TurnReach(car.road);
+            int node = NodeAhead(car.road, car.dir);
+            bool dead = !(byNode.TryGetValue(node, out var l) && l.Exists(i => i != car.road));
+            return (dead && lengths[car.road] - done < reach + 1.2) || (car.prev == ROUND && done < reach);
         }
 
         void TurnAtJunction(TrafficCar car)
         {
             int node = car.s > lengths[car.road] ? roads[car.road].to : roads[car.road].from;
-            int next = car.next >= 0 ? car.next : PickNext(car.road, node);
+            int next = car.next != -1 ? car.next : PickNext(car.road, node);
             car.next = -1;
-            if (next < 0)
+            if (next == ROUND)
             {
+                // Halfway round the U-turn: on round it goes, back the way it came in the other lane.
                 car.s = Math.Min(lengths[car.road], Math.Max(0, car.s));
                 car.dir = -car.dir;
-                car.prev = -1;
+                car.side = car.dir;
+                car.prev = ROUND;
                 return;
             }
             var nr = roads[next];
@@ -317,10 +353,21 @@ namespace Porchlight.Explore
             double len = lengths[car.road];
             double done = car.dir == 1 ? car.s : len - car.s;
             double rest = len - done;
-            if (car.next < 0 && rest < CORNER) car.next = PickNext(car.road, NodeAhead(car.road, car.dir));
+            if (car.next == -1 && rest < Math.Max(CORNER, TurnReach(car.road))) car.next = PickNext(car.road, NodeAhead(car.road, car.dir));
             if (car.prev >= 0 && done >= CORNER) car.prev = -1;
+            if (car.prev == ROUND && done >= TurnReach(car.road)) car.prev = -1;
             var (p, t) = Lane(car.road, car.dir, car.side, done);
-            if (car.next >= 0 && rest < CORNER)
+            if (car.next == ROUND)
+            {
+                double reach = TurnReach(car.road);
+                if (rest < reach) (p, t) = UTurn(car.road, car.dir, reach, (reach - rest) / (2 * reach));
+            }
+            else if (car.prev == ROUND)
+            {
+                double reach = TurnReach(car.road);
+                if (done < reach) (p, t) = UTurn(car.road, -car.dir, reach, 0.5 + done / (2 * reach));
+            }
+            else if (car.next >= 0 && rest < CORNER)
             {
                 int node = NodeAhead(car.road, car.dir);
                 int nextDir = roads[car.next].from == node ? 1 : -1;
@@ -339,6 +386,43 @@ namespace Porchlight.Explore
             }
             car.x = p.x;
             car.y = p.y;
+        }
+
+        /// <summary>How far back from a dead end the U-turn starts: shorter on short roads.</summary>
+        double TurnReach(int road) => Math.Max(1e-3, Math.Min(UTURN, lengths[road] / 2));
+
+        /// <summary>
+        /// A point `t` (0 to 1) round the U-turn at the end of `road` a car drives toward
+        /// (way `dir`): on from its lane `reach` before the end, round a tip just past the end
+        /// (swinging wider than the lanes, as a car does), and back to the other lane `reach`
+        /// from it. Two curves, meeting at the tip, so the way it faces never jumps.
+        /// </summary>
+        (Vec2 at, Vec2 along) UTurn(int road, int dir, double reach, double t)
+        {
+            double len = lengths[road];
+            var (from, f) = Lane(road, dir, dir, len - reach);
+            var to = Lane(road, -dir, -dir, reach).at;
+            double gx = to.x - from.x, gy = to.y - from.y, gap = Numbers.Hypot(gx, gy);
+            if (gap < 1e-9) return (from, f);
+            gx /= gap;
+            gy /= gap;
+            var tip = new Vec2((from.x + to.x) / 2 + f.x * reach * 1.1, (from.y + to.y) / 2 + f.y * reach * 1.1);
+            double a = reach * 0.6, b = Math.Max(gap / 2, reach * 0.45);
+            return t < 0.5
+                ? Bezier(from, new Vec2(from.x + f.x * a, from.y + f.y * a), new Vec2(tip.x - gx * b, tip.y - gy * b), tip, t * 2)
+                : Bezier(tip, new Vec2(tip.x + gx * b, tip.y + gy * b), new Vec2(to.x + f.x * a, to.y + f.y * a), to, t * 2 - 1);
+        }
+
+        /// <summary>A point `t` (0 to 1) along a cubic Bézier curve, and the way along it there.</summary>
+        static (Vec2 at, Vec2 along) Bezier(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, double t)
+        {
+            double u = 1 - t;
+            double b0 = u * u * u, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t * t * t;
+            var p = new Vec2(b0 * p0.x + b1 * p1.x + b2 * p2.x + b3 * p3.x, b0 * p0.y + b1 * p1.y + b2 * p2.y + b3 * p3.y);
+            double dx = 3 * u * u * (p1.x - p0.x) + 6 * u * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x);
+            double dy = 3 * u * u * (p1.y - p0.y) + 6 * u * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y);
+            double l = Numbers.Hypot(dx, dy);
+            return (p, l < 1e-9 ? new Vec2(0, 0) : new Vec2(dx / l, dy / l));
         }
 
         /// <summary>How far either side of the junction the curve between two roads starts: shorter on short roads.</summary>

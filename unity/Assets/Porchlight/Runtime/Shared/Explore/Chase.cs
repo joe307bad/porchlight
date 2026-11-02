@@ -2,7 +2,8 @@
 // the wheel of a Vehicle: the shortest way along the streets to where you are
 // (StreetRoute), worked out again every moment as you move, and straight at
 // you once it's close with nothing in the way. Off the road it goes where any
-// car may. One that's stuck (nose in a hedge) backs off and goes again; one
+// car may. Close by, it pulls up and stays put (for its driver to get out)
+// till you're well away. One that's stuck (nose in a hedge) backs off and goes again; one
 // that gets no nearer for long has lost you, and is sent in again. Pure.
 
 using System;
@@ -26,6 +27,11 @@ namespace Porchlight.Explore
         const double SHARP = 0.9;
         /// <summary>No nearer you (by a tile) for this long, and it's lost you: it's sent in again from somewhere else.</summary>
         const double LOST_AFTER = 6;
+        /// <summary>Pulled up, it stays put till you're this much further off (tiles) than it stopped.</summary>
+        const double PULL_AWAY = 1.5;
+
+        /// <summary>It pulls up this far (tiles) from you.</summary>
+        public double pullUp = 1.6;
 
         public readonly Vehicle car;
         List<Vec2> way = new List<Vec2>();
@@ -36,6 +42,7 @@ namespace Porchlight.Explore
         int stucks;
         double closest = double.PositiveInfinity;
         double sinceCloser;
+        bool pulling;
 
         public Chaser(Vehicle car) => this.car = car;
 
@@ -44,6 +51,9 @@ namespace Porchlight.Explore
 
         /// <summary>It's got no nearer you for a while (stuck, or left behind): better sent in again from somewhere else.</summary>
         public bool Lost => sinceCloser > LOST_AFTER;
+
+        /// <summary>Stopped close by you, pulled up.</summary>
+        public bool PulledUp => pulling && Math.Abs(car.speed) < 0.15;
 
         /// <summary>Sent in again: the car is somewhere new.</summary>
         public void Restart(Vehicle.Spot at)
@@ -55,6 +65,7 @@ namespace Porchlight.Explore
             way.Clear();
             backing = 0;
             stuck = 0;
+            pulling = false;
             closest = double.PositiveInfinity;
             sinceCloser = 0;
         }
@@ -73,6 +84,20 @@ namespace Porchlight.Explore
                 sinceCloser = 0;
             }
             else sinceCloser += dt;
+            // Close enough to stop by you (from the speed it's going): it brakes, and stays put.
+            double stopping = car.speed > 0 ? car.speed * car.speed / (2 * Vehicle.BRAKE) : 0;
+            if (d < pullUp + stopping) pulling = true;
+            else if (d > pullUp + PULL_AWAY + stopping) pulling = false;
+            if (pulling)
+            {
+                closest = d;
+                sinceCloser = 0;
+                backing = 0;
+                stuck = 0;
+                way.Clear();
+                car.Drive(car.speed > 0.05 ? -1 : 0, 0, dt, open);
+                return;
+            }
             replan -= dt;
             if (replan <= 0 || way.Count == 0)
             {
@@ -102,8 +127,6 @@ namespace Porchlight.Explore
             double steer = Math.Max(-1, Math.Min(1, off * 2.5));
             double throttle = Math.Min(1, top / flatOut);
             if (Math.Abs(off) > SHARP) throttle *= 0.45;
-            // Right up to you, and no further: it pulls up alongside.
-            if (d < 1.2) throttle *= Math.Max(0, (d - 0.45) / 0.75);
             car.Drive(throttle, steer, dt, open, boost);
             if (throttle > 0.2 && Math.Abs(car.speed) < 0.25) stuck += dt;
             else stuck = 0;

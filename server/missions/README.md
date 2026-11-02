@@ -49,7 +49,7 @@ A choice whose text starts with `@` is a **wait**. It's never shown. The game pi
 | `@idle role` | The role's person has done every errand queued for them (`walk`, `pause`, `hold` and so on). |
 | `@inside role` | The player is in the role's building (or within the zoo's fence), on the ground: not flying over it. |
 | `@outside role` | The player is anywhere but there. |
-| `@caught role` | One of the role's chase cars (`chase`) has stayed beside the player (`catch_reach`) for `catch_time` seconds. The player on foot or in a car; never while flying. Each catch counts afresh. |
+| `@caught role` | An officer from one of the role's chase cars (`chase`) has stood by the player (`catch_reach`) for `catch_time` seconds. The player on foot or in a car; never while flying. Each catch counts afresh. |
 | `@countdown` | The clock (`countdown`) has run out. |
 | `@wait 3` | Three seconds have passed. |
 
@@ -68,8 +68,9 @@ Roles are any names you like (`sender`, `drop`, `aunt`). Each is one building at
 | `objective(text)` | The line at the top of the directions panel saying what to do next. `""` clears it. |
 | `hint(when, role, text)` | A prompt at the bottom of the screen, shown while `when` holds: `"always"`; `"no_car"` (the player has no car of their own); `"near"` (they're within 3 tiles of the role: its marked spot, else its person, else the pavement outside); `"near_driving"` (the same, driving their own car). The first that holds shows. "Press Enter to talk to …" shows over all of them. |
 | `clear_hints()` | Every hint goes. |
-| `guide(role, to, label)` | Shows the player the way, with turn-by-turn directions and a dotted path, to the role's `"spot"`, `"person"` or `"house"` (the pavement outside), called `label`. `guide("", "", "")` stops. |
-| `setting(name, value)` | Tunes how the town plays the mission. `talk_reach` (1.1 tiles) and `talk_reach_car` (1.9): how close you come to someone to talk. `park_reach` (0.45 tiles), `park_speed` (0.12) and `park_angle` (0.45 radians): how close, how still and how straight a car must be to count as parked. `car_reach` (0.8 tiles): how far your car may stand from a spot for someone to walk to it. `walk_speed` (1.0 tiles a second): how fast a mission's people walk. `your_pace` (1.0): how fast you are on foot, as a share of a person's pace. `chase_speed` (4.4 tiles a second) and `chase_speed_car` (6.4): how fast chase cars go after you on foot, and once you're in a car or plane (past a car's top speed, they use their boost). `catch_reach` (0.45 tiles from a chase car's side) and `catch_time` (1.0 seconds): how close, for how long, is caught. |
+| `guide(role, to, label)` | Shows the player the way, with turn-by-turn directions and a dotted path, to the role's `"spot"`, `"person"`, `"house"` (the pavement outside) or `"door"` (just outside it), called `label`. `guide("", "", "")` stops. |
+| `dot(role, to)` | A blue dot on the ground at the same places, with no way shown to it: for somewhere close by. `dot("", "")` clears it. |
+| `setting(name, value)` | Tunes how the town plays the mission. `talk_reach` (1.1 tiles) and `talk_reach_car` (1.9): how close you come to someone to talk. `park_reach` (0.45 tiles), `park_speed` (0.12) and `park_angle` (0.45 radians): how close, how still and how straight a car must be to count as parked. `car_reach` (0.8 tiles): how far your car may stand from a spot for someone to walk to it. `walk_speed` (1.0 tiles a second): how fast a mission's people walk. `your_pace` (1.0): how fast you are on foot, as a share of a person's pace. `chase_speed` (4.4 tiles a second) and `chase_speed_car` (6.4): how fast chase cars go after you on foot, and once you're in a car or plane (past a car's top speed, they use their boost). `pull_up` (1.6 tiles): how far from you a chase car stops. `officer_speed` (3.0 tiles a second): how fast its driver, out of the car, runs at you, and `officer_reach` (5.0 tiles): how far off you must get for them to give up and drive after you again. `catch_reach` (0.45 tiles from you) and `catch_time` (1.0 seconds): how close an officer stands, for how long, to have you. |
 | `countdown(seconds, label, when, role)` | A clock in the directions panel (`label m:ss`) that runs while `when` holds: `"always"`, or `"inside"`/`"outside"` the role's building. It stops (and says so) while it doesn't, and while the player reads. `@countdown` is met when it runs out. `countdown(0, "", "", "")` stops it. One at a time. |
 
 ### Places and people
@@ -93,7 +94,7 @@ Roles are any names you like (`sender`, `drop`, `aunt`). Each is one building at
 
 | Function | What it does |
 | --- | --- |
-| `chase(role, name, count, car, look)` | `count` cars (1 to 8) of model `car` (`"cars/police"`) come after the player from streets nearby, each with a driver who looks like `look` (`""` for any) and gets out beside you when the car stops by you. `role` is the chase's own name, not a building's: `@caught role` waits for it, `role:` lines are `name`'s. They follow the streets, cut across open ground when close, and drive round anything that blocks them. Returns `name`. Calling it again for the same role starts the chase afresh. |
+| `chase(role, name, count, car, look)` | `count` cars (1 to 8) of model `car` (`"cars/police"`) come after the player from streets nearby, each with a driver who looks like `look` (`""` for any). A car pulls up near the player (`pull_up`), and its driver gets out and runs to stand by them; get far enough away (`officer_reach`) and they run back and drive after you again. `role` is the chase's own name, not a building's: `@caught role` waits for it, `role:` lines are `name`'s. They follow the streets, cut across open ground when close, and drive round anything that blocks them. Returns `name`. Calling it again for the same role starts the chase afresh. |
 
 `leave(role)` calls a chase off: its cars are gone.
 

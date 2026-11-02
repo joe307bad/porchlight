@@ -317,7 +317,13 @@ namespace Porchlight.App
             ok = await Until(() => Objective().StartsWith("Keep away"), 5);
             Debug.Log($"smoke: mission: out of the zoo: '{Objective()}' ok={ok}, {mission?.Chasing} cars after you");
             double start = platform.Now();
-            ok = await Until(() => Objective().StartsWith("Get out"), 45);
+            string officers = "";
+            ok = await Until(() =>
+            {
+                if (mission?.Chasing > 0) officers = mission.Officers();
+                return Objective().StartsWith("Get out");
+            }, 45);
+            Debug.Log($"smoke: mission: when caught: {officers}");
             Debug.Log($"smoke: mission: caught={ok} after {(platform.Now() - start) / 1000:0.0} s, in zoo={InZoo()}, {mission?.Chasing} cars after you");
             iso.PutPlayer(Menagerie.RoadEnd(zoo), 0);
             await Until(() => false, 3);

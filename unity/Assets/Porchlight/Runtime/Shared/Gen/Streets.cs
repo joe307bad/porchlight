@@ -69,7 +69,7 @@ namespace Porchlight.Gen
             var slope = terrainInfo.slope;
             var cost = terrainInfo.cost;
             var airport = Airfield.Mask(model.airport, w, h);
-            var zoo = Menagerie.Mask(model.zoo, w, h, 1);
+            var zoo = Menagerie.Mask(model.zoo, w, h, Menagerie.ROAD_CLEAR);
             var g = RoadGraphOps.BuilderFrom(model.roads);
             double Falloff(Vec2 pt) => Math.Max(0, 1 - Geo.Dist(pt, C) / R);
             var keep = new HashSet<int>();
