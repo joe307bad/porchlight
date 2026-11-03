@@ -81,9 +81,9 @@ namespace Porchlight.Explore
         public const string PEOPLE_CLIPS = "people/animations";
 
         /// <summary>
-        /// Animals (Kenney's Cube Pets): the zoo's, and anyone a mission makes one of
-        /// (look). Each is rigged by its parts and carries its own clips; with how tall
-        /// it stands (tiles) and how fast it ambles about its pen (tiles a second).
+        /// Animals: the zoo's, and anyone a mission makes one of (look). Each is made
+        /// and moved at run time (Rendering/Creatures.cs); with how tall it stands
+        /// (tiles) and how fast it ambles about its pen (tiles a second).
         /// </summary>
         static readonly (string name, double height, double pace)[] ANIMAL_TABLE =
         {

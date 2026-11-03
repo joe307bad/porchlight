@@ -1,5 +1,6 @@
 // Townsfolk, other players and you, as RG Poly's rigged Cartoon City people
-// (or Kenney's Cube Pets animals, at the zoo or when a mission makes you one).
+// (or animals, made and moved by Creature, at the zoo or when a mission makes
+// you one: Avatar.Of picks).
 // Each Avatar is an instance of a person prefab (ModelLibrary) whose Animator
 // plays the shared controller: idle, walk and run blended by pace, played
 // faster as they hurry, and jump, fall and land in the air. Around that, the
@@ -40,7 +41,10 @@ namespace Porchlight.Rendering
 
         public readonly GameObject root;
         readonly Transform body;
-        readonly Animator animator;
+        /// <summary>A person's Animator, or an animal (and its size: tiles to one of its own units).</summary>
+        Animator animator;
+        Creature creature;
+        double creatureScale = 1;
 
         double rootYaw;
         double bodyX, bodyZ;
@@ -54,12 +58,31 @@ namespace Porchlight.Rendering
         double accel, turn, moveWeight, airWeight;
         bool visible = true;
 
-        public Avatar(ModelLibrary.Person person, double height, double phase, Transform parent)
+        Avatar(string name, Transform parent)
         {
-            root = new GameObject("person " + person.name);
+            root = new GameObject("person " + name);
             root.transform.SetParent(parent, false);
             body = new GameObject("body").transform;
             body.SetParent(root.transform, false);
+        }
+
+        /// <summary>Someone who looks like `look`: a character, or an animal (standing its own height, or `height` tiles if given).</summary>
+        public static Avatar Of(string look, double phase, Transform parent, double? height = null)
+        {
+            if (!Catalog.IsAnimal(look)) return new Avatar(ModelLibrary.Instance.Character(look), height ?? PERSON_HEIGHT, phase, parent);
+            var a = new Avatar(look, parent);
+            var c = a.creature = Creatures.Build(look, phase);
+            double k = (height ?? Catalog.AnimalHeight(look)) / Math.Max(1e-3, c.maxY - c.minY);
+            a.creatureScale = k;
+            var t = c.root.transform;
+            t.SetParent(a.body, false);
+            t.localScale = Vector3.one * (float)k;
+            t.localPosition = new Vector3(0, (float)(-c.minY * k), 0);
+            return a;
+        }
+
+        public Avatar(ModelLibrary.Person person, double height, double phase, Transform parent) : this(person.name, parent)
+        {
             var model = UnityEngine.Object.Instantiate(person.prefab, body, false).transform;
             // Sized by where the head starts, so a tall hat or a quiff doesn't make anyone smaller
             // (an animal by how tall it stands); turned round as its file needs (the people face backwards).
@@ -71,9 +94,6 @@ namespace Porchlight.Rendering
             animator = model.GetComponent<Animator>();
             animator.Update((float)(phase * 2));
         }
-
-        /// <summary>How tall someone with this look is drawn (tiles): a person, or the animal's own height.</summary>
-        public static double HeightOf(string look) => Catalog.IsAnimal(look) ? Catalog.AnimalHeight(look) : PERSON_HEIGHT;
 
         /// <summary>Draw this one through walls (you).</summary>
         public void SeeThrough()
@@ -136,10 +156,14 @@ namespace Porchlight.Rendering
             double run = Smoothstep(WALK_TOP, RUN_FROM, pace);
             double walkRate = Math.Pow(Math.Max(0.05, pace) / NATURAL_WALK, CADENCE);
             double runRate = Math.Pow(Math.Max(0.05, pace) / NATURAL_RUN, CADENCE);
-            animator.SetFloat(Speed, (float)(moving ? Math.Max(0.4, pace) : pace * moveWeight));
-            animator.SetFloat(Cadence, moving ? (float)Math.Min(3, walkRate + (runRate - walkRate) * run) : 1);
-            animator.SetBool(Air, air);
-            animator.SetBool(Falling, air && w.rise < 0.2);
+            if (creature != null) creature.Update((float)(pace / creatureScale), air, (float)dt);
+            else
+            {
+                animator.SetFloat(Speed, (float)(moving ? Math.Max(0.4, pace) : pace * moveWeight));
+                animator.SetFloat(Cadence, moving ? (float)Math.Min(3, walkRate + (runRate - walkRate) * run) : 1);
+                animator.SetBool(Air, air);
+                animator.SetBool(Falling, air && w.rise < 0.2);
+            }
 
             double runLean = moveWeight * Smoothstep(0.3, RUN_FROM, pace);
             double lean = Math.Max(-MAX_TILT, Math.Min(MAX_TILT, runLean * RUN_LEAN + accel * ACCEL_LEAN * (1 - airWeight)));
@@ -159,7 +183,7 @@ namespace Porchlight.Rendering
         /// <summary>Wave (a raised right hand, side to side) while `on`; the arm eases up and back down.</summary>
         public void SetWaving(bool on)
         {
-            if (!on && wave == null) return;
+            if (creature != null || (!on && wave == null)) return;
             if (wave == null)
             {
                 wave = root.AddComponent<ArmWave>();

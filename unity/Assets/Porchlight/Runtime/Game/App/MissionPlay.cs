@@ -418,7 +418,7 @@ namespace Porchlight.App
             var walker = new Walker(look, r.kerb.x, r.kerb.y);
             // Facing the street, from their door.
             walker.heading = DetMath.Atan2(r.kerb.x - r.door.x, r.kerb.y - r.door.y);
-            var avatar = new Avatar(library.Character(look), Avatar.HeightOf(look), rng.Next(), view.world.root.transform);
+            var avatar = Avatar.Of(look, rng.Next(), view.world.root.transform);
             avatar.SnapYaw(walker.heading);
             var p = new Person { name = string.IsNullOrEmpty(name) ? "Someone" : name, role = r, walker = walker, avatar = avatar };
             people.Add(p);
@@ -631,7 +631,7 @@ namespace Porchlight.App
             {
                 chaser = new Chaser(new Vehicle(model, at.x, at.y, at.heading)) { grid = grid ??= new DriveGrid(view.world.model.width, view.world.model.height, view.CanDriveAt) },
                 view = new CarView(m, view.world.root.transform) { model = model },
-                officer = new Avatar(library.Character(look), Avatar.HeightOf(look), rng.Next(), view.world.root.transform),
+                officer = Avatar.Of(look, rng.Next(), view.world.root.transform),
                 walker = new Walker(look, at.x, at.y),
             };
             cop.officer.Visible = false;

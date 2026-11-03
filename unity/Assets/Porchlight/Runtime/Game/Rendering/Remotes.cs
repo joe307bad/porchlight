@@ -320,7 +320,7 @@ namespace Porchlight.Rendering
         Remote Spawn(RemoteState s, string look)
         {
             var walker = new Walker(look, s.x, s.z, PLAYER_SCALE) { heading = Protocol.YawFromWire(s.rotY) };
-            var avatar = new Avatar(library.Character(look), Avatar.HeightOf(look), new Rng(s.key).Next(), root);
+            var avatar = Avatar.Of(look, new Rng(s.key).Next(), root);
             avatar.SnapYaw(walker.heading);
             var r = new Remote
             {

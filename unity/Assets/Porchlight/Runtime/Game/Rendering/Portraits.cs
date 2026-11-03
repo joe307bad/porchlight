@@ -124,7 +124,7 @@ namespace Porchlight.Rendering
             if (next == look || next == null) return;
             look = next;
             avatar?.Dispose();
-            avatar = new Avatar(library.Character(next), HeightOf(next), 0, root.transform);
+            avatar = Avatar.Of(next, 0, root.transform, HeightOf(next));
             avatar.SnapYaw(standing.heading);
             OnLayer(avatar.root);
         }
@@ -154,7 +154,7 @@ namespace Porchlight.Rendering
             {
                 if (lookStills.TryGetValue(looks[i], out o[i])) continue;
                 var at = new Vector3(lookStills.Count * STILL_SPACING, 0, 40);
-                var a = new Avatar(library.Character(looks[i]), HeightOf(looks[i]), 0, StillsRoot());
+                var a = Avatar.Of(looks[i], 0, StillsRoot(), HeightOf(looks[i]));
                 a.SnapYaw(standing.heading);
                 OnLayer(a.root);
                 stillAvatars.Add((a, new Walker(null, at.x, -at.z) { heading = standing.heading }));

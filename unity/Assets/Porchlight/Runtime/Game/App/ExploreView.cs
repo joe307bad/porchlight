@@ -386,7 +386,7 @@ namespace Porchlight.App
             for (int k = 0; k < count; k++)
             {
                 var p = Pedestrian.Create(Catalog.RandomLook(rng), world.sidewalks, rng);
-                var a = new Avatar(library.Character(p.look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform);
+                var a = Avatar.Of(p.look, rng.Next(), world.root.transform);
                 people.Add(p);
                 avatars.Add(a);
             }
@@ -414,7 +414,7 @@ namespace Porchlight.App
         {
             playerAvatar?.Dispose();
             string look = lookOverride ?? player.look;
-            playerAvatar = new Avatar(library.Character(look), Avatar.HeightOf(look), 0, world.root.transform);
+            playerAvatar = Avatar.Of(look, 0, world.root.transform);
             playerAvatar.SeeThrough();
             playerAvatar.SnapYaw(player.heading);
         }
@@ -1273,7 +1273,7 @@ namespace Porchlight.App
         void AddPerson(Pedestrian p)
         {
             people.Add(p);
-            avatars.Add(new Avatar(library.Character(p.look), Avatar.PERSON_HEIGHT, autoRng.Next(), world.root.transform));
+            avatars.Add(Avatar.Of(p.look, autoRng.Next(), world.root.transform));
         }
 
         /// <summary>Your car, in place of the one you had (you only ever have one).</summary>
@@ -1898,7 +1898,7 @@ namespace Porchlight.App
                 var rng = new Rng($"{world.model.seed}::keeper::{id}");
                 var look = Catalog.RandomLook(rng);
                 var walker = new Walker(look, spot.Value.x, spot.Value.y) { heading = spot.Value.rot };
-                var avatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, rng.Next(), world.root.transform);
+                var avatar = Avatar.Of(look, rng.Next(), world.root.transform);
                 avatar.SnapYaw(spot.Value.rot);
                 k = new Keeper { walker = walker, avatar = avatar };
                 keepers[id] = k;

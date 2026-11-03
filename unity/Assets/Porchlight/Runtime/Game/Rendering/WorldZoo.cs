@@ -3,9 +3,9 @@
 // the gate, posts either side under an arch with its name on, a path in and
 // one across, and pens of rails between them, each floored for its animals
 // (sand, dirt or snow, the penguins' and polar bears' round a pool), a rock or
-// a bush in each. The fences are solid to walk into. The animals amble about
-// their pens (Kenney's Cube Pets, playing their own walk and idle): drawn
-// here, stepped each frame by the view.
+// a bush in each, and lanterns along the paths that light up at dusk. The
+// fences are solid to walk into. The animals amble about their pens (made
+// and moved by Creature): drawn here, stepped each frame by the view.
 
 using System;
 using System.Collections.Generic;
@@ -25,7 +25,7 @@ namespace Porchlight.Rendering
         static class Z
         {
             public const int path = 0xc9a46e, sand = 0xe3cf98, dirt = 0xa88a5c, snow = 0xeef3f6, pool = 0x5fa8d8, rim = 0xd9d6cc;
-            public const int rail = 0x8a6440, post = 0x6b4b30, pillar = 0xc2b49a, arch = 0x2f5d3a;
+            public const int rail = 0x8a6440, post = 0x6b4b30, pillar = 0xc2b49a, arch = 0x2f5d3a, lamp = 0x2c3a31;
         }
 
         const double PEN_RAIL = 0.22;
@@ -146,6 +146,49 @@ namespace Porchlight.Rendering
             Block(beam, PILLAR_HEIGHT - 0.28, PILLAR_HEIGHT - 0.02, Z.arch);
             b.Build("zoo", still);
             GateSign(z, beam, PILLAR_HEIGHT - 0.15);
+            ZooLamps(z);
+        }
+
+        /// <summary>
+        /// Lanterns along the paths, between them and the pens: a pair inside the gate, and
+        /// more down the path in and along the one across, taking turns side to side. They
+        /// light up at dusk with the street lamps (they're among them), and none is faulty.
+        /// </summary>
+        void ZooLamps(Porchlight.Model.Zoo z)
+        {
+            const double H = 0.62, OFF = 0.12;
+            var paths = Menagerie.Paths();
+            var inPath = paths[0];
+            var across = paths[1];
+            var spots = new[]
+            {
+                (inPath.u0 - OFF, Menagerie.DEPTH - 0.75), (inPath.u1 + OFF, Menagerie.DEPTH - 0.75),
+                (inPath.u1 + OFF, 7.3), (inPath.u0 - OFF, 2.7),
+                (2.0, across.v1 + OFF), (4.0, across.v0 - OFF), (8.0, across.v1 + OFF), (10.0, across.v0 - OFF),
+            };
+            var post = Materials.Lit(Z.lamp);
+            var bulbMaterial = Materials.Glowing(Coords.Hex(0xfff3d6));
+            var poolMaterial = Materials.LightPool();
+            var glowRoot = new GameObject("zoo lamps").transform;
+            glowRoot.SetParent(root.transform, false);
+            foreach (var (u, v) in spots)
+            {
+                var at = Menagerie.ToWorld(z, u, v);
+                var lamp = new GameObject("zoo lamp").transform;
+                lamp.SetParent(props, false);
+                lamp.localPosition = Coords.Map(at.x, at.y);
+                // A foot, a slim post, and over the lantern a little roof with a finial.
+                Shape(PrimitiveType.Cube, lamp, new Vector3(0, 0.03f, 0), new Vector3(0.075f, 0.06f, 0.075f), post);
+                Shape(PrimitiveType.Cylinder, lamp, new Vector3(0, (float)H / 2, 0), new Vector3(0.04f, (float)H / 2, 0.04f), post);
+                Shape(PrimitiveType.Cube, lamp, new Vector3(0, (float)H + 0.005f, 0), new Vector3(0.07f, 0.02f, 0.07f), post);
+                Shape(PrimitiveType.Cube, lamp, new Vector3(0, (float)H + 0.105f, 0), new Vector3(0.12f, 0.025f, 0.12f), post);
+                Shape(PrimitiveType.Sphere, lamp, new Vector3(0, (float)H + 0.135f, 0), Vector3.one * 0.035f, post);
+                var bulb = Shape(PrimitiveType.Sphere, glowRoot, Coords.Map(at.x, at.y, H + 0.055), new Vector3(0.085f, 0.1f, 0.085f), bulbMaterial, false, "bulb");
+                var pool = Shape(PrimitiveType.Quad, glowRoot, Coords.Map(at.x, at.y, 0.045), new Vector3(1.7f, 1.7f, 1), poolMaterial, false, "light pool");
+                pool.transform.localRotation = Quaternion.Euler(90, 0, 0);
+                lamps.Add(new Lamp { x = at.x, y = at.y, h = H + 0.055, phase = zooRng.Range(0, 100), bulb = bulb.GetComponent<Renderer>(), pool = pool.GetComponent<Renderer>() });
+                solids.Add(new Rect(at.x - 0.04, at.y - 0.04, at.x + 0.04, at.y + 0.04));
+            }
         }
 
         /// <summary>The zoo's name on both faces of the arch over its gate.</summary>
@@ -212,7 +255,7 @@ namespace Porchlight.Rendering
                 for (int k = 0; k < count; k++)
                 {
                     var walker = new Walker(animal, zooRng.Range(room.Item1, room.Item3), zooRng.Range(room.Item2, room.Item4)) { heading = zooRng.Range(0, Math.PI * 2) };
-                    var avatar = new Avatar(library.Character(animal), Avatar.HeightOf(animal), zooRng.Next(), root.transform);
+                    var avatar = Avatar.Of(animal, zooRng.Next(), root.transform);
                     avatar.SnapYaw(walker.heading);
                     animals.Add(new ZooAnimal { walker = walker, avatar = avatar, pen = room, rest = zooRng.Range(0, 3), pace = Catalog.AnimalPace(animal) });
                 }
