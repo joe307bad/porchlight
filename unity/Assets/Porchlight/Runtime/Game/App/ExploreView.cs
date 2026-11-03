@@ -2051,7 +2051,7 @@ namespace Porchlight.App
                 int kmh = Numbers.RoundInt((Math.Abs(car.speed) / Vehicle.TOP_SPEED) * 50);
                 if (car.kind == VehicleKind.Plane)
                     overlay.SetPrompt(car.Airborne
-                        ? pad ? $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · RT climb, hold A boost, LT descend, stick banks · land to get out" : $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · W climb, S descend, Shift boost, A/D bank · land to get out"
+                        ? pad ? $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · RT climb, hold A faster, LT descend, stick banks · land to get out" : $"Flying · {kmh} km/h · {Numbers.RoundInt(car.altitude * 4)} m up · W climb, S descend, Shift faster, A/D bank · land to get out"
                         : pad ? $"Taxiing · {kmh} km/h · RT full throttle to take off, LT brake, stick steers · B to get out" : $"Taxiing · {kmh} km/h · hold W to take off, Shift boost, S brake, A/D steer · G to get out");
                 else if (car.kind == VehicleKind.Boat)
                     overlay.SetPrompt(pad ? $"Sailing · {kmh} km/h · RT throttle, hold A boost, LT astern, stick steers · B to get out at a dock or the shore" : $"Sailing · {kmh} km/h · W/S throttle and astern, Shift boost, A/D steer · G to get out at a dock or the shore");

@@ -169,11 +169,14 @@ namespace Porchlight.Explore
             if (plane && throttle > 0 && speed >= TAKEOFF_SPEED) altitude = 1e-3;
         }
 
-        /// <summary>In the air: forward climbs (and speeds up) to cruising height, back sinks (and slows), let go to hold; boost goes faster still.</summary>
+        /// <summary>
+        /// In the air: forward climbs (and speeds up) to cruising height, back sinks (and slows), let go to hold;
+        /// boost goes faster still, and on its own speeds up flat out where you are, without climbing.
+        /// </summary>
         void Fly(double throttle, double steer, double dt, Func<double, double, bool> open, Func<double, double, double> floor, bool boost)
         {
             double flatOut = PLANE_TOP * (boost ? PLANE_BOOST : 1);
-            double target = throttle > 0 ? flatOut : throttle < 0 ? STALL_SPEED : Math.Min(flatOut, Math.Max(STALL_SPEED, speed));
+            double target = throttle < 0 ? STALL_SPEED : throttle > 0 || boost ? flatOut : Math.Min(flatOut, Math.Max(STALL_SPEED, speed));
             speed += Math.Max(-PLANE_SLOWING * dt, Math.Min(PLANE_ACCEL * (boost ? BOOST_ACCEL : 1) * dt, target - speed));
             double climb = throttle > 0 ? (altitude < CRUISE_HEIGHT ? CLIMB : 0) : throttle < 0 ? -SINK : 0;
             double h = heading + steer * AIR_TURN * dt;

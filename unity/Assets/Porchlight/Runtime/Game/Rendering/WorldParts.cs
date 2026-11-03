@@ -216,7 +216,9 @@ namespace Porchlight.Rendering
         {
             double natural = m.size.y * scale;
             double wanted = house.floors * FLOOR_H + (house.style == HouseStyle.House ? 0.9 : 0.4);
-            return Math.Min(1.35, Math.Max(0.75, wanted / natural));
+            // A tower past the usual five floors is drawn as tall as it is.
+            double most = house.floors > 5 ? 4 : 1.35;
+            return Math.Min(most, Math.Max(0.75, wanted / natural));
         }
 
         void Furnish(Rng rng)

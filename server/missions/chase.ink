@@ -1,5 +1,5 @@
 # title: Penguin on the run
-# summary: You're a penguin who's had enough of the zoo. Waddle out of the gate, then keep clear of the police for a whole minute. Cars and planes are fair game.
+# summary: You're a penguin, and you want to see the town! Waddle out of the zoo gate, then stay away from the police for one whole minute. You can hop in a car or a plane to get away.
 
 // Everything this mission is lives in this file: that you're a penguin, the
 // zoo you start in, the police who come after you, how long you must stay
@@ -55,14 +55,14 @@ VAR caught = 0
 ~ standby("police", WAITING, POLICE_CAR, OFFICER)
 ~ look(PENGUIN)
 ~ put_you("zoo", "inside")
-You're a penguin, and you've had quite enough of the zoo.
-you: Noot.
-Someone's left the gate open...
+You're a penguin who lives at the zoo.
+you: Noot!
+You really want to see the town. And look: someone left the gate open!
 -> escape
 
 === escape ===
 ~ clear_hints()
-~ hint("always", "", "Waddle out through the gate · hold Shift (or RT) to run")
+~ hint("always", "", "Waddle to the gate · hold Shift (or RT) to run")
 ~ dot("zoo", "door")
 ~ objective("Get out of the zoo")
 + [@outside zoo] -> on_the_run
@@ -73,11 +73,11 @@ Someone's left the gate open...
 ~ chase("police", "Officer Pike", CARS, POLICE_CAR, OFFICER)
 ~ countdown(FREE_FOR, "Free for", "outside", "zoo")
 ~ objective("Keep away from the police")
-~ hint("always", "", "Don't let an officer catch up with you · any car or plane will do")
+~ hint("always", "", "Don't let a police officer stand next to you · hop in a car or a plane to zoom away")
 { caught == 0:
-    Sirens! Someone's seen a penguin in the street.
+    Uh oh! Someone saw a penguin in the street. Here come the police!
 - else:
-    Out again! The sirens start up.
+    You're out again! Here come the police.
 }
 -> loose
 
@@ -88,14 +88,14 @@ Someone's left the gate open...
 === nabbed ===
 ~ caught++
 ~ clear_hints()
-police: Got you! Back to the zoo with you.
+police: Got you, little penguin! Back to the zoo you go.
 ~ leave("police")
 ~ countdown(0, "", "", "")
 ~ put_you("zoo", "inside")
 { caught == 1:
-    You're back by the pool. But nobody's shut the gate.
+    You're back by the pool. But the gate is still open!
 - else:
-    Back by the pool again. The gate's still open.
+    Back by the pool again. That gate is still open!
 }
 -> escape
 
@@ -103,17 +103,17 @@ police: Got you! Back to the zoo with you.
 ~ countdown(0, "", "", "")
 ~ objective("")
 ~ clear_hints()
-police: We've lost it. Call it off, everyone.
+police: Where did that penguin go? Okay, everyone, let's go home.
 ~ leave("police")
 you: Noot noot!
 ~ unlock("animals")
-A whole minute on the loose<>
+You stayed free for a whole minute<>
 { caught > 0:
-    <>, and caught {caught} {caught == 1:time|times} along the way<>
+    <>, even though you got caught {caught == 1:once|{caught} times}<>
 }
-<>. You're free!
+<>. You did it!
 ~ look("")
-You can be any of the zoo's animals now: choose one from the character box.
+Now you can play as any animal from the zoo! Pick one in the character box.
 -> END
 
 // Stand-ins so the story plays in Inky (the game has the real ones).

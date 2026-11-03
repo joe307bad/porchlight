@@ -61,6 +61,8 @@ namespace Porchlight.Gen
                 bool isChurch = lot.id == church;
                 double d = Math.Min(1, Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / R);
                 if (!isChurch && !rng.Chance(p.buildingDensity * (0.7 + 0.3 * (1 - d)))) continue;
+                // Some of the centre's lots are left open: courtyards among the towers.
+                if (!isChurch && p.courtyards > 0 && InCentre(d, p.downtown) && rng.Chance(p.courtyards)) continue;
                 var tiles = Parcels.TilesIn(lot.polygon, null, w, h);
                 var counts = Parcels.FrontageCounts(tiles, g, w, h);
                 int max = Math.Max(Math.Max(counts[0], counts[1]), Math.Max(counts[2], counts[3]));
@@ -81,7 +83,9 @@ namespace Porchlight.Gen
                 if (rect == null) continue;
                 SetBack(rect, facingIndex, lotTiles, ReachFor(yard), g, w, h, rng);
 
-                var kind = isChurch ? BuildingKind.Church : PickKind(d, rng);
+                var kind = isChurch ? BuildingKind.Church : PickKind(d, p, rng);
+                // With courtyards about, a lot with no room for a proper tower is one more.
+                if (kind == BuildingKind.Shop && p.courtyards > 0 && InCentre(d, p.downtown) && (rect.x1 - rect.x0 + 1) * (rect.y1 - rect.y0 + 1) < 4) continue;
                 var footprint = new List<Vec2>
                 {
                     new Vec2(rect.x0 + INSET, rect.y0 + INSET),
@@ -372,9 +376,13 @@ namespace Porchlight.Gen
             return false;
         }
 
-        static BuildingKind PickKind(double d, Rng rng)
+        /// <summary>In the city centre, `d` (a share of the town radius) from the middle; a centre of 1 is everywhere.</summary>
+        public static bool InCentre(double d, double downtown) => downtown >= 1 || d < downtown;
+
+        /// <summary>Shops (offices and towers, in the centre) through the centre, and never less than out to 0.35 of the way.</summary>
+        static BuildingKind PickKind(double d, GenParams p, Rng rng)
         {
-            if (d < 0.35 && rng.Chance(0.6)) return BuildingKind.Shop;
+            if ((InCentre(d, p.downtown) || d < 0.35) && rng.Chance(p.towerShare)) return BuildingKind.Shop;
             if (d > 0.7 && rng.Chance(0.25)) return BuildingKind.Workshop;
             return BuildingKind.House;
         }

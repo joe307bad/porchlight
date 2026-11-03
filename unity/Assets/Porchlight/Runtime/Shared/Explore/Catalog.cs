@@ -42,7 +42,7 @@ namespace Porchlight.Explore
         static readonly (string name, float yaw, double length, double weight)[] PLANE_TABLE =
         {
             ("prop-small", 180, 2.0, 3),
-            ("biplane-b", -90, 1.9, 2),
+            ("biplane-b", 90, 1.9, 2),
             ("biplane-c", 180, 1.8, 2),
             ("prop-warbird", 0, 2.0, 1),
             ("jet-private", 0, 2.4, 2),

@@ -306,14 +306,19 @@ namespace Porchlight.Rendering
             }
         }
 
-        public void Loft(Transform joint, int color, Vector3 a, Vector3 b, params Vector4[] rings) => Loft(joint, color, a, b, 6, 1, rings);
+        public void Loft(Transform joint, int color, Vector3 a, Vector3 b, params Vector4[] rings) => Loft(joint, color, a, b, 8, 1, rings);
 
         /// <summary>A rounded lump centred on `at`, `length` long along `axis` and `rx` by `ry` across.</summary>
-        public void Ball(Transform joint, int color, Vector3 at, Vector3 axis, float length, float rx, float ry, int sides = 6, float spike = 1)
+        public void Ball(Transform joint, int color, Vector3 at, Vector3 axis, float length, float rx, float ry, int sides = 8, float spike = 1)
         {
             var h = axis.normalized * (length / 2);
-            Loft(joint, color, at - h, at + h, sides, spike, R(0, 0, 0), R(0.18f, rx * 0.72f, ry * 0.72f), R(0.5f, rx, ry), R(0.82f, rx * 0.72f, ry * 0.72f), R(1, 0, 0));
+            // Rings round a sphere's profile: 0.5 - cos(a)/2 along, sin(a) across.
+            Loft(joint, color, at - h, at + h, sides, spike, R(0, 0, 0), R(0.067f, rx * 0.5f, ry * 0.5f), R(0.25f, rx * 0.87f, ry * 0.87f), R(0.5f, rx, ry),
+                R(0.75f, rx * 0.87f, ry * 0.87f), R(0.933f, rx * 0.5f, ry * 0.5f), R(1, 0, 0));
         }
+
+        /// <summary>A round knob at a joint (a knee, a hip, a shoulder): something to bend round, so it never shows a gap.</summary>
+        public void Knob(Transform joint, int color, Vector3 at, float r) => Ball(joint, color, at, Vector3.up, r * 2, r, r);
 
         /// <summary>A small gem (an eye, a nose, a spot): a double pyramid along `axis`.</summary>
         public void Gem(Transform joint, int color, Vector3 at, Vector3 axis, float length, float rx, float ry, int sides = 5)

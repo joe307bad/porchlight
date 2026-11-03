@@ -245,9 +245,13 @@ namespace Porchlight.Explore
                         cx = cx + t.x + 0.5;
                         cy = cy + t.y + 0.5;
                     }
-                    bool nearCentre = Numbers.Hypot(cx / footprint.Count - C.x, cy / footprint.Count - C.y) < model.townRadius * 0.3;
+                    double fromCentre = Numbers.Hypot(cx / footprint.Count - C.x, cy / footprint.Count - C.y) / (model.townRadius * p.downtown);
+                    bool nearCentre = Porchlight.Gen.BuildingsStage.InCentre(fromCentre * p.downtown, p.downtown);
                     var style = b.kind == BuildingKind.Shop && nearCentre && b.floors >= 2 ? HouseStyle.Office : StyleOf(b.kind);
-                    int floors = style == HouseStyle.Office ? Math.Min(5, b.floors + 2) : b.floors;
+                    // Offices are four or five floors; past that (towerFloors), taller towards the middle,
+                    // each a little different: a skyline.
+                    int above = (int)Math.Round((p.towerFloors - 5) * Math.Max(0, 1 - fromCentre) * (0.5 + 0.5 * Hash(b.id + 7919, 9)));
+                    int floors = style == HouseStyle.Office ? Math.Min((int)p.towerFloors, b.floors + 2 + Math.Max(0, above)) : b.floors;
                     var house = new House { x = footprint[0].x, y = footprint[0].y, tiles = footprint, facing = b.facing, kind = b.kind, style = style, floors = floors, buildingId = b.id, blockId = block.id };
                     houses.Add(house);
                     foreach (var t in footprint) use[Grid.Index(t.x, t.y, w)] = Use.HOUSE;

@@ -41,8 +41,14 @@ namespace Porchlight.Rendering
 
         // Shapes, as rings (along, width, height, lift) in shares of a piece's own size. --------
 
-        /// <summary>A body, tail to chest: round at the rump, full in the middle, narrowing to the chest.</summary>
-        static readonly Vector4[] TORSO = { R(0, 0.45f, 0.5f), R(0.12f, 0.88f, 0.92f), R(0.45f, 1, 1), R(0.8f, 0.95f, 0.97f), R(0.95f, 0.7f, 0.78f, 0.05f), R(1, 0.4f, 0.5f, 0.08f) };
+        /// <summary>A body, tail to chest: a rounded rump, full in the middle, curving in to the chest.</summary>
+        static readonly Vector4[] TORSO =
+        {
+            R(0, 0.25f, 0.3f), R(0.04f, 0.6f, 0.66f), R(0.1f, 0.82f, 0.86f), R(0.2f, 0.95f, 0.97f), R(0.45f, 1, 1),
+            R(0.75f, 0.97f, 0.98f), R(0.88f, 0.86f, 0.9f, 0.03f), R(0.96f, 0.62f, 0.7f, 0.06f), R(1, 0.3f, 0.4f, 0.08f),
+        };
+        /// <summary>Corners round a body: plenty, so its back is round rather than a ridge.</summary>
+        const int ROUND = 12;
         /// <summary>A head, back to front, dipping a little towards the face.</summary>
         static readonly Vector4[] SKULL = { R(0, 0.5f, 0.5f), R(0.2f, 0.9f, 0.92f), R(0.55f, 1, 1), R(0.85f, 0.85f, 0.82f, -0.05f), R(1, 0.55f, 0.55f, -0.1f) };
         const float SKULL_BACK = 0.45f, SKULL_FRONT = 0.5f;
@@ -105,8 +111,8 @@ namespace Porchlight.Rendering
             c.gait = Creature.Gait.Four;
             c.size = q.len;
             var body = c.body = s.Joint("body", null, new Vector3(0, q.legs + q.h, 0), new Vector3(-q.pitch, 0, 0));
-            s.Loft(body, q.main, new Vector3(0, 0, -q.len / 2), new Vector3(0, 0, q.len / 2), Scaled(TORSO, q.w, q.h));
-            s.Loft(body, q.belly, new Vector3(0, 0, -q.len * 0.36f), new Vector3(0, 0, q.len * 0.36f),
+            s.Loft(body, q.main, new Vector3(0, 0, -q.len / 2), new Vector3(0, 0, q.len / 2), ROUND, 1, Scaled(TORSO, q.w, q.h));
+            s.Loft(body, q.belly, new Vector3(0, 0, -q.len * 0.36f), new Vector3(0, 0, q.len * 0.36f), ROUND, 1,
                 R(0, 0.45f * q.w, 0.5f * q.h, -0.24f * q.h), R(0.3f, 0.72f * q.w, 0.77f * q.h, -0.24f * q.h), R(0.7f, 0.72f * q.w, 0.77f * q.h, -0.24f * q.h), R(1, 0.45f * q.w, 0.5f * q.h, -0.24f * q.h));
 
             // Legs: a walk goes back left, front left, back right, front right; a trot in diagonal pairs.
@@ -119,8 +125,11 @@ namespace Porchlight.Rendering
                 float L = hip.position.y;
                 sumL += L;
                 float upper = L * 0.5f, foot = lw * 0.9f;
+                // A round shoulder (or haunch) where it meets the body, and a round knee to bend at.
+                s.Knob(hip, legColor, new Vector3(0, lw * 0.6f, 0), 1.4f * lw);
                 s.Loft(hip, legColor, new Vector3(0, lw, 0), new Vector3(0, -upper, 0), R(0, 1.3f * lw, 1.45f * lw), R(0.5f, 1.08f * lw, 1.15f * lw), R(1, 0.88f * lw, 0.92f * lw));
                 var knee = s.Joint("knee", hip, new Vector3(0, -upper, 0));
+                s.Knob(knee, legColor, Vector3.zero, 0.98f * lw);
                 float lower = L - upper;
                 s.Loft(knee, legColor, new Vector3(0, lw * 0.4f, 0), new Vector3(0, -lower + foot, 0), R(0, 0.88f * lw, 0.92f * lw), R(1, 0.76f * lw, 0.8f * lw));
                 s.Loft(knee, q.feet, new Vector3(0, -lower + foot, 0), new Vector3(0, -lower, 0), R(0, 0.78f * lw, 0.82f * lw), R(0.55f, 0.98f * lw, 1.15f * lw, 0.2f * lw), R(1, 0.92f * lw, 1.08f * lw, 0.25f * lw));
@@ -172,7 +181,8 @@ namespace Porchlight.Rendering
                 var j = s.Joint("tail", parent, pos);
                 var d = Back(up + curl * i);
                 float r0 = w * (1 - 0.45f * i / segs), r1 = w * (1 - 0.45f * (i + 1) / segs);
-                s.Loft(j, colors[i % colors.Length], -d * r0 * 0.8f, d * seg, 5, 1, R(0, r0, r0), R(1, r1, r1));
+                s.Loft(j, colors[i % colors.Length], -d * r0 * 0.8f, d * seg, 6, 1, R(0, r0, r0), R(1, r1, r1));
+                if (i > 0) s.Knob(j, colors[i % colors.Length], Vector3.zero, r0 * 1.05f);
                 c.tail.Add(new Creature.Swing { joint = j });
                 parent = j;
                 pos = d * seg;
@@ -211,7 +221,7 @@ namespace Porchlight.Rendering
                     var r = At(TORSO, Mathf.InverseLerp(-q.len / 2, q.len / 2, z - width / 2 + width * f));
                     rings[i] = R(f, r.y * q.w * 1.04f, r.z * q.h * 1.04f, r.w * q.h);
                 }
-                s.Loft(body, color, new Vector3(0, 0, z - width / 2), new Vector3(0, 0, z + width / 2), rings);
+                s.Loft(body, color, new Vector3(0, 0, z - width / 2), new Vector3(0, 0, z + width / 2), ROUND, 1, rings);
             }
         }
 
@@ -302,7 +312,8 @@ namespace Porchlight.Rendering
                 var j = s.Joint("trunk", parent, pos);
                 var d = new Vector3(0, -Mathf.Sin(angles[i] * Mathf.Deg2Rad), Mathf.Cos(angles[i] * Mathf.Deg2Rad));
                 float r0 = 0.075f - 0.009f * i, r1 = r0 - 0.009f, seg = 0.13f;
-                s.Loft(j, grey, -d * r0 * 0.5f, d * seg, 6, 1, R(0, r0, r0), R(1, r1, r1));
+                s.Loft(j, grey, -d * r0 * 0.5f, d * seg, 8, 1, R(0, r0, r0), R(1, r1, r1));
+                if (i > 0) s.Knob(j, grey, Vector3.zero, r0 * 1.02f);
                 c.trunk.Add(new Creature.Swing { joint = j });
                 parent = j;
                 pos = d * seg;
@@ -460,11 +471,11 @@ namespace Porchlight.Rendering
             float bw = 0.2f, bd = 0.18f, bh = 0.32f, legs = 0.09f;
             c.size = bh * 2;
             var body = c.body = s.Joint("body", null, new Vector3(0, legs + bh, 0));
-            s.Loft(body, black, new Vector3(0, -bh, 0), new Vector3(0, bh, 0), 7, 1, R(0, 0.45f * bw, 0.45f * bd), R(0.15f, 0.9f * bw, 0.9f * bd), R(0.45f, bw, bd), R(0.75f, 0.85f * bw, 0.85f * bd), R(1, 0.55f * bw, 0.55f * bd));
+            s.Loft(body, black, new Vector3(0, -bh, 0), new Vector3(0, bh, 0), ROUND, 1, R(0, 0.45f * bw, 0.45f * bd), R(0.15f, 0.9f * bw, 0.9f * bd), R(0.45f, bw, bd), R(0.75f, 0.85f * bw, 0.85f * bd), R(1, 0.55f * bw, 0.55f * bd));
             // The white front (an upright piece's lift is forwards).
-            s.Loft(body, white, new Vector3(0, -bh * 0.92f, 0), new Vector3(0, bh * 0.62f, 0), 7, 1, R(0, 0.4f * bw, 0.4f * bd, 0.04f), R(0.15f, 0.82f * bw, 0.85f * bd, 0.05f), R(0.5f, 0.9f * bw, 0.9f * bd, 0.05f), R(0.85f, 0.7f * bw, 0.75f * bd, 0.04f), R(1, 0.45f * bw, 0.5f * bd, 0.03f));
+            s.Loft(body, white, new Vector3(0, -bh * 0.92f, 0), new Vector3(0, bh * 0.62f, 0), ROUND, 1, R(0, 0.4f * bw, 0.4f * bd, 0.04f), R(0.15f, 0.82f * bw, 0.85f * bd, 0.05f), R(0.5f, 0.9f * bw, 0.9f * bd, 0.05f), R(0.85f, 0.7f * bw, 0.75f * bd, 0.04f), R(1, 0.45f * bw, 0.5f * bd, 0.03f));
             var head = c.head = s.Joint("head", body, new Vector3(0, bh * 0.92f, 0));
-            s.Ball(head, black, new Vector3(0, 0.09f, 0.01f), Vector3.up, 0.24f, 0.14f, 0.14f, 7);
+            s.Ball(head, black, new Vector3(0, 0.09f, 0.01f), Vector3.up, 0.24f, 0.14f, 0.14f, 10);
             foreach (float side in new[] { -1f, 1f })
             {
                 s.Gem(head, white, new Vector3(side * 0.08f, 0.12f, 0.085f), new Vector3(side * 0.6f, 0, 1), 0.035f, 0.032f, 0.03f, 6);
@@ -474,11 +485,13 @@ namespace Porchlight.Rendering
             foreach (float side in new[] { -1f, 1f })
             {
                 var flipper = s.Joint("flipper", body, new Vector3(side * bw * 0.92f, bh * 0.45f, 0), new Vector3(0, 0, side * 8));
+                s.Knob(flipper, black, new Vector3(0, 0.01f, 0), 0.035f);
                 s.Loft(flipper, black, new Vector3(0, 0.03f, 0), new Vector3(0, -0.3f, 0), 6, 1, R(0, 0.02f, 0.05f), R(0.4f, 0.025f, 0.065f), R(1, 0.012f, 0.02f));
                 c.wings.Add(new Creature.Swing { joint = flipper, side = side });
                 var hip = s.Joint("leg", body, new Vector3(side * 0.08f, -bh * 0.9f, 0.01f));
                 float L = hip.position.y;
-                s.Loft(hip, orange, new Vector3(0, 0.03f, 0), new Vector3(0, -L + 0.02f, 0), 5, 1, R(0, 0.03f, 0.03f), R(1, 0.022f, 0.022f));
+                s.Knob(hip, orange, Vector3.zero, 0.034f);
+                s.Loft(hip, orange, new Vector3(0, 0.03f, 0), new Vector3(0, -L + 0.02f, 0), 6, 1, R(0, 0.03f, 0.03f), R(1, 0.022f, 0.022f));
                 s.Loft(hip, orange, new Vector3(0, -L + 0.012f, -0.02f), new Vector3(0, -L + 0.012f, 0.1f), 5, 1, R(0, 0.03f, 0.012f), R(0.7f, 0.055f, 0.012f), R(1, 0.045f, 0.01f));
                 c.legs.Add(new Creature.Leg { hip = hip, walk = side < 0 ? 0 : 0.5f, trot = side < 0 ? 0 : 0.5f, swing = 22, bend = 0, tuck = -10 });
             }
@@ -500,9 +513,9 @@ namespace Porchlight.Rendering
             float w = 0.1f, d = 0.1f, h = 0.16f, legs = 0.1f, lean = 22;
             c.size = h * 2;
             var body = c.body = s.Joint("body", null, new Vector3(0, legs + h, 0), new Vector3(lean, 0, 0));
-            s.Loft(body, red, new Vector3(0, -h, 0), new Vector3(0, h, 0), 7, 1, R(0, 0.4f * w, 0.4f * d), R(0.2f, 0.9f * w, 0.9f * d), R(0.55f, w, d), R(0.85f, 0.8f * w, 0.8f * d), R(1, 0.5f * w, 0.5f * d));
+            s.Loft(body, red, new Vector3(0, -h, 0), new Vector3(0, h, 0), ROUND, 1, R(0, 0.4f * w, 0.4f * d), R(0.2f, 0.9f * w, 0.9f * d), R(0.55f, w, d), R(0.85f, 0.8f * w, 0.8f * d), R(1, 0.5f * w, 0.5f * d));
             var head = c.head = s.Joint("head", body, new Vector3(0, h * 0.95f, 0), new Vector3(-lean, 0, 0));
-            s.Ball(head, red, new Vector3(0, 0.05f, 0.01f), Vector3.up, 0.15f, 0.075f, 0.08f, 7);
+            s.Ball(head, red, new Vector3(0, 0.05f, 0.01f), Vector3.up, 0.15f, 0.075f, 0.08f, 10);
             foreach (float side in new[] { -1f, 1f })
             {
                 s.Gem(head, 0xf2efe6, new Vector3(side * 0.05f, 0.055f, 0.05f), new Vector3(side, 0, 0.8f), 0.025f, 0.035f, 0.03f, 6);
@@ -514,12 +527,14 @@ namespace Porchlight.Rendering
             foreach (float side in new[] { -1f, 1f })
             {
                 var wing = s.Joint("wing", body, new Vector3(side * w * 0.9f, h * 0.55f, -0.01f), new Vector3(0, 0, side * 4));
+                s.Knob(wing, blue, new Vector3(0, 0.01f, 0), 0.026f);
                 s.Loft(wing, blue, new Vector3(0, 0.02f, 0), new Vector3(0, -0.24f, -0.03f), 6, 1, R(0, 0.022f, 0.05f), R(0.45f, 0.026f, 0.068f), R(1, 0.01f, 0.022f));
                 s.Loft(wing, yellow, new Vector3(0, 0.025f, 0), new Vector3(0, -0.09f, -0.01f), 6, 1, R(0, 0.026f, 0.054f), R(1, 0.03f, 0.068f));
                 c.wings.Add(new Creature.Swing { joint = wing, side = side });
                 var hip = s.Joint("leg", body, new Vector3(side * 0.04f, -h * 0.85f, 0.02f), new Vector3(-lean, 0, 0));
                 float L = hip.position.y;
-                s.Loft(hip, grey, new Vector3(0, 0.02f, 0), new Vector3(0, -L + 0.012f, 0), 5, 1, R(0, 0.016f, 0.016f), R(1, 0.012f, 0.012f));
+                s.Knob(hip, grey, Vector3.zero, 0.018f);
+                s.Loft(hip, grey, new Vector3(0, 0.02f, 0), new Vector3(0, -L + 0.012f, 0), 6, 1, R(0, 0.016f, 0.016f), R(1, 0.012f, 0.012f));
                 s.Loft(hip, grey, new Vector3(0, -L + 0.008f, -0.025f), new Vector3(0, -L + 0.008f, 0.05f), 5, 1, R(0, 0.012f, 0.008f), R(0.6f, 0.03f, 0.008f), R(1, 0.022f, 0.006f));
                 c.legs.Add(new Creature.Leg { hip = hip, walk = side < 0 ? 0 : 0.5f, trot = side < 0 ? 0 : 0.5f, swing = 20, bend = 0, tuck = 20 });
             }

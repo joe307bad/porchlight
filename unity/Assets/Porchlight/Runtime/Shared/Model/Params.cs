@@ -44,6 +44,14 @@ namespace Porchlight.Model
         public double frontSetback = 0;
         /// <summary>Within this share of the town radius buildings stand right on the sidewalk, setback or not.</summary>
         public double innerCity = 0.5;
+        /// <summary>Within this share of the town radius is the city centre: shops, and offices and towers among them (1: the whole town).</summary>
+        public double downtown = 0.3;
+        /// <summary>How many floors the tallest towers in the middle of the centre reach.</summary>
+        public double towerFloors = 5;
+        /// <summary>The share of the centre's buildings that are shops, offices and towers (the rest, houses); 1 for towers only.</summary>
+        public double towerShare = 0.6;
+        /// <summary>The share of the centre's lots left open as green courtyards among the towers.</summary>
+        public double courtyards = 0;
         // yards
         public double driveways = 0.6;
         public double gardens = 0.5;
@@ -82,6 +90,10 @@ namespace Porchlight.Model
                 "maxBuildingSize" => maxBuildingSize,
                 "frontSetback" => frontSetback,
                 "innerCity" => innerCity,
+                "downtown" => downtown,
+                "towerFloors" => towerFloors,
+                "towerShare" => towerShare,
+                "courtyards" => courtyards,
                 "driveways" => driveways,
                 "gardens" => gardens,
                 _ => throw new ArgumentException("unknown param " + key),
@@ -116,6 +128,10 @@ namespace Porchlight.Model
                     case "maxBuildingSize": maxBuildingSize = value; break;
                     case "frontSetback": frontSetback = value; break;
                     case "innerCity": innerCity = value; break;
+                    case "downtown": downtown = value; break;
+                    case "towerFloors": towerFloors = value; break;
+                    case "towerShare": towerShare = value; break;
+                    case "courtyards": courtyards = value; break;
                     case "driveways": driveways = value; break;
                     case "gardens": gardens = value; break;
                     default: throw new ArgumentException("unknown param " + key);
@@ -194,6 +210,10 @@ namespace Porchlight.Model
             S("maxBuildingSize", "Max building size", "Lots & buildings", 2, 12, 1),
             S("frontSetback", "Front setback", "Lots & buildings", 0, 3, 1),
             S("innerCity", "Inner city (no setback)", "Lots & buildings", 0, 1, 0.05),
+            S("downtown", "City centre", "Lots & buildings", 0.1, 1, 0.05),
+            S("towerFloors", "Tallest towers (floors)", "Lots & buildings", 5, 16, 1),
+            S("towerShare", "Towers in the centre", "Lots & buildings", 0, 1, 0.05),
+            S("courtyards", "Courtyards in the centre", "Lots & buildings", 0, 0.6, 0.05),
             S("driveways", "Driveways", "Yards", 0, 1, 0.01),
             S("gardens", "Gardens", "Yards", 0, 1, 0.01),
         };

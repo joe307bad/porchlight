@@ -243,7 +243,7 @@ test('the chase plays through, caught once and then free, against a stand-in tow
   assert.equal(town.chases.size, 0);
   assert.equal(town.clock, false);
   assert.equal(town.log.filter((l) => l.startsWith('put_you(zoo, inside)')).length, 2);
-  assert.ok(lines.some((l) => l.startsWith('A whole minute on the loose, and caught 1 time')), lines.join('\n'));
+  assert.ok(lines.some((l) => l.startsWith('You stayed free for a whole minute, even though you got caught once')), lines.join('\n'));
   // Police waiting all over town from the start, and the animals yours at the end.
   assert.ok(town.standing.has('police'));
   assert.deepEqual(town.unlocked, ['animals']);
