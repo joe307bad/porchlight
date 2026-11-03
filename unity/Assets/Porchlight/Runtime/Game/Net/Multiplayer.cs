@@ -131,6 +131,10 @@ namespace Porchlight.App
         public readonly Character character;
         public Action<NetStatus> onStatus;
         NetStatus status = NetStatus.Joining;
+        /// <summary>What the character has unlocked: the server's (once joined), and any earned here since.</summary>
+        public readonly HashSet<string> unlocks = new HashSet<string>();
+        /// <summary>Told when the server says what's unlocked (on joining).</summary>
+        public Action onUnlocks;
 
         public Multiplayer(INetHost host, Character character, string origin, INetPlatform platform, Timers timers)
         {
@@ -193,6 +197,14 @@ namespace Porchlight.App
 
         /// <summary>A new look for the character (it's saved with them).</summary>
         public void LookChanged(string model) => room?.Send(Protocol.MSG_LOOK, new Dictionary<string, object> { ["model"] = model });
+
+        /// <summary>Earned: kept with the character (sent now, or once joined, if we're not).</summary>
+        public void Unlock(string what)
+        {
+            if (unlocks.Add(what) && spawned) SendUnlock(what);
+        }
+
+        void SendUnlock(string what) => room?.Send(Protocol.MSG_UNLOCK, new Dictionary<string, object> { ["what"] = what });
 
         void Disconnect()
         {
@@ -284,6 +296,13 @@ namespace Porchlight.App
                     if (d.TryGetValue("at", out var a) && a is Dictionary<string, object> ad)
                         at = new[] { MsgPack.Num(ad["x"]), MsgPack.Num(ad["z"]), MsgPack.Num(ad["yaw"]) };
                     if (d.TryGetValue("look", out var l)) look = l as string;
+                    // What the server has, and (sent again) anything earned here it hasn't yet.
+                    var kept = new HashSet<string>();
+                    if (d.TryGetValue("unlocks", out var u) && u is List<object> list)
+                        foreach (var what in list) if (what is string s) kept.Add(s);
+                    foreach (var what in unlocks) if (!kept.Contains(what)) SendUnlock(what);
+                    unlocks.UnionWith(kept);
+                    onUnlocks?.Invoke();
                 }
                 // Back in a town we were already playing (after a dropped connection, or
                 // the server restarting): stay where we are, car and all, rather than

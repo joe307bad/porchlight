@@ -43,6 +43,14 @@ test('characters, saves guarded by version, sessions', { skip }, async () => {
   assert.deepEqual([k?.town, k?.x, k?.z, k?.look, k?.version], ['seed=t', 5, 6, 'characters/character-female-b', 2]);
   assert.equal((await p.loadState(dad.id))?.look, 'characters/character-male-c');
 
+  // Unlocks are kept once each, and a save leaves them be.
+  assert.deepEqual(k?.unlocks, []);
+  await p.unlock(kid.id, 'animals');
+  await p.unlock(kid.id, 'animals');
+  await p.save([{ ...base, characterId: kid.id, x: 5, z: 6, version: 3 }]);
+  assert.deepEqual((await p.loadState(kid.id))?.unlocks, ['animals']);
+  assert.deepEqual((await p.loadState(dad.id))?.unlocks, []);
+
   const s = await p.openSession(kid.id, 'room1');
   await p.closeSession(s, kid.id, 'consented', 42);
   await p.closeSession(s, kid.id, 'timeout', 42); // already closed: no double count

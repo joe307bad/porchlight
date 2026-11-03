@@ -24,16 +24,41 @@ namespace Porchlight.Explore
             public double Length => at[at.Count - 1];
         }
 
+        /// <summary>A town's roads made ready to find ways over: how far along each its points are, and which meet at each junction.</summary>
+        sealed class Net
+        {
+            public readonly List<Road> roads = new List<Road>();
+            public readonly Dictionary<int, List<int>> byNode = new Dictionary<int, List<int>>();
+
+            public Net(IReadOnlyList<RoadStroke> strokes)
+            {
+                foreach (var r in strokes)
+                {
+                    var at = new List<double> { 0 };
+                    for (int k = 1; k < r.points.Count; k++) at.Add(at[k - 1] + Geo.Dist(r.points[k], r.points[k - 1]));
+                    roads.Add(new Road { stroke = r, at = at });
+                }
+                for (int i = 0; i < roads.Count; i++)
+                {
+                    if (roads[i].stroke.kind == RoadKind.Path || roads[i].Length <= 1e-6) continue;
+                    foreach (int n in new[] { roads[i].stroke.from, roads[i].stroke.to })
+                    {
+                        if (!byNode.TryGetValue(n, out var list)) byNode[n] = list = new List<int>();
+                        list.Add(i);
+                    }
+                }
+            }
+        }
+
+        /// <summary>Each town's roads, made ready once (a chase's cars ask for ways many times a second).</summary>
+        static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<RoadStroke>, Net> nets =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<RoadStroke>, Net>();
+
         /// <summary>The way from `from` to `to` over these roads (footpaths left out); null if there are no streets.</summary>
         public static StreetRoute Between(IReadOnlyList<RoadStroke> strokes, Vec2 from, Vec2 to)
         {
-            var roads = new List<Road>();
-            foreach (var r in strokes)
-            {
-                var at = new List<double> { 0 };
-                for (int k = 1; k < r.points.Count; k++) at.Add(at[k - 1] + Geo.Dist(r.points[k], r.points[k - 1]));
-                roads.Add(new Road { stroke = r, at = at });
-            }
+            var net = nets.GetValue(strokes, s => new Net(s));
+            var roads = net.roads;
             bool Usable(int i) => roads[i].stroke.kind != RoadKind.Path && roads[i].Length > 1e-6;
             int Nearest(Vec2 q)
             {
@@ -61,27 +86,18 @@ namespace Porchlight.Explore
             if (ra == rb) legs.Add((ra, sa, sb));
             else
             {
-                var byNode = new Dictionary<int, List<int>>();
-                for (int i = 0; i < roads.Count; i++)
-                {
-                    if (!Usable(i)) continue;
-                    foreach (int n in new[] { roads[i].stroke.from, roads[i].stroke.to })
-                    {
-                        if (!byNode.TryGetValue(n, out var list)) byNode[n] = list = new List<int>();
-                        list.Add(i);
-                    }
-                }
+                var byNode = net.byNode;
                 var cost = new Dictionary<int, double>();
                 var via = new Dictionary<int, int>();
                 var heap = new MinHeap();
                 var ids = new List<int>();
+                var idOf = new Dictionary<int, int>();
                 int Id(int node)
                 {
-                    int k = ids.IndexOf(node);
-                    if (k < 0)
+                    if (!idOf.TryGetValue(node, out int k))
                     {
                         ids.Add(node);
-                        k = ids.Count - 1;
+                        idOf[node] = k = ids.Count - 1;
                     }
                     return k;
                 }

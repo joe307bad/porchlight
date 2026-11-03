@@ -122,6 +122,10 @@ namespace Porchlight.App
             public Avatar officer;
             public Walker walker;
             public Duty duty;
+            /// <summary>Got ready ahead of its chase (standby): where it waits, and goes back to when it's called off.</summary>
+            public Vehicle.Spot? home;
+            /// <summary>Its side of you (radians): from far off, it makes for that point of a ring round you.</summary>
+            public double side;
         }
 
         sealed class Pursuit
@@ -172,11 +176,20 @@ namespace Porchlight.App
             ["pull_up"] = 1.6,
             ["officer_speed"] = 3.0,
             ["officer_reach"] = 5.0,
+            // From further off than this ring round you (tiles), a chase's cars each make for their own
+            // side of it, so they close in from all round; 0 sends them straight at you.
+            ["ring"] = 4.5,
             // How close an officer must stand (tiles from you), and for how long (seconds), to have you.
             ["catch_reach"] = 0.45,
             ["catch_time"] = 1.0,
         };
         readonly Dictionary<string, Pursuit> chases = new Dictionary<string, Pursuit>();
+        /// <summary>Each chase's cars got ready ahead of it (standby), waiting across the town.</summary>
+        readonly Dictionary<string, List<Cop>> standing = new Dictionary<string, List<Cop>>();
+        /// <summary>Where a chase's cars may cut across the town (built once, with its first car).</summary>
+        DriveGrid grid;
+        /// <summary>The story's unlock (Catalog.UNLOCKS): the app keeps it.</summary>
+        public Action<string> OnUnlock;
         Clock clock;
         readonly Palette palette = new Palette();
         static Material spotMaterial, beaconMaterial, redMaterial, blueMaterial;
@@ -241,6 +254,8 @@ namespace Porchlight.App
             roles.Clear();
             foreach (var c in chases.Values) CallOff(c);
             chases.Clear();
+            foreach (var cop in standing.Values.SelectMany(l => l)) DisposeCop(cop);
+            standing.Clear();
             clock = null;
             view.Obstacles.Clear();
             view.LookOverride = null;
@@ -535,12 +550,16 @@ namespace Porchlight.App
             if (model < 0 || !Catalog.IsCar(model)) throw new Exception($"no such car '{car}' (cars/police, cars/sedan, ...)");
             if (string.IsNullOrEmpty(look)) look = Catalog.RandomLook(rng);
             else if (!Catalog.IsLook(look)) throw new Exception($"no such look '{look}'");
-            if (count < 1 || count > 8) throw new Exception("a chase is 1 to 8 cars");
+            standing.TryGetValue(role, out var ready);
+            if (count < (ready != null ? 0 : 1) || count > 8) throw new Exception(ready != null ? "a chase is 0 to 8 cars besides its standby" : "a chase is 1 to 8 cars");
             var you = view.PlayerPosition ?? throw new Exception("you're not in the town");
             if (chases.TryGetValue(role, out var old)) CallOff(old);
             var c = new Pursuit { name = string.IsNullOrEmpty(name) ? "Someone" : name };
             chases[role] = c;
+            // Those waiting across the town set off, and some more from nearby.
+            if (ready != null) c.cops.AddRange(ready);
             var busy = view.CarsAbout();
+            foreach (var cop in c.cops) busy.Add(new Vec2(cop.chaser.car.x, cop.chaser.car.y));
             for (int i = 0; i < count; i++)
             {
                 var spot = StartFor(you, busy);
@@ -549,7 +568,52 @@ namespace Porchlight.App
                 c.cops.Add(NewCop(model, spot.Value, look));
             }
             if (c.cops.Count == 0) throw new Exception("no street near you for a chase to start from");
+            // Each to its own side of you, the way round they come from, evenly spaced: a ring closing in.
+            var round = c.cops.OrderBy(o => DetMath.Atan2(o.chaser.car.y - you.y, o.chaser.car.x - you.x)).ToList();
+            double first = DetMath.Atan2(round[0].chaser.car.y - you.y, round[0].chaser.car.x - you.x);
+            for (int i = 0; i < round.Count; i++) round[i].side = first + i * Math.PI * 2 / round.Count;
             return c.name;
+        }
+
+        public void Standby(string role, int count, string car, string look)
+        {
+            if (string.IsNullOrEmpty(role)) throw new Exception("a standby needs a chase's role");
+            if (roles.ContainsKey(role)) throw new Exception($"'{role}' is already a building's role");
+            int model = Array.IndexOf(Catalog.CARS, car ?? "");
+            if (model < 0 || !Catalog.IsCar(model)) throw new Exception($"no such car '{car}' (cars/police, cars/sedan, ...)");
+            if (string.IsNullOrEmpty(look)) look = Catalog.RandomLook(rng);
+            else if (!Catalog.IsLook(look)) throw new Exception($"no such look '{look}'");
+            if (count < 1 || count > 24) throw new Exception("a standby is 1 to 24 cars");
+            if (standing.TryGetValue(role, out var old))
+                foreach (var cop in old) DisposeCop(cop);
+            var you = view.PlayerPosition ?? view.world.model.spawn;
+            var ready = new List<Cop>();
+            standing[role] = ready;
+            foreach (var spot in Chaser.Spread(you, count, view.world.layout.roads, view.CanDriveAt, view.CarsAbout(), rng))
+            {
+                var cop = NewCop(model, spot, look);
+                cop.home = spot;
+                Quiet(cop);
+                ready.Add(cop);
+            }
+            if (ready.Count == 0) throw new Exception("no streets in this town to wait on");
+        }
+
+        /// <summary>A car waiting (on standby): parked, its officer in it, its light bar dark.</summary>
+        void Quiet(Cop cop)
+        {
+            if (cop.home != null) cop.chaser.Restart(cop.home.Value);
+            cop.duty = Duty.Driving;
+            cop.officer.Visible = false;
+            PlaceCop(cop);
+            Materials.SetGlow(cop.siren[0], SirenRed, 0);
+            Materials.SetGlow(cop.siren[1], SirenBlue, 0);
+        }
+
+        public void Unlock(string what)
+        {
+            if (Array.IndexOf(Catalog.UNLOCKS, what) < 0) throw new Exception($"nothing to unlock called '{what}' ({string.Join(", ", Catalog.UNLOCKS)})");
+            OnUnlock?.Invoke(what);
         }
 
         /// <summary>Somewhere for a chase's car to start (or start again): in a parking lane out of the way, else nearer, else further.</summary>
@@ -565,7 +629,7 @@ namespace Porchlight.App
             var m = library.Get(Catalog.CARS[model]);
             var cop = new Cop
             {
-                chaser = new Chaser(new Vehicle(model, at.x, at.y, at.heading)),
+                chaser = new Chaser(new Vehicle(model, at.x, at.y, at.heading)) { grid = grid ??= new DriveGrid(view.world.model.width, view.world.model.height, view.CanDriveAt) },
                 view = new CarView(m, view.world.root.transform) { model = model },
                 officer = new Avatar(library.Character(look), Avatar.HeightOf(look), rng.Next(), view.world.root.transform),
                 walker = new Walker(look, at.x, at.y),
@@ -603,13 +667,18 @@ namespace Porchlight.App
         /// <summary>The chase is over: its cars and who was in them go (their name still voices the role's lines).</summary>
         void CallOff(Pursuit c)
         {
+            // Those that were waiting go back to wait; the rest go.
             foreach (var cop in c.cops)
-            {
-                cop.view.Dispose();
-                cop.officer.Dispose();
-            }
+                if (cop.home != null) Quiet(cop);
+                else DisposeCop(cop);
             c.cops.Clear();
             c.caught = 0;
+        }
+
+        static void DisposeCop(Cop cop)
+        {
+            cop.view.Dispose();
+            cop.officer.Dispose();
         }
 
         public void Countdown(double seconds, string label, string when, string role)
@@ -1123,7 +1192,6 @@ namespace Porchlight.App
                 foreach (var cop in c.cops)
                 {
                     var car = cop.chaser.car;
-                    cop.chaser.pullUp = S("pull_up");
                     // They wait while you read, as you do.
                     if (!still) OnDuty(cop, you.Value, yours, grounded, top, dt, roads);
                     if (cop.duty == Duty.Driving && cop.chaser.Lost)
@@ -1160,7 +1228,13 @@ namespace Porchlight.App
             switch (cop.duty)
             {
                 case Duty.Driving:
-                    cop.chaser.Step(you, top, dt, roads, view.CanDriveAt);
+                    // From far off, to its side of the ring round you; closer, straight at you.
+                    double ring = S("ring");
+                    bool wide = ring > 0 && Geo.Dist(new Vec2(car.x, car.y), you) > ring + 3;
+                    var aim = wide ? new Vec2(you.x + Math.Cos(cop.side) * ring, you.y + Math.Sin(cop.side) * ring) : you;
+                    // It pulls up by you, never at its point of the ring.
+                    cop.chaser.pullUp = wide ? 0 : S("pull_up");
+                    cop.chaser.Step(aim, top, dt, roads, view.CanDriveAt);
                     if (cop.chaser.PulledUp && grounded)
                     {
                         var door = DoorOf(car);

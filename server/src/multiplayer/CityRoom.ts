@@ -39,7 +39,10 @@ import {
   MSG_SPAWN,
   MSG_TAKE,
   MSG_TELEPORT,
+  MSG_UNLOCK,
   MSG_WORLD,
+  UNLOCKS,
+  lookAllowed,
   SEND_MS,
   WORLD_MAX_BYTES,
   WORLD_PER_SECOND,
@@ -106,6 +109,8 @@ interface PlayerRuntime {
   savedChange: number;
   version: number;
   lookTimer: ReturnType<typeof setTimeout> | null;
+  /** What they've unlocked (UNLOCKS). */
+  unlocks: string[];
   /** Saved and signed off (left, timed out, kicked, shut down): nothing more to do. */
   finished: boolean;
 }
@@ -192,7 +197,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     this.onMessage(MSG_LOOK, (client, raw: unknown) => {
       const rt = this.admit(client);
       const look = cleanLook((raw as { model?: unknown } | null)?.model);
-      if (!rt || !look || look === rt.player.appearance) return;
+      if (!rt || !look || look === rt.player.appearance || !lookAllowed(look, rt.unlocks)) return;
       rt.player.appearance = look;
       rt.change++;
       // Debounced: someone flicking through characters is saved once they settle.
@@ -201,6 +206,13 @@ export class CityRoom extends Room<{ state: CityState }> {
         rt.lookTimer = null;
         if (!rt.finished) void this.save([rt]);
       }, LOOK_SAVE_DELAY_MS);
+    });
+    this.onMessage(MSG_UNLOCK, (client, raw: unknown) => {
+      const rt = this.admit(client);
+      const what = (raw as { what?: unknown } | null)?.what;
+      if (!rt || typeof what !== 'string' || !UNLOCKS.includes(what) || rt.unlocks.includes(what)) return;
+      rt.unlocks.push(what);
+      this.deps.persistence.unlock(rt.characterId, what).catch((err: Error) => console.error(`city: couldn't keep ${rt.characterId}'s unlock ${what}:`, err.message));
     });
 
     this.onMessage(MSG_NIGHT, (client, raw: unknown) => {
@@ -283,7 +295,9 @@ export class CityRoom extends Room<{ state: CityState }> {
       const player = new Player();
       player.id = auth.characterId;
       player.name = auth.name;
-      player.appearance = saved?.look ?? auth.look ?? '';
+      const unlocks = (saved?.unlocks ?? []).filter((u) => UNLOCKS.includes(u));
+      const look = saved?.look ?? auth.look ?? '';
+      player.appearance = look && lookAllowed(look, unlocks) ? look : '';
       let at: SpawnMessage['at'] = null;
       if (saved && saved.town === this.town && saved.x > 0 && saved.x < this.bounds.width && saved.z > 0 && saved.z < this.bounds.height) {
         at = { x: saved.x, z: saved.z, yaw: saved.rotY };
@@ -313,11 +327,12 @@ export class CityRoom extends Room<{ state: CityState }> {
         savedChange: 0,
         version: saved?.version ?? 0,
         lookTimer: null,
+        unlocks,
         finished: false,
       });
       // Nobody sees them (and they're on no one's minimap) until their first
       // move says where they are: the client checks the spot against the town.
-      client.send(MSG_SPAWN, { at, look: player.appearance || null } satisfies SpawnMessage);
+      client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
     } catch (err) {
       if (online.get(auth.characterId)?.sessionId === client.sessionId) online.delete(auth.characterId);
       this.state.players.delete(client.sessionId);

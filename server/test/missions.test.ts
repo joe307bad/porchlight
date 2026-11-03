@@ -24,12 +24,12 @@ test('every mission in server/missions compiles, with a title and a summary', as
 const BLOCKS = [
   'objective', 'hint', 'clear_hints', 'setting', 'place', 'spawn', 'walk', 'pause', 'hold',
   'put_in_car', 'take_from_car', 'put_down', 'leave', 'mark_spot', 'clear_spot', 'guide',
-  'dot', 'look', 'put_you', 'chase', 'countdown',
+  'dot', 'look', 'put_you', 'chase', 'countdown', 'standby', 'unlock',
 ];
 const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'countdown', 'wait'];
 const SETTINGS = [
   'talk_reach', 'talk_reach_car', 'park_reach', 'park_speed', 'park_angle', 'car_reach', 'walk_speed',
-  'your_pace', 'chase_speed', 'chase_speed_car', 'pull_up', 'officer_speed', 'officer_reach', 'catch_reach', 'catch_time',
+  'your_pace', 'chase_speed', 'chase_speed_car', 'pull_up', 'officer_speed', 'officer_reach', 'ring', 'catch_reach', 'catch_time',
 ];
 // What a person (or you) can look like: the game's characters and animals.
 const LOOKS = /^(people\/(character-[\w-]+|policeman-a-4-1)|animals\/animal-(penguin|lion|tiger|elephant|giraffe|panda|polar|monkey|koala|parrot))$/;
@@ -41,7 +41,8 @@ function standInTown(story: InstanceType<typeof Story>) {
   const marked = new Set<string>();
   const holding = new Set<string>();
   const chases = new Set<string>();
-  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, look: '', clock: false };
+  const standing = new Set<string>();
+  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, unlocked: [] as string[], look: '', clock: false };
   const oneOf = (what: string, value: string, known: string[]) => {
     if (!known.includes(value)) throw new Error(`no such ${what} '${value}' (${known.join(', ')})`);
   };
@@ -135,12 +136,23 @@ function standInTown(story: InstanceType<typeof Story>) {
   });
   bind('chase', (role: string, name: string, count: number, car: string, look: string) => {
     assert.ok(role && !placed.has(role), `a chase needs a role that isn't a building's`);
-    assert.ok(count >= 1 && count <= 8, 'a chase is 1 to 8 cars');
+    assert.ok(count >= (standing.has(role) ? 0 : 1) && count <= 8, 'a chase is 1 to 8 cars (0 with a standby)');
     assert.match(car, /^cars\//, `no such car '${car}'`);
     assert.ok(look === '' || LOOKS.test(look), `no such look '${look}'`);
     chases.add(role);
     town.names.set(role, name);
     return name;
+  });
+  bind('standby', (role: string, count: number, car: string, look: string) => {
+    assert.ok(role && !placed.has(role), `a standby needs a role that isn't a building's`);
+    assert.ok(count >= 1 && count <= 24, 'a standby is 1 to 24 cars');
+    assert.match(car, /^cars\//, `no such car '${car}'`);
+    assert.ok(look === '' || LOOKS.test(look), `no such look '${look}'`);
+    standing.add(role);
+  });
+  bind('unlock', (what: string) => {
+    oneOf('unlock', what, ['animals']);
+    town.unlocked.push(what);
   });
   bind('countdown', (seconds: number, _label: string, when: string, role: string) => {
     town.clock = seconds > 0;
@@ -232,6 +244,9 @@ test('the chase plays through, caught once and then free, against a stand-in tow
   assert.equal(town.clock, false);
   assert.equal(town.log.filter((l) => l.startsWith('put_you(zoo, inside)')).length, 2);
   assert.ok(lines.some((l) => l.startsWith('A whole minute on the loose, and caught 1 time')), lines.join('\n'));
+  // Police waiting all over town from the start, and the animals yours at the end.
+  assert.ok(town.standing.has('police'));
+  assert.deepEqual(town.unlocked, ['animals']);
 });
 
 test('a broken mission is listed with its errors, and not served', async () => {

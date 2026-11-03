@@ -116,8 +116,23 @@ namespace Porchlight.Explore
             return i < 0 ? 0 : ANIMAL_TABLE[i].pace;
         }
 
+        /// <summary>An animal's name as the character menu says it ("Polar bear").</summary>
+        public static string AnimalName(string look)
+        {
+            int i = System.Array.IndexOf(ANIMALS, look);
+            if (i < 0) return look;
+            string n = ANIMAL_TABLE[i].name == "polar" ? "polar bear" : ANIMAL_TABLE[i].name;
+            return char.ToUpper(n[0]) + n.Substring(1);
+        }
+
         /// <summary>Anything a person or animal can look like: a character or an animal.</summary>
         public static bool IsLook(string look) => IsCharacter(look) || IsAnimal(look);
+
+        /// <summary>
+        /// What a character can unlock (a mission's unlock; the server keeps them): `animals`,
+        /// to be one of the zoo's animals (the character menu offers them after the people).
+        /// </summary>
+        public static readonly string[] UNLOCKS = { "animals" };
 
         static string[] Nature(params string[] names) => names.Select(n => $"nature/{n}").ToArray();
 

@@ -19,6 +19,8 @@ namespace Porchlight.Net
         public const string MSG_CAR = "car";
         /// <summary>The host's traffic and townsfolk; the room passes it on to everyone else.</summary>
         public const string MSG_WORLD = "world";
+        /// <summary>{ what }: something earned (a mission finished), kept with the character.</summary>
+        public const string MSG_UNLOCK = "unlock";
 
         public const string MSG_SPAWN = "spawn";
         public const string MSG_CORRECT = "correct";

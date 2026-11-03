@@ -34,6 +34,8 @@ export interface SavedState {
   rotY: number;
   look: string | null;
   version: number;
+  /** What they've unlocked (protocol UNLOCKS), in the order they did. */
+  unlocks: string[];
 }
 
 /** One character's saveable state at a moment. */
@@ -88,6 +90,8 @@ export interface Persistence {
   character(accountId: string, characterId: string): Promise<CharacterInfo | null>;
   loadState(characterId: string): Promise<SavedState | null>;
   save(rows: Snapshot[]): Promise<void>;
+  /** Keep that the character has unlocked `what` (once). */
+  unlock(characterId: string, what: string): Promise<void>;
   openSession(characterId: string, roomId: string): Promise<string>;
   closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number): Promise<void>;
   close(): Promise<void>;
@@ -101,6 +105,8 @@ export const MIGRATIONS = fileURLToPath(new URL('../../drizzle', import.meta.url
 
 /** A character's look, read out of the appearance JSON. */
 const lookOf = sql<string | null>`${characterState.appearance}->>'look'`;
+/** A character's unlocks, out of the stats JSON. */
+const unlocksOf = sql`coalesce(${characterState.stats}->'unlocks', '[]'::jsonb)`;
 
 export class PgPersistence implements Persistence {
   ready = false;
@@ -208,10 +214,18 @@ export class PgPersistence implements Persistence {
         rotY: characterState.rotY,
         look: lookOf,
         version: characterState.version,
+        unlocks: sql<string[]>`${unlocksOf}`,
       })
       .from(characterState)
       .where(eq(characterState.characterId, characterId));
     return r ?? null;
+  }
+
+  async unlock(characterId: string, what: string): Promise<void> {
+    await this.db
+      .update(characterState)
+      .set({ stats: sql`jsonb_set(${characterState.stats}, '{unlocks}', ${unlocksOf} || to_jsonb(${what}::text))` })
+      .where(and(eq(characterState.characterId, characterId), sql`not (${unlocksOf} ? ${what})`));
   }
 
   /** One statement for the lot; rows whose stored version is newer are left alone. */
@@ -309,7 +323,7 @@ export class MemoryPersistence implements Persistence {
     if (mine.some((c) => c.name === name)) throw new CharacterError(`You already have a character called ${name}.`, 409);
     const id = crypto.randomUUID();
     this.characters.set(id, { id, accountId, name });
-    this.states.set(id, { town: '', x: 0, y: 0, z: 0, rotY: 0, look, version: 0, playSeconds: 0 });
+    this.states.set(id, { town: '', x: 0, y: 0, z: 0, rotY: 0, look, version: 0, playSeconds: 0, unlocks: [] });
     return { id, name, look };
   }
 
@@ -332,7 +346,7 @@ export class MemoryPersistence implements Persistence {
   async loadState(characterId: string): Promise<SavedState | null> {
     this.check();
     const s = this.states.get(characterId);
-    return s ? { ...s } : null;
+    return s ? { ...s, unlocks: [...s.unlocks] } : null;
   }
 
   async save(rows: Snapshot[]): Promise<void> {
@@ -349,8 +363,15 @@ export class MemoryPersistence implements Persistence {
         look: r.look || s?.look || null,
         version: r.version,
         playSeconds: s?.playSeconds ?? 0,
+        unlocks: s?.unlocks ?? [],
       });
     }
+  }
+
+  async unlock(characterId: string, what: string): Promise<void> {
+    this.check();
+    const s = this.states.get(characterId);
+    if (s && !s.unlocks.includes(what)) s.unlocks = [...s.unlocks, what];
   }
 
   async openSession(characterId: string): Promise<string> {

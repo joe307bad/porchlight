@@ -12,6 +12,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { SESSION_COOKIE, type SessionPayload } from '../app.ts';
 import { parseCookies, unseal } from '../cookies.ts';
 import { CharacterError, cleanLook, cleanName, type Persistence } from './persistence.ts';
+import { lookAllowed } from './protocol.ts';
 
 export interface GameDeps {
   persistence: Persistence;
@@ -83,7 +84,9 @@ export function createCharacterRoutes(deps: GameDeps) {
         const body = (await readJson(req)) as { name?: unknown; look?: unknown };
         const name = cleanName(body.name);
         if (!name) throw new CharacterError('Names are 1 to 20 characters.');
-        const created = await deps.persistence.createCharacter(account.id, name, cleanLook(body.look));
+        // A new character has unlocked nothing: no animals yet.
+        const look = cleanLook(body.look);
+        const created = await deps.persistence.createCharacter(account.id, name, look && lookAllowed(look, []) ? look : null);
         return send(201, created);
       }
       if (req.method === 'DELETE' && path.startsWith(`${PREFIX}/`)) {

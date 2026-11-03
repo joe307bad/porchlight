@@ -277,7 +277,17 @@ namespace Porchlight.App
             iso?.SetAuto(false);
             var story = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_MISSION");
             if (!string.IsNullOrEmpty(story)) await SmokeMission(System.IO.File.ReadAllText(story));
-            LeaveExplore();
+            // The animals unlocked: offered in the character box, and one to be.
+            Unlock("animals");
+            ChooseLook();
+            for (int i = 0; i < 30; i++) await Task.Yield();
+            overlay.CloseChooser();
+            foreach (var animal in new[] { "animals/animal-penguin", "animals/animal-giraffe" })
+            {
+                iso.ChangeLook(animal);
+                for (int i = 0; i < 10; i++) await Task.Yield();
+                Debug.Log($"smoke: character box with {Catalog.CHARACTERS.Length + (Unlocks.Contains("animals") ? Catalog.ANIMALS.Length : 0)} to choose from; now {iso.LookModel}");
+            }
             Regenerate(RandomSeed(), @params);
             Debug.Log($"smoke: regenerated {seed}: {statusLabel.text}");
             Debug.Log("smoke: done");
@@ -286,15 +296,40 @@ namespace Porchlight.App
 
         /// <summary>
         /// The smoke run plays a mission too (PORCHLIGHT_SMOKE_MISSION: a story as the server
-        /// compiles it, the chase): out of the zoo, caught by the police and put back, out again.
+        /// compiles it, the chase): out of the zoo, running about till the police catch you and
+        /// put you back, out again, and out in a car; with how smoothly it ran meanwhile.
         /// </summary>
         async Task SmokeMission(string story)
         {
+            // The longest frame, and how many were long (a hitch you'd see), while it plays.
+            float worst = 0;
+            int long_ = 0, frames = 0;
+            // And how far you went meanwhile.
+            double moved = 0;
+            Vec2? was = null;
+            string Frames()
+            {
+                string said = $"frames: {frames}, the longest {worst * 1000:0} ms, {long_} over 50 ms; you went {moved:0} tiles";
+                worst = 0;
+                long_ = frames = 0;
+                moved = 0;
+                was = null;
+                return said;
+            }
             async Task<bool> Until(Func<bool> met, double seconds)
             {
                 double end = platform.Now() + seconds * 1000;
                 while (platform.Now() < end && mission != null)
                 {
+                    frames++;
+                    worst = Math.Max(worst, Time.unscaledDeltaTime);
+                    if (Time.unscaledDeltaTime > 0.05f) long_++;
+                    if (iso.PlayerPosition is Vec2 now)
+                    {
+                        // (Put back in the zoo isn't going anywhere.)
+                        if (was is Vec2 before && Geo.Dist(before, now) < 1) moved += Geo.Dist(before, now);
+                        was = now;
+                    }
                     // Reading on at once, as a player pressing Enter would.
                     if (mission.script.Line != null) mission.script.Advance();
                     if (met()) return true;
@@ -310,24 +345,41 @@ namespace Porchlight.App
                 Debug.Log("smoke: mission: no zoo in this town");
                 return;
             }
-            mission = new MissionPlay("smoke", "Smoke", story, iso, ModelLibrary.Instance, input);
+            double began = platform.Now();
+            mission = new MissionPlay("smoke", "Smoke", story, iso, ModelLibrary.Instance, input) { OnUnlock = what => Debug.Log($"smoke: mission: unlocked {what}") };
             bool ok = await Until(() => Objective().StartsWith("Get out"), 5);
-            Debug.Log($"smoke: mission: '{Objective()}' ok={ok} in zoo={InZoo()} look={iso.LookOverride}");
+            Debug.Log($"smoke: mission: '{Objective()}' ok={ok} in zoo={InZoo()} look={iso.LookOverride}, started in {platform.Now() - began:0} ms");
             iso.PutPlayer(Menagerie.RoadEnd(zoo), 0);
             ok = await Until(() => Objective().StartsWith("Keep away"), 5);
             Debug.Log($"smoke: mission: out of the zoo: '{Objective()}' ok={ok}, {mission?.Chasing} cars after you");
             double start = platform.Now();
+            // On the move all the while, along the sidewalks, as a player running about would be.
+            iso.SetAuto(true);
+            Frames();
             string officers = "";
             ok = await Until(() =>
             {
                 if (mission?.Chasing > 0) officers = mission.Officers();
                 return Objective().StartsWith("Get out");
             }, 45);
+            Debug.Log($"smoke: mission: chase {Frames()}");
             Debug.Log($"smoke: mission: when caught: {officers}");
             Debug.Log($"smoke: mission: caught={ok} after {(platform.Now() - start) / 1000:0.0} s, in zoo={InZoo()}, {mission?.Chasing} cars after you");
             iso.PutPlayer(Menagerie.RoadEnd(zoo), 0);
-            await Until(() => false, 3);
-            Debug.Log($"smoke: mission: out again: '{Objective()}', {mission?.Chasing} cars after you, error={mission?.script.Error}");
+            iso.SetAuto(true);
+            await Until(() => false, 8);
+            iso.SetAuto(false);
+            Debug.Log($"smoke: mission: out again: '{Objective()}', {mission?.Chasing} cars after you, error={mission?.script.Error}, {Frames()}");
+            // And out again at the wheel, driving off with them after you.
+            iso.PutPlayer(Menagerie.RoadEnd(zoo), 0);
+            await Until(() => Objective().StartsWith("Keep away"), 5);
+            bool driving = iso.SpawnCar(Array.IndexOf(Catalog.CARS, "cars/sedan")) && iso.ToggleCar();
+            iso.SetAuto(true);
+            Frames();
+            await Until(() => false, 12);
+            Debug.Log($"smoke: mission: driving={driving && iso.IsDriving}, '{Objective()}', {mission?.Chasing} cars after you, {Frames()}");
+            iso.SetAuto(false);
+            if (iso.IsDriving) iso.ToggleCar();
             EndMission(null);
             Debug.Log($"smoke: mission: ended, look={iso.LookOverride ?? "(yourself)"}");
         }
@@ -753,17 +805,49 @@ namespace Porchlight.App
             overlay.Highlight(0);
         }
 
-        /// <summary>The character box: a grid of everyone to be, and you become the one picked.</summary>
+        /// <summary>The character box: a grid of everyone to be (and every animal, once they're unlocked), and you become the one picked.</summary>
         void ChooseLook()
         {
             if (iso == null) return;
-            var looks = Catalog.CHARACTERS;
-            overlay.Choose("Choose your character", portraits.LookStills(), looks.Select((_, i) => $"Person {i + 1}").ToList(),
-                Array.IndexOf(looks, iso.LookModel), i =>
+            var looks = Catalog.CHARACTERS.Concat(Unlocks.Contains("animals") ? Catalog.ANIMALS : new string[0]).ToList();
+            var names = looks.Select((l, i) => Catalog.IsAnimal(l) ? Catalog.AnimalName(l) : $"Person {i + 1}").ToList();
+            overlay.Choose("Choose your character", portraits.LookStills(looks), names,
+                looks.IndexOf(iso.LookModel), i =>
                 {
                     var look = iso.ChangeLook(looks[i]);
                     if (look != null) net?.LookChanged(look);
                 }, "look");
+        }
+
+        const string UNLOCKS_KEY = "porchlight.unlocks";
+        HashSet<string> deviceUnlocks;
+
+        /// <summary>What's unlocked (by finishing missions): online, the character's, which the server keeps; offline, this device's.</summary>
+        HashSet<string> Unlocks
+        {
+            get
+            {
+                if (net != null) return net.unlocks;
+                if (deviceUnlocks == null)
+                {
+                    deviceUnlocks = new HashSet<string>();
+                    foreach (var what in (platform.Load(UNLOCKS_KEY) ?? "").Split(',')) if (what.Length > 0) deviceUnlocks.Add(what);
+                }
+                return deviceUnlocks;
+            }
+        }
+
+        /// <summary>A mission's unlock: kept (with the character, or on this device), and said.</summary>
+        void Unlock(string what)
+        {
+            if (Unlocks.Contains(what)) return;
+            if (net != null) net.Unlock(what);
+            else
+            {
+                Unlocks.Add(what);
+                platform.Save(UNLOCKS_KEY, string.Join(",", Unlocks));
+            }
+            if (what == "animals") overlay.Notify("Unlocked: the zoo's animals. Choose one from the character box.");
         }
 
         /// <summary>The car box: a grid of every car, and the one picked is yours, brought right beside you (in place of any other).</summary>
@@ -906,7 +990,7 @@ namespace Porchlight.App
                 EndMission(null);
                 try
                 {
-                    mission = new MissionPlay(id, info.title, story, iso, ModelLibrary.Instance, input);
+                    mission = new MissionPlay(id, info.title, story, iso, ModelLibrary.Instance, input) { OnUnlock = Unlock };
                 }
                 catch (Exception e)
                 {

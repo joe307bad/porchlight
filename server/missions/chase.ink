@@ -16,33 +16,43 @@ EXTERNAL put_you(role, at)
 EXTERNAL chase(role, name, count, car, model)
 EXTERNAL leave(role)
 EXTERNAL countdown(seconds, label, when, role)
+EXTERNAL standby(role, count, car, model)
+EXTERNAL unlock(what)
 
 // You, and who comes after you: the models the game draws.
 CONST PENGUIN = "animals/animal-penguin"
 CONST POLICE_CAR = "cars/police"
 CONST OFFICER = "people/policeman-a-4-1"
-// How many police cars, and how long (seconds) you must stay out of their hands.
+// How many police cars wait all over town from the start (got ready now, so
+// there's no pause when they set off), how many more come from nearby, and how
+// long (seconds) you must stay out of their hands.
+CONST WAITING = 14
 CONST CARS = 3
 CONST FREE_FOR = 60
 
 VAR caught = 0
 
 // How the town plays this mission. A penguin is slower than a person on foot
-// (a run is about as fast as a police car's crawl); the police drive a little
-// slower than flat out after you on foot, and use their boost once you're
-// driving. A car pulls up a little way off, and its officer jumps out and runs
-// at you: quicker than you waddle, slower than you run, and giving up once
+// (a run is about as fast as a police car's crawl); the police drive flat out
+// after you, boost and all, faster still once you're driving, and cut across
+// anywhere a car can go. A car pulls up a little way off, and its officer jumps
+// out and runs at you: quicker than you waddle, only just slower than you run,
+// and giving up once
 // you're well away. One that stands by you for three seconds has you (in a
 // car, that's your chance to drive off).
 ~ setting("your_pace", 0.62)
-~ setting("chase_speed", 4.4)
-~ setting("chase_speed_car", 6.4)
+~ setting("chase_speed", 5.6)
+~ setting("chase_speed_car", 8.0)
 ~ setting("pull_up", 1.6)
-~ setting("officer_speed", 3.0)
+~ setting("officer_speed", 3.5)
 ~ setting("officer_reach", 5.0)
+// Far off, each car makes for its own side of a ring this wide round you
+// (tiles), so they close in from all round.
+~ setting("ring", 4.5)
 ~ setting("catch_reach", 0.45)
 ~ setting("catch_time", 3.0)
 ~ place("zoo", "zoo", "", 0, 1000, false)
+~ standby("police", WAITING, POLICE_CAR, OFFICER)
 ~ look(PENGUIN)
 ~ put_you("zoo", "inside")
 You're a penguin, and you've had quite enough of the zoo.
@@ -96,12 +106,14 @@ police: Got you! Back to the zoo with you.
 police: We've lost it. Call it off, everyone.
 ~ leave("police")
 you: Noot noot!
+~ unlock("animals")
 A whole minute on the loose<>
 { caught > 0:
     <>, and caught {caught} {caught == 1:time|times} along the way<>
 }
 <>. You're free!
 ~ look("")
+You can be any of the zoo's animals now: choose one from the character box.
 -> END
 
 // Stand-ins so the story plays in Inky (the game has the real ones).
@@ -126,4 +138,8 @@ A whole minute on the loose<>
 === function leave(role) ===
 ~ return
 === function countdown(seconds, label, when, role) ===
+~ return
+=== function standby(role, count, car, model) ===
+~ return
+=== function unlock(what) ===
 ~ return

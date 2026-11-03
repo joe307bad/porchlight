@@ -7,6 +7,7 @@
 // blank, as it did in the browser).
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Porchlight.Explore;
 using UnityEngine;
@@ -34,7 +35,9 @@ namespace Porchlight.Rendering
         string look;
         int carIndex = -1;
         /// <summary>The stills, once asked for; and what's filming them (gone once they're taken).</summary>
-        Texture2D[] lookStills, carStills;
+        /// <summary>The stills filmed so far: each look's, and the cars'.</summary>
+        readonly Dictionary<string, Texture2D> lookStills = new Dictionary<string, Texture2D>();
+        Texture2D[] carStills;
         /// <summary>What the stills' cameras are filming into, and the still each is copied to when they're done.</summary>
         readonly System.Collections.Generic.List<(RenderTexture film, Texture2D still)> filming = new System.Collections.Generic.List<(RenderTexture, Texture2D)>();
         GameObject stills;
@@ -121,7 +124,7 @@ namespace Porchlight.Rendering
             if (next == look || next == null) return;
             look = next;
             avatar?.Dispose();
-            avatar = new Avatar(library.Character(next), Avatar.PERSON_HEIGHT, 0, root.transform);
+            avatar = new Avatar(library.Character(next), HeightOf(next), 0, root.transform);
             avatar.SnapYaw(standing.heading);
             OnLayer(avatar.root);
         }
@@ -137,23 +140,29 @@ namespace Porchlight.Rendering
             OnLayer(carModel);
         }
 
-        /// <summary>A still of each of Catalog.CHARACTERS, in order (filmed over the next few frames).</summary>
-        public Texture2D[] LookStills()
+        /// <summary>
+        /// How tall a look stands in a portrait: a person as they are, an animal (a giraffe
+        /// or a parrot alike) a little shorter, to fill the same frame.
+        /// </summary>
+        static double HeightOf(string look) => Catalog.IsAnimal(look) ? Avatar.PERSON_HEIGHT * 0.8 : Avatar.PERSON_HEIGHT;
+
+        /// <summary>A still of each of `looks`, in order (each filmed once, over the next few frames).</summary>
+        public Texture2D[] LookStills(IReadOnlyList<string> looks)
         {
-            if (lookStills != null) return lookStills;
-            lookStills = new Texture2D[Catalog.CHARACTERS.Length];
-            for (int i = 0; i < lookStills.Length; i++)
+            var o = new Texture2D[looks.Count];
+            for (int i = 0; i < o.Length; i++)
             {
-                var at = new Vector3(i * STILL_SPACING, 0, 40);
-                var a = new Avatar(library.Character(Catalog.CHARACTERS[i]), Avatar.PERSON_HEIGHT, 0, StillsRoot());
+                if (lookStills.TryGetValue(looks[i], out o[i])) continue;
+                var at = new Vector3(lookStills.Count * STILL_SPACING, 0, 40);
+                var a = new Avatar(library.Character(looks[i]), HeightOf(looks[i]), 0, StillsRoot());
                 a.SnapYaw(standing.heading);
                 OnLayer(a.root);
                 stillAvatars.Add((a, new Walker(null, at.x, -at.z) { heading = standing.heading }));
-                lookStills[i] = Still("look " + i, out var film);
+                lookStills[looks[i]] = o[i] = Still("look " + lookStills.Count, out var film);
                 Film(film, at + new Vector3(0, 0.2f, 0), 0.2f, 0.95f, stills.transform);
                 Light(at, stills.transform);
             }
-            return lookStills;
+            return o;
         }
 
         /// <summary>A still of each of the first Catalog.CarCount of Catalog.CARS (the cars), in order.</summary>
@@ -244,7 +253,7 @@ namespace Porchlight.Rendering
                 film.Release();
                 UnityEngine.Object.Destroy(film);
             }
-            foreach (var still in (lookStills ?? new Texture2D[0]).Concat(carStills ?? new Texture2D[0])) UnityEngine.Object.Destroy(still);
+            foreach (var still in lookStills.Values.Concat(carStills ?? new Texture2D[0])) UnityEngine.Object.Destroy(still);
             person.Release();
             car.Release();
             UnityEngine.Object.Destroy(person);

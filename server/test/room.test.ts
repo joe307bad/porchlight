@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, MSG_CAR, MSG_CORRECT, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, MSG_CAR, MSG_CORRECT, MSG_LOOK, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -124,6 +124,38 @@ test('two characters on one account play together, and see each other move', asy
   await until('the kid to be saved', () => persistence.states.get(kid.id)?.town === 'seed=test');
   assert.equal(persistence.states.get(kid.id)?.x, 12.4);
   assert.equal([...persistence.sessions.values()].filter((s) => !s.reason).length, 0);
+});
+
+test('animals are for characters that have unlocked them, and an unlock is kept', async () => {
+  // Not even at the start: a new character can't be made an animal.
+  const made = (await api('keeper', 'POST', '/mp/characters', { name: 'Keeper', look: 'animals/animal-penguin' })).json;
+  assert.equal(made.look, null);
+  const join = async () => {
+    const room = await client('keeper').joinOrCreate('city', { ...town, character: made.id });
+    const spawn = await new Promise<SpawnMessage>((r) => room.onMessage(MSG_SPAWN, r));
+    move(room, 20, 20);
+    await until('them to be seen', () => room.state.players?.get(room.sessionId)?.x === 20);
+    return { room, spawn };
+  };
+  const first = await join();
+  assert.deepEqual(first.spawn.unlocks, []);
+  const me = () => first.room.state.players.get(first.room.sessionId);
+  first.room.send(MSG_LOOK, { model: 'animals/animal-penguin' });
+  first.room.send(MSG_LOOK, { model: 'people/character-b-1' });
+  await until('the person look', () => me().appearance === 'people/character-b-1');
+  // Unlocked (twice, kept once; something there's no such unlock for, not at all): now a penguin will do.
+  first.room.send(MSG_UNLOCK, { what: 'animals' });
+  first.room.send(MSG_UNLOCK, { what: 'animals' });
+  first.room.send(MSG_UNLOCK, { what: 'flying' });
+  first.room.send(MSG_LOOK, { model: 'animals/animal-penguin' });
+  await until('the penguin look', () => me().appearance === 'animals/animal-penguin');
+  await first.room.leave();
+  await until('the look to be saved', () => persistence.states.get(made.id)?.look === 'animals/animal-penguin');
+  assert.deepEqual(persistence.states.get(made.id)?.unlocks, ['animals']);
+  const second = await join();
+  assert.deepEqual(second.spawn.unlocks, ['animals']);
+  assert.equal(second.spawn.look, 'animals/animal-penguin');
+  await second.room.leave();
 });
 
 test('passengers ride with a driver, up to three to a car', async () => {

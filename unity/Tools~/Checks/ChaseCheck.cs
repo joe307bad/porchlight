@@ -2,6 +2,8 @@
 // outside the zoo's gate, and one walking along a sidewalk. Each chaser starts
 // in a parking lane 9 to 16 tiles off (and is sent in again from there if it
 // loses them) and must pull up within reach in time, never on top of them.
+// Also that a chase's cars get ready all over a town (standby) quickly, spread
+// out and clear of its parked cars.
 //
 //   dotnet run --project "unity/Tools~/Checks" -- chase [count]
 
@@ -13,15 +15,25 @@ using Porchlight.Model;
 
 static class ChaseCheck
 {
-    const double SPEED = 4.4;
+    /// <summary>How fast they come after you (tiles a second): chase.ink's chase_speed, past a car's top speed.</summary>
+    const double SPEED = 5.6;
     /// <summary>Pulled up this close (tiles, middle to middle) has them (its driver gets out); driving on (not pulling up) nearer than TOO_CLOSE is on top of them.</summary>
     const double REACH = 3.2;
     const double TOO_CLOSE = 0.8;
     const double TIME = 40;
+    /// <summary>A standby: this many cars, ready in this long (ms), none closer to another than APART tiles.</summary>
+    const int WAITING = 10;
+    const double SPREAD_MS = 150;
+    const double APART = 5;
+    /// <summary>Ways planned per town, between anywhere and anywhere; none may take longer than ROUTE_MS.</summary>
+    const int ROUTES = 40;
+    const double ROUTE_MS = 5;
 
     public static int Run(int count)
     {
         int failed = 0, runs = 0, restarts = 0;
+        double slowest = 0, closestApart = double.PositiveInfinity, gridSlowest = 0, routeSlowest = 0, routeTotal = 0, startSlowest = 0, streetSlowest = 0;
+        int routes = 0;
         double took = 0;
         for (int i = 0; i < count; i++)
         {
@@ -32,6 +44,46 @@ static class ChaseCheck
             var open = Vehicle.Drivable(model, layout);
             var rng = new Rng(seed + "::chase");
             if (model.zoo == null) continue;
+            var gridClock = System.Diagnostics.Stopwatch.StartNew();
+            var grid = new DriveGrid(model.width, model.height, open);
+            gridSlowest = Math.Max(gridSlowest, gridClock.Elapsed.TotalMilliseconds);
+            // Planning, as a chaser does: to anywhere (a sidewalk, a yard, inside the zoo) up to 25 tiles off.
+            for (int r = 0; r < ROUTES; r++)
+            {
+                var from = new Vec2(rng.Range(0, model.width), rng.Range(0, model.height));
+                double toward = rng.Range(0, 2 * Math.PI), off = rng.Range(0, 25);
+                var to = new Vec2(from.x + Math.Cos(toward) * off, from.y + Math.Sin(toward) * off);
+                var routeClock = System.Diagnostics.Stopwatch.StartNew();
+                grid.Route(from, to);
+                double rms = routeClock.Elapsed.TotalMilliseconds;
+                routeSlowest = Math.Max(routeSlowest, rms);
+                routeTotal += rms;
+                routes++;
+                // And by the streets, from further off.
+                var far = new Vec2(rng.Range(0, model.width), rng.Range(0, model.height));
+                var streetClock = System.Diagnostics.Stopwatch.StartNew();
+                StreetRoute.Between(layout.roads, from, far);
+                streetSlowest = Math.Max(streetSlowest, streetClock.Elapsed.TotalMilliseconds);
+            }
+            var parked = layout.cars.ConvertAll(c => new Vec2(c.x, c.y));
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var spread = Chaser.Spread(Menagerie.Visitor(model.zoo), WAITING, layout.roads, open, parked, rng);
+            double ms = clock.Elapsed.TotalMilliseconds;
+            slowest = Math.Max(slowest, ms);
+            double apart = double.PositiveInfinity;
+            for (int a = 0; a < spread.Count; a++)
+                for (int b = a + 1; b < spread.Count; b++) apart = Math.Min(apart, Geo.Dist(new Vec2(spread[a].x, spread[a].y), new Vec2(spread[b].x, spread[b].y)));
+            closestApart = Math.Min(closestApart, apart);
+            string spreadWhy = spread.Count < WAITING ? $"only {spread.Count} of {WAITING} cars got ready"
+                : ms > SPREAD_MS ? $"getting {WAITING} cars ready took {ms:0} ms"
+                : apart < APART ? $"two waiting cars only {apart:0.0} tiles apart"
+                : spread.Exists(s => parked.Exists(q => Geo.Dist(q, new Vec2(s.x, s.y)) < 1.3) || !Vehicle.Fits(s.x, s.y, s.heading, open)) ? "a waiting car on a parked one, or where no car fits"
+                : null;
+            if (spreadWhy != null)
+            {
+                failed++;
+                Console.WriteLine($"FAIL {seed}: {spreadWhy}");
+            }
             var gate = Menagerie.Gate(model.zoo);
             var dv = Menagerie.AlongV(model.zoo);
             var outside = new Vec2(gate.x + dv.x * 0.6, gate.y + dv.y * 0.6);
@@ -47,7 +99,9 @@ static class ChaseCheck
                     if (s > path.Length) s = path.Length * 2 - s;
                     return AutoDrive.PointAt(path.points, path.at, s);
                 }
+                var startClock = System.Diagnostics.Stopwatch.StartNew();
                 var start = Chaser.StartNear(Target(0), 9, 16, layout.roads, open, Array.Empty<Vec2>(), rng);
+                startSlowest = Math.Max(startSlowest, startClock.Elapsed.TotalMilliseconds);
                 runs++;
                 if (start == null)
                 {
@@ -55,7 +109,7 @@ static class ChaseCheck
                     Console.WriteLine($"FAIL {seed}{(walking ? " walking" : "")}: nowhere to start a chaser");
                     continue;
                 }
-                var chaser = new Chaser(new Vehicle(Array.IndexOf(Catalog.CARS, "cars/police"), start.Value.x, start.Value.y, start.Value.heading));
+                var chaser = new Chaser(new Vehicle(Array.IndexOf(Catalog.CARS, "cars/police"), start.Value.x, start.Value.y, start.Value.heading)) { grid = grid };
                 double t = 0, best = double.PositiveInfinity;
                 for (; t < TIME; t += 0.05)
                 {
@@ -84,7 +138,22 @@ static class ChaseCheck
                 }
             }
         }
-        Console.WriteLine($"{runs - failed}/{runs} chases caught up, in {took / Math.Max(1, runs - failed):0.0} s on average, {restarts} sent in again");
+        Console.WriteLine($"{runs - failed}/{runs} chases caught up, in {took / Math.Max(1, runs - failed):0.0} s on average, {restarts} sent in again; standby of {WAITING} ready in {slowest:0} ms at most, {closestApart:0.0} tiles apart at least; off-road grid built in {gridSlowest:0} ms at most; a way planned in {routeTotal / Math.Max(1, routes):0.00} ms on average, {routeSlowest:0.00} ms at most; a car's start found in {startSlowest:0.00} ms at most; by the streets in {streetSlowest:0.00} ms at most");
+        if (streetSlowest > ROUTE_MS)
+        {
+            failed++;
+            Console.WriteLine($"FAIL: a way by the streets took {streetSlowest:0.00} ms (at most {ROUTE_MS})");
+        }
+        if (startSlowest > ROUTE_MS)
+        {
+            failed++;
+            Console.WriteLine($"FAIL: finding a car's start took {startSlowest:0.00} ms (at most {ROUTE_MS})");
+        }
+        if (routeSlowest > ROUTE_MS)
+        {
+            failed++;
+            Console.WriteLine($"FAIL: planning a way took {routeSlowest:0.00} ms (at most {ROUTE_MS})");
+        }
         return failed == 0 ? 0 : 1;
     }
 }

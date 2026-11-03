@@ -542,7 +542,7 @@ namespace Porchlight.App
         public void ApplySpawn(double[] at, string look)
         {
             if (player == null || world == null) return;
-            if (look != null && look != player.look && Catalog.IsCharacter(look)) Spawn(look);
+            if (look != null && look != player.look && Catalog.IsLook(look)) Spawn(look);
             if (at != null)
             {
                 var to = StandableNear(new Vec2(at[0], at[1]));

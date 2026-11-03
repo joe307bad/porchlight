@@ -17,7 +17,8 @@ static class MissionCheck
     {
         static readonly string[] HINTS = { "always", "no_car", "near", "near_driving" };
         static readonly string[] SETTINGS = { "talk_reach", "talk_reach_car", "park_reach", "park_speed", "park_angle", "car_reach", "walk_speed",
-            "your_pace", "chase_speed", "chase_speed_car", "pull_up", "officer_speed", "officer_reach", "catch_reach", "catch_time" };
+            "your_pace", "chase_speed", "chase_speed_car", "pull_up", "officer_speed", "officer_reach", "ring", "catch_reach", "catch_time" };
+        static readonly string[] UNLOCKS = { "animals" };
         static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church", "zoo" };
         static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
         static readonly string[] PLACES = { "inside", "door", "kerb", "car" };
@@ -35,6 +36,8 @@ static class MissionCheck
         int cargo;
         /// <summary>Who's after you, and how often they've caught you (once is enough here).</summary>
         readonly HashSet<string> chases = new HashSet<string>();
+        readonly HashSet<string> standing = new HashSet<string>();
+        public readonly List<string> unlocked = new List<string>();
         int catches;
         bool clock;
         string look = "";
@@ -178,12 +181,26 @@ static class MissionCheck
         public string Chase(string role, string name, int count, string car, string model)
         {
             if (role == "" || placed.Contains(role)) throw new Exception("a chase needs a role that isn't a building's");
-            if (count < 1 || count > 8) throw new Exception("a chase is 1 to 8 cars");
+            if (count < (standing.Contains(role) ? 0 : 1) || count > 8) throw new Exception("a chase is 1 to 8 cars (0 with a standby)");
             if (!car.StartsWith("cars/")) throw new Exception($"no such car '{car}'");
             chases.Add(role);
             names[role] = name;
             log.Add($"chase {role} = {name}: {count} x {car}");
             return name;
+        }
+        public void Standby(string role, int count, string car, string model)
+        {
+            if (role == "" || placed.Contains(role)) throw new Exception("a standby needs a role that isn't a building's");
+            if (count < 1 || count > 24) throw new Exception("a standby is 1 to 24 cars");
+            if (!car.StartsWith("cars/")) throw new Exception($"no such car '{car}'");
+            standing.Add(role);
+            log.Add($"standby {role}: {count} x {car}");
+        }
+        public void Unlock(string what)
+        {
+            OneOf("unlock", what, UNLOCKS);
+            unlocked.Add(what);
+            log.Add($"unlock {what}");
         }
         public void Countdown(double seconds, string label, string when, string role)
         {
@@ -256,6 +273,7 @@ static class MissionCheck
         }
         if (town.Cargo != 0) Console.Error.WriteLine($"warning: {town.Cargo} thing(s) left on the car at the end");
         if (town.Loose != null) Console.Error.WriteLine($"warning: {town.Loose} at the end");
+        if (town.unlocked.Count > 0) Console.WriteLine($"mission: unlocked {string.Join(", ", town.unlocked)}");
         Console.WriteLine("mission: played to its end");
         return 0;
     }

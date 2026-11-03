@@ -77,6 +77,14 @@ namespace Porchlight.Missions
         string Chase(string role, string name, int count, string car, string look);
         /// <summary>A countdown from `seconds`, shown called label, running while `when` holds (always, inside or outside a role); 0 seconds stops it.</summary>
         void Countdown(double seconds, string label, string when, string role);
+        /// <summary>
+        /// A chase's cars got ready ahead of it: `count` of them (a model, someone at each wheel
+        /// looking like `look`) parked out of the way all over the town. Its chase sends them all
+        /// in, from every side; called off, they go back to wait.
+        /// </summary>
+        void Standby(string role, int count, string car, string look);
+        /// <summary>Something the player keeps for finishing (Catalog.UNLOCKS: "animals").</summary>
+        void Unlock(string what);
         /// <summary>Is this wait met yet? talk, parked, idle, inside, outside or caught for a role, or countdown.</summary>
         bool Met(string wait, string role);
         /// <summary>Who plays the role, for their lines (null: no such role).</summary>
@@ -161,6 +169,8 @@ namespace Porchlight.Missions
             Bind("put_you", a => { world.PutYou(Str(a, 0), Str(a, 1)); return null; });
             Bind("chase", a => world.Chase(Str(a, 0), Str(a, 1), (int)Math.Round(Num(a, 2)), Str(a, 3), Str(a, 4)) ?? "");
             Bind("countdown", a => { world.Countdown(Num(a, 0), Str(a, 1), Str(a, 2), Str(a, 3)); return null; });
+            Bind("standby", a => { world.Standby(Str(a, 0), (int)Math.Round(Num(a, 1)), Str(a, 2), Str(a, 3)); return null; });
+            Bind("unlock", a => { world.Unlock(Str(a, 0)); return null; });
             Pump();
         }
 

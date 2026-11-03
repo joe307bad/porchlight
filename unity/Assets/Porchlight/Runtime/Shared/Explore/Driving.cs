@@ -340,7 +340,7 @@ namespace Porchlight.Explore
             return null;
         }
 
-        static bool ClearOfRoads(Vec2 p, double heading, IReadOnlyList<RoadStroke> roads, double offset)
+        public static bool ClearOfRoads(Vec2 p, double heading, IReadOnlyList<RoadStroke> roads, double offset)
         {
             var f = new Vec2(Math.Cos(heading), Math.Sin(heading));
             var ends = new[] { p, new Vec2(p.x + f.x * CAR_HALF_LENGTH, p.y + f.y * CAR_HALF_LENGTH), new Vec2(p.x - f.x * CAR_HALF_LENGTH, p.y - f.y * CAR_HALF_LENGTH) };

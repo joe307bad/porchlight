@@ -15,6 +15,7 @@ export const MSG_NIGHT = 'night'; // { on }: switch the town to night or day, fo
 export const MSG_TAKE = 'take'; // { car }: "p3" or "t12", a parked or traffic car got into
 export const MSG_CAR = 'car'; // ParkedCarMessage: where their own car is parked (or that it's gone)
 export const MSG_WORLD = 'world'; // the host's traffic and townsfolk (WorldMessage), about 10 a second
+export const MSG_UNLOCK = 'unlock'; // { what }: earned (a mission finished); one of UNLOCKS, kept with the character
 
 /** Server → client. */
 export const MSG_SPAWN = 'spawn'; // SpawnMessage, once after joining
@@ -70,7 +71,15 @@ export interface SpawnMessage {
   at: { x: number; z: number; yaw: number } | null;
   /** Their saved character, if any. */
   look: string | null;
+  /** What they've unlocked (UNLOCKS). */
+  unlocks: string[];
 }
+
+/** What a character can unlock: `animals`, to look like one of the zoo's animals. */
+export const UNLOCKS = ['animals'];
+
+/** Whether a character with these unlocks may look like this (an animal needs `animals`). */
+export const lookAllowed = (look: string, unlocks: readonly string[]): boolean => !look.startsWith('animals/') || unlocks.includes('animals');
 
 export interface CorrectMessage {
   x: number;

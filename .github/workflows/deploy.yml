@@ -13,6 +13,9 @@ on:
     paths:
       - 'unity/**'
       - 'server/**'
+      # The missions alone go out quickly with missions.yml (a push with other
+      # changes too comes here, and copies them along with the server).
+      - '!server/missions/**'
       - 'infra/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:

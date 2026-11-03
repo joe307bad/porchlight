@@ -217,7 +217,7 @@ namespace Porchlight.Rendering
             {
                 seen.Add(s.key);
                 remotes.TryGetValue(s.key, out var r);
-                string look = Catalog.IsCharacter(s.appearance) ? s.appearance : Catalog.CHARACTERS[0];
+                string look = Catalog.IsLook(s.appearance) ? s.appearance : Catalog.CHARACTERS[0];
                 if (r != null && r.look != look)
                 {
                     Drop(s.key);
@@ -320,7 +320,7 @@ namespace Porchlight.Rendering
         Remote Spawn(RemoteState s, string look)
         {
             var walker = new Walker(look, s.x, s.z, PLAYER_SCALE) { heading = Protocol.YawFromWire(s.rotY) };
-            var avatar = new Avatar(library.Character(look), Avatar.PERSON_HEIGHT, new Rng(s.key).Next(), root);
+            var avatar = new Avatar(library.Character(look), Avatar.HeightOf(look), new Rng(s.key).Next(), root);
             avatar.SnapYaw(walker.heading);
             var r = new Remote
             {

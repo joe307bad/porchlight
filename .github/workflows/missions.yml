@@ -1,0 +1,93 @@
+name: Missions
+
+# The quick way out for a change to the missions alone (server/missions): test
+# them, then copy the folder to the box. No game build, no Terraform, no
+# restart: the server reads the folder afresh on every request (it's mounted
+# into the container, see infra/docker/docker-compose.yml), so a mission is live
+# as soon as it lands, and players see it at their next Refresh. Anything else
+# changed goes out with the full deploy (deploy.yml), which copies the missions
+# too: a push that changes anything besides the missions is left to it here,
+# so a mission never goes live ahead of the game it needs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/missions/**'
+  workflow_dispatch:
+
+env:
+  DOMAIN: porchlight.joebad.com
+
+# The same group as the full deploy, so the two never copy over each other.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  missions:
+    runs-on: ubuntu-latest
+    steps:
+      # Missions and nothing else? Otherwise the full deploy has it (missions and all).
+      - name: Only missions changed?
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ "${{ github.event_name }}" != push ] || [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then
+            echo "only=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh api "repos/${{ github.repository }}/compare/$BEFORE...${{ github.sha }}" --paginate --jq '.files[].filename')
+          echo "$files"
+          if grep -qv '^server/missions/' <<<"$files"; then
+            echo "::notice::Not just the missions: the full deploy (deploy.yml) takes this one."
+            echo "only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "only=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.changes.outputs.only == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.changes.outputs.only == 'true'
+        with:
+          node-version: 24
+
+      # Every mission compiles, uses only the game's building blocks and waits,
+      # and the delivery and chase play through against a stand-in town.
+      - name: Missions — test
+        if: steps.changes.outputs.only == 'true'
+        working-directory: server
+        run: |
+          npm ci
+          node --test test/missions.test.ts
+
+      - name: SSH key
+        if: steps.changes.outputs.only == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/id_porchlight
+          chmod 600 ~/.ssh/id_porchlight
+
+      - name: Copy the missions
+        if: steps.changes.outputs.only == 'true'
+        run: |
+          rsync -az --delete -e 'ssh -i ~/.ssh/id_porchlight -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10' \
+            server/missions/ "ec2-user@$DOMAIN:/opt/porchlight/server/missions/"
+
+      # The server's own word: every mission here is listed, and compiled without errors.
+      - name: Check they're served
+        if: steps.changes.outputs.only == 'true'
+        run: |
+          list=$(curl -sf --retry 3 --retry-delay 5 --retry-all-errors "https://$DOMAIN/mp/missions")
+          bad=0
+          for f in server/missions/*.ink; do
+            id=$(basename "$f" .ink)
+            state=$(jq -r --arg id "$id" '.missions[] | select(.id == $id) | if .error then "error: " + .error else "ok" end' <<<"$list")
+            echo "$id: ${state:-missing}"
+            [ "$state" = ok ] || bad=1
+          done
+          exit $bad
