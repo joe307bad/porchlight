@@ -17,8 +17,9 @@ static class MissionCheck
     {
         static readonly string[] HINTS = { "always", "no_car", "near", "near_driving" };
         static readonly string[] SETTINGS = { "talk_reach", "talk_reach_car", "park_reach", "park_speed", "park_angle", "car_reach", "walk_speed",
-            "your_pace", "chase_speed", "chase_speed_car", "pull_up", "officer_speed", "officer_reach", "ring", "catch_reach", "catch_time" };
-        static readonly string[] UNLOCKS = { "animals" };
+            "your_pace", "chase_speed", "chase_speed_car", "pull_up", "officer_speed", "officer_reach", "ring", "catch_reach", "catch_time",
+            "douse_time", "water_speed", "aim_speed" };
+        static readonly string[] UNLOCKS = { "animals", "firefighter" };
         static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church", "zoo" };
         static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
         static readonly string[] PLACES = { "inside", "door", "kerb", "car" };
@@ -41,6 +42,9 @@ static class MissionCheck
         int catches;
         bool clock;
         string look = "";
+        /// <summary>Each burning role's windows still alight, the role the turret's offered for, and the car the story gave you.</summary>
+        readonly Dictionary<string, int> burning = new Dictionary<string, int>();
+        string turret = "", car = "";
 
         static void OneOf(string what, string value, string[] known)
         {
@@ -212,6 +216,34 @@ static class MissionCheck
             }
             log.Add(clock ? $"countdown {seconds}s {label} ({when} {role})" : "countdown off");
         }
+        public void YourCar(string model)
+        {
+            if (model != "" && !model.StartsWith("cars/")) throw new Exception($"no such car '{model}'");
+            car = model;
+            log.Add(model == "" ? "your car back" : $"your car: {model}");
+        }
+        public int Fire(string role, int windows)
+        {
+            Placed(role);
+            if (windows < 0 || windows > 8) throw new Exception("a fire is 0 to 8 windows");
+            // A town's house can have fewer windows facing the street than asked for: this one has
+            // two. Its door burns too, and is put out as they are.
+            if (windows > 0) windows = Math.Min(windows, 2) + 1;
+            if (windows > 0) burning[role] = windows;
+            else burning.Remove(role);
+            log.Add(windows > 0 ? $"fire {role}: {windows} windows" : $"fire {role} out");
+            return windows;
+        }
+        public void Turret(string role, int crew, string model)
+        {
+            if (role != "")
+            {
+                Placed(role);
+                if (crew < 0 || crew > 6) throw new Exception("a turret's crew is 0 to 6");
+            }
+            turret = role;
+            log.Add(role == "" ? "turret off" : $"turret at {role}, {crew} crew");
+        }
         public string NameOf(string role) => names.TryGetValue(role, out var n) ? n : null;
 
         /// <summary>
@@ -225,15 +257,19 @@ static class MissionCheck
             if ((wait == "inside" || wait == "outside") && !placed.Contains(role)) return false;
             if (wait == "caught" && (!chases.Contains(role) || catches > 0)) return false;
             if (wait == "countdown" && !clock) return false;
+            // A fire goes out a window at a time, and only with the turret there to do it.
+            if ((wait == "doused" || wait == "out") && (turret != role || !burning.TryGetValue(role, out int left) || left == 0 || (wait == "doused") != (left > 1))) return false;
             if (asked.Add($"{wait} {role} {log.Count}")) return false;
             if (wait == "caught") catches++;
+            if (wait == "doused" || wait == "out") burning[role] = wait == "out" ? 0 : burning[role] - 1;
             return true;
         }
 
         /// <summary>Things left on the car at the end.</summary>
         public int Cargo => cargo;
         /// <summary>Still looking like something else, or chased, at the end.</summary>
-        public string Loose => look != "" ? $"still looking like {look}" : chases.Count > 0 ? $"still chased by {string.Join(", ", chases)}" : clock ? "a countdown still running" : null;
+        public string Loose => look != "" ? $"still looking like {look}" : chases.Count > 0 ? $"still chased by {string.Join(", ", chases)}" : clock ? "a countdown still running"
+            : car != "" ? $"still in the story's {car}" : turret != "" ? "a turret still offered" : burning.Count > 0 ? "a fire still burning" : null;
     }
 
     public static int Run(string path)

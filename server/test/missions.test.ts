@@ -24,15 +24,16 @@ test('every mission in server/missions compiles, with a title and a summary', as
 const BLOCKS = [
   'objective', 'hint', 'clear_hints', 'setting', 'place', 'spawn', 'walk', 'pause', 'hold',
   'put_in_car', 'take_from_car', 'put_down', 'leave', 'mark_spot', 'clear_spot', 'guide',
-  'dot', 'look', 'put_you', 'chase', 'countdown', 'standby', 'unlock',
+  'dot', 'look', 'put_you', 'chase', 'countdown', 'standby', 'unlock', 'your_car', 'fire', 'turret',
 ];
-const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'countdown', 'wait'];
+const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'doused', 'out', 'countdown', 'wait'];
 const SETTINGS = [
   'talk_reach', 'talk_reach_car', 'park_reach', 'park_speed', 'park_angle', 'car_reach', 'walk_speed',
   'your_pace', 'chase_speed', 'chase_speed_car', 'pull_up', 'officer_speed', 'officer_reach', 'ring', 'catch_reach', 'catch_time',
+  'douse_time', 'water_speed', 'aim_speed',
 ];
-// What a person (or you) can look like: the game's characters and animals.
-const LOOKS = /^(people\/(character-[\w-]+|policeman-a-4-1)|animals\/animal-(penguin|lion|tiger|elephant|giraffe|panda|polar|monkey|koala|parrot))$/;
+// What a person (or you) can look like: the game's characters, the firefighter and the animals.
+const LOOKS = /^(people\/(character-[\w-]+|policeman-a-4-1|firefighter)|animals\/animal-(penguin|lion|tiger|elephant|giraffe|panda|polar|monkey|koala|parrot))$/;
 
 /** Binds a stand-in town to a story: it keeps track of who's where and what's held or on the car, and throws on misuse. */
 function standInTown(story: InstanceType<typeof Story>) {
@@ -42,7 +43,9 @@ function standInTown(story: InstanceType<typeof Story>) {
   const holding = new Set<string>();
   const chases = new Set<string>();
   const standing = new Set<string>();
-  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, unlocked: [] as string[], look: '', clock: false };
+  // Each burning role's windows still alight; the role the turret's offered for ('' none); the car the story gave you ('' none).
+  const burning = new Map<string, number>();
+  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, unlocked: [] as string[], look: '', clock: false, turret: '', car: '' };
   const oneOf = (what: string, value: string, known: string[]) => {
     if (!known.includes(value)) throw new Error(`no such ${what} '${value}' (${known.join(', ')})`);
   };
@@ -151,8 +154,30 @@ function standInTown(story: InstanceType<typeof Story>) {
     standing.add(role);
   });
   bind('unlock', (what: string) => {
-    oneOf('unlock', what, ['animals']);
+    oneOf('unlock', what, ['animals', 'firefighter']);
     town.unlocked.push(what);
+  });
+  bind('your_car', (car: string) => {
+    assert.ok(car === '' || /^cars\//.test(car), `no such car '${car}'`);
+    town.car = car;
+  });
+  bind('fire', (role: string, windows: number) => {
+    isPlaced(role);
+    assert.ok(windows >= 0 && windows <= 8, 'a fire is 0 to 8 windows');
+    // A town's house can have fewer windows facing the street than asked for: this one has
+    // two. Its door burns too, and is put out as they are.
+    if (windows > 0) windows = Math.min(windows, 2) + 1;
+    if (windows > 0) burning.set(role, windows);
+    else burning.delete(role);
+    return windows;
+  });
+  bind('turret', (role: string, crew: number, look: string) => {
+    if (role !== '') {
+      isPlaced(role);
+      assert.ok(crew >= 0 && crew <= 6, "a turret's crew is 0 to 6");
+      assert.ok(look === '' || LOOKS.test(look), `no such look '${look}'`);
+    }
+    town.turret = role;
   });
   bind('countdown', (seconds: number, _label: string, when: string, role: string) => {
     town.clock = seconds > 0;
@@ -247,6 +272,45 @@ test('the chase plays through, caught once and then free, against a stand-in tow
   // Police waiting all over town from the start, and the animals yours at the end.
   assert.ok(town.standing.has('police'));
   assert.deepEqual(town.unlocked, ['animals']);
+});
+
+test('the firefighter saves three houses against a stand-in town', async () => {
+  const mission = await new MissionStore(DEFAULT_MISSIONS_DIR).get('firefighter');
+  assert.ok(mission?.story);
+  const story = new Story(mission.story);
+  story.allowExternalFunctionFallbacks = false;
+  const town = standInTown(story);
+  const waits: string[] = [];
+  const lines: string[] = [];
+  for (let guard = 0; guard < 500 && (story.canContinue || story.currentChoices.length > 0); guard++) {
+    while (story.canContinue) lines.push(story.Continue()!.trim());
+    if (story.currentChoices.length === 0) break;
+    // The windows go out one at a time; the last puts the fire out.
+    const choices = story.currentChoices as { text: string; index: number }[];
+    const left = town.burning.get('fire') ?? 0;
+    const pick = choices.find((c) => c.text === (left > 1 ? '@doused fire' : '@out fire')) ?? choices[0];
+    const [wait, role] = pick.text.slice(1).split(' ');
+    if (wait === 'parked') assert.ok(town.marked.has(role), `@parked ${role} with no spot marked`);
+    if (wait === 'doused' || wait === 'out') {
+      assert.ok(left > 0, `@${wait} ${role} with nothing burning`);
+      assert.equal(town.turret, role, `@${wait} ${role} with no turret to put it out from`);
+      town.burning.set(role, wait === 'out' ? 0 : left - 1);
+    }
+    waits.push(`@${wait}`);
+    story.ChooseChoiceIndex(pick.index);
+  }
+  assert.equal(story.canContinue, false);
+  assert.equal(story.currentChoices.length, 0);
+  assert.deepEqual(waits, Array(3).fill(['@parked', '@doused', '@doused', '@out']).flat());
+  // A firefighter in the fire engine from the start, and yourself in your own car at the end.
+  assert.ok(town.log.indexOf('look(people/firefighter)') < town.log.indexOf('your_car(cars/firetruck)'));
+  assert.equal(town.look, '');
+  assert.equal(town.car, '');
+  assert.equal(town.turret, '');
+  assert.equal(town.burning.size, 0);
+  assert.equal(town.log.filter((l) => l.startsWith('fire(fire, 3)')).length, 3);
+  assert.ok(lines.includes('You saved all three houses! The whole town is cheering.'), lines.join('\n'));
+  assert.deepEqual(town.unlocked, ['firefighter']);
 });
 
 test('a broken mission is listed with its errors, and not served', async () => {

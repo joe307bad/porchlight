@@ -75,11 +75,15 @@ export interface SpawnMessage {
   unlocks: string[];
 }
 
-/** What a character can unlock: `animals`, to look like one of the zoo's animals. */
-export const UNLOCKS = ['animals'];
+/** What a character can unlock: `animals`, to look like one of the zoo's animals; `firefighter`, to look like the firefighter (and drive the fire engine). */
+export const UNLOCKS = ['animals', 'firefighter'];
 
-/** Whether a character with these unlocks may look like this (an animal needs `animals`). */
-export const lookAllowed = (look: string, unlocks: readonly string[]): boolean => !look.startsWith('animals/') || unlocks.includes('animals');
+/** The firefighter's look, which needs `firefighter`. */
+export const FIREFIGHTER = 'people/firefighter';
+
+/** Whether a character with these unlocks may look like this (an animal needs `animals`, the firefighter `firefighter`). */
+export const lookAllowed = (look: string, unlocks: readonly string[]): boolean =>
+  (!look.startsWith('animals/') || unlocks.includes('animals')) && (look !== FIREFIGHTER || unlocks.includes('firefighter'));
 
 export interface CorrectMessage {
   x: number;

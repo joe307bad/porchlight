@@ -274,6 +274,8 @@ namespace Porchlight.App
         public Func<bool> OnPadA;
         /// <summary>A prompt that wins over the view's own (null: none).</summary>
         public Func<string> PromptOverride;
+        /// <summary>Where a mission has the camera (a close-up camera at `at` looking at `look`, world space), while it returns one.</summary>
+        public Func<(Vector3 at, Vector3 look)?> CameraOverride;
         /// <summary>The sign-in screen's town: no controls, an auto walk and a slowly turning camera.</summary>
         public bool Attract;
         Func<double, double, bool> canDrive = (x, y) => false;
@@ -916,6 +918,35 @@ namespace Porchlight.App
             var spot = SpotBeside(busy) ?? Vehicle.CarSpotNear(near, world.layout.roads, Layout.PARKING / 2, canDrive, busy);
             if (spot == null) return false;
             AddCar(new Vehicle(model, spot.Value.x, spot.Value.y, spot.Value.heading));
+            return true;
+        }
+
+        /// <summary>
+        /// A mission's: you at the wheel of your own car, a `model`, swapped in under you if
+        /// you're driving a car, else brought beside you (out of anything else first). False
+        /// if there's no room near.
+        /// </summary>
+        public bool TakeWheel(int model)
+        {
+            if (player == null || world == null || !Catalog.IsCar(model)) return false;
+            if (riding != null) LeaveRide();
+            if (driving != null && cars[driving.Value].car.kind == VehicleKind.Car && !cars[driving.Value].car.Airborne)
+            {
+                ChangeCar(model);
+                driving = 0;
+                return true;
+            }
+            if (driving != null) PutPlayer(new Vec2(player.x, player.y), player.heading);
+            if (!SpawnCar(model)) return false;
+            if (player.IsAuto)
+            {
+                player.StopAuto();
+                OnAutoChange?.Invoke();
+            }
+            driving = 0;
+            held.Clear();
+            SyncDriver();
+            OnCarChange?.Invoke(true);
             return true;
         }
 
@@ -2014,6 +2045,7 @@ namespace Porchlight.App
             if (room != null) CutWalls(room.Value, dt);
             Vector3? roomLight = fixedView != null ? Coords.Map(fixedView.Value.focus.x, fixedView.Value.focus.z, world.rooms[room.Value].height * 0.9) : (Vector3?)null;
             snap = false;
+            overridden = room == null ? CameraOverride?.Invoke() : null;
             PlaceCamera();
 
             AnimateDayNight(roomLight);
@@ -2177,17 +2209,22 @@ namespace Porchlight.App
             chasePos = WorldOf(p.x + o.x * dist, look + o.up * dist, p.y + o.y * dist);
         }
 
+        /// <summary>A mission has the camera (CameraOverride), for now.</summary>
+        bool Overridden => overridden != null;
+        (Vector3 at, Vector3 look)? overridden;
+
         void PlaceCamera()
         {
             camera.pixelRect = viewport;
-            if (mode == CameraMode.Close)
+            if (mode == CameraMode.Close || Overridden)
             {
+                var (at, look) = overridden ?? (chasePos, chaseLook);
                 camera.orthographic = false;
                 camera.fieldOfView = (float)CHASE_FOV;
                 camera.nearClipPlane = 0.05f;
                 camera.farClipPlane = (float)(FOG_FAR + 40);
-                camera.transform.position = chasePos;
-                camera.transform.rotation = Quaternion.LookRotation(chaseLook - chasePos, Vector3.up);
+                camera.transform.position = at;
+                camera.transform.rotation = Quaternion.LookRotation(look - at, Vector3.up);
                 return;
             }
             double half = VIEW_HEIGHT / 2 / shownZoom;
@@ -2218,7 +2255,7 @@ namespace Porchlight.App
                 var near = ray.origin;
                 var dir = ray.direction;
                 double t = dir.y < -1e-4 ? -near.y / dir.y : double.PositiveInfinity;
-                if (mode == CameraMode.Close)
+                if (mode == CameraMode.Close || Overridden)
                 {
                     double flat = Numbers.Hypot(dir.x, dir.z);
                     if (flat == 0) flat = 1;
@@ -2306,7 +2343,7 @@ namespace Porchlight.App
                     : 0.9 + 0.1 * Math.Sin(t * 11 + lamp.phase) * Math.Sin(t * 3.7 + lamp.phase * 2);
                 lampLevels[i] = dusk * flicker;
             }
-            sky.Update(dusk, night, mode == CameraMode.Close, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, roomLight);
+            sky.Update(dusk, night, mode == CameraMode.Close || Overridden, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, roomLight);
             // Televisions: a cold blue flicker in a few windows, each group to its own programme.
             for (int g = 0; g < world.screens.Count; g++)
             {

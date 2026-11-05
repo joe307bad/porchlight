@@ -13,8 +13,10 @@
 // like someone (or something) else and put you somewhere; a chase is a role
 // too, cars with someone at the wheel that drive after you (Chaser) until
 // they've been close enough for long enough; and a countdown runs while
-// you're where it says. Local to this player: no one else sees a mission's
-// people, or what it's made you.
+// you're where it says. A role's building can burn, and your car can be one
+// the story gives you, with a water turret on its roof to put the fire out
+// from (Firefight). Local to this player: no one else sees a mission's
+// people, its fires, or what it's made you.
 
 using System;
 using System.Collections.Generic;
@@ -182,6 +184,11 @@ namespace Porchlight.App
             // How close an officer must stand (tiles from you), and for how long (seconds), to have you.
             ["catch_reach"] = 0.45,
             ["catch_time"] = 1.0,
+            // How long (seconds) water must play on a burning window to put it out, how fast the turret
+            // throws it (tiles a second), and how fast the turret turns at full stick (radians a second).
+            ["douse_time"] = 2.5,
+            ["water_speed"] = 5.0,
+            ["aim_speed"] = 1.3,
         };
         readonly Dictionary<string, Pursuit> chases = new Dictionary<string, Pursuit>();
         /// <summary>Each chase's cars got ready ahead of it (standby), waiting across the town.</summary>
@@ -191,6 +198,9 @@ namespace Porchlight.App
         /// <summary>The story's unlock (Catalog.UNLOCKS): the app keeps it.</summary>
         public Action<string> OnUnlock;
         Clock clock;
+        readonly Firefight fight;
+        /// <summary>The car you had before the story gave you one (your_car): -1 none; null if it hasn't.</summary>
+        int? carBefore;
         readonly Palette palette = new Palette();
         static Material spotMaterial, beaconMaterial, redMaterial, blueMaterial;
         GameObject cargoRoot;
@@ -217,6 +227,10 @@ namespace Porchlight.App
                 return objective.Length == 0 ? time : $"{objective} · {time}";
             }
         }
+        /// <summary>The mission's fires and the turret (the smoke run aims it).</summary>
+        public Firefight Fight => fight;
+        /// <summary>The role's marked spot, if it has one (the smoke run parks in it).</summary>
+        public Vehicle.Spot? SpotOf(string role) => roles.TryGetValue(role ?? "", out var r) && r.Marked ? r.spot : null;
         /// <summary>Which of the conversation's choices the keys or pad are on.</summary>
         public int Highlighted => highlighted;
         /// <summary>How many cars are after you.</summary>
@@ -242,6 +256,8 @@ namespace Porchlight.App
             cargoRoot.transform.SetParent(view.world.root.transform, false);
             view.PromptOverride = Prompt;
             view.OnPadA = TryTalk;
+            fight = new Firefight(view, library, input, rng, S);
+            view.CameraOverride = fight.Camera;
             script = new MissionScript(story, this);
         }
 
@@ -257,6 +273,8 @@ namespace Porchlight.App
             foreach (var cop in standing.Values.SelectMany(l => l)) DisposeCop(cop);
             standing.Clear();
             clock = null;
+            fight.Dispose();
+            GiveCarBack();
             view.Obstacles.Clear();
             view.LookOverride = null;
             view.YourPace = 1;
@@ -270,6 +288,7 @@ namespace Porchlight.App
             view.InDialogue = false;
             if (view.PromptOverride == (Func<string>)Prompt) view.PromptOverride = null;
             if (view.OnPadA == (Func<bool>)TryTalk) view.OnPadA = null;
+            if (view.CameraOverride == (Func<(Vector3 at, Vector3 look)?>)fight.Camera) view.CameraOverride = null;
         }
 
         // The story's building blocks (IMissionWorld).
@@ -616,6 +635,51 @@ namespace Porchlight.App
             OnUnlock?.Invoke(what);
         }
 
+        public void YourCar(string car)
+        {
+            if (string.IsNullOrEmpty(car))
+            {
+                GiveCarBack();
+                return;
+            }
+            int model = Array.IndexOf(Catalog.CARS, car);
+            if (model < 0 || !Catalog.IsCar(model)) throw new Exception($"no such car '{car}' (cars/firetruck, cars/sedan, ...)");
+            int had = view.CarModel >= 0 && Catalog.IsCar(view.CarModel) ? view.CarModel : -1;
+            if (!view.TakeWheel(model)) throw new Exception("there's no room for a car near you");
+            carBefore ??= had;
+        }
+
+        /// <summary>The car you had before your_car, back in its place (if you had one, and your car's still a car); with none, you keep this one.</summary>
+        void GiveCarBack()
+        {
+            if (carBefore == null) return;
+            if (carBefore.Value >= 0) view.ChangeCar(carBefore.Value);
+            carBefore = null;
+        }
+
+        public int Fire(string role, int windows)
+        {
+            var r = RoleOf(role);
+            if (r.room < 0) throw new Exception($"'{role}' isn't a building that can burn");
+            if (windows < 0 || windows > 8) throw new Exception("a fire is 0 to 8 windows");
+            var room = view.world.rooms[r.room];
+            var door = Interiors.Doors(room).OrderBy(d => Geo.Dist(d.at, r.door)).First();
+            return fight.Ignite(role, r.room, door, r.spot != null ? r.Spot : r.kerb, windows);
+        }
+
+        public void Turret(string role, int crew, string look)
+        {
+            if (string.IsNullOrEmpty(role))
+            {
+                fight.Offer(null, null, 0, null);
+                return;
+            }
+            var r = RoleOf(role);
+            if (crew < 0 || crew > 6) throw new Exception("a turret's crew is 0 to 6");
+            if (!string.IsNullOrEmpty(look) && !Catalog.IsLook(look)) throw new Exception($"no such look '{look}'");
+            fight.Offer(role, r.door, crew, look);
+        }
+
         /// <summary>Somewhere for a chase's car to start (or start again): in a parking lane out of the way, else nearer, else further.</summary>
         Vehicle.Spot? StartFor(Vec2 you, List<Vec2> busy)
         {
@@ -704,6 +768,8 @@ namespace Porchlight.App
         public bool Met(string wait, string role)
         {
             if (wait == "countdown") return clock != null && clock.left <= 0;
+            if (wait == "out") return fight.Out(role);
+            if (wait == "doused") return fight.TakeDoused(role);
             if (wait == "caught")
             {
                 if (!chases.TryGetValue(role ?? "", out var c) || c.caught < S("catch_time")) return false;
@@ -1058,11 +1124,11 @@ namespace Porchlight.App
             return null;
         }
 
-        /// <summary>Talk to whoever's in reach (Enter, or the pad's A): true if there was someone.</summary>
+        /// <summary>Talk to whoever's in reach (Enter, or the pad's A), else up to the turret if there's one: true if either.</summary>
         public bool TryTalk()
         {
             var r = TalkTarget();
-            if (r == null) return false;
+            if (r == null) return fight.TryMount();
             r.talked = true;
             var you = view.PlayerPosition.Value;
             r.person.walker.heading = DetMath.Atan2(you.x - r.person.walker.x, you.y - r.person.walker.y);
@@ -1072,6 +1138,7 @@ namespace Porchlight.App
         /// <summary>The prompt: how to talk to whoever's in reach, else the first of the story's hints whose condition holds.</summary>
         string Prompt()
         {
+            if (fight.Manned) return fight.Prompt();
             var r = TalkTarget();
             if (r != null) return $"Press {(input.Connected ? "A" : "Enter")} to talk to {r.name}";
             foreach (var h in hints)
@@ -1108,7 +1175,7 @@ namespace Porchlight.App
         public bool OnKey(Key code)
         {
             bool ok = code == Key.Enter || code == Key.NumpadEnter || code == Key.Space;
-            if (script.Line == null && script.Choices.Count == 0) return code != Key.Space && ok && TryTalk();
+            if (script.Line == null && script.Choices.Count == 0) return fight.OnKey(code) || (code != Key.Space && ok && TryTalk());
             if (script.Line != null)
             {
                 if (ok) script.Advance();
@@ -1145,7 +1212,10 @@ namespace Porchlight.App
             }
             highlighted = Math.Min(highlighted, Math.Max(0, script.Choices.Count - 1));
             script.Update(dt);
-            view.InDialogue = !script.Done && (script.Line != null || script.Choices.Count > 0);
+            bool reading = !script.Done && (script.Line != null || script.Choices.Count > 0);
+            fight.Update(dt, reading);
+            // Up at the turret the keys and pad are its, as they're the conversation's while you read.
+            view.InDialogue = reading || fight.Manned;
 
             view.DoorOpeners.Clear();
             for (int i = people.Count - 1; i >= 0; i--)

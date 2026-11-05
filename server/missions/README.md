@@ -4,7 +4,7 @@ Each `.ink` file here is a mission, written in [ink](https://github.com/inkle/in
 
 The file name is the mission's id (lowercase letters, digits and dashes: `delivery.ink` is `delivery`). Errors in a file show in the sidebar under its name, and in the server's log.
 
-To try a mission outside the game, open it in [Inky](https://github.com/inkle/inky): the stand-in functions at the bottom of each file let it play there. `npm test` checks every mission compiles and uses only the building blocks and waits the game has, and plays `delivery` and `chase` through against a stand-in town that checks each block is used right. `node scripts/mission.ts <id>` prints the compiled story, which `dotnet run --project unity/Tools~/Checks -- mission <file>` plays through the game's runtime against a pretend town.
+To try a mission outside the game, open it in [Inky](https://github.com/inkle/inky): the stand-in functions at the bottom of each file let it play there. `npm test` checks every mission compiles and uses only the building blocks and waits the game has, and plays `delivery`, `chase` and `firefighter` through against a stand-in town that checks each block is used right. `node scripts/mission.ts <id>` prints the compiled story, which `dotnet run --project unity/Tools~/Checks -- mission <file>` plays through the game's runtime against a pretend town.
 
 ## Name and summary
 
@@ -34,7 +34,7 @@ Ordinary choices are the player's to pick:
 
 ## Everything a mission is, is in its file
 
-The game knows no missions. It knows a small set of **building blocks** (put a role in a building, put someone there, have them walk, hold things and put them on your car, mark a spot to park in, show the way, change what you look like, send cars after you, run a clock, give a reward) and a few **waits**. A mission puts these together into whatever it is about. `delivery.ink` builds "carry boxes from one house to another" out of `walk`, `pause`, `hold`, `put_in_car` and so on, in its own helper functions (`carry_out`, `carry_in`). `chase.ink` builds "a penguin escapes the zoo" out of `place` (the zoo), `look`, `put_you`, `standby`, `chase`, `countdown` and `unlock`, and the waits `@outside`, `@caught` and `@countdown`. Who's in a mission, their names, what the boxes look like, the hints you see, how precisely you must park: all of that is in the story. A new kind of mission needs no new build of the game as long as these blocks can make it. A new block does need a build: add it to `IMissionWorld` and `MissionScript` (`unity/Assets/Porchlight/Runtime/Shared/Missions`), `MissionPlay`, the stand-in towns in `unity/Tools~/Checks/MissionCheck.cs` and `test/missions.test.ts`, and this page.
+The game knows no missions. It knows a small set of **building blocks** (put a role in a building, put someone there, have them walk, hold things and put them on your car, mark a spot to park in, show the way, change what you look like, give you a car, send cars after you, run a clock, set a building alight and give you a water turret to put it out, give a reward) and a few **waits**. A mission puts these together into whatever it is about. `delivery.ink` builds "carry boxes from one house to another" out of `walk`, `pause`, `hold`, `put_in_car` and so on, in its own helper functions (`carry_out`, `carry_in`). `chase.ink` builds "a penguin escapes the zoo" out of `place` (the zoo), `look`, `put_you`, `standby`, `chase`, `countdown` and `unlock`, and the waits `@outside`, `@caught` and `@countdown`. `firefighter.ink` builds "save three burning houses" out of `look`, `your_car` (the fire engine), `place`, `fire`, `mark_spot`, `turret` and `unlock`, and the waits `@parked`, `@doused` and `@out`. Who's in a mission, their names, what the boxes look like, the hints you see, how precisely you must park: all of that is in the story. A new kind of mission needs no new build of the game as long as these blocks can make it. A new block does need a build: add it to `IMissionWorld` and `MissionScript` (`unity/Assets/Porchlight/Runtime/Shared/Missions`), `MissionPlay`, the stand-in towns in `unity/Tools~/Checks/MissionCheck.cs` and `test/missions.test.ts`, and this page.
 
 Spelling it all out makes the files long. That's intended: the story is the mission.
 
@@ -50,6 +50,8 @@ A choice whose text starts with `@` is a **wait**. It's never shown. The game pi
 | `@inside role` | The player is in the role's building (or within the zoo's fence), on the ground: not flying over it. |
 | `@outside role` | The player is anywhere but there. |
 | `@caught role` | An officer from one of the role's chase cars (`chase`) has stood by the player (`catch_reach`) for `catch_time` seconds. The player on foot or in a car; never while flying. Each catch counts afresh. |
+| `@doused role` | One of the role's burning windows or its door (`fire`) has gone out. Each counts afresh, so a loop hears of every one. |
+| `@out role` | Every one of the role's burning windows, and its door, is out. Put it before `@doused` where both wait: the last window meets both. |
 | `@countdown` | The clock (`countdown`) has run out. |
 | `@wait 3` | Three seconds have passed. |
 
@@ -70,7 +72,7 @@ Roles are any names you like (`sender`, `drop`, `aunt`). Each is one building at
 | `clear_hints()` | Every hint goes. |
 | `guide(role, to, label)` | Shows the player the way, with turn-by-turn directions and a dotted path, to the role's `"spot"`, `"person"`, `"house"` (the pavement outside) or `"door"` (just outside it), called `label`. `guide("", "", "")` stops. |
 | `dot(role, to)` | A blue dot on the ground at the same places, with no way shown to it: for somewhere close by. `dot("", "")` clears it. |
-| `setting(name, value)` | Tunes how the town plays the mission. `talk_reach` (1.1 tiles) and `talk_reach_car` (1.9): how close you come to someone to talk. `park_reach` (0.45 tiles), `park_speed` (0.12) and `park_angle` (0.45 radians): how close, how still and how straight a car must be to count as parked. `car_reach` (0.8 tiles): how far your car may stand from a spot for someone to walk to it. `walk_speed` (1.0 tiles a second): how fast a mission's people walk. `your_pace` (1.0): how fast you are on foot, as a share of a person's pace. `chase_speed` (4.4 tiles a second) and `chase_speed_car` (6.4): how fast chase cars go after you on foot, and once you're in a car or plane (past a car's top speed, they use their boost). `pull_up` (1.6 tiles): how far from you a chase car stops. `officer_speed` (3.0 tiles a second): how fast its driver, out of the car, runs at you, and `officer_reach` (5.0 tiles): how far off you must get for them to give up and drive after you again. `ring` (4.5 tiles): from further off than this, a chase's cars each make for their own side of a ring round you, so they close in from all round (0 sends them straight at you). `catch_reach` (0.45 tiles from you) and `catch_time` (1.0 seconds): how close an officer stands, for how long, to have you. |
+| `setting(name, value)` | Tunes how the town plays the mission. `talk_reach` (1.1 tiles) and `talk_reach_car` (1.9): how close you come to someone to talk. `park_reach` (0.45 tiles), `park_speed` (0.12) and `park_angle` (0.45 radians): how close, how still and how straight a car must be to count as parked. `car_reach` (0.8 tiles): how far your car may stand from a spot for someone to walk to it. `walk_speed` (1.0 tiles a second): how fast a mission's people walk. `your_pace` (1.0): how fast you are on foot, as a share of a person's pace. `chase_speed` (4.4 tiles a second) and `chase_speed_car` (6.4): how fast chase cars go after you on foot, and once you're in a car or plane (past a car's top speed, they use their boost). `pull_up` (1.6 tiles): how far from you a chase car stops. `officer_speed` (3.0 tiles a second): how fast its driver, out of the car, runs at you, and `officer_reach` (5.0 tiles): how far off you must get for them to give up and drive after you again. `ring` (4.5 tiles): from further off than this, a chase's cars each make for their own side of a ring round you, so they close in from all round (0 sends them straight at you). `catch_reach` (0.45 tiles from you) and `catch_time` (1.0 seconds): how close an officer stands, for how long, to have you. `douse_time` (2.5 seconds): how long water must play on a burning window to put it out. `water_speed` (5.0 tiles a second): how fast the turret throws water (so how far it reaches). `aim_speed` (1.3 radians a second): how fast the turret turns at full stick. |
 | `countdown(seconds, label, when, role)` | A clock in the directions panel (`label m:ss`) that runs while `when` holds: `"always"`, or `"inside"`/`"outside"` the role's building. It stops (and says so) while it doesn't, and while the player reads. `@countdown` is met when it runs out. `countdown(0, "", "", "")` stops it. One at a time. |
 
 ### Places and people
@@ -87,8 +89,9 @@ Roles are any names you like (`sender`, `drop`, `aunt`). Each is one building at
 
 | Function | What it does |
 | --- | --- |
-| `look(model)` | The player looks like `model` while on foot: a character or an animal (`"animals/animal-penguin"`; also `lion`, `tiger`, `elephant`, `giraffe`, `panda`, `polar`, `monkey`, `koala`, `parrot`). `""` is themselves again. It ends with the mission. |
+| `look(model)` | The player looks like `model` while on foot: a character (`"people/firefighter"` too) or an animal (`"animals/animal-penguin"`; also `lion`, `tiger`, `elephant`, `giraffe`, `panda`, `polar`, `monkey`, `koala`, `parrot`). `""` is themselves again. It ends with the mission. |
 | `put_you(role, at)` | The player is put at the role's building: `"inside"`, `"door"` or `"kerb"`, facing out. Out of any car or plane first. |
+| `your_car(model)` | The player's own car becomes a `model` car (`"cars/firetruck"`; cars only, not boats or planes), brought beside them, and they're put at its wheel (at the wheel of a car already, it's swapped in under them). When the mission's over, or with `your_car("")`, it turns back into the car they had; if they had none, they keep it. |
 
 ### Chases
 
@@ -100,11 +103,18 @@ Roles are any names you like (`sender`, `drop`, `aunt`). Each is one building at
 
 `leave(role)` calls a chase off: its cars are gone (those on standby go back to wait).
 
+### Fires
+
+| Function | What it does |
+| --- | --- |
+| `fire(role, windows)` | The role's building is alight: up to `windows` (1 to 8) of the windows a fire engine parked out front can reach, those facing the street first, and its front door, each with flames and a glowing pane and smoke pouring out of its top, with a column of smoke over the roof that can be seen from streets away. Water on a burning window or the door for `douse_time` seconds puts it out (it dies down as it's doused, and steams). `@doused role` hears of each one, `@out role` of the last. It returns how many are burning (those windows and the door), which can be fewer than asked for plus one: a house can have fewer windows facing the street. `fire(role, 0)` puts it all out at once. Calling it again for the same role lights it afresh (after `place` has moved the role, a new building). |
+| `turret(role, crew, model)` | A water turret on the roof of the player's car, theirs to climb up to: at the wheel, stopped, they press A (or Enter). Up there the camera is behind the turret; the stick (or the arrows, or WASD) turns it all the way round and tips it up and down, and holding A, RT or RB (or Space) sprays (A and RB because Firefox gives some pads no triggers); a reticle shows where the water will land, orange when that's a burning window; B (or G) climbs back down to the wheel. It points at the role's building to begin with. `crew` (0 to 6) people looking like `model` (`""` for the firefighter) stand round the car with hoses and spray wherever the player's water lands; each puts a little more water on a window. `turret("", 0, "")` takes it all away (and the player down from it). |
+
 ### Rewards
 
 | Function | What it does |
 | --- | --- |
-| `unlock(what)` | Something the player keeps for good: `"animals"`, so the character box offers the zoo's animals after the people. Kept with the character (on the server; offline, on the device). |
+| `unlock(what)` | Something the player keeps for good: `"animals"`, so the character box offers the zoo's animals after the people; `"firefighter"`, so the character box offers the firefighter and the car box the fire engine. Kept with the character (on the server; offline, on the device). |
 
 ### Errands
 
@@ -135,5 +145,5 @@ Ink functions that call these, recursively for a count, keep a mission tidy (see
 
 ## Notes
 
-- A mission's people and spots are the player's alone. Others in the town don't see them.
+- A mission's people, spots and fires are the player's alone. Others in the town don't see them.
 - Missions don't save. Leaving the town (a new seed, or regenerating) ends the one being played.

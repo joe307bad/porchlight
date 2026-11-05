@@ -109,8 +109,21 @@ namespace Porchlight.Rendering
         /// </summary>
         public static Material LightPool()
         {
-            if (soft == null)
+            var m = new Material(Library.particles) { name = "light pool", enableInstancing = true };
+            m.SetTexture(BaseMap, Soft);
+            m.SetColor(BaseColor, Color.black);
+            m.SetFloat("_Blend", 2);
+            m.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+            m.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.One);
+            return m;
+        }
+
+        /// <summary>A soft white dot, fading to nothing at its edge (light pools, fire, smoke and spray).</summary>
+        public static Texture2D Soft
+        {
+            get
             {
+                if (soft != null) return soft;
                 const int n = 64;
                 soft = new Texture2D(n, n, TextureFormat.RGBA32, false) { name = "soft light", wrapMode = TextureWrapMode.Clamp };
                 var px = new Color32[n * n];
@@ -124,14 +137,8 @@ namespace Porchlight.Rendering
                     }
                 soft.SetPixels32(px);
                 soft.Apply(false);
+                return soft;
             }
-            var m = new Material(Library.particles) { name = "light pool", enableInstancing = true };
-            m.SetTexture(BaseMap, soft);
-            m.SetColor(BaseColor, Color.black);
-            m.SetFloat("_Blend", 2);
-            m.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
-            m.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.One);
-            return m;
         }
 
         /// <summary>One renderer's colour (a light pool's brightness).</summary>

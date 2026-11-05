@@ -65,7 +65,8 @@ namespace Porchlight.EditorTools
             lib.kits = kits = Kits();
             lib.models = Catalog.Statics.Select(name => StaticModel(name, converted, looks)).ToList();
             lib.peopleController = PeopleController();
-            lib.people = Catalog.CHARACTERS.Select(name => PersonModel(name, converted, looks, lib.peopleController)).ToList();
+            lib.people = Catalog.CHARACTERS.Select(name => PersonModel(name, converted, looks, lib.peopleController))
+                .Append(PersonModel(Catalog.FIREFIGHTER_FROM, converted, looks, lib.peopleController, Catalog.FIREFIGHTER, Firefighter.Dress)).ToList();
             EditorUtility.SetDirty(lib);
             AssetDatabase.SaveAssets();
             Debug.Log($"Porchlight: library built ({lib.models.Count} models, {lib.people.Count} people, {lib.kits.Count} kits)");
@@ -78,8 +79,9 @@ namespace Porchlight.EditorTools
             if (lib == null) return false;
             var models = new HashSet<string>(lib.models.Select(m => m.name));
             var people = new HashSet<string>(lib.people.Select(p => p.name));
-            return Catalog.Statics.All(models.Contains) && Catalog.CHARACTERS.All(people.Contains)
-                && lib.models.Where(m => IsBuilding(m.name)).All(m => m.ground != null && m.ground.storey > 0);
+            return Catalog.Statics.All(models.Contains) && Catalog.PEOPLE.All(people.Contains)
+                && lib.models.Where(m => IsBuilding(m.name)).All(m => m.ground != null && m.ground.storey > 0)
+                && !Firefighter.Stale();
         }
 
         static GameObject Source(string name)
@@ -396,10 +398,13 @@ namespace Porchlight.EditorTools
             return b;
         }
 
-        static ModelLibrary.Person PersonModel(string name, Dictionary<Material, Material> converted, Dictionary<string, Material> looks, RuntimeAnimatorController controller)
+        /// <summary>A person from a character's model: saved as `saveAs` (else its own name), dressed by `dress` (stood in the idle pose) if given.</summary>
+        static ModelLibrary.Person PersonModel(string name, Dictionary<Material, Material> converted, Dictionary<string, Material> looks, RuntimeAnimatorController controller,
+            string saveAs = null, Action<GameObject, AnimationClip> dress = null)
         {
+            saveAs ??= name;
             var go = (GameObject)UnityEngine.Object.Instantiate(Source(name));
-            go.name = name.Split('/').Last();
+            go.name = saveAs.Split('/').Last();
             foreach (var r in go.GetComponentsInChildren<Renderer>())
             {
                 r.sharedMaterials = r.sharedMaterials.Select(m => Convert(m, converted, looks, "people")).ToArray();
@@ -414,13 +419,14 @@ namespace Porchlight.EditorTools
             var bounds = BoundsOf(go);
             var head = go.GetComponentsInChildren<Transform>().FirstOrDefault(t => t.name == "Head");
             float headY = head != null ? go.transform.InverseTransformPoint(head.position).y : float.NaN;
+            dress?.Invoke(go, clips["idle"]);
             var animator = go.AddComponent<Animator>();
             animator.runtimeAnimatorController = controller;
             animator.avatar = GenericAvatar(go);
             animator.applyRootMotion = false;
             animator.cullingMode = AnimatorCullingMode.CullUpdateTransforms;
-            var prefab = Save(go, name);
-            return new ModelLibrary.Person { name = name, prefab = prefab, headY = headY, minY = bounds.min.y, maxY = bounds.max.y, turn = 180 };
+            var prefab = Save(go, saveAs);
+            return new ModelLibrary.Person { name = saveAs, prefab = prefab, headY = headY, minY = bounds.min.y, maxY = bounds.max.y, turn = 180 };
         }
 
         static UnityEngine.Avatar shared;
@@ -446,6 +452,8 @@ namespace Porchlight.EditorTools
         /// path (and Root's own motion is dropped). Only rotations, and the hips'
         /// position, carry over: they fit everyone.
         /// </summary>
+        static Dictionary<string, AnimationClip> clips;
+
         static Dictionary<string, AnimationClip> PeopleClips()
         {
             string src = $"{Models}/{Catalog.PEOPLE_CLIPS}.glb";
@@ -473,7 +481,7 @@ namespace Porchlight.EditorTools
                 AssetDatabase.CreateAsset(made, path);
                 o[to] = made;
             }
-            return o;
+            return clips = o;
         }
 
         /// <summary>

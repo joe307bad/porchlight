@@ -7,8 +7,9 @@
 // says it's met (@talk sender: you've spoken to them, @parked drop: your car
 // is stopped in their spot, @idle sender: their errands are done, @inside zoo
 // and @outside zoo: you're in or out of the role's grounds, @caught police:
-// the role's chasers have had you, @countdown: the countdown's run out, @wait
-// 3: three seconds on). The story changes the town through its EXTERNAL
+// the role's chasers have had you, @countdown: the countdown's run out,
+// @doused fire: one of the role's burning windows has gone out, @out fire:
+// they all have, @wait 3: three seconds on). The story changes the town through its EXTERNAL
 // functions, generic building blocks the world (IMissionWorld) carries out:
 // what a mission is about lives in its story, not here. Pure: the game
 // supplies the world.
@@ -83,9 +84,19 @@ namespace Porchlight.Missions
         /// in, from every side; called off, they go back to wait.
         /// </summary>
         void Standby(string role, int count, string car, string look);
-        /// <summary>Something the player keeps for finishing (Catalog.UNLOCKS: "animals").</summary>
+        /// <summary>Something the player keeps for finishing (Catalog.UNLOCKS: "animals", "firefighter").</summary>
         void Unlock(string what);
-        /// <summary>Is this wait met yet? talk, parked, idle, inside, outside or caught for a role, or countdown.</summary>
+        /// <summary>Your own car becomes a `car` (a model), and you're at its wheel; "" gives you back the one you had.</summary>
+        void YourCar(string car);
+        /// <summary>The role's building alight: up to `windows` of the windows a fire engine parked out front can reach, and its front door, smoke pouring out; 0 puts it out. How many are burning to be put out: those windows and the door.</summary>
+        int Fire(string role, int windows);
+        /// <summary>
+        /// A water turret on your car's roof, yours to go up to (A at the wheel, stopped), aimed
+        /// first at the role's building; `crew` people looking like `look` by your car spray where
+        /// you do. "" role takes it away (and you down from it).
+        /// </summary>
+        void Turret(string role, int crew, string look);
+        /// <summary>Is this wait met yet? talk, parked, idle, inside, outside, caught, doused or out for a role, or countdown.</summary>
         bool Met(string wait, string role);
         /// <summary>Who plays the role, for their lines (null: no such role).</summary>
         string NameOf(string role);
@@ -100,7 +111,7 @@ namespace Porchlight.Missions
 
     public struct MissionWait
     {
-        /// <summary>talk, parked, idle, inside, outside, caught, countdown or wait.</summary>
+        /// <summary>talk, parked, idle, inside, outside, caught, doused, out, countdown or wait.</summary>
         public string kind;
         public string role;
         /// <summary>For @wait: how many seconds.</summary>
@@ -109,8 +120,8 @@ namespace Porchlight.Missions
 
     public sealed class MissionScript
     {
-        /// <summary>The waits the town knows (@talk, @parked, @idle, @inside, @outside and @caught a role, @countdown, @wait seconds).</summary>
-        static readonly string[] WAITS = { "talk", "parked", "idle", "inside", "outside", "caught", "countdown", "wait" };
+        /// <summary>The waits the town knows (@talk, @parked, @idle, @inside, @outside, @caught, @doused and @out a role, @countdown, @wait seconds).</summary>
+        static readonly string[] WAITS = { "talk", "parked", "idle", "inside", "outside", "caught", "doused", "out", "countdown", "wait" };
 
         readonly Story story;
         readonly IMissionWorld world;
@@ -171,6 +182,9 @@ namespace Porchlight.Missions
             Bind("countdown", a => { world.Countdown(Num(a, 0), Str(a, 1), Str(a, 2), Str(a, 3)); return null; });
             Bind("standby", a => { world.Standby(Str(a, 0), (int)Math.Round(Num(a, 1)), Str(a, 2), Str(a, 3)); return null; });
             Bind("unlock", a => { world.Unlock(Str(a, 0)); return null; });
+            Bind("your_car", a => { world.YourCar(Str(a, 0)); return null; });
+            Bind("fire", a => world.Fire(Str(a, 0), (int)Math.Round(Num(a, 1))));
+            Bind("turret", a => { world.Turret(Str(a, 0), (int)Math.Round(Num(a, 1)), Str(a, 2)); return null; });
             Pump();
         }
 

@@ -277,6 +277,8 @@ namespace Porchlight.App
             iso?.SetAuto(false);
             var story = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_MISSION");
             if (!string.IsNullOrEmpty(story)) await SmokeMission(System.IO.File.ReadAllText(story));
+            var fire = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_FIRE");
+            if (!string.IsNullOrEmpty(fire)) await SmokeFire(System.IO.File.ReadAllText(fire));
             // The animals unlocked: offered in the character box, and one to be.
             Unlock("animals");
             ChooseLook();
@@ -382,6 +384,71 @@ namespace Porchlight.App
             if (iso.IsDriving) iso.ToggleCar();
             EndMission(null);
             Debug.Log($"smoke: mission: ended, look={iso.LookOverride ?? "(yourself)"}");
+        }
+
+        /// <summary>
+        /// The smoke run fights fires too (PORCHLIGHT_SMOKE_FIRE: the firefighter story as the
+        /// server compiles it): the fire engine put straight into each burning house's spot, up
+        /// to the turret, and its water on each burning window in turn till all three are saved.
+        /// </summary>
+        async Task SmokeFire(string story)
+        {
+            int frames = 0, long_ = 0;
+            float worst = 0;
+            async Task<bool> Until(Func<bool> met, double seconds)
+            {
+                double end = platform.Now() + seconds * 1000;
+                while (platform.Now() < end && mission != null)
+                {
+                    frames++;
+                    worst = Math.Max(worst, Time.unscaledDeltaTime);
+                    if (Time.unscaledDeltaTime > 0.05f) long_++;
+                    if (mission.script.Line != null) mission.script.Advance();
+                    if (met()) return true;
+                    await Task.Yield();
+                }
+                return mission == null && met();
+            }
+            string Objective() => mission?.CurrentObjective ?? "(no mission)";
+            int had = iso.CarModel;
+            mission = new MissionPlay("smoke-fire", "Smoke fire", story, iso, ModelLibrary.Instance, input) { OnUnlock = Unlock };
+            for (int house = 1; house <= 3 && mission != null; house++)
+            {
+                bool ok = await Until(() => Objective().StartsWith("Drive to"), 5);
+                Debug.Log($"smoke: fire: house {house}: '{Objective()}' ok={ok} look={iso.LookOverride} car={(iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none")} at the wheel={iso.DrivingMyCar} error={mission?.script.Error}");
+                var spot = mission?.SpotOf("fire");
+                var car = iso.OwnVehicle;
+                if (spot == null || car == null) break;
+                car.x = spot.Value.x;
+                car.y = spot.Value.y;
+                car.heading = spot.Value.heading;
+                car.speed = 0;
+                ok = await Until(() => Objective().StartsWith("Put out"), 5);
+                bool up = mission != null && mission.TryTalk();
+                Debug.Log($"smoke: fire: parked={ok}, '{Objective()}', up at the turret={up && mission.Fight.Manned}; walls {mission?.Fight.Walls()}");
+                double start = platform.Now();
+                frames = long_ = 0;
+                worst = 0;
+                ok = await Until(() =>
+                {
+                    var f = mission?.Fight;
+                    if (f != null && f.Manned)
+                    {
+                        f.holdSpray = f.AimAtBurning();
+                    }
+                    return mission == null || !Objective().StartsWith("Put out");
+                }, 40);
+                if (!ok) Debug.Log($"smoke: fire: still burning: {mission?.Fight.Burning()}");
+                Debug.Log($"smoke: fire: house {house} out={ok} in {(platform.Now() - start) / 1000:0.0} s, now '{Objective()}', error={mission?.script.Error}; frames {frames}, the longest {worst * 1000:0} ms, {long_} over 50 ms");
+                if (!ok) break;
+            }
+            await Until(() => false, 3);
+            Debug.Log($"smoke: fire: mission over={mission == null}, look={iso.LookOverride ?? "(yourself)"}, car {(iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none")} (had {(had >= 0 ? Catalog.CARS[had] : "none")}), unlocked firefighter={Unlocks.Contains("firefighter")}, fire engine in the car box={Catalog.GarageCars(Unlocks).Contains(Array.IndexOf(Catalog.CARS, Catalog.FIRETRUCK))}");
+            EndMission(null);
+            if (iso.IsDriving) iso.ToggleCar();
+            iso.ChangeLook(Catalog.FIREFIGHTER);
+            for (int i = 0; i < 10; i++) await Task.Yield();
+            Debug.Log($"smoke: fire: now {iso.LookModel}");
         }
 
         void BuildApp()
@@ -805,12 +872,14 @@ namespace Porchlight.App
             overlay.Highlight(0);
         }
 
-        /// <summary>The character box: a grid of everyone to be (and every animal, once they're unlocked), and you become the one picked.</summary>
+        /// <summary>The character box: a grid of everyone to be (and the firefighter and every animal, once they're unlocked), and you become the one picked.</summary>
         void ChooseLook()
         {
             if (iso == null) return;
-            var looks = Catalog.CHARACTERS.Concat(Unlocks.Contains("animals") ? Catalog.ANIMALS : new string[0]).ToList();
-            var names = looks.Select((l, i) => Catalog.IsAnimal(l) ? Catalog.AnimalName(l) : $"Person {i + 1}").ToList();
+            var looks = Catalog.CHARACTERS
+                .Concat(Unlocks.Contains("firefighter") ? new[] { Catalog.FIREFIGHTER } : new string[0])
+                .Concat(Unlocks.Contains("animals") ? Catalog.ANIMALS : new string[0]).ToList();
+            var names = looks.Select((l, i) => Catalog.IsAnimal(l) ? Catalog.AnimalName(l) : l == Catalog.FIREFIGHTER ? "Firefighter" : $"Person {i + 1}").ToList();
             overlay.Choose("Choose your character", portraits.LookStills(looks), names,
                 looks.IndexOf(iso.LookModel), i =>
                 {
@@ -848,16 +917,19 @@ namespace Porchlight.App
                 platform.Save(UNLOCKS_KEY, string.Join(",", Unlocks));
             }
             if (what == "animals") overlay.Notify("Unlocked: the zoo's animals. Choose one from the character box.");
+            if (what == "firefighter") overlay.Notify("Unlocked: the firefighter and the fire engine. Find them in the character and car boxes.");
         }
 
-        /// <summary>The car box: a grid of every car, and the one picked is yours, brought right beside you (in place of any other).</summary>
+        /// <summary>The car box: a grid of every car (the fire engine once it's unlocked), and the one picked is yours, brought right beside you (in place of any other).</summary>
         void ChooseCar()
         {
             if (iso == null) return;
-            var names = Catalog.CARS.Take(Catalog.CarCount).Select(CarName).ToList();
-            overlay.Choose("Choose your car", portraits.CarStills(), names, carModel, i =>
+            var models = Catalog.GarageCars(Unlocks);
+            var names = models.Select(m => CarName(Catalog.CARS[m])).ToList();
+            var stills = portraits.CarStills();
+            overlay.Choose("Choose your car", models.Select(m => stills[m]).ToArray(), names, Array.IndexOf(models, carModel), i =>
             {
-                carModel = i;
+                carModel = models[i];
                 // At the wheel it's swapped under you; otherwise it's brought right beside you.
                 if (iso.IsDriving) iso.ChangeCar(carModel);
                 else if (!iso.SpawnCar(carModel)) overlay.Flash("No room for a car near here. Try by a street.");

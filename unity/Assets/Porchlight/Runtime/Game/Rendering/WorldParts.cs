@@ -173,6 +173,86 @@ namespace Porchlight.Rendering
             return room;
         }
 
+        /// <summary>A window on a building's outside, on the map: its middle, which way it faces, its half-width along the wall, and its sill and head.</summary>
+        public struct Facade
+        {
+            public Vec2 at, outward;
+            public double half, y0, y1;
+        }
+
+        /// <summary>Every window in a building's walls (its room's and the rest), on the map.</summary>
+        public List<Facade> WindowsOf(int room)
+        {
+            var o = new List<Facade>();
+            if (room < 0 || room >= pieces.Count) return o;
+            var piece = pieces[room];
+            var g = piece.ground;
+            float Plane(int side) => side switch { 0 => g.room.y, 1 => g.room.w, 2 => g.room.x, _ => g.room.z };
+            void Add(int side, float plane, float a0, float a1, float y0, float y1)
+            {
+                var p = side < 2 ? MapPoint(piece.model, a0, 0, plane) : MapPoint(piece.model, plane, 0, a0);
+                var q = side < 2 ? MapPoint(piece.model, a1, 0, plane) : MapPoint(piece.model, plane, 0, a1);
+                o.Add(new Facade
+                {
+                    at = new Vec2((p.x + q.x) / 2, (p.y + q.y) / 2),
+                    outward = Front(SideFacing(piece.model, side)),
+                    half = Geo.Dist(p, q) / 2,
+                    y0 = HeightOf(piece.model, y0),
+                    y1 = HeightOf(piece.model, y1),
+                });
+            }
+            foreach (var w in g.windows) Add(w.side, Plane(w.side), w.a0, w.a1, w.y0, w.y1);
+            foreach (var w in g.panes) Add(w.side, w.plane, w.a0, w.a1, w.y0, w.y1);
+            return o;
+        }
+
+        /// <summary>The physics layer a building's solid (Solid) is on, and nothing else.</summary>
+        public const int SOLID_LAYER = 30;
+
+        /// <summary>
+        /// A building made solid, for water to land on its real surfaces: a mesh collider (on
+        /// SOLID_LAYER) for each of its meshes, from its prefab's own (its drawn ones are merged
+        /// into the town's by static batching), hung on the part each belongs to. Destroy each to
+        /// take it away again.
+        /// </summary>
+        public List<GameObject> Solid(int room)
+        {
+            var o = new List<GameObject>();
+            if (room < 0 || room >= shells.Count) return o;
+            var m = library.Get(shells[room].name);
+            if (m == null || m.prefab == null) return o;
+            var root = pieces[room].model;
+            foreach (var filter in m.prefab.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (filter.sharedMesh == null || !filter.sharedMesh.isReadable) continue;
+                var part = filter.transform == m.prefab.transform ? root : root.Find(PathOf(filter.transform, m.prefab.transform));
+                if (part == null) continue;
+                var go = new GameObject("solid") { layer = SOLID_LAYER };
+                go.transform.SetParent(part, false);
+                go.AddComponent<MeshCollider>().sharedMesh = filter.sharedMesh;
+                o.Add(go);
+            }
+            Physics.SyncTransforms();
+            return o;
+        }
+
+        static string PathOf(Transform t, Transform root)
+        {
+            var names = new List<string>();
+            for (; t != null && t != root; t = t.parent) names.Add(t.name);
+            names.Reverse();
+            return string.Join("/", names);
+        }
+
+        /// <summary>How tall a building stands (its roof's top).</summary>
+        public double RoofOf(int room)
+        {
+            if (room < 0 || room >= shells.Count) return 0;
+            double top = 0;
+            foreach (var r in shells[room].GetComponentsInChildren<Renderer>(true)) top = Math.Max(top, r.bounds.max.y);
+            return top;
+        }
+
         static string[] ModelsFor(House house) =>
             house.style == HouseStyle.Office && house.floors >= 4 ? Catalog.TOWERS : Catalog.KindModels(house.style);
 

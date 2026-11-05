@@ -78,6 +78,20 @@ namespace Porchlight.Explore
             "character-b-1", "policeman-a-4-1",
         }.Select(n => $"people/{n}").ToArray();
 
+        /// <summary>
+        /// The firefighter: the policeman in bunker gear, with a helmet and an air tank
+        /// (Editor/Firefighter.cs dresses him). Not one of the town's people: a mission
+        /// makes you one, and finishing it unlocks him.
+        /// </summary>
+        public const string FIREFIGHTER = "people/firefighter";
+        /// <summary>The character the firefighter is made from.</summary>
+        public const string FIREFIGHTER_FROM = "people/policeman-a-4-1";
+        /// <summary>The fire engine, which the firefighter unlock adds to the car box.</summary>
+        public const string FIRETRUCK = "cars/firetruck";
+
+        /// <summary>Everyone the library builds: the characters, and the firefighter.</summary>
+        public static IEnumerable<string> PEOPLE => CHARACTERS.Append(FIREFIGHTER);
+
         public const string PEOPLE_CLIPS = "people/animations";
 
         /// <summary>
@@ -130,9 +144,14 @@ namespace Porchlight.Explore
 
         /// <summary>
         /// What a character can unlock (a mission's unlock; the server keeps them): `animals`,
-        /// to be one of the zoo's animals (the character menu offers them after the people).
+        /// to be one of the zoo's animals (the character menu offers them after the people);
+        /// `firefighter`, to be the firefighter, and to have the fire engine in the car box.
         /// </summary>
-        public static readonly string[] UNLOCKS = { "animals" };
+        public static readonly string[] UNLOCKS = { "animals", "firefighter" };
+
+        /// <summary>The car models the car box offers with these unlocks (indices into CARS): every car, the fire engine once unlocked.</summary>
+        public static int[] GarageCars(ICollection<string> unlocks) =>
+            Enumerable.Range(0, CarCount).Where(i => CARS[i] != FIRETRUCK || unlocks.Contains("firefighter")).ToArray();
 
         static string[] Nature(params string[] names) => names.Select(n => $"nature/{n}").ToArray();
 
@@ -294,6 +313,6 @@ namespace Porchlight.Explore
             return 0;
         }
 
-        public static bool IsCharacter(string look) => System.Array.IndexOf(CHARACTERS, look) >= 0;
+        public static bool IsCharacter(string look) => System.Array.IndexOf(CHARACTERS, look) >= 0 || look == FIREFIGHTER;
     }
 }
