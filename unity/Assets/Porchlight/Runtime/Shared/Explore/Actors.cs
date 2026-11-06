@@ -388,7 +388,15 @@ namespace Porchlight.Explore
     /// <summary>Solid rectangles the player can't walk through (walls, furniture), bucketed by tile.</summary>
     public sealed class Solids
     {
+        /// <summary>A solid that can stand open (a zoo pen's gate).</summary>
+        public sealed class Door
+        {
+            public Rect rect;
+            public bool open;
+        }
+
         readonly Dictionary<int, List<Rect>> buckets = new Dictionary<int, List<Rect>>();
+        readonly List<Door> doors = new List<Door>();
         readonly int width;
 
         public Solids(IEnumerable<Rect> rects, int width)
@@ -410,9 +418,24 @@ namespace Porchlight.Explore
             }
         }
 
+        /// <summary>A solid that's there until it's opened.</summary>
+        public Door AddDoor(Rect r)
+        {
+            var d = new Door { rect = r };
+            doors.Add(d);
+            return d;
+        }
+
         /// <summary>True if a circle of radius r at (x, y) overlaps any solid.</summary>
         public bool Hits(double x, double y, double r)
         {
+            foreach (var d in doors)
+            {
+                if (d.open) continue;
+                double dx = x - Math.Max(d.rect.x0, Math.Min(x, d.rect.x1));
+                double dy = y - Math.Max(d.rect.y0, Math.Min(y, d.rect.y1));
+                if (dx * dx + dy * dy < r * r) return true;
+            }
             for (int ty = (int)Math.Floor(y - r); ty <= (int)Math.Floor(y + r); ty++)
             {
                 for (int tx = (int)Math.Floor(x - r); tx <= (int)Math.Floor(x + r); tx++)

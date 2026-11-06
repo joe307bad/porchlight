@@ -53,9 +53,10 @@ namespace Porchlight.Rendering
         public float bob = 0.02f, roll, nod = 3;
         public Transform body, neck, head;
         public readonly List<Leg> legs = new List<Leg>();
+        float tailPhase;
         public readonly List<Swing> tail = new List<Swing>(), trunk = new List<Swing>(), ears = new List<Swing>(), wings = new List<Swing>();
         /// <summary>Tail sway (degrees) and rate; ear flap (degrees) and rate; how far the wings are held out, and beat, in the air.</summary>
-        public float tailSway = 12, tailRate = 2.2f, earFlap = 4, earRate = 0.7f, wingOut = 8, wingBeat = 45;
+        public float tailSway = 12, tailRate = 1.1f, earFlap = 4, earRate = 0.7f, wingOut = 8, wingBeat = 45;
         /// <summary>How big it is (units), for breathing.</summary>
         public float size = 1;
 
@@ -158,11 +159,17 @@ namespace Porchlight.Rendering
             }
             else if (head != null) head.localRotation = headRest * Quaternion.Euler(nodNow + lookPitch, lookYaw, lookYaw * 0.15f);
 
+            // Added up a step at a time: worked out as t times a rate that changes, it would whip
+            // round whenever the animal started or stopped walking.
+            tailPhase += (tailRate + 0.5f * move) * dt;
             for (int i = 0; i < tail.Count; i++)
             {
                 var j = tail[i];
                 float share = 0.5f + 0.5f * (i + 1) / tail.Count;
-                float yaw = (tailSway + 8 * move) * share * Mathf.Sin(t * (tailRate + 2 * move) - j.offset);
+                // A lazy swish that comes and goes, each joint following the one before.
+                float swish = Mathf.Sin(tailPhase - j.offset) + 0.3f * Mathf.Sin(tailPhase * 0.43f - j.offset * 0.5f);
+                float swell = 0.6f + 0.4f * Mathf.Sin(tailPhase * 0.27f);
+                float yaw = (tailSway + 5 * move) * share * swell * swish;
                 j.joint.localRotation = j.rest * Quaternion.Euler(-12 * air * share, yaw, 0);
             }
             for (int i = 0; i < trunk.Count; i++)

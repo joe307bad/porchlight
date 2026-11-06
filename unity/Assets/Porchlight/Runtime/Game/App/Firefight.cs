@@ -36,6 +36,8 @@ namespace Porchlight.App
         const double SMALLEST = 0.07;
         /// <summary>The straight steps the water's arc is followed in, to see what it hits.</summary>
         const int ARC_STEPS = 32;
+        /// <summary>How high the middle of a crew's hose lies (clear of the street), and how high its coupling is on the engine.</summary>
+        const double HOSE_UP = 0.05, COUPLING_UP = 0.17;
         /// <summary>How high the turret's nozzle is, about, when there's no car to say.</summary>
         const double NOZZLE_UP = 0.8;
         /// <summary>How far behind a wall's face (tiles) a window set in it can be.</summary>
@@ -69,7 +71,12 @@ namespace Porchlight.App
             public Walker walker;
             public Jet jet;
             public Hose hose;
-            public GameObject nozzle;
+            /// <summary>The branch in their hands (both ends placed each frame), and their grip on it (null: no arms to hold it with).</summary>
+            public GameObject nozzle, branch, tip;
+            public HoseGrip grip;
+            /// <summary>Where their hose joins the engine: a coupling on its side, this far along from its middle.</summary>
+            public GameObject coupling;
+            public double port;
         }
 
         readonly ExploreView view;
@@ -297,8 +304,10 @@ namespace Porchlight.App
             reticleRenderer = reticle.AddComponent<MeshRenderer>();
             reticleRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             reticleRenderer.receiveShadows = false;
-            aim ??= Materials.Unlit(Color.white);
-            aimHot ??= Materials.Unlit(Coords.Hex(0xff8a1f));
+            // Past 1, for true white once the picture's been tonemapped; and last of all, over the smoke.
+            aim ??= Materials.Unlit(new Color(2.6f, 2.6f, 2.6f));
+            aimHot ??= Materials.Unlit(new Color(2.8f, 1.1f, 0.15f));
+            aim.renderQueue = aimHot.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent + 100;
         }
 
         static GameObject Part(PrimitiveType type, Transform parent, Vector3 at, Vector3 size, Material material)
@@ -437,7 +446,7 @@ namespace Porchlight.App
             reticle.transform.position = World(p) + facing * 0.015f;
             reticle.transform.rotation = Quaternion.LookRotation(facing, Mathf.Abs(facing.y) > 0.98f ? WorldDir(Aim()) : Vector3.up);
             float far = Vector3.Distance(n, p);
-            reticle.transform.localScale = Vector3.one * (0.05f + 0.018f * far);
+            reticle.transform.localScale = Vector3.one * (0.065f + 0.022f * far);
         }
 
         /// <summary>A ring with four ticks pointing in, flat in x and y, one across, seen from either side.</summary>
@@ -456,13 +465,13 @@ namespace Porchlight.App
             {
                 float a0 = s * Mathf.PI * 2 / SIDES, a1 = (s + 1) * Mathf.PI * 2 / SIDES;
                 Vector3 P(float a, float r) => new Vector3(Mathf.Cos(a) * r, Mathf.Sin(a) * r, 0);
-                Quad(P(a0, 0.38f), P(a0, 0.5f), P(a1, 0.5f), P(a1, 0.38f));
+                Quad(P(a0, 0.3f), P(a0, 0.5f), P(a1, 0.5f), P(a1, 0.3f));
             }
             for (int k = 0; k < 4; k++)
             {
                 var d = new Vector3(Mathf.Cos(k * Mathf.PI / 2), Mathf.Sin(k * Mathf.PI / 2), 0);
-                var side = new Vector3(-d.y, d.x, 0) * 0.04f;
-                Quad(d * 0.14f - side, d * 0.14f + side, d * 0.3f + side, d * 0.3f - side);
+                var side = new Vector3(-d.y, d.x, 0) * 0.07f;
+                Quad(d * 0.1f - side, d * 0.1f + side, d * 0.3f + side, d * 0.3f - side);
             }
             var m = new Mesh { name = "reticle" };
             m.SetVertices(v);
@@ -572,6 +581,9 @@ namespace Porchlight.App
             return $"{f.solid.Count} solid parts; aimed at the door, {onHouse} of {tries} land on the house, on a wall at the deepest {deepest:0.00} out from the door's line";
         }));
 
+        /// <summary>For the smoke run: how far short of the branch each of the crew's hands ends up.</summary>
+        public string Grips() => string.Join(", ", crew.Select(h => h.grip == null ? "no grip" : $"{h.grip.Miss:0.000}"));
+
         /// <summary>For the smoke run: each burning window, how high and far it is, and whether it's in front of the nozzle.</summary>
         public string Burning()
         {
@@ -639,6 +651,7 @@ namespace Porchlight.App
                 h.jet.Dispose();
                 h.hose.Dispose();
                 UnityEngine.Object.Destroy(h.nozzle);
+                UnityEngine.Object.Destroy(h.coupling);
             }
             crew.Clear();
         }
@@ -664,9 +677,14 @@ namespace Porchlight.App
                 var walker = new Walker(look, at.x, at.y) { heading = DetMath.Atan2(towards.x - at.x, towards.y - at.y) };
                 var avatar = Avatar.Of(look, rng.Next(), root.transform);
                 avatar.SnapYaw(walker.heading);
-                var hose = new Hose(root.transform, hoseMaterial, 0.014);
-                var nozzle = Part(PrimitiveType.Cylinder, root.transform, Vector3.zero, new Vector3(0.022f, 0.045f, 0.022f), Steel);
-                crew.Add(new Hand { avatar = avatar, walker = walker, jet = new Jet(root.transform, 0.035), hose = hose, nozzle = nozzle });
+                var hose = new Hose(root.transform, hoseMaterial, 0.016);
+                var nozzle = new GameObject("branch");
+                nozzle.transform.SetParent(root.transform, false);
+                var branch = Part(PrimitiveType.Cylinder, nozzle.transform, Vector3.zero, new Vector3(0.024f, 0.05f, 0.024f), Steel);
+                var tip = Part(PrimitiveType.Cylinder, nozzle.transform, Vector3.zero, new Vector3(0.036f, 0.012f, 0.036f), Red);
+                var coupling = Part(PrimitiveType.Cylinder, root.transform, Vector3.zero, new Vector3(0.05f, 0.05f, 0.05f), Steel);
+                double port = crewCount == 1 ? -0.2 : -0.42 + 0.44 * i / (crewCount - 1);
+                crew.Add(new Hand { avatar = avatar, walker = walker, jet = new Jet(root.transform, 0.035), hose = hose, nozzle = nozzle, branch = branch, tip = tip, grip = avatar.GripHose(), coupling = coupling, port = port });
             }
         }
 
@@ -681,7 +699,7 @@ namespace Porchlight.App
                 if (target != null) w.heading += Orbit.ShortestTurn(w.heading, DetMath.Atan2(target.Value.x - w.x, target.Value.y - w.y)) * Math.Min(1, dt * 4);
                 w.Moved(0, 0, dt);
                 h.avatar.Update(w, dt);
-                // The branch held out in front at the hip, and the hose back along the ground to the car.
+                // The branch held out in both hands, tipped up to throw as far as it must.
                 var d = new Vec2(Math.Sin(w.heading), Math.Cos(w.heading));
                 var hand = new Vector3((float)(w.x + d.x * 0.1), (float)(w.y + d.y * 0.1), (float)(Avatar.PERSON_HEIGHT * 0.5));
                 double lift = 0.2;
@@ -692,19 +710,40 @@ namespace Porchlight.App
                     lift = Math.Atan2(to.z - hand.z, flat) + 0.25;
                 }
                 var dir = new Vector3((float)(d.x * Math.Cos(lift)), (float)(d.y * Math.Cos(lift)), (float)Math.Sin(lift));
-                h.nozzle.transform.localPosition = World(hand + dir * 0.04f);
-                h.nozzle.transform.localRotation = Quaternion.LookRotation(WorldDir(dir), Vector3.up) * Quaternion.Euler(90, 0, 0);
+                if (h.grip != null) h.grip.aim = WorldDir(dir);
+                bool held = h.grip != null && h.grip.Ready;
+                var back = held ? h.grip.Back : World(hand);
+                var tip = held ? h.grip.Tip : World(hand + dir * 0.14f);
+                var pipe = tip - back;
+                var turned = Quaternion.FromToRotation(Vector3.up, pipe.normalized);
+                h.branch.transform.localPosition = (back + tip) / 2;
+                h.branch.transform.localRotation = turned;
+                h.branch.transform.localScale = new Vector3(0.024f, pipe.magnitude / 2, 0.024f);
+                h.tip.transform.localPosition = tip;
+                h.tip.transform.localRotation = turned;
                 if (car != null)
                 {
+                    // The hose: out of a coupling on the engine's side, down to the street, along it to
+                    // their feet and up into the back of the branch.
                     var f = car.Forward;
-                    var pump = new Vec2(car.x - f.x * 0.25, car.y - f.y * 0.25);
-                    h.hose.Lay(
-                        Coords.Map(pump.x, pump.y, 0.12),
-                        Coords.Map(pump.x + (w.x - pump.x) * 0.3, pump.y + (w.y - pump.y) * 0.3, 0.016),
-                        Coords.Map(w.x - d.x * 0.08, w.y - d.y * 0.08, 0.016),
-                        World(hand));
+                    var side = new Vec2(-f.y, f.x);
+                    if (Geo.Dot(side, new Vec2(w.x - car.x, w.y - car.y)) < 0) side = new Vec2(-side.x, -side.y);
+                    var m = library.Get(Catalog.CARS[car.model]);
+                    double wide = Math.Min(m.size.x, m.size.z) * CarView.ScaleOf(m) / 2;
+                    var port = new Vec2(car.x + f.x * h.port + side.x * wide, car.y + f.y * h.port + side.y * wide);
+                    h.coupling.transform.localPosition = Coords.Map(port.x, port.y, COUPLING_UP);
+                    h.coupling.transform.localRotation = Quaternion.FromToRotation(Vector3.up, WorldDir(new Vector3((float)side.x, (float)side.y, 0)));
+                    var lip = new Vec2(port.x + side.x * 0.05, port.y + side.y * 0.05);
+                    var feet = new Vec2(w.x - d.x * 0.1, w.y - d.y * 0.1);
+                    h.hose.Lay((float)HOSE_UP,
+                        Coords.Map(lip.x, lip.y, COUPLING_UP),
+                        Coords.Map(lip.x + side.x * 0.1, lip.y + side.y * 0.1, COUPLING_UP - 0.03),
+                        Coords.Map(lip.x + (feet.x - lip.x) * 0.45, lip.y + (feet.y - lip.y) * 0.45, HOSE_UP),
+                        Coords.Map(feet.x, feet.y, HOSE_UP),
+                        back);
                 }
-                if (spraying && lands != null) h.jet.Spray(true, World(hand + dir * 0.08f), WorldDir(Lob(hand, lands.Value)), Flight(hand, lands.Value), World(lands.Value), Vector3.up);
+                var nozzleAt = new Vector3(tip.x, -tip.z, tip.y);
+                if (spraying && lands != null) h.jet.Spray(true, tip, WorldDir(Lob(nozzleAt, lands.Value)), Flight(nozzleAt, lands.Value), World(lands.Value), Vector3.up);
                 else h.jet.Spray(false, default, default, 0, default, default);
             }
         }

@@ -55,7 +55,11 @@ namespace Porchlight.EditorTools
             var head = bones.FirstOrDefault(b => b != null && b.name == "Head");
             var torso = bones.FirstOrDefault(b => b != null && b.name == "Torso");
             var headVerts = On("Head");
-            if (head != null && headVerts.Count > 0) Attach(go, head, Helmet(headVerts), atlas, "helmet");
+            if (head != null && headVerts.Count > 0)
+            {
+                TuckCap(skin, head, posed, headVerts);
+                Attach(go, head, Helmet(headVerts), atlas, "helmet");
+            }
             var torsoVerts = On("Torso");
             if (torso != null && torsoVerts.Count > 0) Attach(go, torso, Tank(torsoVerts), atlas, "air tank");
         }
@@ -126,6 +130,55 @@ namespace Porchlight.EditorTools
         }
 
         const int SIDES = 12;
+        /// <summary>The brim's height, as a share of the way up his head (cap and all).</summary>
+        const float BRIM_AT = 0.57f;
+        /// <summary>How far up his head (cap and all) it's still his head and not the cap's band.</summary>
+        const float SKULL_TO = 0.45f;
+        /// <summary>How far out from the dome's middle his cap can stay: well inside its flat faces.</summary>
+        const float TUCKED = 0.92f;
+
+        /// <summary>
+        /// Where the helmet's dome goes and how big: fitted to his head (his face and the back
+        /// of his skull) and not to his cap, which is wider and is tucked inside it (TuckCap).
+        /// </summary>
+        static (Vector3 centre, Vector3 radius) Fit(List<Vector3> head)
+        {
+            float y0 = head.Min(v => v.y), y1 = head.Max(v => v.y);
+            var skull = head.Where(v => v.y < y0 + (y1 - y0) * SKULL_TO).ToList();
+            float x0 = skull.Min(v => v.x), x1 = skull.Max(v => v.x), z0 = skull.Min(v => v.z), z1 = skull.Max(v => v.z);
+            var c = new Vector3((x0 + x1) / 2, y0 + (y1 - y0) * BRIM_AT, (z0 + z1) / 2);
+            return (c, new Vector3((x1 - x0) / 2 * 1.06f, (y1 - c.y) * 1.0f, (z1 - z0) / 2 * 1.02f));
+        }
+
+        /// <summary>
+        /// His cap (and hair) drawn in to fit under the helmet: what's above the brim pulled in
+        /// towards the dome's middle, and what's just under it pulled in round the sides, moved
+        /// in his mesh's own space, so it stays put as he moves.
+        /// </summary>
+        static void TuckCap(SkinnedMeshRenderer skin, Transform headBone, Vector3[] posed, List<Vector3> head)
+        {
+            var (c, r) = Fit(head);
+            var mesh = skin.sharedMesh;
+            int bone = System.Array.IndexOf(skin.bones, headBone);
+            var weights = mesh.boneWeights;
+            var rest = mesh.vertices;
+            var toRest = (headBone.localToWorldMatrix * mesh.bindposes[bone]).inverse;
+            float below = (head.Max(v => v.y) - head.Min(v => v.y)) * 0.1f;
+            for (int i = 0; i < rest.Length; i++)
+            {
+                if (weights[i].boneIndex0 != bone || weights[i].weight0 < 0.9f) continue;
+                var p = posed[i];
+                if (p.y < c.y - below) continue;
+                var d = new Vector3((p.x - c.x) / r.x, Mathf.Max(0, p.y - c.y) / r.y, (p.z - c.z) / r.z);
+                float far = d.magnitude / TUCKED;
+                if (far <= 1) continue;
+                var q = new Vector3(c.x + (p.x - c.x) / far, p.y > c.y ? c.y + (p.y - c.y) / far : p.y, c.z + (p.z - c.z) / far);
+                rest[i] = toRest.MultiplyPoint3x4(q);
+            }
+            mesh.vertices = rest;
+            mesh.RecalculateBounds();
+            EditorUtility.SetDirty(mesh);
+        }
 
         /// <summary>
         /// A round dome snug over the top of his head, a brim round it that runs out
@@ -133,22 +186,7 @@ namespace Porchlight.EditorTools
         /// </summary>
         static Mesh Helmet(List<Vector3> head)
         {
-            float y0 = head.Min(v => v.y), y1 = head.Max(v => v.y);
-            float band = y0 + (y1 - y0) * 0.6f;
-            // Round from above, as a helmet is, over his crown: the top of his head (not the peak
-            // of his cap, or his nose and chin, which would stretch it long).
-            var crown = head.Where(v => v.y > band + (y1 - band) * 0.25f).ToList();
-            if (crown.Count < 8) crown = head;
-            float cx = (crown.Min(v => v.x) + crown.Max(v => v.x)) / 2, cz = (crown.Min(v => v.z) + crown.Max(v => v.z)) / 2;
-            var c = new Vector3(cx, band, cz);
-            var across = crown.Select(v => new Vector2(v.x - cx, v.z - cz).magnitude).OrderBy(d => d).ToList();
-            float round = across[(int)((across.Count - 1) * 0.9f)];
-            var r = new Vector3(round, (y1 - band) * 1.04f, round);
-            // Just big enough that his crown doesn't poke through, going by all but the furthest few.
-            var out_ = crown.Select(v => new Vector3((v.x - c.x) / r.x, (v.y - c.y) / r.y, (v.z - c.z) / r.z).magnitude)
-                .OrderBy(d => d).ToList();
-            float most = Mathf.Clamp(out_[(int)((out_.Count - 1) * 0.95f)], 1, 1.2f);
-            r *= most * 1.03f;
+            var (c, r) = Fit(head);
             var b = new Builder();
             // Map angle a goes round from the front (-z); ring k is k/RINGS of the way up.
             const int RINGS = 5;
@@ -171,7 +209,7 @@ namespace Porchlight.EditorTools
             float Out(float a)
             {
                 float back = (1 - Mathf.Cos(a)) / 2;
-                return 1.1f + 0.2f * back * back;
+                return 1.07f + 0.2f * back * back;
             }
             float Droop(float a) => -0.12f * r.y * Mathf.Max(0, -Mathf.Cos(a));
             for (int s = 0; s < SIDES; s++)

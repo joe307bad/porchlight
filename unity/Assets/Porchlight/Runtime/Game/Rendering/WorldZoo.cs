@@ -1,10 +1,9 @@
 // The zoo, laid out in its own (u along its front, v out through the gate:
 // Menagerie) frame: the fence round it (the yards' fence model) with a gap for
 // the gate, posts either side under an arch with its name on, a path in and
-// one across, and pens of rails between them, each floored for its animals
-// (sand, dirt or snow, the penguins' and polar bears' round a pool), a rock or
-// a bush in each, and lanterns along the paths that light up at dusk. The
-// fences are solid to walk into. The animals amble about their pens (made
+// one across, the pens between them (each a habitat: WorldExhibits.cs), and
+// lanterns along the paths that light up at dusk. The fences are solid to walk
+// into, but for a pen's gate, which opens for its own animal. The animals amble about their pens (made
 // and moved by Creature): drawn here, stepped each frame by the view.
 
 using System;
@@ -26,9 +25,11 @@ namespace Porchlight.Rendering
         {
             public const int path = 0xc9a46e, sand = 0xe3cf98, dirt = 0xa88a5c, snow = 0xeef3f6, pool = 0x5fa8d8, rim = 0xd9d6cc;
             public const int rail = 0x8a6440, post = 0x6b4b30, pillar = 0xc2b49a, arch = 0x2f5d3a, lamp = 0x2c3a31;
+            public const int grass = 0x86a653, jungle = 0x5f8f47, dryGrass = 0xbcae62, mud = 0x6e5233, ice = 0xcfe8f5, iron = 0x34383d;
+            public const int leaf = 0x6c9440, leafLight = 0x86ab4d, bamboo = 0x7fb04f, bambooDark = 0x568a3a, hay = 0xd8bf68, stone = 0xa9a79f, rope = 0xc9b48a, tyre = 0x2b2b2d, roof = 0xa4553a;
         }
 
-        const double PEN_RAIL = 0.22;
+        const double PEN_RAIL = 0.26;
         const double PILLAR_HEIGHT = 0.95;
 
         /// <summary>One of the zoo's animals, ambling about its pen.</summary>
@@ -38,6 +39,8 @@ namespace Porchlight.Rendering
             public Avatar avatar;
             /// <summary>Where it may go (map rectangle), and where it's going.</summary>
             public (double x0, double y0, double x1, double y1) pen;
+            /// <summary>What's in its pen to keep off (rocks and trees).</summary>
+            public List<(Vec2 at, double r)> keep;
             public Vec2? to;
             public double rest;
             public double pace;
@@ -71,38 +74,13 @@ namespace Porchlight.Rendering
 
             foreach (var p in Menagerie.Paths()) Flat(p, 0.006, Z.path);
 
-            // The pens: a floor for who lives there, rails all round, and a pool or a rock.
+            // The pens: each a habitat for who lives there, with its own kind of fence and a gate on the path.
             foreach (var pen in Menagerie.Pens())
             {
-                var x = pen.box;
-                string first = pen.animals[0].animal;
-                bool cold = pen.pool;
-                bool big = first.EndsWith("giraffe") || first.EndsWith("elephant");
-                Flat(x, 0.005, cold ? Z.snow : big ? Z.dirt : Z.sand);
-                if (pen.pool)
-                {
-                    var pool = Menagerie.Pool(pen);
-                    Flat(new Airfield.Box(pool.u0 - 0.06, pool.v0 - 0.06, pool.u1 + 0.06, pool.v1 + 0.06), 0.012, Z.rim);
-                    Flat(pool, 0.016, Z.pool);
-                }
-                const double t = 0.025;
-                foreach (var side in new[]
-                {
-                    new Airfield.Box(x.u0, x.v0 - t, x.u1, x.v0 + t), new Airfield.Box(x.u0, x.v1 - t, x.u1, x.v1 + t),
-                    new Airfield.Box(x.u0 - t, x.v0, x.u0 + t, x.v1), new Airfield.Box(x.u1 - t, x.v0, x.u1 + t, x.v1),
-                })
-                {
-                    Block(new Airfield.Box(side.u0, side.v0, side.u1, side.v1), PEN_RAIL * 0.45, PEN_RAIL * 0.55, Z.rail);
-                    Block(new Airfield.Box(side.u0, side.v0, side.u1, side.v1), PEN_RAIL * 0.88, PEN_RAIL, Z.rail);
-                    Solid(side);
-                }
-                for (double u = x.u0; u <= x.u1 + 1e-6; u += (x.u1 - x.u0) / Math.Max(1, Math.Round((x.u1 - x.u0) / 0.5)))
-                    foreach (double v in new[] { x.v0, x.v1 }) Block(new Airfield.Box(u - 0.03, v - 0.03, u + 0.03, v + 0.03), 0, PEN_RAIL + 0.03, Z.post);
-                for (double v = x.v0; v <= x.v1 + 1e-6; v += (x.v1 - x.v0) / Math.Max(1, Math.Round((x.v1 - x.v0) / 0.5)))
-                    foreach (double u in new[] { x.u0, x.u1 }) Block(new Airfield.Box(u - 0.03, v - 0.03, u + 0.03, v + 0.03), 0, PEN_RAIL + 0.03, Z.post);
-                Decorate(z, pen);
-                Stock(z, pen);
+                var keep = BuildExhibit(z, b, pen);
+                Stock(z, pen, keep);
             }
+            PathSides(z, b);
 
             // The fence round it, a tile at a time, but for the gate.
             var fence = library.Get("suburban/fence");
@@ -164,7 +142,8 @@ namespace Porchlight.Rendering
             {
                 (inPath.u0 - OFF, Menagerie.DEPTH - 0.75), (inPath.u1 + OFF, Menagerie.DEPTH - 0.75),
                 (inPath.u1 + OFF, 7.3), (inPath.u0 - OFF, 2.7),
-                (2.0, across.v1 + OFF), (4.0, across.v0 - OFF), (8.0, across.v1 + OFF), (10.0, across.v0 - OFF),
+                // Along the way across, clear of the pens' gates and signs and the benches.
+                (1.0, across.v1 + OFF), (3.4, across.v0 - OFF), (7.2, across.v1 + OFF), (9.7, across.v0 - OFF),
             };
             var post = Materials.Lit(Z.lamp);
             var bulbMaterial = Materials.Glowing(Coords.Hex(0xfff3d6));
@@ -217,35 +196,8 @@ namespace Porchlight.Rendering
             }
         }
 
-        /// <summary>A rock, a bush or a tree in a pen, away from its pool.</summary>
-        void Decorate(Porchlight.Model.Zoo z, Menagerie.Pen pen)
-        {
-            var x = pen.box;
-            string first = pen.animals[0].animal;
-            bool tall = first.EndsWith("giraffe") || first.EndsWith("monkey") || first.EndsWith("koala");
-            var pool = pen.pool ? Menagerie.Pool(pen) : (Airfield.Box?)null;
-            double u = pool != null ? (pool.Value.MidU < x.MidU ? x.u1 - 0.45 : x.u0 + 0.45) : x.u0 + 0.5;
-            var at = Menagerie.ToWorld(z, u, x.v0 + 0.5);
-            if (tall)
-            {
-                var t = library.Get(zooRng.Pick(Catalog.TREES));
-                double s = 1.6 / t.size.y;
-                Props.Place(t, props, at.x, at.y, zooRng.Range(0, Math.PI * 2), s, s, s);
-            }
-            else
-            {
-                var r = library.Get(zooRng.Pick(Catalog.BOULDERS));
-                double s = 0.45 / Math.Max(r.size.x, r.size.z);
-                Props.Place(r, props, at.x, at.y, zooRng.Range(0, Math.PI * 2), s, s, s);
-            }
-            var bush = library.Get(zooRng.Pick(Catalog.BUSHES));
-            var b = Menagerie.ToWorld(z, x.MidU, x.v1 - 0.3);
-            double bs = 0.35 / Math.Max(bush.size.x, bush.size.z);
-            Props.Place(bush, props, b.x, b.y, zooRng.Range(0, Math.PI * 2), bs, bs, bs, castShadows: false);
-        }
-
         /// <summary>The pen's animals, each somewhere in it.</summary>
-        void Stock(Porchlight.Model.Zoo z, Menagerie.Pen pen)
+        void Stock(Porchlight.Model.Zoo z, Menagerie.Pen pen, List<(Vec2 at, double r)> keep)
         {
             var (x0, y0, x1, y1) = Menagerie.Rect(z, pen.box);
             const double inset = 0.25;
@@ -254,17 +206,31 @@ namespace Porchlight.Rendering
             {
                 for (int k = 0; k < count; k++)
                 {
-                    var walker = new Walker(animal, zooRng.Range(room.Item1, room.Item3), zooRng.Range(room.Item2, room.Item4)) { heading = zooRng.Range(0, Math.PI * 2) };
+                    var start = Roam(room, keep);
+                    var walker = new Walker(animal, start.x, start.y) { heading = zooRng.Range(0, Math.PI * 2) };
                     var avatar = Avatar.Of(animal, zooRng.Next(), root.transform);
                     avatar.SnapYaw(walker.heading);
-                    animals.Add(new ZooAnimal { walker = walker, avatar = avatar, pen = room, rest = zooRng.Range(0, 3), pace = Catalog.AnimalPace(animal) });
+                    animals.Add(new ZooAnimal { walker = walker, avatar = avatar, pen = room, keep = keep, rest = zooRng.Range(0, 3), pace = Catalog.AnimalPace(animal) });
                 }
             }
         }
 
-        /// <summary>The animals amble: to somewhere in their pen, a rest, somewhere else.</summary>
-        public void UpdateZoo(double dt)
+        /// <summary>Somewhere in a pen, clear of its rocks and trees if it can be.</summary>
+        Vec2 Roam((double x0, double y0, double x1, double y1) pen, List<(Vec2 at, double r)> keep)
         {
+            var p = default(Vec2);
+            for (int tries = 0; tries < 8; tries++)
+            {
+                p = new Vec2(zooRng.Range(pen.x0, pen.x1), zooRng.Range(pen.y0, pen.y1));
+                if (!keep.Any(k => Geo.Dist(k.at, p) < k.r)) break;
+            }
+            return p;
+        }
+
+        /// <summary>The animals amble: to somewhere in their pen, a rest, somewhere else. And each pen's gate lets its own animal (you, if that's what you are) in, and anyone inside out.</summary>
+        public void UpdateZoo(double dt, string look = null, Vec2? you = null)
+        {
+            UpdatePenGates(dt, look, you);
             foreach (var a in animals)
             {
                 var w = a.walker;
@@ -272,7 +238,7 @@ namespace Porchlight.Rendering
                 {
                     w.Moved(0, 0, dt);
                     a.rest -= dt;
-                    if (a.rest <= 0) a.to = new Vec2(zooRng.Range(a.pen.x0, a.pen.x1), zooRng.Range(a.pen.y0, a.pen.y1));
+                    if (a.rest <= 0) a.to = Roam(a.pen, a.keep);
                 }
                 else
                 {

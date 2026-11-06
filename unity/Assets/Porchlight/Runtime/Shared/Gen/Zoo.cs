@@ -244,6 +244,22 @@ namespace Porchlight.Gen
             };
         }
 
+        /// <summary>How far either side of its middle a pen's gate reaches.</summary>
+        public const double PEN_GATE_HALF = 0.3;
+
+        /// <summary>Which of a pen's sides its gate's in: the one on the path across (v this far along), in the middle of it.</summary>
+        public static double PenGateV(Pen p) => p.box.MidV < CROSS ? p.box.v1 : p.box.v0;
+
+        /// <summary>Which way out of its gate a pen faces, in v.</summary>
+        public static int PenGateOut(Pen p) => p.box.MidV < CROSS ? 1 : -1;
+
+        /// <summary>Whether a map point is inside a pen.</summary>
+        public static bool InPen(Zoo z, Pen p, Vec2 at)
+        {
+            var (x0, y0, x1, y1) = Rect(z, p.box);
+            return at.x > x0 && at.x < x1 && at.y > y0 && at.y < y1;
+        }
+
         /// <summary>A pen's pool: the half of it furthest from the path in.</summary>
         public static Airfield.Box Pool(Pen p)
         {

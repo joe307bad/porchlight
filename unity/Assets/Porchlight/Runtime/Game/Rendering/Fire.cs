@@ -529,8 +529,8 @@ namespace Porchlight.Rendering
             r.shadowCastingMode = ShadowCastingMode.On;
         }
 
-        /// <summary>The hose laid through `points` (world), curving smoothly between them.</summary>
-        public void Lay(params Vector3[] points)
+        /// <summary>The hose laid through `points` (world), curving smoothly between them but never under `floor` (world height: it lies on the street, not in it).</summary>
+        public void Lay(float floor, params Vector3[] points)
         {
             // Catmull-Rom through the points, STEPS to each span.
             var path = new System.Collections.Generic.List<Vector3>();
@@ -544,6 +544,8 @@ namespace Porchlight.Rendering
                 }
             }
             path.Add(points[points.Length - 1]);
+            for (int i = 0; i < path.Count; i++)
+                if (path[i].y < floor) path[i] = new Vector3(path[i].x, floor, path[i].z);
             int n = path.Count, quads = (n - 1) * SIDES;
             if (vertices.Length != quads * 4)
             {

@@ -2025,7 +2025,7 @@ namespace Porchlight.App
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);
-            world.UpdateZoo(dt);
+            world.UpdateZoo(dt, lookOverride ?? player?.look, player != null ? new Vec2(player.x, player.y) : (Vec2?)null);
 
             Fixed? fixedView = room != null ? RoomView(room.Value) : (Fixed?)null;
             double yawTarget = fixedView?.yaw ?? targetYaw;

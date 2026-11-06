@@ -279,6 +279,7 @@ namespace Porchlight.App
             if (!string.IsNullOrEmpty(story)) await SmokeMission(System.IO.File.ReadAllText(story));
             var fire = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_FIRE");
             if (!string.IsNullOrEmpty(fire)) await SmokeFire(System.IO.File.ReadAllText(fire));
+            SmokeZoo();
             // The animals unlocked: offered in the character box, and one to be.
             Unlock("animals");
             ChooseLook();
@@ -391,6 +392,35 @@ namespace Porchlight.App
         /// server compiles it): the fire engine put straight into each burning house's spot, up
         /// to the turret, and its water on each burning window in turn till all three are saved.
         /// </summary>
+        /// <summary>Each pen's gate: shut to anyone else, open to its own animal coming up from the path, and open to get out from inside.</summary>
+        void SmokeZoo()
+        {
+            var world = iso.world;
+            var z = world.model.zoo;
+            if (z == null) return;
+            foreach (var g in world.penGates)
+            {
+                var o = Menagerie.AlongV(z);
+                int side = Menagerie.PenGateOut(g.pen);
+                var path = new Vec2(g.at.x + o.x * side * 0.2, g.at.y + o.y * side * 0.2);
+                var pen = new Vec2(g.at.x - o.x * side * 0.2, g.at.y - o.y * side * 0.2);
+                string own = g.pen.animals[0].animal;
+                bool Clear() => !world.solids.Hits(g.at.x, g.at.y, 0.1);
+                world.UpdateZoo(0, Catalog.FIREFIGHTER, path);
+                bool shut = !Clear();
+                world.UpdateZoo(0, own, path);
+                bool opens = Clear();
+                bool stuck = false;
+                for (double k = 0; k <= 1; k += 0.1)
+                    stuck |= world.solids.Hits(path.x + (pen.x - path.x) * k, path.y + (pen.y - path.y) * k, 0.1);
+                world.UpdateZoo(0, Catalog.FIREFIGHTER, pen);
+                bool outward = Clear();
+                world.UpdateZoo(0, null, null);
+                Debug.Log($"smoke: zoo: {own} gate shut to others={shut}, opens for its own={opens}, walked through={!stuck}, lets you out={outward}, shut again={!Clear()}");
+            }
+            Debug.Log($"smoke: zoo: {world.animals.Count} animals in {world.penGates.Count} pens");
+        }
+
         async Task SmokeFire(string story)
         {
             int frames = 0, long_ = 0;
@@ -427,6 +457,7 @@ namespace Porchlight.App
                 bool up = mission != null && mission.TryTalk();
                 Debug.Log($"smoke: fire: parked={ok}, '{Objective()}', up at the turret={up && mission.Fight.Manned}; walls {mission?.Fight.Walls()}");
                 double start = platform.Now();
+                string grips = "";
                 frames = long_ = 0;
                 worst = 0;
                 ok = await Until(() =>
@@ -435,10 +466,12 @@ namespace Porchlight.App
                     if (f != null && f.Manned)
                     {
                         f.holdSpray = f.AimAtBurning();
+                        grips = f.Grips();
                     }
                     return mission == null || !Objective().StartsWith("Put out");
                 }, 40);
                 if (!ok) Debug.Log($"smoke: fire: still burning: {mission?.Fight.Burning()}");
+                Debug.Log($"smoke: fire: hands short of the branch by {grips}");
                 Debug.Log($"smoke: fire: house {house} out={ok} in {(platform.Now() - start) / 1000:0.0} s, now '{Objective()}', error={mission?.script.Error}; frames {frames}, the longest {worst * 1000:0} ms, {long_} over 50 ms");
                 if (!ok) break;
             }

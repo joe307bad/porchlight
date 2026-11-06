@@ -192,6 +192,14 @@ namespace Porchlight.Rendering
             wave.on = on;
         }
 
+        /// <summary>Hold a hose's branch in both hands, from now on; null if this one has no arms to (an animal).</summary>
+        public HoseGrip GripHose()
+        {
+            if (creature != null) return null;
+            var grip = root.AddComponent<HoseGrip>();
+            return grip.Bind(root.transform) ? grip : null;
+        }
+
         public void SnapYaw(double yaw)
         {
             rootYaw = yaw;
