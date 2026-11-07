@@ -1,18 +1,28 @@
 // Who's asking, for the game: the signed-in account (from the same sealed
-// session cookie the auth routes set), and the routes for its characters.
+// session cookie the auth routes set), and the routes for its characters, the
+// towns and what it's earned.
 //
-//   GET    /mp/characters        this account's characters (and the town each is playing in, if any)
-//   POST   /mp/characters        { name, look } → a new one
-//   DELETE /mp/characters/:id    delete one (not while it's being played)
+//   GET    /mp/characters            this account's characters (where each lives, and the town each is playing in, if any)
+//   POST   /mp/characters            { name, look } → a new one
+//   DELETE /mp/characters/:id        delete one (not while it's being played)
+//   PUT    /mp/characters/:id/town   { town } move them to a town (out of any house they had)
+//   PUT    /mp/characters/:id/home   { x, y } move them into the house at this tile of their town
+//   GET    /mp/towns                 every town, and how many more this account can make
+//   POST   /mp/towns                 { name } → a new one (MAX_TOWNS at most: delete one to make another)
+//   DELETE /mp/towns/:id             delete one of this account's (not while anyone's playing there)
+//   GET    /mp/towns/:id/homes       the houses people live in there
+//   GET    /mp/progress              the missions and unlocks, and which this account has earned
 //
 // One account plays as any of its characters, several at once: a parent and
-// child on one sign-in each play their own.
+// child on one sign-in each play their own. What's earned is the account's, so
+// all of them have it, in every town.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { SESSION_COOKIE, type SessionPayload } from '../app.ts';
 import { parseCookies, unseal } from '../cookies.ts';
-import { CharacterError, cleanLook, cleanName, type Persistence } from './persistence.ts';
-import { lookAllowed } from './protocol.ts';
+import type { Mission } from '../missions.ts';
+import { CharacterError, cleanLook, cleanName, MAX_TOWNS, TOWN_NAME_MAX, type Persistence } from './persistence.ts';
+import { lookAllowed, UNLOCK_NAMES, UNLOCKS } from './protocol.ts';
 
 export interface GameDeps {
   persistence: Persistence;
@@ -22,6 +32,10 @@ export interface GameDeps {
   isOnline(characterId: string): boolean;
   /** The town this character is playing in right now, if any. */
   townOf(characterId: string): string | null;
+  /** How many characters are playing in this town (its key) right now. */
+  playingIn(townKey: string): number;
+  /** The missions on offer. */
+  missions: { list(): Promise<Mission[]>; get(id: string): Promise<Mission | null> };
 }
 
 /**
@@ -40,6 +54,8 @@ export function readSession(secret: string, cookieHeader: string | null | undefi
 export const foreignOrigin = (appUrl: string, origin: string | null | undefined): boolean => !!origin && origin !== appUrl;
 
 const PREFIX = '/mp/characters';
+const TOWNS = '/mp/towns';
+const PROGRESS = '/mp/progress';
 
 async function readJson(req: IncomingMessage, limit = 1024): Promise<unknown> {
   let size = 0;
@@ -56,11 +72,15 @@ async function readJson(req: IncomingMessage, limit = 1024): Promise<unknown> {
   }
 }
 
+/** A tile of a town: towns are at most 1024 across. */
+const tile = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) < 1024;
+
 /** Handles the character routes; false if the request isn't one of them. */
 export function createCharacterRoutes(deps: GameDeps) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const path = (req.url ?? '/').split('?')[0];
-    if (path !== PREFIX && !path.startsWith(`${PREFIX}/`)) return false;
+    const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
+    if (!under(PREFIX) && !under(TOWNS) && path !== PROGRESS) return false;
     const send = (status: number, body: unknown): true => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
@@ -74,23 +94,80 @@ export function createCharacterRoutes(deps: GameDeps) {
       const account = await deps.persistence.account(session.sub, session.name);
       if (account.banned) return send(403, { error: 'This account is banned.' });
 
+      const json = async <T>(): Promise<T> => {
+        // JSON only: a cross-site form can't send it without a preflight.
+        if (!req.headers['content-type']?.startsWith('application/json')) throw new CharacterError('Send JSON.', 415);
+        return (await readJson(req)) as T;
+      };
+      const parts = path.split('/').slice(1).map(decodeURIComponent); // ['mp', 'towns', id, 'homes']
+
+      if (path === PROGRESS) {
+        if (req.method !== 'GET') return send(405, { error: 'Method not allowed.' });
+        const [earned, missions] = await Promise.all([deps.persistence.progress(account.id), deps.missions.list()]);
+        const done = new Map(earned.completions.map((c) => [c.missionId, c]));
+        const had = new Map(earned.unlocks.map((u) => [u.what, u.at]));
+        return send(200, {
+          missions: missions
+            .filter((m) => !m.error)
+            .map((m) => {
+              const c = done.get(m.id);
+              return { id: m.id, title: m.title, summary: m.summary, unlocks: m.unlocks, times: c?.times ?? 0, firstAt: c?.firstAt ?? null, lastAt: c?.lastAt ?? null, firstCharacter: c?.firstCharacter ?? null };
+            }),
+          unlocks: UNLOCKS.map((id) => ({ id, name: UNLOCK_NAMES[id], at: had.get(id) ?? null, mission: missions.find((m) => m.unlocks === id)?.title ?? null })),
+        });
+      }
+
+      if (under(TOWNS)) {
+        if (req.method === 'GET' && path === TOWNS) {
+          const towns = await deps.persistence.listTowns(account.id);
+          return send(200, { towns: towns.map((t) => ({ ...t, playing: deps.playingIn(t.key) })), made: towns.filter((t) => t.mine).length, max: MAX_TOWNS });
+        }
+        if (req.method === 'POST' && path === TOWNS) {
+          const name = cleanName((await json<{ name?: unknown }>()).name, TOWN_NAME_MAX);
+          if (!name) throw new CharacterError(`Town names are 1 to ${TOWN_NAME_MAX} characters.`);
+          const town = await deps.persistence.createTown(account.id, name);
+          return send(201, { ...town, playing: 0 });
+        }
+        if (req.method === 'DELETE' && parts.length === 3) {
+          const key = await deps.persistence.ownTownKey(account.id, parts[2]);
+          if (deps.playingIn(key) > 0) throw new CharacterError('Someone is playing in that town right now.', 409);
+          await deps.persistence.deleteTown(account.id, parts[2]);
+          return send(200, { ok: true });
+        }
+        if (req.method === 'GET' && parts.length === 4 && parts[3] === 'homes') {
+          return send(200, { homes: await deps.persistence.listHomes(account.id, parts[2]) });
+        }
+        return send(405, { error: 'Method not allowed.' });
+      }
+
+      if (req.method === 'PUT' && parts.length === 4 && parts[3] === 'town') {
+        const town = (await json<{ town?: unknown }>()).town;
+        if (typeof town !== 'string') throw new CharacterError('Which town?');
+        await deps.persistence.moveToTown(account.id, parts[2], town);
+        return send(200, await deps.persistence.character(account.id, parts[2]));
+      }
+      if (req.method === 'PUT' && parts.length === 4 && parts[3] === 'home') {
+        const { x, y } = await json<{ x?: unknown; y?: unknown }>();
+        if (!tile(x) || !tile(y)) throw new CharacterError('Which house?');
+        await deps.persistence.claimHome(account.id, parts[2], x, y);
+        return send(200, await deps.persistence.character(account.id, parts[2]));
+      }
+
       if (req.method === 'GET' && path === PREFIX) {
         const characters = await deps.persistence.listCharacters(account.id);
         return send(200, { characters: characters.map((c) => ({ ...c, town: deps.townOf(c.id) })) });
       }
       if (req.method === 'POST' && path === PREFIX) {
-        // JSON only: a cross-site form can't send it without a preflight.
-        if (!req.headers['content-type']?.startsWith('application/json')) throw new CharacterError('Send JSON.', 415);
-        const body = (await readJson(req)) as { name?: unknown; look?: unknown };
+        const body = await json<{ name?: unknown; look?: unknown }>();
         const name = cleanName(body.name);
         if (!name) throw new CharacterError('Names are 1 to 20 characters.');
-        // A new character has unlocked nothing: no animals yet.
+        // Only what the account has unlocked: no animals until a mission's earned them.
         const look = cleanLook(body.look);
-        const created = await deps.persistence.createCharacter(account.id, name, look && lookAllowed(look, []) ? look : null);
+        const created = await deps.persistence.createCharacter(account.id, name, look && lookAllowed(look, await deps.persistence.unlocks(account.id)) ? look : null);
         return send(201, created);
       }
       if (req.method === 'DELETE' && path.startsWith(`${PREFIX}/`)) {
-        const id = decodeURIComponent(path.slice(PREFIX.length + 1));
+        const id = parts[2];
         if (deps.isOnline(id)) throw new CharacterError('That character is playing right now.', 409);
         const gone = await deps.persistence.deleteCharacter(account.id, id);
         return send(gone ? 200 : 404, gone ? { ok: true } : { error: 'No such character.' });

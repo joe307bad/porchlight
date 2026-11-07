@@ -34,12 +34,14 @@ import {
   MSG_CORRECT,
   MSG_DOTS,
   MSG_LOOK,
+  MSG_MISSION_DONE,
   MSG_MOVE,
   MSG_NIGHT,
   MSG_SPAWN,
   MSG_TAKE,
   MSG_TELEPORT,
   MSG_UNLOCK,
+  MSG_UNLOCKS,
   MSG_WORLD,
   UNLOCKS,
   lookAllowed,
@@ -91,6 +93,7 @@ interface JoinOptions {
 /** Everything about a player the clients don't get. */
 interface PlayerRuntime {
   sessionId: string;
+  accountId: string;
   characterId: string;
   player: Player;
   view: StateView;
@@ -109,7 +112,7 @@ interface PlayerRuntime {
   savedChange: number;
   version: number;
   lookTimer: ReturnType<typeof setTimeout> | null;
-  /** What they've unlocked (UNLOCKS). */
+  /** What their account has unlocked (UNLOCKS). */
   unlocks: string[];
   /** Saved and signed off (left, timed out, kicked, shut down): nothing more to do. */
   finished: boolean;
@@ -122,6 +125,9 @@ export const isOnline = (characterId: string): boolean => online.has(characterId
 
 /** The town (its room's key) this character is playing in right now, if any. */
 export const townOf = (characterId: string): string | null => online.get(characterId)?.room.town ?? null;
+
+/** How many characters are playing in this town (its room's key) right now. */
+export const playingIn = (town: string): number => [...online.values()].filter((o) => o.room.town === town).length;
 
 /** Night or day in each town, kept while this process runs (a town's room closes when everyone's left). */
 const nights = new Map<string, boolean>();
@@ -212,7 +218,19 @@ export class CityRoom extends Room<{ state: CityState }> {
       const what = (raw as { what?: unknown } | null)?.what;
       if (!rt || typeof what !== 'string' || !UNLOCKS.includes(what) || rt.unlocks.includes(what)) return;
       rt.unlocks.push(what);
-      this.deps.persistence.unlock(rt.characterId, what).catch((err: Error) => console.error(`city: couldn't keep ${rt.characterId}'s unlock ${what}:`, err.message));
+      // The account's: its other characters playing right now have it too.
+      for (const o of online.values()) o.room.granted(rt, o.sessionId, what);
+      this.deps.persistence.unlock(rt.accountId, what).catch((err: Error) => console.error(`city: couldn't keep ${rt.accountId}'s unlock ${what}:`, err.message));
+    });
+    this.onMessage(MSG_MISSION_DONE, (client, raw: unknown) => {
+      const rt = this.admit(client);
+      const id = (raw as { id?: unknown } | null)?.id;
+      if (!rt || typeof id !== 'string') return;
+      // Only real missions: nothing's kept for any other name a client makes up.
+      this.deps.missions
+        .get(id)
+        .then((mission) => (mission ? this.deps.persistence.completeMission(rt.accountId, rt.characterId, id) : undefined))
+        .catch((err: Error) => console.error(`city: couldn't keep ${rt.accountId} finishing ${id}:`, err.message));
     });
 
     this.onMessage(MSG_NIGHT, (client, raw: unknown) => {
@@ -292,10 +310,11 @@ export class CityRoom extends Room<{ state: CityState }> {
 
     try {
       const saved = await d.persistence.loadState(auth.characterId);
+      const earned = await d.persistence.unlocks(auth.accountId);
       const player = new Player();
       player.id = auth.characterId;
       player.name = auth.name;
-      const unlocks = (saved?.unlocks ?? []).filter((u) => UNLOCKS.includes(u));
+      const unlocks = earned.filter((u) => UNLOCKS.includes(u));
       const look = saved?.look ?? auth.look ?? '';
       player.appearance = look && lookAllowed(look, unlocks) ? look : '';
       let at: SpawnMessage['at'] = null;
@@ -310,6 +329,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       client.view = view;
       this.runtime.set(client.sessionId, {
         sessionId: client.sessionId,
+        accountId: auth.accountId,
         characterId: auth.characterId,
         player,
         view,
@@ -341,6 +361,14 @@ export class CityRoom extends Room<{ state: CityState }> {
       console.error('city: join failed:', (err as Error).message);
       throw new ServerError(503, 'Service unavailable. Try again in a moment.');
     }
+  }
+
+  /** Someone on `from`'s account earned this: if this session is another of the account's, it has it too. */
+  granted(from: PlayerRuntime, sessionId: string, what: string): void {
+    const rt = this.runtime.get(sessionId);
+    if (!rt || rt === from || rt.accountId !== from.accountId || rt.unlocks.includes(what)) return;
+    rt.unlocks.push(what);
+    rt.client?.send(MSG_UNLOCKS, { unlocks: rt.unlocks });
   }
 
   /** Dropped without saying goodbye: hold their place for a while. */

@@ -9,6 +9,8 @@
 // A mission names itself with tags at the top of its file:
 //   # title: Moving day
 //   # summary: Three neighbours need boxes run across town.
+// and, if finishing it earns something, says what (one of the UNLOCKS):
+//   # unlocks: animals
 // The game's side of the story (its EXTERNAL functions and @ choices) is in
 // server/missions/README.md.
 
@@ -27,6 +29,8 @@ export interface Mission {
   id: string;
   title: string;
   summary: string;
+  /** What finishing it earns (`# unlocks:`), or null. */
+  unlocks: string | null;
   /** The compiled story (ink's JSON), or null if it didn't compile. */
   story: string | null;
   /** Why it didn't compile (ink's own messages). */
@@ -58,6 +62,7 @@ export function compileMission(id: string, source: string): Mission {
     id,
     title: tags.get('title') || id,
     summary: tags.get('summary') || '',
+    unlocks: tags.get('unlocks') || null,
     story,
     error: errors.length > 0 ? errors.join('\n') : null,
   };

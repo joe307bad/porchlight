@@ -15,12 +15,14 @@ export const MSG_NIGHT = 'night'; // { on }: switch the town to night or day, fo
 export const MSG_TAKE = 'take'; // { car }: "p3" or "t12", a parked or traffic car got into
 export const MSG_CAR = 'car'; // ParkedCarMessage: where their own car is parked (or that it's gone)
 export const MSG_WORLD = 'world'; // the host's traffic and townsfolk (WorldMessage), about 10 a second
-export const MSG_UNLOCK = 'unlock'; // { what }: earned (a mission finished); one of UNLOCKS, kept with the character
+export const MSG_UNLOCK = 'unlock'; // { what }: earned; one of UNLOCKS, kept with the account
+export const MSG_MISSION_DONE = 'mission_done'; // { id }: a mission played to its end
 
 /** Server → client. */
 export const MSG_SPAWN = 'spawn'; // SpawnMessage, once after joining
 export const MSG_CORRECT = 'correct'; // CorrectMessage: snap here
 export const MSG_DOTS = 'dots'; // DotsMessage, once a second: everyone in the room, for the minimap
+export const MSG_UNLOCKS = 'unlocks'; // { unlocks }: another of the account's characters earned something
 // MSG_WORLD, passed on from the host to everyone else as it comes.
 
 /** Close codes (4000 is a consented leave; 4001-4010 are Colyseus's own). */
@@ -71,12 +73,18 @@ export interface SpawnMessage {
   at: { x: number; z: number; yaw: number } | null;
   /** Their saved character, if any. */
   look: string | null;
-  /** What they've unlocked (UNLOCKS). */
+  /** What their account has unlocked (UNLOCKS). */
   unlocks: string[];
 }
 
-/** What a character can unlock: `animals`, to look like one of the zoo's animals; `firefighter`, to look like the firefighter (and drive the fire engine). */
+/** What an account can unlock, for all its characters: `animals`, to look like one of the zoo's animals; `firefighter`, to look like the firefighter (and drive the fire engine). */
 export const UNLOCKS = ['animals', 'firefighter'];
+
+/** What each unlock is, for the Journal. */
+export const UNLOCK_NAMES: Record<string, string> = {
+  animals: "Play as the zoo's animals",
+  firefighter: 'Play as the firefighter, and drive the fire engine',
+};
 
 /** The firefighter's look, which needs `firefighter`. */
 export const FIREFIGHTER = 'people/firefighter';

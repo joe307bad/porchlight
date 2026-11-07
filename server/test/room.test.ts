@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, MSG_CAR, MSG_CORRECT, MSG_LOOK, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, MSG_CAR, MSG_CORRECT, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -126,7 +126,7 @@ test('two characters on one account play together, and see each other move', asy
   assert.equal([...persistence.sessions.values()].filter((s) => !s.reason).length, 0);
 });
 
-test('animals are for characters that have unlocked them, and an unlock is kept', async () => {
+test('animals are for accounts that have unlocked them, and an unlock is kept', async () => {
   // Not even at the start: a new character can't be made an animal.
   const made = (await api('keeper', 'POST', '/mp/characters', { name: 'Keeper', look: 'animals/animal-penguin' })).json;
   assert.equal(made.look, null);
@@ -151,11 +151,113 @@ test('animals are for characters that have unlocked them, and an unlock is kept'
   await until('the penguin look', () => me().appearance === 'animals/animal-penguin');
   await first.room.leave();
   await until('the look to be saved', () => persistence.states.get(made.id)?.look === 'animals/animal-penguin');
-  assert.deepEqual(persistence.states.get(made.id)?.unlocks, ['animals']);
+  assert.deepEqual(await persistence.unlocks((await persistence.account('keeper', '')).id), ['animals']);
   const second = await join();
   assert.deepEqual(second.spawn.unlocks, ['animals']);
   assert.equal(second.spawn.look, 'animals/animal-penguin');
   await second.room.leave();
+});
+
+test('what one character earns, all the account\'s characters have, at once and in any town', async () => {
+  const one = (await api('family', 'POST', '/mp/characters', { name: 'One' })).json;
+  const two = (await api('family', 'POST', '/mp/characters', { name: 'Two' })).json;
+  const a = await client('family').joinOrCreate('city', { ...town, character: one.id });
+  a.onMessage(MSG_SPAWN, () => {});
+  const b = await client('family').joinOrCreate('city', { town: 'seed=family-other', width: 128, height: 128, character: two.id });
+  const spawned = new Promise<SpawnMessage>((r) => b.onMessage(MSG_SPAWN, r));
+  const told = new Promise<{ unlocks: string[] }>((r) => b.onMessage(MSG_UNLOCKS, r));
+  assert.deepEqual((await spawned).unlocks, []);
+  move(a, 20, 20);
+  move(b, 20, 20);
+  await until('them to be placed', () => b.state.players?.get(b.sessionId)?.x === 20 && a.state.players?.get(a.sessionId)?.x === 20);
+  a.send(MSG_UNLOCK, { what: 'firefighter' });
+  assert.deepEqual((await told).unlocks, ['firefighter']);
+  // So the other one, in another town, can be the firefighter straight away.
+  b.send(MSG_LOOK, { model: 'people/firefighter' });
+  await until('the firefighter look', () => b.state.players.get(b.sessionId)?.appearance === 'people/firefighter');
+  // A new character on the account has it from the start.
+  assert.equal((await api('family', 'POST', '/mp/characters', { name: 'New', look: 'people/firefighter' })).json.look, 'people/firefighter');
+  await a.leave();
+  await b.leave();
+  // Someone else's account doesn't.
+  assert.equal((await api('stranger', 'POST', '/mp/characters', { name: 'New', look: 'people/firefighter' })).json.look, null);
+});
+
+test('missions finished are the account\'s, and can be played again', async () => {
+  const one = (await api('finisher', 'POST', '/mp/characters', { name: 'One' })).json;
+  const two = (await api('finisher', 'POST', '/mp/characters', { name: 'Two' })).json;
+  const before = (await api('finisher', 'GET', '/mp/progress')).json;
+  assert.deepEqual(before.missions.find((m: { id: string }) => m.id === 'chase').times, 0);
+  assert.deepEqual(before.unlocks.map((u: { id: string; at: string | null }) => [u.id, u.at]), [['animals', null], ['firefighter', null]]);
+  assert.equal(before.unlocks[0].mission, 'Penguin on the run');
+  for (const character of [one.id, two.id]) {
+    const room = await client('finisher').joinOrCreate('city', { ...town, character });
+    await new Promise<SpawnMessage>((r) => room.onMessage(MSG_SPAWN, r));
+    room.send(MSG_MISSION_DONE, { id: 'chase' });
+    room.send(MSG_MISSION_DONE, { id: 'no-such-mission' });
+    room.send(MSG_UNLOCK, { what: 'animals' });
+    await new Promise((r) => setTimeout(r, 100));
+    await room.leave();
+  }
+  const after = (await api('finisher', 'GET', '/mp/progress')).json;
+  const chase = after.missions.find((m: { id: string }) => m.id === 'chase');
+  assert.deepEqual([chase.times, chase.firstCharacter, chase.unlocks], [2, 'One', 'animals']);
+  assert.ok(after.unlocks[0].at);
+  assert.equal(after.unlocks[1].at, null);
+  assert.equal(after.missions.some((m: { id: string }) => m.id === 'no-such-mission'), false);
+  assert.equal((persistence.completions.get((await persistence.account('finisher', '')).id) ?? []).length, 1);
+});
+
+test('towns: three each and delete one to make another, and houses for two', async () => {
+  const listed = (await api('mayor', 'GET', '/mp/towns')).json;
+  assert.deepEqual([listed.made, listed.max], [0, 3]);
+  assert.ok(listed.towns.some((t: { name: string; mine: boolean }) => t.name === 'Maple Hollow' && !t.mine));
+  const made: { id: string; key: string }[] = [];
+  for (const name of ['One', 'Two', 'Three']) {
+    const res = await api('mayor', 'POST', '/mp/towns', { name });
+    assert.equal(res.status, 201);
+    made.push(res.json);
+  }
+  assert.equal(new Set(made.map((t) => t.key)).size, 3);
+  assert.equal((await api('mayor', 'POST', '/mp/towns', { name: 'Four' })).status, 409);
+  assert.equal((await api('mayor', 'POST', '/mp/towns', { name: ' ' })).status, 400);
+
+  const [a, b, c] = await Promise.all(['A', 'B', 'C'].map(async (name) => (await api('mayor', 'POST', '/mp/characters', { name })).json));
+  const other = (await api('neighbour', 'POST', '/mp/characters', { name: 'Other' })).json;
+  const home = (who: string, id: string, x: number, y: number) => api(who, 'PUT', `/mp/characters/${id}/home`, { x, y });
+  const moveTo = (who: string, id: string, town: string) => api(who, 'PUT', `/mp/characters/${id}/town`, { town });
+  assert.equal((await home('mayor', a.id, 5, 6)).status, 409); // no town yet
+  assert.equal((await moveTo('neighbour', a.id, made[0].id)).status, 404); // not theirs
+  assert.equal((await moveTo('mayor', a.id, crypto.randomUUID())).status, 404);
+  for (const id of [a.id, b.id, c.id]) assert.equal((await moveTo('mayor', id, made[0].id)).status, 200);
+  assert.equal((await moveTo('neighbour', other.id, made[0].id)).status, 200);
+
+  const moved = await home('mayor', a.id, 5, 6);
+  assert.deepEqual(moved.json.home, { townId: made[0].id, townName: 'One', townKey: made[0].key, house: { x: 5, y: 6 } });
+  assert.equal((await home('mayor', b.id, 5, 6)).status, 200); // two to a house
+  assert.equal((await home('mayor', c.id, 5, 6)).status, 409); // not three
+  assert.equal((await home('neighbour', other.id, 5, 6)).status, 409); // nor someone else's account
+  assert.equal((await home('mayor', a.id, -1, 6)).status, 400);
+  assert.deepEqual((await api('neighbour', 'GET', `/mp/towns/${made[0].id}/homes`)).json.homes, [{ x: 5, y: 6, mine: false, residents: ['A', 'B'] }]);
+  assert.equal((await api('mayor', 'GET', '/mp/towns')).json.towns.find((t: { id: string }) => t.id === made[0].id).residents, 4);
+  // The character's list says where they live.
+  const mine = (await api('mayor', 'GET', '/mp/characters')).json.characters;
+  assert.equal(mine.find((x: { name: string }) => x.name === 'A').home.townName, 'One');
+  // Moving town leaves the house behind.
+  assert.equal((await moveTo('mayor', b.id, made[1].id)).json.home.house, null);
+
+  // Not someone else's town, nor one anyone's playing in; a deleted town's people choose again.
+  assert.equal((await api('neighbour', 'DELETE', `/mp/towns/${made[0].id}`)).status, 403);
+  assert.equal((await api('mayor', 'DELETE', `/mp/towns/${listed.towns[0].id}`)).status, 403);
+  const room = await client('neighbour').joinOrCreate('city', { town: made[0].key, width: 128, height: 128, character: other.id });
+  await new Promise<SpawnMessage>((r) => room.onMessage(MSG_SPAWN, r));
+  assert.equal((await api('mayor', 'GET', '/mp/towns')).json.towns.find((t: { id: string }) => t.id === made[0].id).playing, 1);
+  assert.equal((await api('mayor', 'DELETE', `/mp/towns/${made[0].id}`)).status, 409);
+  await room.leave();
+  await until('them to have left', () => persistence.sessions.size > 0 && ![...persistence.sessions.values()].some((s) => s.characterId === other.id && !s.reason));
+  assert.equal((await api('mayor', 'DELETE', `/mp/towns/${made[0].id}`)).status, 200);
+  assert.equal((await api('neighbour', 'GET', '/mp/characters')).json.characters[0].home, null);
+  assert.equal((await api('mayor', 'POST', '/mp/towns', { name: 'Four' })).status, 201);
 });
 
 test('passengers ride with a driver, up to three to a car', async () => {

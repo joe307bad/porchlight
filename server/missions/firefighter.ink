@@ -1,5 +1,6 @@
 # title: Fire on the street
 # summary: You're a firefighter! Drive the fire engine to three burning houses, park out front, and climb up to the water turret on the roof to put the fires out.
+# unlocks: firefighter
 
 // Everything this mission is lives in this file: that you're a firefighter
 // at the wheel of the fire engine, which houses burn and how badly, your crew,

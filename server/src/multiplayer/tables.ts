@@ -5,9 +5,11 @@
 //
 // One account (one Google sign-in) can have several characters, and play more
 // than one at once: a parent and child sharing an account each play their own.
+// What's earned (missions finished, unlocks) belongs to the account, so every
+// character has it, in every town. Where someone lives belongs to the character.
 
 import { sql } from 'drizzle-orm';
-import { bigint, index, jsonb, pgTable, real, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { type AnyPgColumn, bigint, index, integer, jsonb, pgTable, primaryKey, real, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 
 const at = (name: string) => timestamp(name, { withTimezone: true });
 
@@ -20,6 +22,38 @@ export const players = pgTable('players', {
   bannedAt: at('banned_at'),
 });
 
+/** A town people can live in. `key` is its seed and params: also what its room is called. */
+export const towns = pgTable('towns', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  key: text('key').notNull().unique(),
+  /** Who made it (they can delete it); null for the towns that come with the game. */
+  createdBy: uuid('created_by').references(() => players.id, { onDelete: 'cascade' }),
+  createdAt: at('created_at').notNull().defaultNow(),
+});
+
+/**
+ * A house someone lives in. It's named by a tile of the building, not the
+ * building's id: ids are generation order, which any change to the generator
+ * can renumber. A house belongs to one account, and goes when nobody lives there.
+ */
+export const homes = pgTable(
+  'homes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    townId: uuid('town_id')
+      .notNull()
+      .references(() => towns.id, { onDelete: 'cascade' }),
+    x: integer('x').notNull(),
+    y: integer('y').notNull(),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    createdAt: at('created_at').notNull().defaultNow(),
+  },
+  (t) => [unique('homes_town_tile_key').on(t.townId, t.x, t.y)],
+);
+
 export const characters = pgTable(
   'characters',
   {
@@ -28,6 +62,9 @@ export const characters = pgTable(
       .notNull()
       .references(() => players.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    /** The town they live in, once they've chosen; none if it's been deleted. */
+    townId: uuid('town_id').references((): AnyPgColumn => towns.id, { onDelete: 'set null' }),
+    homeId: uuid('home_id').references((): AnyPgColumn => homes.id, { onDelete: 'set null' }),
     createdAt: at('created_at').notNull().defaultNow(),
   },
   (t) => [unique('characters_player_id_name_key').on(t.playerId, t.name)],
@@ -68,4 +105,34 @@ export const sessions = pgTable(
     endReason: text('end_reason'),
   },
   (t) => [index('sessions_character_open').on(t.characterId).where(sql`${t.endedAt} IS NULL`)],
+);
+
+/** What an account has earned: once, for all its characters, in every town. */
+export const accountUnlocks = pgTable(
+  'account_unlocks',
+  {
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    what: text('what').notNull(),
+    unlockedAt: at('unlocked_at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.playerId, t.what] })],
+);
+
+/** The missions an account has finished, and how often (they can be played again). */
+export const missionCompletions = pgTable(
+  'mission_completions',
+  {
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    missionId: text('mission_id').notNull(),
+    times: integer('times').notNull().default(1),
+    firstAt: at('first_at').notNull().defaultNow(),
+    lastAt: at('last_at').notNull().defaultNow(),
+    /** Who finished it first (gone if they've been deleted; the mission stays finished). */
+    firstCharacterId: uuid('first_character_id').references(() => characters.id, { onDelete: 'set null' }),
+  },
+  (t) => [primaryKey({ columns: [t.playerId, t.missionId] })],
 );

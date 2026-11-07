@@ -15,6 +15,12 @@ Tags at the very top:
 # summary: Three neighbours need boxes run across town.
 ```
 
+A mission that earns something says what, so the Journal can show the reward before it's won (the story still calls `unlock`):
+
+```ink
+# unlocks: animals
+```
+
 ## What the story says
 
 Each line is shown on its own, and the player reads on with Enter or A. A line that starts with a role and a colon is spoken by whoever plays that role. `you:` is the player:
@@ -114,7 +120,7 @@ Roles are any names you like (`sender`, `drop`, `aunt`). Each is one building at
 
 | Function | What it does |
 | --- | --- |
-| `unlock(what)` | Something the player keeps for good: `"animals"`, so the character box offers the zoo's animals after the people; `"firefighter"`, so the character box offers the firefighter and the car box the fire engine. Kept with the character (on the server; offline, on the device). |
+| `unlock(what)` | Something the player keeps for good: `"animals"`, so the character box offers the zoo's animals after the people; `"firefighter"`, so the character box offers the firefighter and the car box the fire engine. Kept with the account, on the server: every one of its characters has it, in every town, and playing the mission again doesn't earn it twice. In dev mode (no server) it lasts until the page closes. |
 
 ### Errands
 
@@ -146,4 +152,5 @@ Ink functions that call these, recursively for a count, keep a mission tidy (see
 ## Notes
 
 - A mission's people, spots and fires are the player's alone. Others in the town don't see them.
-- Missions don't save. Leaving the town (a new seed, or regenerating) ends the one being played.
+- A mission in progress doesn't save. Leaving the town ends the one being played.
+- Reaching the end of the story (with no error) counts as finishing the mission: it's kept with the account, for the Journal. Abandoned missions don't count. Every mission's only ending is the win today; a mission that can be lost will need a new block to say so.
