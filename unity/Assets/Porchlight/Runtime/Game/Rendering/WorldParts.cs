@@ -401,8 +401,14 @@ namespace Porchlight.Rendering
                 // Kept back from the building's own wall, so the two never fight over which shows.
                 const double back = 0.02;
                 var wl = wp.rect;
-                double x0 = wl.x0 + (wp.side == Facing.W ? back : e), y0 = wl.y0 + (wp.side == Facing.N ? back : e);
-                double x1 = wl.x1 - (wp.side == Facing.E ? back : e), y1 = wl.y1 - (wp.side == Facing.S ? back : e);
+                // Along a wall, only its ends draw back, where it crosses the next wall at the room's corner:
+                // the pieces of one wall have to meet, or you see out through the joins around doors and windows.
+                bool alongX = wp.side == Facing.N || wp.side == Facing.S;
+                double End(double at, double corner) => Math.Abs(at - corner) < 1e-6 ? e : 0;
+                double x0 = wl.x0 + (wp.side == Facing.W ? back : alongX ? End(wl.x0, room.x0) : e);
+                double y0 = wl.y0 + (wp.side == Facing.N ? back : alongX ? e : End(wl.y0, room.y0));
+                double x1 = wl.x1 - (wp.side == Facing.E ? back : alongX ? End(wl.x1, room.x1) : e);
+                double y1 = wl.y1 - (wp.side == Facing.S ? back : alongX ? e : End(wl.y1, room.y1));
                 b.Box(x0, y0, x1, y1, wp.y0, wp.y1 - e, 0xefe6d6, 0xb8ad9a, ROOM_GLOW);
             }
             foreach (var side in sideOrder)
