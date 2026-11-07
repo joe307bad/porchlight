@@ -2,7 +2,7 @@
 // session cookie the auth routes set), and the routes for its characters, the
 // towns and what it's earned.
 //
-//   GET    /mp/characters            this account's characters (where each lives, and the town each is playing in, if any)
+//   GET    /mp/characters?tab=       this account's characters (where each lives, the town each is playing in, if any, and whether someone other than this tab has them)
 //   POST   /mp/characters            { name, look } → a new one
 //   DELETE /mp/characters/:id        delete one (not while it's being played)
 //   PUT    /mp/characters/:id/town   { town } move them to a town (out of any house they had)
@@ -30,8 +30,8 @@ export interface GameDeps {
   appUrl: string;
   /** Is this character in a room right now? */
   isOnline(characterId: string): boolean;
-  /** The town this character is playing in right now, if any. */
-  townOf(characterId: string): string | null;
+  /** This character right now, as this tab sees it. */
+  presence(characterId: string, tab: string): { town: string | null; session: string | null; inUse: boolean };
   /** How many characters are playing in this town (its key) right now. */
   playingIn(townKey: string): number;
   /** The missions on offer. */
@@ -158,7 +158,8 @@ export function createCharacterRoutes(deps: GameDeps) {
 
       if (req.method === 'GET' && path === PREFIX) {
         const characters = await deps.persistence.listCharacters(account.id);
-        return send(200, { characters: characters.map((c) => ({ ...c, town: deps.townOf(c.id) })) });
+        const tab = new URLSearchParams((req.url ?? '').split('?')[1] ?? '').get('tab')?.slice(0, 64) ?? '';
+        return send(200, { characters: characters.map((c) => ({ ...c, ...deps.presence(c.id, tab) })) });
       }
       if (req.method === 'POST' && path === PREFIX) {
         const body = await json<{ name?: unknown; look?: unknown }>();

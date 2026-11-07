@@ -26,13 +26,17 @@ namespace Porchlight.App
         public string look;
         /// <summary>The town (its key) they're playing in right now, if they are.</summary>
         public string town;
+        /// <summary>Their session there: how to pick them out in the town.</summary>
+        public string session;
+        /// <summary>Someone on another tab or device is playing them, so they can't be chosen.</summary>
+        public bool inUse;
         /// <summary>Where they live; null until they've chosen a town.</summary>
         public Home home;
 
         public static Character From(object o)
         {
             if (!(o is Dictionary<string, object> d)) return null;
-            var c = new Character { id = Json.Str(d, "id"), name = Json.Str(d, "name"), look = Json.Str(d, "look"), town = Json.Str(d, "town") };
+            var c = new Character { id = Json.Str(d, "id"), name = Json.Str(d, "name"), look = Json.Str(d, "look"), town = Json.Str(d, "town"), session = Json.Str(d, "session"), inUse = d.TryGetValue("inUse", out var used) && used is bool busy && busy };
             var home = Json.Obj(d, "home");
             if (home != null)
             {
@@ -126,8 +130,11 @@ namespace Porchlight.App
 
         static string Id(string id) => Uri.EscapeDataString(id);
 
+        /// <summary>Which tab or device this is: the server won't give a character being played by another.</summary>
+        public static string Tab = "";
+
         public static void ListCharacters(INetPlatform net, string origin, Action<List<Character>, string> done) =>
-            Call(net, origin, "GET", "/characters", null, (json, err) =>
+            Call(net, origin, "GET", "/characters?tab=" + Id(Tab), null, (json, err) =>
             {
                 if (err != null)
                 {

@@ -137,6 +137,8 @@ namespace Porchlight.App
         public Action onUnlocks;
         /// <summary>Another of the account's characters, playing right now, earned this.</summary>
         public Action<string> onUnlockedElsewhere;
+        /// <summary>Someone else on the account has this character (we lost our connection, or never had them). We've stopped.</summary>
+        public Action onInUse;
         /// <summary>Missions finished before we'd joined: sent once we have.</summary>
         readonly List<string> missionsDone = new List<string>();
 
@@ -256,13 +258,16 @@ namespace Porchlight.App
 
         public bool Online => room != null;
 
+        /// <summary>In the room, and placed in the town.</summary>
+        public bool Spawned => spawned;
+
         void Join()
         {
             Disconnect();
             var t = town;
             if (t == null) return;
             int gen = generation;
-            var options = new Dictionary<string, object> { ["town"] = t.key, ["width"] = t.width, ["height"] = t.height, ["character"] = character.id };
+            var options = new Dictionary<string, object> { ["town"] = t.key, ["width"] = t.width, ["height"] = t.height, ["character"] = character.id, ["tab"] = Account.Tab };
             SetStatus(NetStatus.Joining);
             // The room can fill up between matchmaking and joining: try once more.
             client.JoinOrCreate(Protocol.CITY_ROOM, options, (r, err) =>
@@ -277,6 +282,13 @@ namespace Porchlight.App
             if (r == null)
             {
                 if (gen != generation) return;
+                if (err == Protocol.IN_USE)
+                {
+                    stopped = true;
+                    SetStatus(NetStatus.Offline("playing somewhere else"));
+                    onInUse?.Invoke();
+                    return;
+                }
                 UnityEngine.Debug.LogWarning("multiplayer: could not join: " + err);
                 string why = string.IsNullOrEmpty(err) ? "the game server isn't answering" : err;
                 host.Notify($"Playing alone: {why}. Trying again…");
@@ -394,7 +406,7 @@ namespace Porchlight.App
                 {
                     stopped = true;
                     SetStatus(NetStatus.Offline("playing somewhere else"));
-                    host.Notify($"{character.name} is being played somewhere else now. Playing alone here.");
+                    onInUse?.Invoke();
                 }
                 else if (code == Protocol.CLOSE_KICKED)
                 {

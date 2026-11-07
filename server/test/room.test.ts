@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, MSG_CAR, MSG_CORRECT, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -275,6 +275,42 @@ test('the town editor saves a town by name: its own key, once, and it counts tow
   assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Two', key: 'seed=two' })).status, 201);
   assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Three', key: 'seed=three' })).status, 201);
   assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Four', key: 'seed=four' })).status, 409);
+});
+
+test('a character plays on one device at a time; the others see where, and can join them', async () => {
+  const me = (await api('couple', 'POST', '/mp/characters', { name: 'Me' })).json;
+  const list = async (tab: string) => (await api('couple', 'GET', `/mp/characters?tab=${tab}`)).json.characters[0];
+  const here = { ...town, town: 'seed=couple', character: me.id };
+  const phone = await client('couple').joinOrCreate('city', { ...here, tab: 'phone' });
+  phone.onMessage(MSG_SPAWN, () => {});
+
+  const seen = await list('laptop');
+  assert.deepEqual([seen.inUse, seen.town, seen.session], [true, 'seed=couple', phone.sessionId]);
+  assert.equal((await list('phone')).inUse, false);
+
+  // Another device can't have them, and the phone carries on.
+  await assert.rejects(client('couple').joinOrCreate('city', { ...here, tab: 'laptop' }), new RegExp(IN_USE));
+  await assert.rejects(client('couple').joinOrCreate('city', { ...here, town: 'seed=elsewhere', tab: 'laptop' }), new RegExp(IN_USE));
+  assert.equal((await list('laptop')).session, phone.sessionId);
+
+  // The same tab can: a reload's old connection is still there.
+  const left = new Promise<number>((r) => phone.onLeave(r));
+  const reloaded = await client('couple').joinOrCreate('city', { ...here, tab: 'phone' });
+  reloaded.onMessage(MSG_SPAWN, () => {});
+  assert.equal(await left, CLOSE_SIGNED_IN_ELSEWHERE);
+
+  // Lost connection: not in use, so they aren't stuck for as long as it might come back.
+  reloaded.reconnection.enabled = false;
+  reloaded.connection.close(4010);
+  for (let tries = 0; (await list('laptop')).inUse; tries++) {
+    assert.ok(tries < 100, 'the drop was never noticed');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  const laptop = await client('couple').joinOrCreate('city', { ...here, tab: 'laptop' });
+  laptop.onMessage(MSG_SPAWN, () => {});
+  assert.equal((await list('phone')).inUse, true);
+  await laptop.leave();
+  assert.deepEqual([(await list('phone')).inUse, (await list('phone')).town], [false, null]);
 });
 
 test('passengers ride with a driver, up to three to a car', async () => {

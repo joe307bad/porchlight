@@ -583,7 +583,7 @@ namespace Porchlight.UI
             if (playing == null || playing.Count == 0) return;
             joinRows = El.Box("sb-joins");
             foreach (var (name, join) in playing)
-                joinRows.Add(El.Btn($"Join {name}", $"Go to {name}'s town, and be shown the way to them", join, "btn-primary", "press"));
+                joinRows.Add(El.Btn($"Join {name}", $"Go to {name}, wherever they are", join, "btn-primary", "press"));
             top.Insert(top.IndexOf(links) + 1, joinRows);
         }
 

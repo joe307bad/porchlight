@@ -33,6 +33,9 @@ namespace Porchlight.Net
         public const int CLOSE_SIGNED_IN_ELSEWHERE = 4100;
         public const int CLOSE_KICKED = 4101;
 
+        /// <summary>A join refused because someone else is playing this character.</summary>
+        public const string IN_USE = "That character is being played on another device.";
+
         public const int ANIM_IDLE = 0;
         public const int ANIM_WALK = 1;
         public const int ANIM_RUN = 2;

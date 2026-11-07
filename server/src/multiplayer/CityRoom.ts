@@ -27,6 +27,8 @@ import {
   ANIM_DRIVE,
   ANIM_IDLE,
   CAR_SEATS,
+  CLOSE_IN_USE,
+  IN_USE,
   CLOSE_KICKED,
   CLOSE_SIGNED_IN_ELSEWHERE,
   HOST_SILENT_MS,
@@ -88,6 +90,8 @@ interface JoinOptions {
   width?: unknown;
   height?: unknown;
   character?: unknown;
+  /** Which tab or device this is (it makes this up, and keeps it for as long as the tab lasts). */
+  tab?: unknown;
 }
 
 /** Everything about a player the clients don't get. */
@@ -119,12 +123,18 @@ interface PlayerRuntime {
 }
 
 /** Characters being played right now, across every room in this process. */
-const online = new Map<string, { room: CityRoom; sessionId: string }>();
+const online = new Map<string, { room: CityRoom; sessionId: string; tab: string }>();
 
 export const isOnline = (characterId: string): boolean => online.has(characterId);
 
-/** The town (its room's key) this character is playing in right now, if any. */
-export const townOf = (characterId: string): string | null => online.get(characterId)?.room.town ?? null;
+/** Is someone other than this tab playing this character, and still connected? */
+const inUse = (o: { room: CityRoom; sessionId: string; tab: string } | undefined, tab: string): boolean => !!o && o.tab !== tab && o.room.connected(o.sessionId);
+
+/** This character right now, as `tab` sees it: the town (its room's key) and session they're playing in, and whether someone else has them. */
+export const presence = (characterId: string, tab: string): { town: string | null; session: string | null; inUse: boolean } => {
+  const o = online.get(characterId);
+  return { town: o?.room.town ?? null, session: o?.sessionId ?? null, inUse: inUse(o, tab) };
+};
 
 /** How many characters are playing in this town (its room's key) right now. */
 export const playingIn = (town: string): number => [...online.values()].filter((o) => o.room.town === town).length;
@@ -300,13 +310,20 @@ export class CityRoom extends Room<{ state: CityState }> {
     }
   }
 
-  async onJoin(client: Client, _options: JoinOptions, auth: JoinAuth): Promise<void> {
+  async onJoin(client: Client, options: JoinOptions, auth: JoinAuth): Promise<void> {
     const d = this.deps;
-    // Newest wins: whoever had this character (another tab, another device)
-    // is saved and signed out first, so what's loaded below is up to date.
+    const tab = typeof options.tab === 'string' ? options.tab.slice(0, 64) : '';
+    // One person to a character: someone connected on another tab or device keeps them.
     const prior = online.get(auth.characterId);
-    if (prior) await prior.room.evict(prior.sessionId);
-    online.set(auth.characterId, { room: this, sessionId: client.sessionId });
+    if (inUse(prior, tab)) throw new ServerError(CLOSE_IN_USE, IN_USE);
+    // This tab again (a reload, or another town), or someone who's lost their connection:
+    // saved and signed out first, so what's loaded below is up to date.
+    if (prior) {
+      await prior.room.evict(prior.sessionId);
+      const since = online.get(auth.characterId);
+      if (since && since.sessionId !== prior.sessionId) throw new ServerError(CLOSE_IN_USE, IN_USE); // someone was quicker
+    }
+    online.set(auth.characterId, { room: this, sessionId: client.sessionId, tab });
 
     try {
       const saved = await d.persistence.loadState(auth.characterId);
@@ -415,6 +432,12 @@ export class CityRoom extends Room<{ state: CityState }> {
     // Normally everyone's been saved on their way out; catch anyone who wasn't.
     const left = [...this.runtime.values()].filter((rt) => !rt.finished);
     await Promise.all(left.map((rt) => this.finish(rt, this.shuttingDown ? 'shutdown' : 'timeout')));
+  }
+
+  /** Is this session connected (or still joining), rather than dropped and waiting to come back? */
+  connected(sessionId: string): boolean {
+    const rt = this.runtime.get(sessionId);
+    return !rt || rt.client !== null;
   }
 
   /** Someone else has taken this character: save, sign off and close this session. */

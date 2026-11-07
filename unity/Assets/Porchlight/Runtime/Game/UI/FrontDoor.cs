@@ -70,6 +70,9 @@ namespace Porchlight.App
     public sealed class FrontDoor
     {
         const string KEY = "porchlight.character";
+        const string TAB_KEY = "porchlight.tab";
+        /// <summary>How often (s) the character screen looks again at who's being played.</summary>
+        const float POLL_SECONDS = 4;
         static readonly string[] CHARACTER_NAMES = { "Robin", "Sam", "Alex", "Jo", "Charlie", "Frankie", "Pat", "Toby", "Wren", "Nell", "Ollie", "Maya" };
         static readonly string[] TOWN_FIRST = { "Oak", "Willow", "Lantern", "Clover", "Juniper", "Birch", "Thistle", "Honey", "Fern", "Amber" };
         static readonly string[] TOWN_LAST = { "Hollow", "Bend", "Falls", "Green", "Crossing", "Harbour", "Hill", "Springs", "Meadow", "Glen" };
@@ -84,6 +87,9 @@ namespace Porchlight.App
         PadMenu menu;
         /// <summary>What the account has unlocked: which looks a new character can have.</summary>
         HashSet<string> unlocked = new HashSet<string>();
+        /// <summary>Looks again at what this screen shows, now and then.</summary>
+        Action poll;
+        float pollAt;
 
         public FrontDoor(VisualElement root, Platform platform, string origin, Func<Portraits> portraits, Func<string> randomSeed, Action signOut)
         {
@@ -93,17 +99,32 @@ namespace Porchlight.App
             this.origin = origin;
             this.portraits = portraits;
             this.randomSeed = randomSeed;
+            Account.Tab = platform.Load(TAB_KEY, session: true);
+            if (string.IsNullOrEmpty(Account.Tab))
+            {
+                Account.Tab = Guid.NewGuid().ToString("N");
+                platform.Save(TAB_KEY, Account.Tab, session: true);
+            }
         }
 
         public bool Open => overlay != null;
 
-        public void Update(PadState pad, bool connected) => menu?.Update(pad, connected);
+        public void Update(PadState pad, bool connected)
+        {
+            menu?.Update(pad, connected);
+            if (poll != null && Time.realtimeSinceStartup >= pollAt)
+            {
+                pollAt = Time.realtimeSinceStartup + POLL_SECONDS;
+                poll();
+            }
+        }
 
         public void Close()
         {
             overlay?.RemoveFromHierarchy();
             overlay = null;
             menu = null;
+            poll = null;
         }
 
         // This tab's character, so a reload carries straight on.
@@ -236,9 +257,19 @@ namespace Porchlight.App
                 }
                 if (characters.Count == 0) list.Add(El.Text("No characters yet. Make one below.", "picker-empty"));
                 foreach (var c in characters) list.Add(CharacterRow(c, thisMenu, play, move, error));
-                if (characters.Count > 0) thisMenu.MoveTo(list.Q<UiButton>(className: "picker-play"));
+                thisMenu.MoveTo(list.Query<UiButton>(className: "picker-play").Where(b => b.enabledSelf).First());
+                // Someone starts or stops playing on another device: show it (unless they're typing a name).
+                string shown = Busy(characters);
+                pollAt = Time.realtimeSinceStartup + POLL_SECONDS;
+                poll = () => Account.ListCharacters(platform, origin, (now, _) =>
+                {
+                    if (overlay == null || menu != thisMenu || now == null || Busy(now) == shown || !string.IsNullOrEmpty(name.value)) return;
+                    Characters(play, move);
+                });
             });
         }
+
+        static string Busy(List<Character> characters) => string.Join(",", characters.Select(c => c.id + (c.inUse ? "!" : "")));
 
         VisualElement CharacterRow(Character c, PadMenu forMenu, Action<Character> play, Action<Character> move, Label error)
         {
@@ -248,6 +279,16 @@ namespace Porchlight.App
             row.Add(face);
             var middle = El.Box("picker-middle");
             void Play() => play(c);
+            if (c.inUse)
+            {
+                // Someone else is them right now: here to see, not to choose.
+                var taken = El.Btn(c.name, $"{c.name} is being played on another device", Play, "picker-play", "semibold");
+                taken.SetEnabled(false);
+                middle.Add(taken);
+                middle.Add(El.Text("Being played on another device", "picker-detail"));
+                row.Add(middle);
+                return row;
+            }
             var button = forMenu.AddRow(El.Btn(c.name, null, Play, "picker-play", "semibold", "press"), Play);
             middle.Add(button);
             string where = c.home == null ? "Hasn’t chosen a town yet" : c.home.hasHouse ? $"Lives in {c.home.townName}" : $"In {c.home.townName}, choosing a house";
@@ -270,6 +311,44 @@ namespace Porchlight.App
                 });
             }, "picker-delete"));
             return row;
+        }
+
+        // Where to, now they've been chosen?
+
+        /// <summary>Others on the account are playing right now: join one of them, wherever they are, or carry on (goOn: as this says).</summary>
+        public void WhereTo(Character c, List<Character> others, Action<Character> join, Action goOn, Action back)
+        {
+            var card = Screen($"Where to, {c.name}?", "Join someone who’s playing right now, wherever they are, or carry on by yourself.");
+            var thisMenu = menu;
+            thisMenu.back = back;
+            var list = ListIn(card, thisMenu);
+            var places = new List<(Character them, Label where)>();
+            foreach (var them in others)
+            {
+                var row = El.Box("picker-row");
+                var face = El.Box("picker-face");
+                if (them.look != null && Catalog.IsLook(them.look)) face.style.backgroundImage = new StyleBackground(portraits().LookStills(new[] { them.look })[0]);
+                row.Add(face);
+                var middle = El.Box("picker-middle");
+                void Join() => join(them);
+                middle.Add(thisMenu.AddRow(El.Btn($"Join {them.name}", $"Go to {them.name}, wherever they are", Join, "picker-play", "semibold", "press"), Join));
+                var where = El.Text("Playing now", "picker-detail");
+                middle.Add(where);
+                places.Add((them, where));
+                row.Add(middle);
+                list.Add(row);
+            }
+            string alone = c.home == null ? "Choose a town" : c.home.hasHouse ? $"Go home to {c.home.townName}" : $"Choose a house in {c.home.townName}";
+            card.Add(thisMenu.Add(El.Btn(alone, null, goOn, "picker-editor", "semibold", "press"), goOn));
+            var leave = El.Link("Back", back);
+            leave.style.marginTop = 10;
+            card.Add(leave);
+            Account.ListTowns(platform, origin, (towns, _) =>
+            {
+                if (towns == null || menu != thisMenu) return;
+                foreach (var (them, where) in places)
+                    if (towns.towns.Find(t => t.key == them.town) is Town town) where.text = $"Playing now in {town.name}";
+            });
         }
 
         // What a new character looks like.

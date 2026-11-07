@@ -493,6 +493,20 @@ namespace Porchlight.App
         /// <summary>Besides yours, cars the town's traffic stops for (a mission's).</summary>
         public readonly List<Vec2> Obstacles = new List<Vec2>();
 
+        /// <summary>Straight to just beside this spot (someone you've joined).</summary>
+        public void JumpBeside(Vec2 them)
+        {
+            if (player == null || world == null) return;
+            const double GAP = 0.4;
+            foreach (var (dx, dy) in new[] { (GAP, 0.0), (-GAP, 0.0), (0.0, GAP), (0.0, -GAP) })
+            {
+                if (open.Length == 0 || !Player.Standable(them.x + dx, them.y + dy, open, world.model, world.solids, walkPaved)) continue;
+                Teleport(new Vec2(them.x + dx, them.y + dy));
+                return;
+            }
+            Teleport(them);
+        }
+
         void Teleport(Vec2 at)
         {
             if (player == null || world == null) return;

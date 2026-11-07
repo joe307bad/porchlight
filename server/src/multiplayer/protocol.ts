@@ -28,6 +28,10 @@ export const MSG_UNLOCKS = 'unlocks'; // { unlocks }: another of the account's c
 /** Close codes (4000 is a consented leave; 4001-4010 are Colyseus's own). */
 export const CLOSE_SIGNED_IN_ELSEWHERE = 4100;
 export const CLOSE_KICKED = 4101;
+export const CLOSE_IN_USE = 4102;
+
+/** A join refused because someone else is playing this character (the game knows this message: Protocol.IN_USE). */
+export const IN_USE = 'That character is being played on another device.';
 
 /** Player.anim. */
 export const ANIM_IDLE = 0;

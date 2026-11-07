@@ -85,8 +85,12 @@ namespace Porchlight.App
         int carModel;
         double playersAt;
         /// <summary>Who you've joined (by the button under your name), until they're found.</summary>
-        string joining;
+        string joining, joiningSession;
         double joiningUntil;
+        /// <summary>The "Join" buttons showing, and when to look again.</summary>
+        string joinsShown = "";
+        double joinsAt;
+        const double JOINS_MS = 10000;
         const double JOIN_FIND_MS = 30000;
 
         // Missions
@@ -568,22 +572,46 @@ namespace Porchlight.App
 
         // The front door: who's playing, and where they live, then into their town.
 
-        void OpenFrontDoor()
+        void OpenFrontDoor(string message = null)
         {
             root.AddToClassList("choosing");
             door ??= new FrontDoor(root, platform, origin, () => portraits ??= new Portraits(ModelLibrary.Instance), () => RandomSeed(), () => platform.PostForm("/auth/logout"));
             // A reload in this tab carries straight on, where they were.
             FrontDoor.Remembered(platform, origin, c =>
             {
-                if (c?.home != null && c.home.hasHouse) PlayAs(c, false);
-                else ShowCharacters();
+                if (c?.home != null && c.home.hasHouse && !c.inUse) PlayAs(c, false);
+                else ShowCharacters(message ?? (c?.inUse == true ? InUse(c) : null));
             });
         }
 
         void ShowCharacters(string message = null) => door.Characters(Settle, c => ChooseTown(c), message);
 
-        /// <summary>This character, please: on to whatever they haven't chosen yet, or into their town.</summary>
-        void Settle(Character c)
+        static string InUse(Character c) => $"{c.name} is being played on another device. Choose someone else.";
+
+        bool settling;
+
+        /// <summary>This character, please (if they're still free): somewhere to go, if others on the account are playing.</summary>
+        void Settle(Character chosen)
+        {
+            if (settling) return;
+            settling = true;
+            Account.ListCharacters(platform, origin, (list, _) =>
+            {
+                settling = false;
+                var c = list?.Find(o => o.id == chosen.id) ?? chosen;
+                if (c.inUse)
+                {
+                    ShowCharacters(InUse(c));
+                    return;
+                }
+                var others = list?.Where(o => o.id != c.id && o.inUse && !string.IsNullOrEmpty(o.town)).ToList();
+                if (others != null && others.Count > 0) door.WhereTo(c, others, them => Visit(c, them), () => CarryOn(c), () => ShowCharacters());
+                else CarryOn(c);
+            });
+        }
+
+        /// <summary>On to whatever they haven't chosen yet, or into their town.</summary>
+        void CarryOn(Character c)
         {
             if (c.home == null) ChooseTown(c);
             else if (!c.home.hasHouse) ChooseHouse(c);
@@ -723,9 +751,24 @@ namespace Porchlight.App
             preferHome = atDoor;
             FrontDoor.Remember(platform, c.id);
             root.RemoveFromClassList("choosing");
-            sidebar.SetCharacter(c.name, SwitchCharacter, c.home.townName, GoHome, ToggleJournal);
+            sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home.townName, GoHome, ToggleJournal);
             OfferJoins();
             _ = Explore();
+        }
+
+        /// <summary>Into someone else's town as this character, who needn't live anywhere yet.</summary>
+        void Visit(Character c, Character them)
+        {
+            door.Close();
+            net?.Close();
+            net = null;
+            if (iso != null) iso.TeleportHook = null;
+            playing = c;
+            preferHome = false;
+            FrontDoor.Remember(platform, c.id);
+            root.RemoveFromClassList("choosing");
+            sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home?.townName, c.home?.hasHouse == true ? GoHome : (Action)null, ToggleJournal);
+            Join(them);
         }
 
         /// <summary>Your front door, if you're in your own town and it's there.</summary>
@@ -1058,6 +1101,7 @@ namespace Porchlight.App
             net = new Multiplayer(iso, playing, origin, platform, timers);
             net.onStatus = s => sidebar.SetOnline(s.state, s.here, s.why);
             net.onUnlockedElsewhere = SayUnlocked;
+            net.onInUse = () => SwitchCharacter(InUse(playing));
             iso.TeleportHook = (x, z) => net?.Teleport(x, z) ?? false;
         }
 
@@ -1072,33 +1116,34 @@ namespace Porchlight.App
         /// <summary>
         /// Signed in while one of the account's characters is already playing (another
         /// tab, another device, someone else on this sign-in): a button under the name
-        /// to go to their town and be shown the way to them.
+        /// to go straight to them.
         /// </summary>
         void OfferJoins()
         {
             string mine = playing?.id;
             Account.ListCharacters(platform, origin, (list, err) =>
             {
-                if (list == null) return;
-                var playing = list.Where(c => !string.IsNullOrEmpty(c.town) && c.id != mine).ToList();
-                sidebar.SetJoins(playing.Select(c => (c.name, (Action)(() => Join(c)))).ToList());
+                if (list == null || playing?.id != mine) return;
+                var others = list.Where(c => c.inUse && !string.IsNullOrEmpty(c.town) && c.id != mine).ToList();
+                string shown = string.Join(",", others.Select(c => c.id));
+                if (shown == joinsShown) return;
+                joinsShown = shown;
+                sidebar.SetJoins(others.Select(c => (c.name, (Action)(() => Join(c)))).ToList());
             });
         }
 
-        /// <summary>Into their town (playing as whoever's picked next), finding the way to them once they're seen.</summary>
+        /// <summary>Into their town (if we're not there), arriving beside them once they're seen.</summary>
         void Join(Character them)
         {
-            sidebar.SetJoins(null);
-            var state = ParseUrlState(them.town);
-            sidebar.SetParams(state.@params);
-            Regenerate(state.seed ?? RandomSeed(), state.@params);
+            ShowTown(them.town);
             joining = them.name;
+            joiningSession = them.session;
             joiningUntil = platform.Now() + JOIN_FIND_MS;
             _ = Explore();
         }
 
-        /// <summary>Someone else is playing: back to the front door.</summary>
-        void SwitchCharacter()
+        /// <summary>Someone else is playing: back to the front door (saying why, if there's a reason to).</summary>
+        void SwitchCharacter(string message = null)
         {
             EndMission(null);
             journal?.Close();
@@ -1107,9 +1152,11 @@ namespace Porchlight.App
             if (iso != null) iso.TeleportHook = null;
             FrontDoor.Forget(platform);
             playing = null;
+            joining = null;
+            joinsShown = "";
             sidebar.SetJoins(null);
             LeaveExplore(true);
-            OpenFrontDoor();
+            OpenFrontDoor(message);
         }
 
         /// <summary>Night or day: online, for everyone in the town (the room says when it's done).</summary>
@@ -1221,10 +1268,21 @@ namespace Porchlight.App
             var list = iso.Others.Select(o => (o.key, o.name)).OrderBy(o => o.name, StringComparer.OrdinalIgnoreCase).ToList();
             if (joining != null)
             {
-                // Joined someone: the way to them as soon as they're on the map (or not, after a while).
-                var them = iso.Others.FirstOrDefault(o => o.name == joining);
-                if (them.key != null) iso.Find(them.key);
-                if (them.key != null || now > joiningUntil) joining = null;
+                // Joined someone: beside them as soon as they're on the map (or not, after a while).
+                var them = iso.Others.FirstOrDefault(o => o.key == joiningSession);
+                if (them.key == null) them = iso.Others.FirstOrDefault(o => o.name == joining);
+                if (them.key != null && net?.Spawned == true)
+                {
+                    iso.JumpBeside(new Vec2(them.x, them.y));
+                    joining = null;
+                }
+                else if (now > joiningUntil) joining = null;
+            }
+            // Who else on the account has started or stopped playing.
+            if (playing != null && now >= joinsAt)
+            {
+                joinsAt = now + JOINS_MS;
+                OfferJoins();
             }
             sidebar.SetPlayers(list, iso.Finding, key => iso.Find(key));
         }
