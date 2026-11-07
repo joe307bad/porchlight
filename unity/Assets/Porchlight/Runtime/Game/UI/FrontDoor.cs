@@ -109,6 +109,9 @@ namespace Porchlight.App
 
         public bool Open => overlay != null;
 
+        /// <summary>The character screen has its characters (or why it can't have them).</summary>
+        public Action Listed;
+
         public void Update(PadState pad, bool connected)
         {
             menu?.Update(pad, connected);
@@ -250,6 +253,7 @@ namespace Porchlight.App
             {
                 if (overlay == null || menu != thisMenu) return;
                 list.Clear();
+                Listed?.Invoke();
                 if (characters == null)
                 {
                     Say(error, err);

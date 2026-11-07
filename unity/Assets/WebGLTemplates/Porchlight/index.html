@@ -62,7 +62,8 @@
       }, (progress) => {
         fill.style.width = `${Math.round(progress * 100)}%`;
       }).then(() => {
-        loading.remove();
+        // Once the game's first frame is up, with its own loader on it.
+        requestAnimationFrame(() => requestAnimationFrame(() => loading.remove()));
         canvas.focus();
       }).catch((err) => {
         loading.querySelector('.text').className = 'error';

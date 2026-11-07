@@ -495,6 +495,36 @@ Label {
     background-color: rgba(20, 19, 17, 0.6);
 }
 
+/* Who's playing and which town: nothing behind them (the map is only for choosing a house, and for dev mode). */
+.choosing #picker {
+    background-color: #2b2a27;
+}
+
+/* Over everything until there's a real screen to show: looks as the page's own loader does. */
+.loader {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    align-items: center;
+    justify-content: center;
+    background-color: #2b2a27;
+}
+
+.loader-text {
+    color: #a99f88;
+    font-size: 13px;
+}
+
+.loader-bar {
+    width: 200px;
+    height: 4px;
+    margin-top: 10px;
+    border-radius: 2px;
+    background-color: #c2412d;
+}
+
 /* Choosing who's playing and where they live: the map gets the whole window. */
 .choosing #sidebar {
     display: none;

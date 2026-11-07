@@ -161,6 +161,55 @@ namespace Porchlight.App
             root.style.unityFontDefinition = FontDefinition.FromFont(Resources.Load<Font>("Porchlight/Fonts/Inter-Regular"));
             root.style.flexGrow = 1;
             root.pickingMode = PickingMode.Ignore;
+            loader = El.Box("loader");
+            loader.Add(El.Text("Loading Porchlight…", "loader-text"));
+            loader.Add(El.Box("loader-bar"));
+            root.Add(loader);
+        }
+
+        // The loader: carries on from the page's, over everything, until there's a real screen
+        // to show. Building a town stops everything for a moment, so it has to be drawn first.
+
+        VisualElement loader;
+        Action afterPaint;
+        int paintFrames;
+        /// <summary>Going into a town: the loader stays till they're in it and in their place.</summary>
+        bool enteringTown;
+        double enteringUntil;
+        const double ENTERING_MS = 5000;
+
+        bool Loading => loader.style.display != DisplayStyle.None;
+
+        void ShowLoader() => loader.style.display = DisplayStyle.Flex;
+
+        void HideLoader()
+        {
+            loader.style.display = DisplayStyle.None;
+            enteringTown = false;
+            enteringUntil = 0;
+        }
+
+        /// <summary>Do something heavy once what's on screen now has been drawn.</summary>
+        void AfterPaint(Action then)
+        {
+            afterPaint = then;
+            paintFrames = 2;
+        }
+
+        void UpdateLoader()
+        {
+            if (afterPaint != null && --paintFrames <= 0)
+            {
+                var then = afterPaint;
+                afterPaint = null;
+                then();
+            }
+            if (!Loading) return;
+            if (root[root.childCount - 1] != loader) loader.BringToFront();
+            if (!enteringTown || !exploring) return;
+            double now = platform.Now();
+            if (enteringUntil == 0) enteringUntil = now + ENTERING_MS;
+            if ((net == null || net.Spawned) && joining == null || now > enteringUntil) HideLoader();
         }
 
         // Sign-in: nothing starts until someone is signed in, when the
@@ -200,12 +249,14 @@ namespace Porchlight.App
                     Start2();
                     return;
                 }
-                StartAttract();
+                // The card straight away; the scenery behind it can follow.
                 var gate = SignInGate.Show(root, provider, error ?? err, () =>
                 {
                     string returnTo = platform.PathName + platform.Search + platform.Hash;
                     platform.Navigate("/auth/login?returnTo=" + Uri.EscapeDataString(returnTo));
                 });
+                HideLoader();
+                AfterPaint(StartAttract);
             });
         }
 
@@ -568,6 +619,7 @@ namespace Porchlight.App
 
             Regenerate(seed, @params);
             if (online) OpenFrontDoor();
+            else HideLoader();
         }
 
         // The front door: who's playing, and where they live, then into their town.
@@ -576,6 +628,7 @@ namespace Porchlight.App
         {
             root.AddToClassList("choosing");
             door ??= new FrontDoor(root, platform, origin, () => portraits ??= new Portraits(ModelLibrary.Instance), () => RandomSeed(), () => platform.PostForm("/auth/logout"));
+            door.Listed = HideLoader;
             // A reload in this tab carries straight on, where they were.
             FrontDoor.Remembered(platform, origin, c =>
             {
@@ -684,6 +737,12 @@ namespace Porchlight.App
         /// <summary>Their town's map, to choose a house on.</summary>
         void ChooseHouse(Character c, string note = null)
         {
+            ShowLoader();
+            AfterPaint(() => OpenHousePicker(c, note));
+        }
+
+        void OpenHousePicker(Character c, string note)
+        {
             door.Close();
             root.AddToClassList("choosing");
             ShowTown(c.home.townKey);
@@ -697,6 +756,7 @@ namespace Porchlight.App
                     ShowCharacters(err);
                     return;
                 }
+                HideLoader();
                 var rng = new Rng(RandomSeed());
                 housePicker = new HousePicker(root, map, model, c.name, c.home.townName, homes, note, () => rng.Next(), (x, y) =>
                     Account.ClaimHome(platform, origin, c.id, x, y, (moved, refused) =>
@@ -736,6 +796,12 @@ namespace Porchlight.App
         /// <summary>Into this character's town, as them: at their front door, or (a reload) where they were.</summary>
         void PlayAs(Character c, bool atDoor)
         {
+            ShowLoader();
+            AfterPaint(() => EnterAs(c, atDoor));
+        }
+
+        void EnterAs(Character c, bool atDoor)
+        {
             door.Close();
             net?.Close();
             net = null;
@@ -752,11 +818,18 @@ namespace Porchlight.App
             FrontDoor.Remember(platform, c.id);
             root.RemoveFromClassList("choosing");
             sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home.townName, GoHome, ToggleJournal);
+            enteringTown = true;
             _ = Explore();
         }
 
         /// <summary>Into someone else's town as this character, who needn't live anywhere yet.</summary>
         void Visit(Character c, Character them)
+        {
+            ShowLoader();
+            AfterPaint(() => VisitNow(c, them));
+        }
+
+        void VisitNow(Character c, Character them)
         {
             door.Close();
             net?.Close();
@@ -767,7 +840,7 @@ namespace Porchlight.App
             FrontDoor.Remember(platform, c.id);
             root.RemoveFromClassList("choosing");
             sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home?.townName, c.home?.hasHouse == true ? GoHome : (Action)null, ToggleJournal);
-            Join(them);
+            GoTo(them);
         }
 
         /// <summary>Your house, if you're in your own town and it's there.</summary>
@@ -794,8 +867,13 @@ namespace Porchlight.App
             if (home == null || iso == null) return;
             if (home.townKey != TownKey)
             {
-                preferHome = true;
-                ShowTown(home.townKey);
+                ShowLoader();
+                AfterPaint(() =>
+                {
+                    preferHome = true;
+                    ShowTown(home.townKey);
+                    enteringTown = true;
+                });
                 return;
             }
             if (DoorOfHome() is (Vec2 at, double heading)) iso.PutPlayer(at, heading);
@@ -820,7 +898,7 @@ namespace Porchlight.App
         bool Typing()
         {
             // A screen over the town has the keys, as a text field would.
-            if (journal != null || housePicker != null || door?.Open == true) return true;
+            if (Loading || journal != null || housePicker != null || door?.Open == true) return true;
             var focused = root?.panel?.focusController?.focusedElement as VisualElement;
             return focused != null && (focused is TextField || focused.GetFirstAncestorOfType<TextField>() != null);
         }
@@ -835,6 +913,7 @@ namespace Porchlight.App
             platform.Pump();
             timers.Tick();
             input.Update();
+            UpdateLoader();
             if (attract != null)
             {
                 attract.viewport = new Rect(0, 0, Screen.width, Screen.height);
@@ -1068,6 +1147,7 @@ namespace Porchlight.App
                 statusLabel.text = $"couldn't start explore mode: {err.Message}";
                 statusLabel.AddToClassList("error");
                 LeaveExplore(true);
+                HideLoader();
             }
             finally
             {
@@ -1157,6 +1237,13 @@ namespace Porchlight.App
         /// <summary>Into their town (if we're not there), arriving beside them once they're seen.</summary>
         void Join(Character them)
         {
+            ShowLoader();
+            AfterPaint(() => GoTo(them));
+        }
+
+        void GoTo(Character them)
+        {
+            enteringTown = true;
             ShowTown(them.town);
             joining = them.name;
             joiningSession = them.session;
