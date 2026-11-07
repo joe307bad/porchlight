@@ -90,7 +90,7 @@ namespace Porchlight.App
         /// <summary>The "Join" buttons showing, and when to look again.</summary>
         string joinsShown = "";
         double joinsAt;
-        const double JOINS_MS = 10000;
+        const double JOINS_MS = 5000;
         const double JOIN_FIND_MS = 30000;
 
         // Missions
@@ -752,7 +752,6 @@ namespace Porchlight.App
             FrontDoor.Remember(platform, c.id);
             root.RemoveFromClassList("choosing");
             sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home.townName, GoHome, ToggleJournal);
-            OfferJoins();
             _ = Explore();
         }
 
@@ -1119,12 +1118,14 @@ namespace Porchlight.App
             if (isoTown != model) return;
             net?.Enter(new TownKey { key = EncodeUrlState(seed, @params), width = model.width, height = model.height });
             overlay?.SetHome(DoorOfHome()?.at, HouseOfHome()?.footprint);
+            // Joining is for someone in another town, and which that is has just changed.
+            if (playing != null) OfferJoins();
         }
 
         /// <summary>
         /// Signed in while one of the account's characters is already playing (another
-        /// tab, another device, someone else on this sign-in): a button under the name
-        /// to go straight to them.
+        /// tab, another device, someone else on this sign-in) in another town: a button
+        /// under the name to go straight to them.
         /// </summary>
         void OfferJoins()
         {
@@ -1132,11 +1133,24 @@ namespace Porchlight.App
             Account.ListCharacters(platform, origin, (list, err) =>
             {
                 if (list == null || playing?.id != mine) return;
-                var others = list.Where(c => c.inUse && !string.IsNullOrEmpty(c.town) && c.id != mine).ToList();
+                var others = list.Where(c => c.inUse && !string.IsNullOrEmpty(c.town) && c.id != mine && c.town != TownKey).ToList();
                 string shown = string.Join(",", others.Select(c => c.id));
                 if (shown == joinsShown) return;
                 joinsShown = shown;
-                sidebar.SetJoins(others.Select(c => (c.name, (Action)(() => Join(c)))).ToList());
+                sidebar.SetJoins(others.Select(c => (c.name, (Action)(() => JoinWhereverNow(c.id)))).ToList());
+            });
+        }
+
+        /// <summary>A Join button: they may have moved on since it appeared, so ask where they are now.</summary>
+        void JoinWhereverNow(string id)
+        {
+            string mine = playing?.id;
+            Account.ListCharacters(platform, origin, (list, _) =>
+            {
+                if (list == null || playing?.id != mine) return;
+                var them = list.Find(c => c.id == id);
+                if (them != null && them.inUse && !string.IsNullOrEmpty(them.town) && them.town != TownKey) Join(them);
+                else OfferJoins();
             });
         }
 
