@@ -8,7 +8,7 @@
 // without DATABASE_URL (multiplayer works, nothing outlives the process).
 
 import { fileURLToPath } from 'node:url';
-import { and, asc, count, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, eq, isNull, notInArray, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -84,11 +84,13 @@ export const MAX_TOWNS = 3;
 export const MAX_RESIDENTS = 2;
 const NAME_MAX = 20;
 export const TOWN_NAME_MAX = 24;
-/** The towns that come with the game, there for everyone (and nobody can delete them). */
+/**
+ * The town that comes with the game, the same for everyone (and nobody can delete it): as big and
+ * built up as the map settings go, with no water. Written as the game writes a key (see
+ * `dotnet run --project "unity/Tools~/Checks" -- homes`), since this is also its room's name.
+ */
 export const STARTER_TOWNS = [
-  { name: 'Maple Hollow', key: 'seed=maple-hollow' },
-  { name: 'Harbour Bend', key: 'seed=harbour-bend' },
-  { name: 'Cedar Falls', key: 'seed=cedar-falls' },
+  { name: 'Porchlight', key: 'seed=porchlight&width=256&height=256&edgeFalloff=0&waterFraction=0&rockSlope=0.1&riverCount=0&townRadius=0.5&maxRoadSlope=0.1&roadDensity=1&lotMinSize=4&lotMaxSize=12&buildingDensity=1&innerCity=1&towerFloors=16&driveways=0&gardens=0' },
 ];
 const newTownKey = (): string => `seed=${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
 const tooManyTowns = () => new CharacterError(`You can have up to ${MAX_TOWNS} towns. Delete one to make another.`, 409);
@@ -238,6 +240,8 @@ export class PgPersistence implements Persistence {
           .returning({ id: sessions.id });
         if (crashed.length) console.log(`game db: closed ${crashed.length} session(s) left open by a crash`);
         await this.db.insert(towns).values(STARTER_TOWNS).onConflictDoNothing({ target: towns.key });
+        // Only starter towns have no maker: any that no longer come with the game go, and those who lived there choose again.
+        await this.db.delete(towns).where(and(isNull(towns.createdBy), notInArray(towns.key, STARTER_TOWNS.map((t) => t.key))));
         this.ready = true;
         console.log('game db: ready');
       } catch (err) {

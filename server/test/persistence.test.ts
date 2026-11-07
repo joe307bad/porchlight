@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { PgPersistence } from '../src/multiplayer/persistence.ts';
+import { towns } from '../src/multiplayer/tables.ts';
 
 const url = process.env.TEST_DATABASE_URL;
 const db = url ? new PgPersistence(url) : null;
@@ -71,7 +72,7 @@ test('towns: three at most, and houses: one account, two people, free again when
   for (const name of ['One', 'Two', 'Three']) made.push(await p.createTown(me.id, name));
   await assert.rejects(p.createTown(me.id, 'Four'), /Delete one/);
   const listed = await p.listTowns(me.id);
-  assert.ok(['Maple Hollow', 'Harbour Bend', 'Cedar Falls'].every((n) => listed.some((t) => t.name === n && !t.mine)));
+  assert.ok(listed.some((t) => t.name === 'Porchlight' && !t.mine));
   assert.equal(listed.filter((t) => t.mine).length, 3);
 
   const [a, b, c] = await Promise.all(['A', 'B', 'C'].map((n) => p.createCharacter(me.id, `${n}-${made[0].id.slice(0, 6)}`, null)));
@@ -115,4 +116,22 @@ test('towns: three at most, and houses: one account, two people, free again when
   await p.claimHome(me.id, c.id, 1, 1);
   assert.equal(await p.deleteCharacter(me.id, c.id), true);
   assert.deepEqual(await p.listHomes(me.id, made[1].id), []);
+});
+
+test('a starter town that no longer comes with the game goes on the next start, and those who lived there choose again', { skip }, async () => {
+  const p = db!;
+  const me = await p.account(`${sub}-retired`, 'Retired');
+  const key = `seed=retired-${crypto.randomUUID()}`;
+  const [old] = await (p as unknown as { db: { insert: (t: typeof towns) => { values: (v: object) => { returning: () => Promise<{ id: string }[]> } } } }).db.insert(towns).values({ name: 'Old', key }).returning();
+  const c = await p.createCharacter(me.id, 'Stays', null);
+  await p.moveToTown(me.id, c.id, old.id);
+  const next = new PgPersistence(url!);
+  next.start();
+  const end = Date.now() + 15_000;
+  while (!next.ready && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(next.ready);
+  assert.ok(!(await p.listTowns(me.id)).some((t) => t.key === key));
+  assert.equal((await p.character(me.id, c.id))?.home, null);
+  assert.equal((await p.listTowns(me.id)).filter((t) => t.name === 'Porchlight').length, 1);
+  await next.close();
 });

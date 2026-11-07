@@ -771,6 +771,14 @@ namespace Porchlight.App
             Join(them);
         }
 
+        /// <summary>Your house, if you're in your own town and it's there.</summary>
+        Building HouseOfHome()
+        {
+            var home = playing?.home;
+            if (home == null || !home.hasHouse || iso?.world == null || home.townKey != TownKey) return null;
+            return Homes.At(iso.world.model.buildings, home.x, home.y);
+        }
+
         /// <summary>Your front door, if you're in your own town and it's there.</summary>
         (Vec2 at, double heading)? DoorOfHome()
         {
@@ -1110,7 +1118,7 @@ namespace Porchlight.App
         {
             if (isoTown != model) return;
             net?.Enter(new TownKey { key = EncodeUrlState(seed, @params), width = model.width, height = model.height });
-            overlay?.SetHome(DoorOfHome()?.at);
+            overlay?.SetHome(DoorOfHome()?.at, HouseOfHome()?.footprint);
         }
 
         /// <summary>

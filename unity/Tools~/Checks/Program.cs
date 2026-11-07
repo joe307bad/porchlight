@@ -5,7 +5,8 @@
 //   dotnet run --project "unity/Tools~/Checks" -- net '<json>'      # play the real game server (NetCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- mission <file>    # play a compiled mission (MissionCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- chase [count]     # set chasers after someone (ChaseCheck.cs)
-//   dotnet run --project "unity/Tools~/Checks" -- homes             # the towns that come with the game have houses to live in
+//   dotnet run --project "unity/Tools~/Checks" -- homes             # the town that comes with the game has houses to live in
+//   dotnet run --project "unity/Tools~/Checks" -- measure <seed> 'width=256&riverCount=0'   # how big and built up a town is
 
 using System;
 using System.Collections.Generic;
@@ -22,6 +23,7 @@ static class Program
         if (args.Length > 1 && args[0] == "mission") return MissionCheck.Run(args[1]);
         if (args.Length > 0 && args[0] == "chase") return ChaseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
         if (args.Length > 0 && args[0] == "homes") return HomesCheck();
+        if (args.Length > 2 && args[0] == "measure") return Measure(args[1], args[2]);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
@@ -31,12 +33,49 @@ static class Program
     /// The towns that come with the game (the server's STARTER_TOWNS) and a few more:
     /// plenty of houses, each found again by the tile it's known by, none sharing it, and a zoo for the chase.
     /// </summary>
+    /// <summary>One town, by its settings ("width=256&amp;riverCount=0"): how big, how built up, and any water.</summary>
+    static int Measure(string seed, string settings)
+    {
+        var d = new Dictionary<string, double>();
+        foreach (var kv in settings.Split('&', StringSplitOptions.RemoveEmptyEntries)) d[kv.Split('=')[0]] = double.Parse(kv.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture);
+        var sw = Stopwatch.StartNew();
+        var m = Generator.Generate(seed, GenParams.Normalize(d), check: true);
+        double gen = sw.Elapsed.TotalSeconds;
+        sw.Restart();
+        var layout = Porchlight.Explore.Layout.Build(m);
+        double lay = sw.Elapsed.TotalSeconds;
+        var houses = Porchlight.Explore.Homes.All(m);
+        int built = m.buildings.Sum(b => b.tiles.Count);
+        int water = m.heightmap.Count(h => h <= m.waterLevel);
+        string bad = Ports(m, layout) ?? Zoo(m, layout) ?? CulDeSacs(m, layout) ?? Turning(layout);
+        Console.WriteLine($"{m.width}x{m.height} buildings {m.buildings.Count} houses {houses.Count} built {100.0 * built / (m.width * m.height):0.0}% lots {m.lots.Count} roads {m.roads.edges.Count} water {water} rivers {m.rivers.Count} bridges {m.bridges.Count} docks {m.docks.Count} zoo {(m.zoo != null ? "yes" : "no")} airport {(m.airport != null ? "yes" : "no")} cars {layout.cars.Count} gen {gen:0.00}s layout {lay:0.00}s {(bad == null ? "ok" : "FAIL " + bad)}");
+        return bad == null ? 0 : 1;
+    }
+
     static int HomesCheck()
     {
         int failed = 0;
-        foreach (string seed in new[] { "maple-hollow", "harbour-bend", "cedar-falls", "a1b2c3d4e5f6", "0f9e8d7c6b5a", "123456789abc" })
+        // The town that comes with the game (server/: STARTER_TOWNS), then fresh seeds. A key has to be written as the game writes it, or it's another room.
+        const string STARTER = "seed=porchlight&width=256&height=256&edgeFalloff=0&waterFraction=0&rockSlope=0.1&riverCount=0&townRadius=0.5&maxRoadSlope=0.1&roadDensity=1&lotMinSize=4&lotMaxSize=12&buildingDensity=1&innerCity=1&towerFloors=16&driveways=0&gardens=0";
+        foreach (string key in new[] { STARTER, "seed=a1b2c3d4e5f6", "seed=0f9e8d7c6b5a", "seed=123456789abc" })
         {
-            var model = Generator.Generate(seed, GenParams.Normalize(new Dictionary<string, double>()), check: true);
+            var settings = new Dictionary<string, double>();
+            string seed = null;
+            foreach (var kv in key.Split('&'))
+            {
+                if (kv.StartsWith("seed=")) seed = kv.Substring(5);
+                else settings[kv.Split('=')[0]] = double.Parse(kv.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture);
+            }
+            var parsed = GenParams.Normalize(settings);
+            var written = new List<string> { "seed=" + seed };
+            foreach (var spec in ParamSpec.All)
+                if (parsed[spec.key] != GenParams.Defaults[spec.key]) written.Add(spec.key + "=" + Porchlight.Core.Numbers.NumberToString(parsed[spec.key]));
+            if (string.Join("&", written) != key)
+            {
+                Console.WriteLine($"FAIL {seed}: the game writes this key as {string.Join("&", written)}");
+                failed++;
+            }
+            var model = Generator.Generate(seed, parsed, check: true);
             var houses = Porchlight.Explore.Homes.All(model);
             int lost = houses.Count(b => { var a = Porchlight.Explore.Homes.Anchor(b); return Porchlight.Explore.Homes.At(houses, a.x, a.y) != b; });
             bool ok = houses.Count >= 10 && lost == 0 && model.zoo != null;

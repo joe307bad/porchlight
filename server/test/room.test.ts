@@ -7,7 +7,7 @@ import { Client, type Room } from '@colyseus/sdk';
 import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
-import { MemoryPersistence } from '../src/multiplayer/persistence.ts';
+import { MemoryPersistence, STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
 import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
@@ -211,7 +211,7 @@ test('missions finished are the account\'s, and can be played again', async () =
 test('towns: three each and delete one to make another, and houses for two', async () => {
   const listed = (await api('mayor', 'GET', '/mp/towns')).json;
   assert.deepEqual([listed.made, listed.max], [0, 3]);
-  assert.ok(listed.towns.some((t: { name: string; mine: boolean }) => t.name === 'Maple Hollow' && !t.mine));
+  assert.ok(listed.towns.some((t: { name: string; mine: boolean }) => t.name === 'Porchlight' && !t.mine));
   const made: { id: string; key: string }[] = [];
   for (const name of ['One', 'Two', 'Three']) {
     const res = await api('mayor', 'POST', '/mp/towns', { name });
@@ -268,7 +268,7 @@ test('the town editor saves a town by name: its own key, once, and it counts tow
   const again = await api('someone', 'POST', '/mp/towns', { name: 'Copy', key });
   assert.equal(again.status, 409);
   assert.match(again.json.error, /My Town/);
-  assert.equal((await api('someone', 'POST', '/mp/towns', { name: 'Maple', key: 'seed=maple-hollow' })).status, 409);
+  assert.equal((await api('someone', 'POST', '/mp/towns', { name: 'Maple', key: STARTER_TOWNS[0].key })).status, 409);
   for (const bad of ['nonsense', 'seed=', 'seed=a&b=<script>', 'x=1&seed=a', 5, `seed=${'a'.repeat(512)}`]) {
     assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Bad', key: bad })).status, 400, String(bad));
   }

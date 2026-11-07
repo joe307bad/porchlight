@@ -76,15 +76,32 @@ namespace Porchlight.UI
 
         public Vec2 Reticle => reticle;
 
-        /// <summary>Your front door, marked on the maps (null: not in this town).</summary>
-        public void SetHome(Vec2? at)
+        /// <summary>Your front door and your house's outline, marked on the maps (null: not in this town).</summary>
+        public void SetHome(Vec2? at, IList<Vec2> house = null)
         {
             home = at;
+            homeHouse = house;
             minimapOverlay.MarkDirtyRepaint();
             bigMapMarks?.MarkDirtyRepaint();
         }
 
         Vec2? home;
+        IList<Vec2> homeHouse;
+
+        /// <summary>Your house, in a colour no other building is.</summary>
+        void HomeHouse(Painter2D painter, Func<Vec2, Vector2> to)
+        {
+            if (homeHouse == null || homeHouse.Count < 3) return;
+            painter.BeginPath();
+            painter.MoveTo(to(homeHouse[0]));
+            for (int i = 1; i < homeHouse.Count; i++) painter.LineTo(to(homeHouse[i]));
+            painter.ClosePath();
+            painter.fillColor = Coords.Hex(0xffc83d);
+            painter.Fill();
+            painter.lineWidth = 1;
+            painter.strokeColor = Coords.Hex(0x2e241d);
+            painter.Stroke();
+        }
         /// <summary>The Journal is X on the big map, rather than the town map (which a signed-in player doesn't go back to).</summary>
         public bool SignedIn;
 
@@ -206,6 +223,7 @@ namespace Porchlight.UI
                     painter.Fill();
                 }
             }
+            HomeHouse(painter, P);
             if (home != null) HomeMark(painter, P(home.Value), 8);
             if (waypoint != null) Waypoint(painter, P(waypoint.Value), 1);
             foreach (var o in others) Dot(painter, P(o), 5, Coords.Hex(0x3b82c4));
@@ -559,6 +577,7 @@ namespace Porchlight.UI
                 painter.lineCap = LineCap.Butt;
                 painter.Stroke();
             }
+            HomeHouse(painter, P);
             if (home != null) HomeMark(painter, P(home.Value), 4);
             if (goal != null)
             {
