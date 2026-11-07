@@ -309,7 +309,8 @@ namespace Porchlight.App
             this.overlay = overlay;
             this.input = input;
             sky = new Sky(camera);
-            overlay.OnMinimapPick = Teleport;
+            // A click on the minimap opens the big map (where a click sets a waypoint); it doesn't move you.
+            overlay.OnMinimapPick = _ => { if (world != null && !overlay.MapOpen) overlay.OpenMap(); };
             overlay.OnWaypointPick = SetWaypoint;
             input.KeyDown += OnKeyDown;
             input.KeyUp += OnKeyUp;
