@@ -66,6 +66,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   trap 'kill $AUTH_PID 2>/dev/null || true' EXIT
 else
   echo "warning: Docker isn't running, so there's no Keycloak; sign-in (and so multiplayer) is off for this run." >&2
+  export NO_GAME_SERVER=1
 fi
 
 echo "Starting Porchlight at http://localhost:5173/  (sign in as dev / dev)"

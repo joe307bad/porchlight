@@ -10,14 +10,14 @@ namespace Porchlight.App
     public static class SignInGate
     {
         /// <summary>Cover the app with the sign-in card. The button navigates away to sign in.</summary>
-        public static VisualElement Show(VisualElement root, string provider, string error, Action signIn)
+        public static VisualElement Show(VisualElement root, string provider, string error, Action signIn, string label = null)
         {
             var gate = new VisualElement { name = "signin" };
             gate.AddToClassList("overlay");
             var card = El.Box("card", "signin-card");
             card.Add(El.Text("Porchlight", "signin-title"));
             UnityEngine.UIElements.Button button = null;
-            button = El.Btn(provider == "google" ? "Sign in with Google" : "Sign in", null, () =>
+            button = El.Btn(label ?? (provider == "google" ? "Sign in with Google" : "Sign in"), null, () =>
             {
                 button.SetEnabled(false);
                 signIn();

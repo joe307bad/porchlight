@@ -53,7 +53,8 @@ before(async () => {
     sessionSecret: SECRET,
     persistence,
     handleSignals: false,
-    handler: async (_req, res) => {
+    handler: async (req, res) => {
+      if (req.url === '/boom') throw new Error('boom');
       res.writeHead(404);
       res.end();
     },
@@ -63,6 +64,17 @@ before(async () => {
 
 after(async () => {
   await game.server.gracefullyShutdown(false);
+});
+
+test('a request that throws gets a 500, and the server carries on', async () => {
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    assert.equal((await fetch(`${base}/boom`)).status, 500);
+    assert.equal((await fetch(`${base}/elsewhere`)).status, 404);
+  } finally {
+    console.error = quiet;
+  }
 });
 
 test('characters: an account makes several, and only sees its own', async () => {

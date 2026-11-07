@@ -232,6 +232,13 @@ namespace Porchlight.App
                 string rest = EncodeQuery(query);
                 platform.ReplaceUrl(platform.PathName + (rest.Length > 0 ? "?" + rest : "") + platform.Hash);
             }
+            AskWho(error, platform.Now() + SERVER_WAIT_MS);
+        }
+
+        const double SERVER_WAIT_MS = 15000, SERVER_RETRY_MS = 1000;
+
+        void AskWho(string error, double giveUpAt)
+        {
             Account.FetchMe(platform, origin, (u, provider, err, status) =>
             {
                 if (u != null)
@@ -240,13 +247,31 @@ namespace Porchlight.App
                     Start2();
                     return;
                 }
-                // No sign-in service here (a static host, or a dev server without
-                // Keycloak or the game server behind it): play alone.
-                bool absent = status == 0 || status == 404 || status == 502 || status == 503 || status == 504;
-                if (absent && error == null)
+                // No sign-in service here at all (a static host, or dev.sh without Docker): play alone.
+                if (status == 404 && error == null)
                 {
                     Debug.Log("porchlight: no sign-in service (" + err + "); playing offline");
                     Start2();
+                    return;
+                }
+                // There should be one but it isn't answering, which says nothing about who you
+                // are: wait through a restart, then say so. Never carry on as if signed out.
+                if ((status == 0 || status == 502 || status == 503 || status == 504) && error == null)
+                {
+                    if (platform.Now() < giveUpAt)
+                    {
+                        timers.After(SERVER_RETRY_MS, () => AskWho(null, giveUpAt));
+                        return;
+                    }
+                    VisualElement down = null;
+                    down = SignInGate.Show(root, null, "The game server isn’t answering.", () =>
+                    {
+                        down.RemoveFromHierarchy();
+                        root.RemoveFromClassList("signed-out");
+                        ShowLoader();
+                        AskWho(null, platform.Now() + SERVER_WAIT_MS);
+                    }, "Try again");
+                    HideLoader();
                     return;
                 }
                 // The card straight away; the scenery behind it can follow.

@@ -36,6 +36,12 @@ const TYPES = {
 const proxied = (url) => url.startsWith('/auth') || url.startsWith('/mp');
 
 function proxy(req, res) {
+  // dev.sh without Docker: no server on purpose, so the game plays alone. (A 502 means it's meant to be there.)
+  if (process.env.NO_GAME_SERVER) {
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'No game server in this run.' }));
+    return;
+  }
   const out = http.request({ ...upstream, method: req.method, path: req.url, headers: req.headers }, (up) => {
     res.writeHead(up.statusCode ?? 502, up.headers);
     up.pipe(res);
@@ -81,7 +87,7 @@ const server = http.createServer((req, res) => (proxied(req.url ?? '') ? proxy(r
 
 // WebSockets (/mp): pass the upgrade and then the raw bytes through.
 server.on('upgrade', (req, socket, head) => {
-  if (!proxied(req.url ?? '')) return socket.destroy();
+  if (!proxied(req.url ?? '') || process.env.NO_GAME_SERVER) return socket.destroy();
   const up = net.connect(upstream, () => {
     const lines = [`${req.method} ${req.url} HTTP/1.1`];
     for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);

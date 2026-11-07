@@ -56,9 +56,14 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
     express: (app) => {
       app.disable('x-powered-by');
       app.use((req: IncomingMessage, res: ServerResponse) => {
+        // A rejection nobody catches ends the process: one bad request mustn't take everyone's game with it.
         void (async () => {
           if (!(await missions(req, res)) && !(await characters(req, res))) await opts.handler(req, res);
-        })();
+        })().catch((err) => {
+          console.error(`${req.method} ${req.url}:`, err);
+          if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'internal error' }));
+        });
       });
     },
   });
