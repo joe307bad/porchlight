@@ -7,6 +7,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- chase [count]     # set chasers after someone (ChaseCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- homes             # the town that comes with the game has houses to live in
 //   dotnet run --project "unity/Tools~/Checks" -- measure <seed> 'width=256&riverCount=0'   # how big and built up a town is
+//   dotnet run --project "unity/Tools~/Checks" -- traffic <seed> 'width=256&riverCount=0'   # how smooth its traffic looks following a host, as the host slows down
 
 using System;
 using System.Collections.Generic;
@@ -24,6 +25,7 @@ static class Program
         if (args.Length > 0 && args[0] == "chase") return ChaseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
         if (args.Length > 0 && args[0] == "homes") return HomesCheck();
         if (args.Length > 2 && args[0] == "measure") return Measure(args[1], args[2]);
+        if (args.Length > 2 && args[0] == "traffic") return TrafficCheck(args[1], args[2]);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
@@ -50,6 +52,60 @@ static class Program
         string bad = Ports(m, layout) ?? Zoo(m, layout) ?? CulDeSacs(m, layout) ?? Turning(layout);
         Console.WriteLine($"{m.width}x{m.height} buildings {m.buildings.Count} houses {houses.Count} built {100.0 * built / (m.width * m.height):0.0}% lots {m.lots.Count} roads {m.roads.edges.Count} water {water} rivers {m.rivers.Count} bridges {m.bridges.Count} docks {m.docks.Count} zoo {(m.zoo != null ? "yes" : "no")} airport {(m.airport != null ? "yes" : "no")} cars {layout.cars.Count} gen {gen:0.00}s layout {lay:0.00}s {(bad == null ? "ok" : "FAIL " + bad)}");
         return bad == null ? 0 : 1;
+    }
+
+    /// <summary>
+    /// How smoothly a town's traffic looks on a client following a host (at 60 frames a second)
+    /// as the host's frame rate falls: a window in the background gets about one frame a second.
+    /// </summary>
+    static int TrafficCheck(string seed, string settings)
+    {
+        var d = new Dictionary<string, double>();
+        foreach (var kv in settings.Split('&', StringSplitOptions.RemoveEmptyEntries)) d[kv.Split('=')[0]] = double.Parse(kv.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture);
+        var m = Generator.Generate(seed, GenParams.Normalize(d));
+        var layout = Porchlight.Explore.Layout.Build(m);
+        const double FRAME = 1 / 60.0, CRUISE = 2.4, SECONDS = 120;
+        foreach (double hostFps in new[] { 60.0, 15, 5, 2.5, 2, 1 })
+        {
+            Porchlight.Explore.Traffic Make() => new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng(seed + "::traffic"), r => 0);
+            var host = Make();
+            var follow = Make();
+            var sync = new Porchlight.Explore.WorldSync();
+            var noPeople = new List<Porchlight.Explore.Walker>();
+            var none = new List<Porchlight.Core.Vec2>();
+            int n = host.cars.Count;
+            var at = follow.cars.Select(c => (c.x, c.y)).ToArray();
+            long frames = 0, still = 0, back = 0, jump = 0;
+            double nextFrame = 0, nextSend = 0;
+            for (double t = 0; t < SECONDS; t += FRAME)
+            {
+                if (t >= nextFrame)
+                {
+                    // As the game does: at most half a second of the town to a frame, and a world message every 0.1 s at most.
+                    for (double left = Math.Min(0.5, 1 / hostFps); left > 1e-9; left -= Math.Min(0.05, left)) host.Update(Math.Min(0.05, left), none);
+                    nextFrame += 1 / hostFps;
+                    if (t >= nextSend)
+                    {
+                        sync.Receive(Porchlight.Explore.WorldSync.EncodeCars(host.cars), Porchlight.Explore.WorldSync.EncodePeople(noPeople));
+                        nextSend = t + 0.1;
+                    }
+                }
+                sync.Step(FRAME, follow.cars, noPeople);
+                frames++;
+                for (int i = 0; i < n; i++)
+                {
+                    var f = follow.cars[i];
+                    double dx = f.x - at[i].x, dy = f.y - at[i].y, moved = Math.Sqrt(dx * dx + dy * dy);
+                    if (moved < CRUISE * FRAME * 0.2) still++;
+                    if (moved > CRUISE * FRAME * 2) jump++;
+                    if (dx * Math.Cos(f.heading) + dy * Math.Sin(f.heading) < -CRUISE * FRAME * 0.05) back++;
+                    at[i] = (f.x, f.y);
+                }
+            }
+            double per = 100.0 / (frames * n);
+            Console.WriteLine($"host at {hostFps,4:0.#} fps: follower sees cars stopped {still * per,5:0.0}%, too fast {jump * per,5:0.0}%, going backwards {back * per,5:0.0}%");
+        }
+        return 0;
     }
 
     static int HomesCheck()

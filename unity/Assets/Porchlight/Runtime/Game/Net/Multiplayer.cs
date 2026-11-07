@@ -105,6 +105,12 @@ namespace Porchlight.App
         const double HEARTBEAT_MS = 1000;
         /// <summary>A correction this soon after asking to jump somewhere is the jump (ms).</summary>
         const double TELEPORT_ANSWER_MS = 5000;
+        /// <summary>
+        /// A frame this long (s) and we're no use as the room's host: a window in the background gets about
+        /// one a second, and everyone following would see cars lurch on and get pulled back. Saying nothing,
+        /// the server gives the town to someone else who's playing (HOST_SILENT_MS).
+        /// </summary>
+        const float TOO_SLOW_TO_HOST = 0.75f;
         /// <summary>Rejoin delays after losing the room (ms), longest last and then repeated.</summary>
         static readonly double[] RETRY_MS = { 2000, 5000, 10000, 30000 };
 
@@ -428,7 +434,7 @@ namespace Porchlight.App
         /// <summary>The host's traffic and townsfolk, for everyone else.</summary>
         void SendWorld()
         {
-            if (room == null || !spawned) return;
+            if (room == null || !spawned || Time.unscaledDeltaTime > TOO_SLOW_TO_HOST) return;
             var w = host.World();
             if (w == null) return;
             room.Send(Protocol.MSG_WORLD, new Dictionary<string, object>
