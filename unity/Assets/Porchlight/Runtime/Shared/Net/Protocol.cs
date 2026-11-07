@@ -19,12 +19,16 @@ namespace Porchlight.Net
         public const string MSG_CAR = "car";
         /// <summary>The host's traffic and townsfolk; the room passes it on to everyone else.</summary>
         public const string MSG_WORLD = "world";
-        /// <summary>{ what }: something earned (a mission finished), kept with the character.</summary>
+        /// <summary>{ what }: something earned, kept with the account.</summary>
         public const string MSG_UNLOCK = "unlock";
+        /// <summary>{ id }: a mission played to its end.</summary>
+        public const string MSG_MISSION_DONE = "mission_done";
 
         public const string MSG_SPAWN = "spawn";
         public const string MSG_CORRECT = "correct";
         public const string MSG_DOTS = "dots";
+        /// <summary>{ unlocks }: another of the account's characters earned something.</summary>
+        public const string MSG_UNLOCKS = "unlocks";
 
         public const int CLOSE_SIGNED_IN_ELSEWHERE = 4100;
         public const int CLOSE_KICKED = 4101;

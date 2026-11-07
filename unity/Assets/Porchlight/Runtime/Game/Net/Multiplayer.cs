@@ -131,10 +131,14 @@ namespace Porchlight.App
         public readonly Character character;
         public Action<NetStatus> onStatus;
         NetStatus status = NetStatus.Joining;
-        /// <summary>What the character has unlocked: the server's (once joined), and any earned here since.</summary>
+        /// <summary>What the account has unlocked: the server's (once joined), and any earned here since.</summary>
         public readonly HashSet<string> unlocks = new HashSet<string>();
         /// <summary>Told when the server says what's unlocked (on joining).</summary>
         public Action onUnlocks;
+        /// <summary>Another of the account's characters, playing right now, earned this.</summary>
+        public Action<string> onUnlockedElsewhere;
+        /// <summary>Missions finished before we'd joined: sent once we have.</summary>
+        readonly List<string> missionsDone = new List<string>();
 
         public Multiplayer(INetHost host, Character character, string origin, INetPlatform platform, Timers timers)
         {
@@ -198,13 +202,22 @@ namespace Porchlight.App
         /// <summary>A new look for the character (it's saved with them).</summary>
         public void LookChanged(string model) => room?.Send(Protocol.MSG_LOOK, new Dictionary<string, object> { ["model"] = model });
 
-        /// <summary>Earned: kept with the character (sent now, or once joined, if we're not).</summary>
+        /// <summary>Earned: kept with the account (sent now, or once joined, if we're not).</summary>
         public void Unlock(string what)
         {
             if (unlocks.Add(what) && spawned) SendUnlock(what);
         }
 
         void SendUnlock(string what) => room?.Send(Protocol.MSG_UNLOCK, new Dictionary<string, object> { ["what"] = what });
+
+        /// <summary>A mission played to its end: kept with the account (sent now, or once joined, if we're not).</summary>
+        public void MissionDone(string id)
+        {
+            if (spawned) SendMissionDone(id);
+            else missionsDone.Add(id);
+        }
+
+        void SendMissionDone(string id) => room?.Send(Protocol.MSG_MISSION_DONE, new Dictionary<string, object> { ["id"] = id });
 
         void Disconnect()
         {
@@ -303,6 +316,8 @@ namespace Porchlight.App
                     foreach (var what in unlocks) if (!kept.Contains(what)) SendUnlock(what);
                     unlocks.UnionWith(kept);
                     onUnlocks?.Invoke();
+                    foreach (var id in missionsDone) SendMissionDone(id);
+                    missionsDone.Clear();
                 }
                 // Back in a town we were already playing (after a dropped connection, or
                 // the server restarting): stay where we are, car and all, rather than
@@ -311,6 +326,12 @@ namespace Porchlight.App
                 placedIn = town?.key;
                 spawned = true;
                 Send(true);
+            });
+            r.OnMessage(Protocol.MSG_UNLOCKS, m =>
+            {
+                if (!(m is Dictionary<string, object> d) || !d.TryGetValue("unlocks", out var u) || !(u is List<object> list)) return;
+                foreach (var what in list)
+                    if (what is string s && unlocks.Add(s)) onUnlockedElsewhere?.Invoke(s);
             });
             r.OnMessage(Protocol.MSG_CORRECT, m =>
             {

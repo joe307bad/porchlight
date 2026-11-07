@@ -81,7 +81,7 @@ namespace Porchlight.App
         {
             Key.W, Key.A, Key.S, Key.D, Key.UpArrow, Key.DownArrow, Key.LeftArrow, Key.RightArrow,
             Key.Q, Key.E, Key.Z, Key.X, Key.PageUp, Key.PageDown, Key.F, Key.G, Key.B, Key.Space,
-            Key.N, Key.R, Key.T, Key.V, Key.C, Key.M, Key.Escape, Key.Backquote, Key.LeftShift, Key.RightShift, Key.Enter, Key.Tab,
+            Key.N, Key.R, Key.T, Key.V, Key.C, Key.M, Key.J, Key.Escape, Key.Backquote, Key.LeftShift, Key.RightShift, Key.Enter, Key.Tab,
         };
 
         readonly Dictionary<Key, double> repeatAt = new Dictionary<Key, double>();

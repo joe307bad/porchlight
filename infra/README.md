@@ -29,10 +29,13 @@ The auth service is also the game server: Colyseus on the same port, under `/mp`
 
 - **Missions:** `/mp/missions` lists the ink stories in `server/missions` and serves each one compiled. Files are read fresh on every request, and the folder is mounted into the container, so a changed mission is live without rebuilding the image or the game.
 - **Rooms:** everyone exploring the same town (seed and params) shares a room, up to 100 players. Past that, a second copy of the town opens.
-- **Characters:** one account (one Google sign-in) has up to 8 characters. Several of them can be played at once from different tabs or devices, so two people can share an account. After sign-in, explore mode asks **Who's playing?** (`/mp/characters`). The choice is remembered for that tab only.
+- **Characters:** one account (one Google sign-in) has up to 8 characters. Several of them can be played at once from different tabs or devices, so two people can share an account. After sign-in, the game asks **Who's playing?** (`/mp/characters`), which town they live in and which house, then goes to their front door. The choice is remembered for that tab only.
+- **Towns:** three come with the game, and an account can make up to 3 more of its own; to make another it deletes one (`/mp/towns`). Deleting one sends those who lived there back to choosing a town, and is refused while anyone's playing there. A town is its seed and params, so `towns.key` is also its room's name. Any number of characters can live in a town, and anyone can visit any town.
+- **Houses:** a house belongs to one account and holds up to 2 of its characters (`PUT /mp/characters/:id/home`). It's named by a tile of its building, not the building's id, which any change to the generator could renumber; if the tile no longer has a house, the game asks them to choose again. It goes when nobody lives there. Only the game runs the generator, so the server checks a house isn't taken or full, but not that the tile is a house.
+- **Progress:** finished missions and unlocks belong to the account (`/mp/progress`), so all its characters have them, in every town. A mission can be played again and counted again; its reward is earned once. Only the game runs missions, so the server checks they're real missions and real rewards, but takes the game's word that they were finished.
 - **Auth:** joining checks the same `pl_session` cookie. It goes along because `/mp` is same-origin. The room also checks the character belongs to that account. Nothing new is stored in the page.
 - **Live state** is in memory only. Clients send moves about 30 times a second while moving, each stamped with when the client took it. The server checks each one as it arrives (well-formed, inside the town, in order, no faster than a boosted car) and snaps back any that fail. It sends each client only the players within a cell or two of them (16-tile cells), as delta patches about 30 times a second. Clients play each other player back on that player's own timestamps, about 120 ms behind, so motion stays even however the network bunches the moves up. Everyone else in the room shows as a minimap dot, updated once a second.
-- **Saved state** goes to Postgres, through Drizzle (tables in `server/src/multiplayer/tables.ts`; migrations generated into `server/drizzle` by `npm run db:generate`, and applied by the server on start): accounts, characters, each character's last position (per town) and look, play time, and sessions. Writes are batched every 30 s, plus on leave and on shutdown. A failed write is retried later and never holds up the game. If the database is down, joins are refused.
+- **Saved state** goes to Postgres, through Drizzle (tables in `server/src/multiplayer/tables.ts`; migrations generated into `server/drizzle` by `npm run db:generate`, and applied by the server on start): accounts and what they've earned, towns and houses, characters, each character's last position (per town) and look, play time, and sessions. Writes are batched every 30 s, plus on leave and on shutdown. A failed write is retried later and never holds up the game. If the database is down, joins are refused.
 - **Edge cases:** a dropped connection has 20 s to reconnect, and its character stands still meanwhile. Opening the same character again elsewhere signs out the older session ("newest wins"). Spamming messages or repeated bad moves gets a client kicked. On SIGTERM every room saves before the process exits.
 
 The server migrates its database on start and retries until the database is reachable. Sign-in works whether or not the database is up.
@@ -53,7 +56,7 @@ The realm is provisioned by `keycloak/init-keycloak.sh`, an idempotent `kcadm` s
 
 The first run builds the game from `unity/`, which needs Unity 6000.6.5f1 with WebGL support. That takes a few minutes. `./dev.sh --build` rebuilds after a change, and the editor's **Porchlight ▸ Build WebGL** does the same.
 
-To try multiplayer, sign in in two windows (a private one works), or open two tabs on one account and pick a different character in each. Then explore the same town: copy the URL, which carries the seed. To load-test, run `npm run bots -- 100 60` in `server/` (100 bots for 60 s; the server logs tick times every minute). Run `npm run test:db` in `server/` to also test the Postgres code against the dev database.
+To try multiplayer, sign in in two windows (a private one works), or open two tabs on one account and pick a different character in each. Then have them live in the same town, or use **Join** under your name to visit another of your characters. To load-test, run `npm run bots -- 100 60` in `server/` (100 bots for 60 s; the server logs tick times every minute). Run `npm run test:db` in `server/` to also test the Postgres code against the dev database.
 
 There are two dev accounts:
 
@@ -62,7 +65,7 @@ There are two dev accounts:
 | The game (porchlight realm) | http://localhost:5173 | **dev / dev** |
 | Keycloak admin console (master realm) | http://localhost:8080/admin | admin / admin |
 
-Without Docker there's no Keycloak or game server: the game finds no sign-in service and plays alone.
+Without Docker there's no Keycloak or game server: the game finds no sign-in service and starts blank in dev mode: any seed, the blueprint and its settings, nothing saved.
 
 ## Production
 

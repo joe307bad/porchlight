@@ -1,6 +1,6 @@
 # Porchlight
 
-The game: grow a town from a seed, see its blueprint, then walk and drive its streets with everyone else exploring the same town. It's a Unity 6000.6.5f1 project in C#, using URP, the Input System, UI Toolkit, TextMeshPro and glTFast. It builds for the web (WebGL) and is set up for consoles and desktop.
+The game: sign in, make a character, choose a town and a house in it, then walk and drive its streets with everyone else who's there, playing missions for rewards. With no sign-in service it starts blank in dev mode, where you grow towns from a seed, see their blueprints and explore them alone. It's a Unity 6000.6.5f1 project in C#, using URP, the Input System, UI Toolkit, TextMeshPro and glTFast. It builds for the web (WebGL) and is set up for consoles and desktop.
 
 The server is `server/`, Node and Colyseus. It handles sign-in, the characters, the shared town rooms, and the missions: [ink](https://github.com/inkle/ink) stories in `server/missions` that the server compiles and the game plays, so new ones need no new build (see `server/missions/README.md`).
 
@@ -32,7 +32,7 @@ Everything is Unity's own; there are no custom shaders:
 
 **In the editor:** open `unity/` in Unity 6000.6.5f1. A fresh checkout builds its model library as it opens; run **Porchlight ▸ Set Up Project** to rebuild it. Then open `Assets/Porchlight/Scenes/Boot.unity` and press Play.
 
-Off the web there's no page address and no browser cookies. The game talks to `PORCHLIGHT_ORIGIN`, or `http://localhost:3017` if that isn't set. It plays offline unless you hand it a session with `PORCHLIGHT_COOKIE=pl_session=<value>` (copy it from a signed-in browser).
+Off the web there's no page address and no browser cookies. The game talks to `PORCHLIGHT_ORIGIN`, or `http://localhost:3017` if that isn't set. It starts in dev mode unless you hand it a session with `PORCHLIGHT_COOKIE=pl_session=<value>` (copy it from a signed-in browser).
 
 **In the browser:** from the repository root, run
 

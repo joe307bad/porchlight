@@ -19,6 +19,8 @@ namespace Porchlight.UI
 {
     public sealed class SidebarHandlers
     {
+        /// <summary>Playing as someone with a home, not trying out towns in dev mode.</summary>
+        public bool SignedIn;
         public Action<GenParams> OnParamsChange;
         public Action OnRegenerate;
         public Action<string> OnSeed;
@@ -181,6 +183,7 @@ namespace Porchlight.UI
             top.Add(playingDetail);
             links = El.Box("sb-links");
             top.Add(links);
+            // Signed in, you live in a town: the seed, Regenerate and the map's settings are dev mode's.
             var seedRow = El.Box("sb-seed");
             seedRow.Add(El.Text("Seed", "sb-seed-label"));
             seedRow.Add(seedInput);
@@ -196,11 +199,20 @@ namespace Porchlight.UI
             actions.Add(regen);
             actions.Add(exploreButton);
             top.Add(actions);
+            if (h.SignedIn)
+            {
+                seedRow.style.display = DisplayStyle.None;
+                actions.style.display = DisplayStyle.None;
+            }
 
             // Controls: what every button and key does.
             var controls = El.Box("ctl-list");
-            foreach (var (what, pad, keys) in CONTROLS)
+            foreach (var (first, firstPad, firstKeys) in CONTROLS)
             {
+                bool journal = h.SignedIn && first == "Back to the town map";
+                string what = journal ? "Journal" : first;
+                string[] pad = journal ? new[] { "Menu", "X" } : firstPad;
+                string[] keys = journal ? new[] { "J" } : firstKeys;
                 var row = El.Box("ctl-row");
                 var icons = El.Box("ctl-icons");
                 var padIcons = El.Box("ctl-pad");
@@ -253,7 +265,9 @@ namespace Porchlight.UI
             body.Add(Section("Controls", controls));
             body.Add(Section("Players", playersList));
             body.Add(Section("Missions", missions));
-            body.Add(Section("Map settings", settings));
+            var settingsSection = Section("Map settings", settings);
+            body.Add(settingsSection);
+            if (h.SignedIn) settingsSection.style.display = DisplayStyle.None;
             root.Add(scroll);
             pinned = El.Box("sb-section-head", "sb-pinned");
             pinnedLabel = El.Text("", "sb-head-label", "semibold");
@@ -459,9 +473,10 @@ namespace Porchlight.UI
         /// Abandon); a broken one shows its errors. A status line instead while
         /// they're loading or if the server can't be reached.
         /// </summary>
-        public void SetMissions(List<Porchlight.App.MissionInfo> missions, string status, string playing, Action<string> start, Action abandon)
+        public void SetMissions(List<Porchlight.App.MissionInfo> missions, string status, string playing, Action<string> start, Action abandon, IReadOnlyDictionary<string, int> finished = null)
         {
-            string shown = $"{status}#{playing}#" + (missions == null ? "" : string.Join("|", missions.Select(m => $"{m.id}:{m.title}:{m.summary}:{m.error}")));
+            int Times(string id) => finished != null && finished.TryGetValue(id, out int n) ? n : 0;
+            string shown = $"{status}#{playing}#" + (missions == null ? "" : string.Join("|", missions.Select(m => $"{m.id}:{m.title}:{m.summary}:{m.error}:{Times(m.id)}")));
             if (shown == missionsShown) return;
             missionsShown = shown;
             missionsList.Clear();
@@ -478,6 +493,8 @@ namespace Porchlight.UI
                 bool on = m.id == playing;
                 var title = El.Text(on ? $"{m.title} · playing" : m.title, "mission-title", "semibold");
                 row.Add(title);
+                int times = Times(m.id);
+                if (times > 0) row.Add(El.Text(times == 1 ? "Finished" : $"Finished {times} times", "journal-done"));
                 if (!string.IsNullOrEmpty(m.summary))
                 {
                     var summary = El.Text(m.summary, "help-text", "mission-summary");
@@ -522,18 +539,27 @@ namespace Porchlight.UI
         }
 
         /// <summary>The character you're playing as online (null: playing alone), and how to switch.</summary>
-        public void SetCharacter(string name, Action onSwitch)
+        public void SetCharacter(string name, Action onSwitch, string homeTown = null, Action onGoHome = null, Action onJournal = null)
         {
             characterName = name;
             this.onSwitch = onSwitch;
-            ShowDetail(name != null ? "" : "Playing alone");
+            this.homeTown = homeTown;
+            this.onGoHome = onGoHome;
+            this.onJournal = onJournal;
+            ShowDetail(name != null ? Lives("") : "Playing alone");
             SyncPlaying();
         }
+
+        string homeTown;
+        Action onGoHome, onJournal;
+
+        /// <summary>The line under your name: where you live, then how it's going.</summary>
+        string Lives(string then) => homeTown == null ? then : then == "" ? $"Lives in {homeTown}" : $"Lives in {homeTown} · {then}";
 
         public void SetOnline(string state, int here, string why)
         {
             if (characterName == null) return;
-            ShowDetail(state == "joining" ? "Joining…" : state == "online" ? (here == 1 ? "Just you here" : $"{here} here") : $"Offline: {why}");
+            ShowDetail(Lives(state == "joining" ? "Joining…" : state == "online" ? (here == 1 ? "Just you here" : $"{here} here") : $"Offline: {why}"));
         }
 
         /// <summary>The line under your name (hidden when empty).</summary>
@@ -571,6 +597,8 @@ namespace Porchlight.UI
         {
             playingName.text = characterName ?? accountName ?? "Guest";
             links.Clear();
+            if (onJournal != null) links.Add(El.Link("Journal", onJournal));
+            if (onGoHome != null) links.Add(El.Link("Go home", onGoHome));
             if (onSwitch != null) links.Add(El.Link(characterName != null ? "Switch character" : "Play online", onSwitch));
             if (onSignOut != null) links.Add(El.Link("Sign out", onSignOut));
             links.style.display = links.childCount > 0 ? DisplayStyle.Flex : DisplayStyle.None;

@@ -16,6 +16,8 @@ namespace Porchlight.Explore
     public sealed class Room
     {
         public int id;
+        /// <summary>The building it's in.</summary>
+        public int buildingId = -1;
         public double x0, y0, x1, y1;
         public Facing facing;
         public HouseStyle style;

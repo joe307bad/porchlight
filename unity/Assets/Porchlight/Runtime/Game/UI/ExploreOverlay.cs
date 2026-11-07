@@ -76,6 +76,36 @@ namespace Porchlight.UI
 
         public Vec2 Reticle => reticle;
 
+        /// <summary>Your front door, marked on the maps (null: not in this town).</summary>
+        public void SetHome(Vec2? at)
+        {
+            home = at;
+            minimapOverlay.MarkDirtyRepaint();
+            bigMapMarks?.MarkDirtyRepaint();
+        }
+
+        Vec2? home;
+        /// <summary>The Journal is X on the big map, rather than the town map (which a signed-in player doesn't go back to).</summary>
+        public bool SignedIn;
+
+        static void HomeMark(Painter2D painter, Vector2 at, float r)
+        {
+            painter.BeginPath();
+            painter.MoveTo(at + new Vector2(0, -r * 1.3f));
+            painter.LineTo(at + new Vector2(r * 1.1f, -r * 0.1f));
+            painter.LineTo(at + new Vector2(r * 0.75f, -r * 0.1f));
+            painter.LineTo(at + new Vector2(r * 0.75f, r));
+            painter.LineTo(at + new Vector2(-r * 0.75f, r));
+            painter.LineTo(at + new Vector2(-r * 0.75f, -r * 0.1f));
+            painter.LineTo(at + new Vector2(-r * 1.1f, -r * 0.1f));
+            painter.ClosePath();
+            painter.fillColor = Coords.Hex(0xffc83d);
+            painter.Fill();
+            painter.lineWidth = 1.5f;
+            painter.strokeColor = Coords.Hex(0x2e241d);
+            painter.Stroke();
+        }
+
         public void SetWaypoint(Vec2? at)
         {
             waypoint = at;
@@ -92,7 +122,7 @@ namespace Porchlight.UI
             bigMapPicture.style.backgroundImage = new StyleBackground(baseTexture);
             bigMap.style.display = DisplayStyle.Flex;
             bigMapHint.text = Gamepad.current != null
-                ? "Left stick moves the cross · A sets a waypoint · Y clears it · X back to the town map · B or Start closes"
+                ? $"Left stick moves the cross · A sets a waypoint · Y clears it · X {(SignedIn ? "opens the Journal" : "back to the town map")} · B or Start closes"
                 : "Click to set a waypoint · M or Esc closes";
             FitBigMap();
         }
@@ -176,6 +206,7 @@ namespace Porchlight.UI
                     painter.Fill();
                 }
             }
+            if (home != null) HomeMark(painter, P(home.Value), 8);
             if (waypoint != null) Waypoint(painter, P(waypoint.Value), 1);
             foreach (var o in others) Dot(painter, P(o), 5, Coords.Hex(0x3b82c4));
             if (player != null) Dot(painter, P(player.Value), 6, Coords.Hex(0xc2412d));
@@ -528,6 +559,7 @@ namespace Porchlight.UI
                 painter.lineCap = LineCap.Butt;
                 painter.Stroke();
             }
+            if (home != null) HomeMark(painter, P(home.Value), 4);
             if (goal != null)
             {
                 var gp = P(goal.Value);

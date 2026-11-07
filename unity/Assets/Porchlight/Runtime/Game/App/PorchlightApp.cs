@@ -1,7 +1,8 @@
-// The whole app: sign in (when the page is
-// served by the auth service), grow a town from the seed in the URL, show its
-// blueprint with the sidebar, and on Explore walk it in 3D with everyone else
-// in the same town, and play missions (ink stories the server hands out).
+// The whole app. Signed in: choose who's playing and where they live (FrontDoor),
+// and walk their town in 3D with everyone else in it, playing missions (ink
+// stories the server hands out) and keeping what they earn with the account.
+// With no sign-in service, dev mode, starting blank each time: grow a town from
+// the seed in the URL, show its blueprint with the sidebar, and on Explore walk it alone.
 // One of these sits in the only scene (Boot.unity).
 
 using System;
@@ -66,8 +67,13 @@ namespace Porchlight.App
         bool online;
         User user;
         Multiplayer net;
-        /// <summary>Asked who's playing (choosing to play alone counts).</summary>
-        bool asked;
+        /// <summary>Who's playing (signed in): chosen at the front door.</summary>
+        Character playing;
+        FrontDoor door;
+        HousePicker housePicker;
+        Journal journal;
+        /// <summary>Come in at your own front door next time the server says you've joined, wherever you were last.</summary>
+        bool preferHome;
         double lastFollow;
         /// <summary>The map keeps your character in view until you pan or zoom it yourself.</summary>
         bool followOnMap = true;
@@ -92,6 +98,8 @@ namespace Porchlight.App
         bool missionsAsked;
         /// <summary>The mission being fetched to start (only the latest Start counts).</summary>
         string missionStarting;
+        /// <summary>How often the account has finished each mission.</summary>
+        Dictionary<string, int> finished = new Dictionary<string, int>();
 
         void Awake()
         {
@@ -486,7 +494,8 @@ namespace Porchlight.App
 
         void BuildApp()
         {
-            var initial = ReadUrlState();
+            // Signed in, the character says which town; until then, any behind the front door.
+            var initial = online ? new UrlState { @params = GenParams.Defaults } : ReadUrlState();
             seed = initial.seed ?? RandomSeed();
             @params = initial.@params;
 
@@ -497,7 +506,12 @@ namespace Porchlight.App
                 autoFit = false;
                 followOnMap = false;
             };
-            map.OnHover = world => hoverLabel.text = DescribeTile(model, world);
+            map.OnHover = world =>
+            {
+                hoverLabel.text = DescribeTile(model, world);
+                housePicker?.Hover(world);
+            };
+            map.OnClick = world => housePicker?.Click(world);
             map.OnDoubleClick = Fit;
             map.RegisterCallback<PointerDownEvent>(_ => Unfocus(), TrickleDown.TrickleDown);
             map.RegisterCallback<GeometryChangedEvent>(_ =>
@@ -528,29 +542,174 @@ namespace Porchlight.App
             root.Add(host);
             sidebar = new Sidebar(host, @params, new SidebarHandlers
             {
+                SignedIn = online,
                 OnParamsChange = ChangeParams,
                 OnRegenerate = () => Regenerate(RandomSeed(), @params),
                 OnSeed = value => Regenerate(value, @params),
                 OnExplore = () => _ = Explore(),
-                OnBack = LeaveExplore,
+                OnBack = () => LeaveExplore(),
                 OnResetParams = ResetParams,
                 OnMissionsRefresh = RefreshMissions,
             }, SetSidebarOpen);
             if (user != null)
             {
                 sidebar.SetAccount(user.name, user.email, () => platform.PostForm("/auth/logout"));
-                OfferJoins();
+                footer.style.display = DisplayStyle.None;
+                panel.root.style.visibility = Visibility.Hidden;
             }
 
             // Small screens start with the map, not the controls.
             if (Screen.width / dpr <= 720) SetSidebarOpen(false);
-            if (platform.Load(DEBUG_KEY) == "1") SetDebugOpen(true);
+            if (!online && platform.Load(DEBUG_KEY) == "1") SetDebugOpen(true);
 
             Regenerate(seed, @params);
+            if (online) OpenFrontDoor();
+        }
+
+        // The front door: who's playing, and where they live, then into their town.
+
+        void OpenFrontDoor()
+        {
+            root.AddToClassList("choosing");
+            door ??= new FrontDoor(root, platform, origin, () => portraits ??= new Portraits(ModelLibrary.Instance), () => RandomSeed(), () => platform.PostForm("/auth/logout"));
+            // A reload in this tab carries straight on, where they were.
+            FrontDoor.Remembered(platform, origin, c =>
+            {
+                if (c?.home != null && c.home.hasHouse) PlayAs(c, false);
+                else ShowCharacters();
+            });
+        }
+
+        void ShowCharacters(string message = null) => door.Characters(Settle, ChooseTown, message);
+
+        /// <summary>This character, please: on to whatever they haven't chosen yet, or into their town.</summary>
+        void Settle(Character c)
+        {
+            if (c.home == null) ChooseTown(c);
+            else if (!c.home.hasHouse) ChooseHouse(c);
+            else PlayAs(c, true);
+        }
+
+        void ChooseTown(Character c) => door.Towns(c, moved => ChooseHouse(moved), () => ShowCharacters());
+
+        /// <summary>Their town's map, to choose a house on.</summary>
+        void ChooseHouse(Character c, string note = null)
+        {
+            door.Close();
+            root.AddToClassList("choosing");
+            ShowTown(c.home.townKey);
+            autoFit = true;
+            map.Fit();
+            map.Redraw();
+            Account.ListHomes(platform, origin, c.home.townId, (homes, err) =>
+            {
+                if (homes == null)
+                {
+                    ShowCharacters(err);
+                    return;
+                }
+                var rng = new Rng(RandomSeed());
+                housePicker = new HousePicker(root, map, model, c.name, c.home.townName, homes, note, () => rng.Next(), (x, y) =>
+                    Account.ClaimHome(platform, origin, c.id, x, y, (moved, refused) =>
+                    {
+                        if (moved == null)
+                        {
+                            housePicker?.Refused(refused);
+                            return;
+                        }
+                        CloseHousePicker();
+                        PlayAs(moved, true);
+                    }), () =>
+                    {
+                        CloseHousePicker();
+                        ChooseTown(c);
+                    });
+            });
+        }
+
+        void CloseHousePicker()
+        {
+            housePicker?.Close();
+            housePicker = null;
+        }
+
+        /// <summary>This town on the map, if it isn't already.</summary>
+        void ShowTown(string key)
+        {
+            if (key == TownKey) return;
+            var state = ParseUrlState(key);
+            sidebar.SetParams(state.@params);
+            Regenerate(state.seed ?? RandomSeed(), state.@params);
+        }
+
+        string TownKey => EncodeUrlState(seed, @params);
+
+        /// <summary>Into this character's town, as them: at their front door, or (a reload) where they were.</summary>
+        void PlayAs(Character c, bool atDoor)
+        {
+            door.Close();
+            net?.Close();
+            net = null;
+            if (iso != null) iso.TeleportHook = null;
+            ShowTown(c.home.townKey);
+            // Generated afresh, a town can have changed since they moved in.
+            if (Homes.At(Homes.All(model), c.home.x, c.home.y) == null)
+            {
+                ChooseHouse(c, "The town has changed, and your house isn’t there any more. Choose another.");
+                return;
+            }
+            playing = c;
+            preferHome = atDoor;
+            FrontDoor.Remember(platform, c.id);
+            root.RemoveFromClassList("choosing");
+            sidebar.SetCharacter(c.name, SwitchCharacter, c.home.townName, GoHome, ToggleJournal);
+            OfferJoins();
+            _ = Explore();
+        }
+
+        /// <summary>Your front door, if you're in your own town and it's there.</summary>
+        (Vec2 at, double heading)? DoorOfHome()
+        {
+            var home = playing?.home;
+            if (home == null || !home.hasHouse || iso?.world == null || home.townKey != TownKey) return null;
+            var house = Homes.At(iso.world.model.buildings, home.x, home.y);
+            return house != null ? Homes.Door(iso.world.rooms, house.id) : null;
+        }
+
+        /// <summary>Back to your own front door, from wherever you are (another town too).</summary>
+        void GoHome()
+        {
+            var home = playing?.home;
+            if (home == null || iso == null) return;
+            if (home.townKey != TownKey)
+            {
+                preferHome = true;
+                ShowTown(home.townKey);
+                return;
+            }
+            if (DoorOfHome() is (Vec2 at, double heading)) iso.PutPlayer(at, heading);
+        }
+
+        void ToggleJournal()
+        {
+            if (playing == null) return;
+            if (journal != null)
+            {
+                journal.Close();
+                return;
+            }
+            journal = new Journal(root, platform, origin, () =>
+            {
+                journal = null;
+                if (iso != null) iso.PadHeld = false;
+            });
+            if (iso != null) iso.PadHeld = true;
         }
 
         bool Typing()
         {
+            // A screen over the town has the keys, as a text field would.
+            if (journal != null || housePicker != null || door?.Open == true) return true;
             var focused = root?.panel?.focusController?.focusedElement as VisualElement;
             return focused != null && (focused is TextField || focused.GetFirstAncestorOfType<TextField>() != null);
         }
@@ -572,6 +731,8 @@ namespace Porchlight.App
             }
             if (!started) return;
             root.EnableInClassList("narrow", Screen.width / dpr <= 720);
+            // Before there's a town to walk, the front door's pictures still need filming.
+            if (iso == null) portraits?.Update(Time.deltaTime, false);
             if (iso != null)
             {
                 iso.viewport = ScreenRect(isoHost);
@@ -583,6 +744,10 @@ namespace Porchlight.App
             }
             Follow();
             CheckHash();
+            // After the town's had its turn, so a press that closes one of these isn't read by the town too.
+            door?.Update(input.Pad, input.Connected);
+            housePicker?.Update(input.Pad, input.Connected);
+            journal?.Update(input.Pad);
         }
 
         /// <summary>
@@ -700,7 +865,14 @@ namespace Porchlight.App
             overlay = new ExploreOverlay(isoHost) { Dpr = dpr };
             iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
             iso.OnTake = car => net?.Take(car);
-            portraits = new Portraits(ModelLibrary.Instance);
+            portraits ??= new Portraits(ModelLibrary.Instance);
+            overlay.SignedIn = online;
+            iso.HomeDoor = saved =>
+            {
+                if (saved && !preferHome) return null;
+                preferHome = false;
+                return DoorOfHome();
+            };
             missionPanel = new MissionPanel(isoHost);
             overlay.OnPersonBox = ChooseLook;
             overlay.OnCarBox = ChooseCar;
@@ -709,11 +881,15 @@ namespace Porchlight.App
                 if (action == PadAction.Menu)
                 {
                     if (exploring) LeaveExplore();
-                    else _ = Explore();
+                    else if (!online) _ = Explore();
                     return;
                 }
                 if (!exploring) return;
-                if (action == PadAction.BackToMap) LeaveExplore();
+                if (action == PadAction.BackToMap)
+                {
+                    if (online) ToggleJournal();
+                    else LeaveExplore();
+                }
                 if (action == PadAction.Car) ToggleCar();
                 if (action == PadAction.Night) ToggleNight();
                 if (action == PadAction.NewCharacter) NewLook();
@@ -769,8 +945,9 @@ namespace Porchlight.App
                 }
                 else if (iso.PlayerPosition == null) SpawnCharacter();
                 // Same town as last time: carry on as the same character, where you left off.
-                // Online: who's playing (asked once), then into this town's room.
-                Connect(EnterTown);
+                // Online: into this town's room, as whoever's playing.
+                Connect();
+                EnterTown();
                 if (!missionsAsked) RefreshMissions();
             }
             catch (Exception err)
@@ -778,7 +955,7 @@ namespace Porchlight.App
                 Debug.LogException(err);
                 statusLabel.text = $"couldn't start explore mode: {err.Message}";
                 statusLabel.AddToClassList("error");
-                LeaveExplore();
+                LeaveExplore(true);
             }
             finally
             {
@@ -786,16 +963,18 @@ namespace Porchlight.App
             }
         }
 
-        void LeaveExplore()
+        /// <summary>Back to the blueprint: dev mode's. Signed in, you stay in the town (`force`: until you're choosing again).</summary>
+        void LeaveExplore(bool force = false)
         {
+            if (online && !force) return;
             iso?.CloseMap();
             exploring = false;
             root.RemoveFromClassList("exploring");
             sidebar.SetExploring(false);
             isoHost.style.display = DisplayStyle.None;
             map.style.display = DisplayStyle.Flex;
-            footer.style.display = DisplayStyle.Flex;
-            panel.root.style.visibility = Visibility.Visible;
+            footer.style.display = online ? DisplayStyle.None : DisplayStyle.Flex;
+            panel.root.style.visibility = online ? Visibility.Hidden : Visibility.Visible;
             iso?.SetBackground(true); // keep the town (and an auto-walking character) going behind the map
             // Mark where the character is on the blueprint and bring it into view.
             var at = iso?.PlayerPosition;
@@ -810,39 +989,22 @@ namespace Porchlight.App
             map.Redraw();
         }
 
-        /// <summary>Online: ask (once) who's playing, then join their town's room.</summary>
-        void Connect(Action then)
+        /// <summary>Signed in: whoever's playing goes online (if they aren't yet).</summary>
+        void Connect()
         {
-            if (!online || asked || iso == null)
-            {
-                then();
-                return;
-            }
-            asked = true;
-            CharacterPicker.Remembered(platform, origin, remembered =>
-            {
-                void Use(Character character)
-                {
-                    sidebar.SetCharacter(character?.name, SwitchCharacter);
-                    if (character == null || iso == null)
-                    {
-                        then();
-                        return;
-                    }
-                    net = new Multiplayer(iso, character, origin, platform, timers);
-                    net.onStatus = s => sidebar.SetOnline(s.state, s.here, s.why);
-                    iso.TeleportHook = (x, z) => net?.Teleport(x, z) ?? false;
-                    then();
-                }
-                if (remembered != null) Use(remembered);
-                else CharacterPicker.Pick(root, platform, origin, () => Catalog.RandomLook(new Rng(RandomSeed())), Use);
-            });
+            if (playing == null || iso == null || net != null) return;
+            net = new Multiplayer(iso, playing, origin, platform, timers);
+            net.onStatus = s => sidebar.SetOnline(s.state, s.here, s.why);
+            net.onUnlockedElsewhere = SayUnlocked;
+            iso.TeleportHook = (x, z) => net?.Teleport(x, z) ?? false;
         }
 
         /// <summary>Play the town on screen with everyone else in it (no-op when it's already the one).</summary>
         void EnterTown()
         {
-            if (isoTown == model) net?.Enter(new TownKey { key = EncodeUrlState(seed, @params), width = model.width, height = model.height });
+            if (isoTown != model) return;
+            net?.Enter(new TownKey { key = EncodeUrlState(seed, @params), width = model.width, height = model.height });
+            overlay?.SetHome(DoorOfHome()?.at);
         }
 
         /// <summary>
@@ -852,7 +1014,7 @@ namespace Porchlight.App
         /// </summary>
         void OfferJoins()
         {
-            string mine = CharacterPicker.RememberedId(platform);
+            string mine = playing?.id;
             Account.ListCharacters(platform, origin, (list, err) =>
             {
                 if (list == null) return;
@@ -873,14 +1035,19 @@ namespace Porchlight.App
             _ = Explore();
         }
 
+        /// <summary>Someone else is playing: back to the front door.</summary>
         void SwitchCharacter()
         {
+            EndMission(null);
+            journal?.Close();
             net?.Close();
             net = null;
             if (iso != null) iso.TeleportHook = null;
-            CharacterPicker.Forget(platform);
-            asked = false;
-            Connect(EnterTown);
+            FrontDoor.Forget(platform);
+            playing = null;
+            sidebar.SetJoins(null);
+            LeaveExplore(true);
+            OpenFrontDoor();
         }
 
         /// <summary>Night or day: online, for everyone in the town (the room says when it's done).</summary>
@@ -921,36 +1088,25 @@ namespace Porchlight.App
                 }, "look");
         }
 
-        const string UNLOCKS_KEY = "porchlight.unlocks";
-        HashSet<string> deviceUnlocks;
+        /// <summary>Dev mode's unlocks: blank each time, and gone with the page.</summary>
+        readonly HashSet<string> devUnlocks = new HashSet<string>();
 
-        /// <summary>What's unlocked (by finishing missions): online, the character's, which the server keeps; offline, this device's.</summary>
-        HashSet<string> Unlocks
-        {
-            get
-            {
-                if (net != null) return net.unlocks;
-                if (deviceUnlocks == null)
-                {
-                    deviceUnlocks = new HashSet<string>();
-                    foreach (var what in (platform.Load(UNLOCKS_KEY) ?? "").Split(',')) if (what.Length > 0) deviceUnlocks.Add(what);
-                }
-                return deviceUnlocks;
-            }
-        }
+        /// <summary>What's unlocked (by finishing missions): the account's, for every character in every town, which the server keeps.</summary>
+        HashSet<string> Unlocks => net != null ? net.unlocks : devUnlocks;
 
-        /// <summary>A mission's unlock: kept (with the character, or on this device), and said.</summary>
+        /// <summary>A mission's unlock: once, so playing the mission again earns nothing new; kept, and said.</summary>
         void Unlock(string what)
         {
             if (Unlocks.Contains(what)) return;
             if (net != null) net.Unlock(what);
-            else
-            {
-                Unlocks.Add(what);
-                platform.Save(UNLOCKS_KEY, string.Join(",", Unlocks));
-            }
-            if (what == "animals") overlay.Notify("Unlocked: the zoo's animals. Choose one from the character box.");
-            if (what == "firefighter") overlay.Notify("Unlocked: the firefighter and the fire engine. Find them in the character and car boxes.");
+            else devUnlocks.Add(what);
+            SayUnlocked(what);
+        }
+
+        void SayUnlocked(string what)
+        {
+            if (what == "animals") overlay?.Notify("Unlocked for all your characters: the zoo's animals. Choose one from the character box.");
+            if (what == "firefighter") overlay?.Notify("Unlocked for all your characters: the firefighter and the fire engine. Find them in the character and car boxes.");
         }
 
         /// <summary>The car box: a grid of every car (the fire engine once it's unlocked), and the one picked is yours, brought right beside you (in place of any other).</summary>
@@ -1037,7 +1193,17 @@ namespace Porchlight.App
             if (!started) return;
             if (exploring)
             {
+                if (journal != null)
+                {
+                    if (code == Key.Escape) journal.Close();
+                    return;
+                }
                 if (Typing()) return;
+                if (code == Key.J && !repeat)
+                {
+                    ToggleJournal();
+                    return;
+                }
                 // A conversation takes the keys (Enter also starts one, beside someone waiting to talk).
                 if (code != Key.Escape && mission != null && mission.OnKey(code)) return;
                 if (code == Key.N) ToggleNight();
@@ -1054,7 +1220,7 @@ namespace Porchlight.App
                 }
                 return;
             }
-            if (Typing()) return;
+            if (Typing() || online) return;
             if (code == Key.Backquote) SetDebugOpen(!panel.IsOpen);
         }
 
@@ -1072,9 +1238,22 @@ namespace Porchlight.App
                 missionsStatus = err;
                 ShowMissions();
             });
+            RefreshProgress();
         }
 
-        void ShowMissions() => sidebar.SetMissions(missions, missionsStatus, mission?.id, StartMission, () => EndMission("Mission abandoned"));
+        /// <summary>How often the account has finished each mission, for the sidebar's list.</summary>
+        void RefreshProgress()
+        {
+            if (!online) return;
+            Account.FetchProgress(platform, origin, (p, _) =>
+            {
+                if (p == null) return;
+                finished = p.missions.ToDictionary(m => m.id, m => m.times);
+                ShowMissions();
+            });
+        }
+
+        void ShowMissions() => sidebar.SetMissions(missions, missionsStatus, mission?.id, StartMission, () => EndMission("Mission abandoned"), finished);
 
         /// <summary>Fetch the mission's story as the server has it now, and start it (in place of any other).</summary>
         void StartMission(string id)
@@ -1134,7 +1313,14 @@ namespace Porchlight.App
                     EndMission(null);
                     overlay.Notify($"{title} stopped: {script.Error}");
                 }
-                else EndMission($"Mission complete: {mission.title}");
+                else
+                {
+                    // Played to its end: the account's for good (abandoning or an error doesn't count).
+                    net?.MissionDone(mission.id);
+                    finished.TryGetValue(mission.id, out int times);
+                    finished[mission.id] = times + 1;
+                    EndMission($"Mission complete: {mission.title}");
+                }
                 return;
             }
             overlay.SetObjective(mission.title, mission.CurrentObjective);
@@ -1198,6 +1384,7 @@ namespace Porchlight.App
 
         void WriteUrlState()
         {
+            if (online) return; // the character says which town, not the URL
             writtenHash = "#" + EncodeUrlState(seed, @params);
             platform.SetHash(writtenHash.Substring(1));
         }
@@ -1205,6 +1392,7 @@ namespace Porchlight.App
         /// <summary>The hash edited by hand (hashchange): load what it says.</summary>
         void CheckHash()
         {
+            if (online) return;
             double now = platform.Now();
             if (now < hashCheckAt) return;
             hashCheckAt = now + 250;

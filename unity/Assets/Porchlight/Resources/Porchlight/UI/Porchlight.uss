@@ -491,8 +491,17 @@ Label {
     background-color: rgba(20, 19, 17, 0.28);
 }
 
-#picker {
+#picker, #journal {
     background-color: rgba(20, 19, 17, 0.6);
+}
+
+/* Choosing who's playing and where they live: the map gets the whole window. */
+.choosing #sidebar {
+    display: none;
+}
+
+.choosing #map {
+    right: 0;
 }
 
 .card {
@@ -624,6 +633,154 @@ Label {
 
 .picker-create:disabled {
     opacity: 0.6;
+}
+
+.picker-list {
+    max-height: 340px;
+    flex-shrink: 1;
+    margin-bottom: 4px;
+}
+
+.picker-earned {
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: #efe6cf;
+}
+
+.picker-face {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    margin-right: 8px;
+    background-color: #2b2a27;
+    -unity-background-scale-mode: scale-and-crop;
+}
+
+.picker-middle {
+    flex-grow: 1;
+    flex-shrink: 1;
+    margin-right: 6px;
+}
+
+.picker-middle .picker-play {
+    margin: 0;
+}
+
+.picker-detail {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #a99f88;
+}
+
+.picker-move {
+    height: 38px;
+    margin: 0 6px 0 0;
+    padding: 0 10px;
+    border-width: 1px;
+    border-color: #444038;
+    border-radius: 0;
+    background-color: rgba(0, 0, 0, 0);
+    color: #efe6cf;
+    font-size: 12px;
+}
+
+.picker-delete {
+    height: 38px;
+}
+
+.picker-suggest {
+    align-self: flex-start;
+    margin: 6px 0 0 0;
+    padding: 4px 0;
+    border-width: 0;
+    background-color: rgba(0, 0, 0, 0);
+    color: #a99f88;
+    font-size: 12px;
+}
+
+/* The controller's place on a screen. */
+.pad-on {
+    border-width: 2px;
+    border-color: #ffc83d;
+}
+
+.look-grid {
+    flex-direction: row;
+    flex-wrap: wrap;
+}
+
+.look-tile {
+    width: 60px;
+    height: 60px;
+    margin: 0 6px 6px 0;
+    padding: 0;
+    border-width: 0;
+    border-radius: 0;
+    -unity-background-scale-mode: scale-and-crop;
+}
+
+.look-tile:hover {
+    border-width: 2px;
+    border-color: #efe6cf;
+}
+
+/* Choosing a house: over the map, leaving it to click. */
+.house-panel {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    width: 300px;
+    max-width: 90%;
+    padding: 18px 18px 14px 18px;
+}
+
+.house-status {
+    margin-bottom: 12px;
+    font-size: 14px;
+    color: #efe6cf;
+}
+
+.journal-card {
+    width: 480px;
+    max-width: 100%;
+    max-height: 90%;
+    padding: 26px 24px 20px 24px;
+}
+
+.journal-list {
+    flex-shrink: 1;
+    margin-bottom: 12px;
+}
+
+.journal-head {
+    margin: 10px 0 8px 0;
+    font-size: 14px;
+    color: #efe6cf;
+}
+
+.journal-row {
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom-width: 1px;
+    border-bottom-color: #333029;
+}
+
+.journal-done {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #7fce8d;
+}
+
+.journal-todo {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #a99f88;
+}
+
+.journal-reward {
+    margin-top: 3px;
+    font-size: 12px;
+    color: #ffc83d;
 }
 
 /* The debug panel (lil-gui), top left. */
@@ -893,6 +1050,7 @@ Label {
 
 .sb-links {
     flex-direction: row;
+    flex-wrap: wrap;
 }
 
 .sb-links > .link {

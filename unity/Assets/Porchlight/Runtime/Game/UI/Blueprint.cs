@@ -171,6 +171,10 @@ namespace Porchlight.UI
         public Action OnViewChanged;
         public Action<Vec2?> OnHover;
         public Action OnDoubleClick;
+        /// <summary>A click (not a drag), at this map point.</summary>
+        public Action<Vec2> OnClick;
+        /// <summary>Shapes painted over the buildings (choosing a house).</summary>
+        public readonly List<(List<Vec2> shape, Color fill)> highlights = new List<(List<Vec2>, Color)>();
         public Func<double> WheelDelta;
 
         readonly Dictionary<string, VisualElement> layers = new Dictionary<string, VisualElement>();
@@ -179,6 +183,8 @@ namespace Porchlight.UI
         readonly Dictionary<string, Texture2D> rasters = new Dictionary<string, Texture2D>();
         List<(Vec2 a, Vec2 b)> contourMajor, contourMinor, contourShore;
         Vec2? dragging;
+        /// <summary>How far this press has dragged, in pixels: more than a little isn't a click.</summary>
+        double dragged;
 
         public BlueprintView()
         {
@@ -228,12 +234,14 @@ namespace Porchlight.UI
                     return;
                 }
                 dragging = new Vec2(e.position.x, e.position.y);
+                dragged = 0;
                 this.CapturePointer(e.pointerId);
             });
             RegisterCallback<PointerMoveEvent>(e =>
             {
                 if (dragging != null)
                 {
+                    dragged += Math.Abs(e.position.x - dragging.Value.x) + Math.Abs(e.position.y - dragging.Value.y);
                     camera.Pan(e.position.x - dragging.Value.x, e.position.y - dragging.Value.y);
                     dragging = new Vec2(e.position.x, e.position.y);
                     OnViewChanged?.Invoke();
@@ -245,6 +253,7 @@ namespace Porchlight.UI
                 if (dragging == null) return;
                 dragging = null;
                 this.ReleasePointer(e.pointerId);
+                if (dragged < 5) OnClick?.Invoke(camera.ScreenToWorld(new Vec2(e.localPosition.x, e.localPosition.y)));
             });
             RegisterCallback<PointerLeaveEvent>(_ => OnHover?.Invoke(null));
             RegisterCallback<WheelEvent>(e =>
@@ -991,6 +1000,14 @@ namespace Porchlight.UI
         {
             if (model == null) return;
             var p = ctx.painter2D;
+            foreach (var (shape, fill) in highlights)
+            {
+                if (shape == null || shape.Count < 3) continue;
+                p.fillColor = fill;
+                p.BeginPath();
+                Polygon(p, shape.Select(S).ToList());
+                p.Fill();
+            }
             if (route.Count > 1)
             {
                 p.strokeColor = Coords.Hex(0xff6a00);

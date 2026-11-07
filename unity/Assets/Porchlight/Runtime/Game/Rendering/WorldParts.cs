@@ -140,6 +140,7 @@ namespace Porchlight.Rendering
             var room = new Room
             {
                 id = id,
+                buildingId = house.buildingId,
                 x0 = Math.Min(c0.x, c1.x),
                 y0 = Math.Min(c0.y, c1.y),
                 x1 = Math.Max(c0.x, c1.x),

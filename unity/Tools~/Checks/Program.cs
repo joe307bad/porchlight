@@ -5,6 +5,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- net '<json>'      # play the real game server (NetCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- mission <file>    # play a compiled mission (MissionCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- chase [count]     # set chasers after someone (ChaseCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- homes             # the towns that come with the game have houses to live in
 
 using System;
 using System.Collections.Generic;
@@ -20,9 +21,29 @@ static class Program
         if (args.Length > 1 && args[0] == "net") return NetCheck.Run(args[1]);
         if (args.Length > 1 && args[0] == "mission") return MissionCheck.Run(args[1]);
         if (args.Length > 0 && args[0] == "chase") return ChaseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
+        if (args.Length > 0 && args[0] == "homes") return HomesCheck();
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
+    }
+
+    /// <summary>
+    /// The towns that come with the game (the server's STARTER_TOWNS) and a few more:
+    /// plenty of houses, each found again by the tile it's known by, none sharing it, and a zoo for the chase.
+    /// </summary>
+    static int HomesCheck()
+    {
+        int failed = 0;
+        foreach (string seed in new[] { "maple-hollow", "harbour-bend", "cedar-falls", "a1b2c3d4e5f6", "0f9e8d7c6b5a", "123456789abc" })
+        {
+            var model = Generator.Generate(seed, GenParams.Normalize(new Dictionary<string, double>()), check: true);
+            var houses = Porchlight.Explore.Homes.All(model);
+            int lost = houses.Count(b => { var a = Porchlight.Explore.Homes.Anchor(b); return Porchlight.Explore.Homes.At(houses, a.x, a.y) != b; });
+            bool ok = houses.Count >= 10 && lost == 0 && model.zoo != null;
+            Console.WriteLine($"{(ok ? "ok" : "FAIL")} {seed}: {houses.Count} houses, {lost} not found by their tile, zoo {(model.zoo != null ? "yes" : "no")}");
+            if (!ok) failed++;
+        }
+        return failed == 0 ? 0 : 1;
     }
 
     /// <summary>

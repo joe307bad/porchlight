@@ -229,6 +229,13 @@ namespace Porchlight.App
         bool space;
         bool steering;
         public Action<PadAction> OnPadAction;
+        /// <summary>Something over the town (the Journal) has the controller.</summary>
+        public bool PadHeld;
+        /// <summary>
+        /// Where you come in at, if at your own front door: asked as the server says
+        /// you've joined, told whether it has somewhere you were in this town (null: there or the town's spawn point).
+        /// </summary>
+        public Func<bool, (Vec2 at, double heading)?> HomeDoor;
         readonly List<MyCar> cars = new List<MyCar>();
         int? driving;
         AutoDrive autoDrive;
@@ -545,7 +552,14 @@ namespace Porchlight.App
         {
             if (player == null || world == null) return;
             if (look != null && look != player.look && Catalog.IsLook(look)) Spawn(look);
-            if (at != null)
+            if (HomeDoor?.Invoke(at != null) is (Vec2 door, double facing))
+            {
+                var to = StandableNear(door);
+                MoveTo(to.x, to.y);
+                player.heading = facing;
+                playerAvatar?.SnapYaw(facing);
+            }
+            else if (at != null)
             {
                 var to = StandableNear(new Vec2(at[0], at[1]));
                 MoveTo(to.x, to.y);
@@ -1622,6 +1636,11 @@ namespace Porchlight.App
             {
                 padState = PadState.Idle;
                 if (s.Pressed(Button.Menu)) OnPadAction?.Invoke(PadAction.Menu);
+                return;
+            }
+            if (PadHeld)
+            {
+                padState = PadState.Idle;
                 return;
             }
             if (inDialogue)
