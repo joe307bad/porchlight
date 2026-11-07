@@ -64,5 +64,25 @@ namespace Porchlight.Gen
             }
             return model;
         }
+
+        /// <summary>
+        /// The same town a stage at a time: each stage's name once it's run, then `done` with
+        /// the town. (So a game can draw between stages while it waits.)
+        /// </summary>
+        public static IEnumerable<string> GenerateSteps(string seed, GenParams @params, Action<TownModel> done, bool check = false)
+        {
+            var model = TownModel.CreateEmpty(seed, GenParams.Normalize(@params ?? new GenParams()));
+            foreach (var stage in Stages)
+            {
+                model = stage.Run(model, Rng.Stage(seed, stage.Name));
+                if (check)
+                {
+                    var violations = stage.Check(model);
+                    if (violations.Count > 0) throw new InvariantException(stage.Name, violations);
+                }
+                yield return stage.Name;
+            }
+            done(model);
+        }
     }
 }

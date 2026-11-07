@@ -327,6 +327,12 @@ namespace Porchlight.App
         /// <summary>Build the scene for a town (replacing any previous one) and fill the sidewalks with people.</summary>
         public void SetTown(TownModel model)
         {
+            foreach (var _ in SetTownSteps(model)) { }
+        }
+
+        /// <summary>SetTown a part at a time, each named once it's done. Don't update the view till it's through.</summary>
+        public IEnumerable<string> SetTownSteps(TownModel model)
+        {
             remotes?.Clear();
             world?.Dispose();
             fleet?.Dispose();
@@ -368,8 +374,10 @@ namespace Porchlight.App
             lastSpot = null;
             player = null;
             playerAvatar = null;
-            world = new TownWorld(model, library);
+            world = new TownWorld(model, library, stepwise: true);
             remotes = new RemotePlayers(world.root.transform, library);
+            yield return "layout";
+            foreach (var part in world.Build()) yield return part;
             snap = true;
             open = WalkMask();
             var paved = Vehicle.Paved(model, world.layout);
@@ -385,6 +393,7 @@ namespace Porchlight.App
             canSail = Vehicle.Sailable(model, world.layout);
             skyFloor = SkyFloor();
             overlay.SetTown(model);
+            yield return "ways";
 
             traffic = new Traffic(world.layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             fleet = new Fleet(traffic, library, world.root.transform);
@@ -400,6 +409,7 @@ namespace Porchlight.App
                 avatars.Add(a);
             }
             basePeople = people.Count;
+            yield return "people";
         }
 
         /// <summary>Put a new character with the given look at the town's spawn point (or swap the look in place).</summary>

@@ -500,7 +500,7 @@ Label {
     background-color: #2b2a27;
 }
 
-/* Over everything until there's a real screen to show: looks as the page's own loader does. */
+/* Over everything until there's a real screen to show: carries on from the page's own bar. */
 .loader {
     position: absolute;
     left: 0;
@@ -512,16 +512,17 @@ Label {
     background-color: #2b2a27;
 }
 
-.loader-text {
-    color: #a99f88;
-    font-size: 13px;
-}
-
 .loader-bar {
     width: 200px;
     height: 4px;
-    margin-top: 10px;
     border-radius: 2px;
+    overflow: hidden;
+    background-color: #1f1e1b;
+}
+
+.loader-fill {
+    height: 100%;
+    width: 0;
     background-color: #c2412d;
 }
 

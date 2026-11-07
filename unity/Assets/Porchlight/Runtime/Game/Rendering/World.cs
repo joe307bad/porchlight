@@ -118,7 +118,8 @@ namespace Porchlight.Rendering
         readonly List<GameObject> parkedCars = new List<GameObject>();
         readonly Dictionary<int, Interior> interiors = new Dictionary<int, Interior>();
 
-        public TownWorld(TownModel model, ModelLibrary library)
+        /// <summary>`stepwise`: only begun; <see cref="Build"/> does the rest, a part at a time.</summary>
+        public TownWorld(TownModel model, ModelLibrary library, bool stepwise = false)
         {
             this.model = model;
             this.library = library;
@@ -130,20 +131,36 @@ namespace Porchlight.Rendering
             still.SetParent(root.transform, false);
             props = new GameObject("props").transform;
             props.SetParent(root.transform, false);
-            var rng = new Rng($"{model.seed}::iso");
+            if (!stepwise) foreach (var _ in Build()) { }
+        }
 
+        /// <summary>The town's parts, built in turn: each one's name once it's done.</summary>
+        public IEnumerable<string> Build()
+        {
+            var rng = new Rng($"{model.seed}::iso");
             BuildGround(rng).Build("ground", still);
+            yield return "ground";
             AddWater();
             BuildRoads().Build("roads", still);
+            yield return "roads";
             var sheds = new MeshBuilder(palette);
             AddHouses(rng);
+            yield return "houses";
             // Rooms are furnished from a stream of their own, so the rest of the town doesn't move when they change.
             Furnish(new Rng($"{model.seed}::rooms"));
             AddScreens();
             AddDoors();
-            for (int i = 0; i < rooms.Count; i++) InteriorOf(i);
+            yield return "rooms";
+            const int ROOMS_A_STEP = 64;
+            for (int i = 0; i < rooms.Count; i++)
+            {
+                InteriorOf(i);
+                if (i % ROOMS_A_STEP == ROOMS_A_STEP - 1) yield return "interiors" + i / ROOMS_A_STEP;
+            }
+            yield return "interiors";
             AddYards(sheds, rng);
             AddTrees(rng);
+            yield return "yards";
             AddPlazaDecor(rng);
             AddParkedCars();
             AddAirport();
@@ -151,11 +168,14 @@ namespace Porchlight.Rendering
             AddDocks();
             if (!sheds.Empty) sheds.Build("sheds", still);
             AddLamps(rng);
+            yield return "places";
             signs = Signs.Plan(model, layout, names);
             AddStreetSigns();
             AddFountain();
             _ = palette.Material;
+            yield return "signs";
             StaticBatchingUtility.Combine(still.gameObject);
+            yield return "batching";
         }
 
         public void SetParkedVisible(int i, bool visible) => Show(parkedCars[i], visible);

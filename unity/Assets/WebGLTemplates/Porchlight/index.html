@@ -24,19 +24,52 @@
       html, body { margin: 0; height: 100%; overflow: hidden; background: #2b2a27; }
       #unity-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
       #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #a99f88; font: 13px system-ui, sans-serif; }
-      #loading .bar { width: 200px; height: 4px; margin-top: 10px; background: #1f1e1b; border-radius: 2px; overflow: hidden; }
+      #loading .bar { width: 200px; height: 4px; background: #1f1e1b; border-radius: 2px; overflow: hidden; }
       #loading .fill { width: 0; height: 100%; background: #c2412d; }
       #loading .error { color: #ff8a73; max-width: 480px; text-align: center; }
     </style>
   </head>
   <body>
     <canvas id="unity-canvas" tabindex="-1"></canvas>
-    <div id="loading"><div><div class="text">Loading Porchlight…</div><div class="bar"><div class="fill"></div></div></div></div>
+    <div id="loading"><div><div class="text"></div><div class="bar"><div class="fill"></div></div></div></div>
     <script src="Build/{{{ LOADER_FILENAME }}}"></script>
     <script>
       const canvas = document.querySelector('#unity-canvas');
       const loading = document.querySelector('#loading');
       const fill = loading.querySelector('.fill');
+      // One bar from here to the game's first screen. Each part's share is how long it took on
+      // this device last time (the game keeps its own steps' times under the same prefix).
+      const KEY = 'porchlight.load.';
+      const read = (name) => {
+        try {
+          return Object.fromEntries((localStorage.getItem(KEY + name) || '').split(';').filter(Boolean)
+            .map((p) => [p.slice(0, p.lastIndexOf('=')), Number(p.slice(p.lastIndexOf('=') + 1))])
+            .filter(([n, ms]) => n && ms >= 0));
+        } catch { return {}; }
+      };
+      const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+      const page = read('page'), pageMs = sum(page), firstMs = sum(read('first'));
+      // The page's share of the whole first load (the game works the same out, and takes over there).
+      const share = pageMs + firstMs > 0 ? pageMs / (pageMs + firstMs) : 0.5;
+      const downloadShare = pageMs > 0 ? share * (page.download || 0) / pageMs : share * 0.7;
+      let shown = 0, downloaded = 0, ready = 0;
+      const show = (f) => {
+        shown = Math.max(shown, Math.min(f, share));
+        fill.style.width = `${(shown * 100).toFixed(1)}%`;
+      };
+      // Unity reports downloading as 0 to 0.9, then nothing till it's started: that part goes by the clock.
+      const starting = () => {
+        if (ready || !loading.isConnected) return;
+        const expect = Math.max(1, page.start || 2000);
+        show(downloadShare + (share - downloadShare) * Math.min(0.9, (performance.now() - downloaded) / expect));
+        requestAnimationFrame(starting);
+      };
+      const remember = () => {
+        const mean = (was, ms) => Math.round(was >= 0 ? (was + ms) / 2 : ms);
+        try {
+          localStorage.setItem(KEY + 'page', `download=${mean(page.download, downloaded)};start=${mean(page.start, ready - downloaded)}`);
+        } catch { /* private mode: no history, the bar just guesses */ }
+      };
       createUnityInstance(canvas, {
         dataUrl: 'Build/{{{ DATA_FILENAME }}}',
         frameworkUrl: 'Build/{{{ FRAMEWORK_FILENAME }}}',
@@ -60,8 +93,16 @@
         devicePixelRatio: window.devicePixelRatio || 1,
         matchWebGLToCanvasSize: true,
       }, (progress) => {
-        fill.style.width = `${Math.round(progress * 100)}%`;
+        if (progress < 0.9) return show(downloadShare * progress / 0.9);
+        if (!downloaded) {
+          downloaded = performance.now();
+          requestAnimationFrame(starting);
+        }
       }).then(() => {
+        ready = performance.now();
+        if (!downloaded) downloaded = ready;
+        show(share);
+        remember();
         // Once the game's first frame is up, with its own loader on it.
         requestAnimationFrame(() => requestAnimationFrame(() => loading.remove()));
         canvas.focus();

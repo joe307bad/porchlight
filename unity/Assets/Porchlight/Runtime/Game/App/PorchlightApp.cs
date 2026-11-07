@@ -161,32 +161,64 @@ namespace Porchlight.App
             root.style.unityFontDefinition = FontDefinition.FromFont(Resources.Load<Font>("Porchlight/Fonts/Inter-Regular"));
             root.style.flexGrow = 1;
             root.pickingMode = PickingMode.Ignore;
-            loader = El.Box("loader");
-            loader.Add(El.Text("Loading Porchlight…", "loader-text"));
-            loader.Add(El.Box("loader-bar"));
-            root.Add(loader);
+            loader = new LoadBar(platform.Now, key => platform.Load(key), (key, value) => platform.Save(key, value));
+            root.Add(loader.root);
+            loader.Begin(LoadBar.FIRST, loader.PageShare());
         }
 
         // The loader: carries on from the page's, over everything, until there's a real screen
         // to show. Building a town stops everything for a moment, so it has to be drawn first.
 
-        VisualElement loader;
+        LoadBar loader;
         Action afterPaint;
+        /// <summary>A town being built a part at a time: it isn't to be played (or updated) till it's done.</summary>
+        bool buildingTown;
+        readonly List<TaskCompletionSource<bool>> frameWaiters = new List<TaskCompletionSource<bool>>();
+        /// <summary>How long a frame may spend building before the loader gets drawn again.</summary>
+        const double FRAME_BUDGET_MS = 50;
         int paintFrames;
         /// <summary>Going into a town: the loader stays till they're in it and in their place.</summary>
         bool enteringTown;
         double enteringUntil;
         const double ENTERING_MS = 5000;
 
-        bool Loading => loader.style.display != DisplayStyle.None;
+        bool Loading => loader.Visible;
 
-        void ShowLoader() => loader.style.display = DisplayStyle.Flex;
+        /// <summary>The loader up for a load (`flow` names it, for its timings), or carrying on with the one showing.</summary>
+        void ShowLoader(string flow) => loader.Begin(flow);
 
-        void HideLoader()
+        /// <summary>`keep`: it got where it was going, so its timings are worth remembering.</summary>
+        void HideLoader(bool keep = true)
         {
-            loader.style.display = DisplayStyle.None;
+            loader.End(keep);
             enteringTown = false;
             enteringUntil = 0;
+        }
+
+        Task NextFrame()
+        {
+            var next = new TaskCompletionSource<bool>();
+            frameWaiters.Add(next);
+            return next.Task;
+        }
+
+        /// <summary>Do the steps; while the loader's up, drawing it between them whenever a frame's worth is gone.</summary>
+        async Task Run(IEnumerable<string> steps, string prefix)
+        {
+            double until = platform.Now() + FRAME_BUDGET_MS;
+            foreach (var step in steps)
+            {
+                loader.Step(prefix + step);
+                if (!Loading || platform.Now() < until) continue;
+                await NextFrame();
+                until = platform.Now() + FRAME_BUDGET_MS;
+            }
+        }
+
+        /// <summary>Do the steps now, all of them (timed, if the loader's up).</summary>
+        void Drain(IEnumerable<string> steps, string prefix)
+        {
+            foreach (var step in steps) loader.Step(prefix + step);
         }
 
         /// <summary>Do something heavy once what's on screen now has been drawn.</summary>
@@ -198,6 +230,12 @@ namespace Porchlight.App
 
         void UpdateLoader()
         {
+            if (frameWaiters.Count > 0)
+            {
+                var waiting = frameWaiters.ToArray();
+                frameWaiters.Clear();
+                foreach (var w in waiting) w.SetResult(true);
+            }
             if (afterPaint != null && --paintFrames <= 0)
             {
                 var then = afterPaint;
@@ -205,11 +243,16 @@ namespace Porchlight.App
                 then();
             }
             if (!Loading) return;
-            if (root[root.childCount - 1] != loader) loader.BringToFront();
-            if (!enteringTown || !exploring) return;
+            loader.Update();
+            if (root[root.childCount - 1] != loader.root) loader.root.BringToFront();
+            if (!enteringTown || !exploring || buildingTown) return;
             double now = platform.Now();
             if (enteringUntil == 0) enteringUntil = now + ENTERING_MS;
-            if ((net == null || net.Spawned) && joining == null || now > enteringUntil) HideLoader();
+            if ((net == null || net.Spawned) && joining == null || now > enteringUntil)
+            {
+                loader.Step("join");
+                HideLoader();
+            }
         }
 
         // Sign-in: nothing starts until someone is signed in, when the
@@ -241,6 +284,7 @@ namespace Porchlight.App
         {
             Account.FetchMe(platform, origin, (u, provider, err, status) =>
             {
+                loader.Step("signin");
                 if (u != null)
                 {
                     user = u;
@@ -268,10 +312,10 @@ namespace Porchlight.App
                     {
                         down.RemoveFromHierarchy();
                         root.RemoveFromClassList("signed-out");
-                        ShowLoader();
+                        ShowLoader("retry");
                         AskWho(null, platform.Now() + SERVER_WAIT_MS);
                     }, "Try again");
-                    HideLoader();
+                    HideLoader(false);
                     return;
                 }
                 // The card straight away; the scenery behind it can follow.
@@ -280,7 +324,8 @@ namespace Porchlight.App
                     string returnTo = platform.PathName + platform.Search + platform.Hash;
                     platform.Navigate("/auth/login?returnTo=" + Uri.EscapeDataString(returnTo));
                 });
-                HideLoader();
+                // Not a first load to time: the next one will most likely be signed in.
+                HideLoader(false);
                 AfterPaint(StartAttract);
             });
         }
@@ -643,6 +688,7 @@ namespace Porchlight.App
             if (!online && platform.Load(DEBUG_KEY) == "1") SetDebugOpen(true);
 
             Regenerate(seed, @params);
+            loader.Step("app");
             if (online) OpenFrontDoor();
             else HideLoader();
         }
@@ -653,10 +699,15 @@ namespace Porchlight.App
         {
             root.AddToClassList("choosing");
             door ??= new FrontDoor(root, platform, origin, () => portraits ??= new Portraits(ModelLibrary.Instance), () => RandomSeed(), () => platform.PostForm("/auth/logout"));
-            door.Listed = HideLoader;
+            door.Listed = () =>
+            {
+                loader.Step("characters");
+                HideLoader();
+            };
             // A reload in this tab carries straight on, where they were.
             FrontDoor.Remembered(platform, origin, c =>
             {
+                loader.Step("who");
                 if (c?.home != null && c.home.hasHouse && !c.inUse) PlayAs(c, false);
                 else ShowCharacters(message ?? (c?.inUse == true ? InUse(c) : null));
             });
@@ -762,15 +813,15 @@ namespace Porchlight.App
         /// <summary>Their town's map, to choose a house on.</summary>
         void ChooseHouse(Character c, string note = null)
         {
-            ShowLoader();
+            ShowLoader("house");
             AfterPaint(() => OpenHousePicker(c, note));
         }
 
-        void OpenHousePicker(Character c, string note)
+        async void OpenHousePicker(Character c, string note)
         {
             door.Close();
             root.AddToClassList("choosing");
-            ShowTown(c.home.townKey);
+            await Run(ShowTownSteps(c.home.townKey), "town/");
             autoFit = true;
             map.Fit();
             map.Redraw();
@@ -781,6 +832,7 @@ namespace Porchlight.App
                     ShowCharacters(err);
                     return;
                 }
+                loader.Step("homes");
                 HideLoader();
                 var rng = new Rng(RandomSeed());
                 housePicker = new HousePicker(root, map, model, c.name, c.home.townName, homes, note, () => rng.Next(), (x, y) =>
@@ -808,12 +860,14 @@ namespace Porchlight.App
         }
 
         /// <summary>This town on the map, if it isn't already.</summary>
-        void ShowTown(string key)
+        void ShowTown(string key) => Drain(ShowTownSteps(key), "town/");
+
+        IEnumerable<string> ShowTownSteps(string key)
         {
-            if (key == TownKey) return;
+            if (key == TownKey) yield break;
             var state = ParseUrlState(key);
             sidebar.SetParams(state.@params);
-            Regenerate(state.seed ?? RandomSeed(), state.@params);
+            foreach (var step in RegenerateSteps(state.seed ?? RandomSeed(), state.@params)) yield return step;
         }
 
         string TownKey => EncodeUrlState(seed, @params);
@@ -821,17 +875,17 @@ namespace Porchlight.App
         /// <summary>Into this character's town, as them: at their front door, or (a reload) where they were.</summary>
         void PlayAs(Character c, bool atDoor)
         {
-            ShowLoader();
+            ShowLoader("town");
             AfterPaint(() => EnterAs(c, atDoor));
         }
 
-        void EnterAs(Character c, bool atDoor)
+        async void EnterAs(Character c, bool atDoor)
         {
             door.Close();
             net?.Close();
             net = null;
             if (iso != null) iso.TeleportHook = null;
-            ShowTown(c.home.townKey);
+            await Run(ShowTownSteps(c.home.townKey), "town/");
             // Generated afresh, a town can have changed since they moved in.
             if (Homes.At(Homes.All(model), c.home.x, c.home.y) == null)
             {
@@ -844,13 +898,13 @@ namespace Porchlight.App
             root.RemoveFromClassList("choosing");
             sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home.townName, GoHome, ToggleJournal);
             enteringTown = true;
-            _ = Explore();
+            await Explore();
         }
 
         /// <summary>Into someone else's town as this character, who needn't live anywhere yet.</summary>
         void Visit(Character c, Character them)
         {
-            ShowLoader();
+            ShowLoader("town");
             AfterPaint(() => VisitNow(c, them));
         }
 
@@ -892,11 +946,11 @@ namespace Porchlight.App
             if (home == null || iso == null) return;
             if (home.townKey != TownKey)
             {
-                ShowLoader();
-                AfterPaint(() =>
+                ShowLoader("town");
+                AfterPaint(async () =>
                 {
                     preferHome = true;
-                    ShowTown(home.townKey);
+                    await Run(ShowTownSteps(home.townKey), "town/");
                     enteringTown = true;
                 });
                 return;
@@ -948,7 +1002,7 @@ namespace Porchlight.App
             root.EnableInClassList("narrow", Screen.width / dpr <= 720);
             // Before there's a town to walk, the front door's pictures still need filming.
             if (iso == null) portraits?.Update(Time.deltaTime, false);
-            if (iso != null)
+            if (iso != null && !buildingTown)
             {
                 iso.viewport = ScreenRect(isoHost);
                 if (exploring) ZoomWithWheel();
@@ -1001,15 +1055,37 @@ namespace Porchlight.App
 
         // The town.
 
-        void Regenerate(string nextSeed, GenParams nextParams)
+        void Regenerate(string nextSeed, GenParams nextParams) => Drain(RegenerateSteps(nextSeed, nextParams), "");
+
+        /// <summary>Regenerate a generator stage at a time (the town's only taken on at the end).</summary>
+        IEnumerable<string> RegenerateSteps(string nextSeed, GenParams nextParams)
         {
             bool sizeChanged = model == null || model.width != nextParams.width || model.height != nextParams.height;
+            var sw = Stopwatch.StartNew();
+            TownModel next = null;
+            Exception failed = null;
+            using (var stages = Generator.GenerateSteps(nextSeed, nextParams, m => next = m, check: Application.isEditor).GetEnumerator())
+            {
+                while (true)
+                {
+                    try
+                    {
+                        if (!stages.MoveNext()) break;
+                    }
+                    catch (Exception err)
+                    {
+                        failed = err;
+                        break;
+                    }
+                    yield return "gen/" + stages.Current;
+                }
+            }
             seed = nextSeed;
             @params = nextParams;
-            var sw = Stopwatch.StartNew();
             try
             {
-                model = Generator.Generate(seed, @params, check: Application.isEditor);
+                if (failed != null) throw failed;
+                model = next;
                 string counts = $"{model.buildings.Count} buildings · {model.roads.edges.Count} roads · {model.lots.Count} lots";
                 statusLabel.text = $"{counts} · generated in {sw.Elapsed.TotalMilliseconds:0} ms";
                 statusLabel.RemoveFromClassList("error");
@@ -1032,11 +1108,13 @@ namespace Porchlight.App
             if (exploring && iso != null)
             {
                 // A new town: drop the old walk and start afresh at the new town's spawn point.
+                // (All at once: the town is in play, with others' moves arriving, so it can't be half built.)
                 EndMission(null);
                 iso.SetTown(model);
                 isoTown = model;
                 SpawnCharacter();
                 EnterTown();
+                yield return "world";
             }
             else if (iso != null && iso.IsAuto)
             {
@@ -1134,14 +1212,16 @@ namespace Porchlight.App
         async Task Explore()
         {
             sidebar.SetLoading(true);
+            buildingTown = true;
             try
             {
                 // Let "Loading…" show before the town is built (a frame's work).
-                await Task.Yield();
+                await NextFrame();
                 if (iso == null)
                 {
                     isoHost.style.display = DisplayStyle.Flex;
                     LoadIso();
+                    loader.Step("explore");
                 }
                 exploring = true;
                 Unfocus();
@@ -1155,7 +1235,8 @@ namespace Porchlight.App
                 if (isoTown != model)
                 {
                     EndMission(null);
-                    iso.SetTown(model);
+                    isoTown = null;
+                    await Run(iso.SetTownSteps(model), "world/");
                     isoTown = model;
                     SpawnCharacter();
                 }
@@ -1172,10 +1253,11 @@ namespace Porchlight.App
                 statusLabel.text = $"couldn't start explore mode: {err.Message}";
                 statusLabel.AddToClassList("error");
                 LeaveExplore(true);
-                HideLoader();
+                HideLoader(false);
             }
             finally
             {
+                buildingTown = false;
                 sidebar.SetLoading(false);
             }
         }
@@ -1262,14 +1344,14 @@ namespace Porchlight.App
         /// <summary>Into their town (if we're not there), arriving beside them once they're seen.</summary>
         void Join(Character them)
         {
-            ShowLoader();
+            ShowLoader("town");
             AfterPaint(() => GoTo(them));
         }
 
-        void GoTo(Character them)
+        async void GoTo(Character them)
         {
+            await Run(ShowTownSteps(them.town), "town/");
             enteringTown = true;
-            ShowTown(them.town);
             joining = them.name;
             joiningSession = them.session;
             joiningUntil = platform.Now() + JOIN_FIND_MS;
