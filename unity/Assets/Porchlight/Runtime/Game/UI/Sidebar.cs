@@ -176,7 +176,8 @@ namespace Porchlight.UI
 
             // The top: who you're playing as, the seed, and the two big buttons.
             top = El.Box("sb-top");
-            top.Add(El.Text("Playing as", "sb-head-label", "semibold"));
+            var playingHead = El.Text("Playing as", "sb-head-label", "semibold");
+            top.Add(playingHead);
             playingName = El.Text("", "sb-playing-name", "semibold");
             top.Add(playingName);
             playingDetail = El.Text("", "sb-playing-detail");
@@ -184,7 +185,7 @@ namespace Porchlight.UI
             links = El.Box("sb-links");
             top.Add(links);
             // Signed in, you live in a town: the seed, Regenerate and the map's settings are dev mode's.
-            var seedRow = El.Box("sb-seed");
+            seedRow = El.Box("sb-seed");
             seedRow.Add(El.Text("Seed", "sb-seed-label"));
             seedRow.Add(seedInput);
             top.Add(seedRow);
@@ -194,7 +195,7 @@ namespace Porchlight.UI
                 if (exploring) h.OnBack?.Invoke();
                 else h.OnExplore?.Invoke();
             }, "btn-primary", "press");
-            var actions = El.Box("sb-actions");
+            actions = El.Box("sb-actions");
             regen.AddToClassList("first");
             actions.Add(regen);
             actions.Add(exploreButton);
@@ -265,9 +266,11 @@ namespace Porchlight.UI
             body.Add(Section("Controls", controls));
             body.Add(Section("Players", playersList));
             body.Add(Section("Missions", missions));
-            var settingsSection = Section("Map settings", settings);
+            settingsSection = Section("Map settings", settings);
             body.Add(settingsSection);
             if (h.SignedIn) settingsSection.style.display = DisplayStyle.None;
+            playingBits = new VisualElement[] { playingHead, playingName, playingDetail, links };
+            top.Insert(0, BuildEditorBox());
             root.Add(scroll);
             pinned = El.Box("sb-section-head", "sb-pinned");
             pinnedLabel = El.Text("", "sb-head-label", "semibold");
@@ -605,6 +608,86 @@ namespace Porchlight.UI
         }
 
         public void SetSeed(string seed) => seedInput.SetValueWithoutNotify(seed);
+
+        // The town editor: signed in, the seed, Regenerate and the map's settings are only for this.
+
+        VisualElement seedRow, actions, settingsSection, editorBox;
+        VisualElement[] playingBits;
+        TextField editorName;
+        Label editorError;
+        UnityEngine.UIElements.Button editorSave;
+        Action<string> onEditorSave;
+        Action onEditorBack;
+
+        VisualElement BuildEditorBox()
+        {
+            editorBox = El.Box("editor-box");
+            editorBox.style.display = DisplayStyle.None;
+            editorBox.Add(El.Text("Town editor", "editor-title", "bold"));
+            var hint = El.Text("Change the seed and the map’s settings until it’s the town you want, then name it and save it.", "help-text");
+            hint.style.whiteSpace = WhiteSpace.Normal;
+            editorBox.Add(hint);
+            void Save()
+            {
+                string name = editorName.value?.Trim();
+                if (string.IsNullOrEmpty(name))
+                {
+                    EditorMessage("Give your town a name.");
+                    editorName.Focus();
+                    return;
+                }
+                EditorMessage(null);
+                editorSave.SetEnabled(false);
+                onEditorSave?.Invoke(name);
+            }
+            editorName = El.ClickToFocus(new TextField { maxLength = 24, textEdition = { placeholder = "The town’s name" } });
+            editorName.AddToClassList("picker-name");
+            editorName.RegisterCallback<KeyDownEvent>(e =>
+            {
+                if (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter) Save();
+            }, TrickleDown.TrickleDown);
+            editorSave = El.Btn("Save", "Save this town by name", Save, "picker-create", "semibold", "press");
+            var form = El.Box("picker-new");
+            form.Add(editorName);
+            form.Add(editorSave);
+            editorBox.Add(form);
+            editorError = El.Text("", "picker-error", "hidden");
+            editorError.style.whiteSpace = WhiteSpace.Normal;
+            editorBox.Add(editorError);
+            var back = El.Link("Back to towns", () => onEditorBack?.Invoke());
+            back.style.marginTop = 8;
+            editorBox.Add(back);
+            return editorBox;
+        }
+
+        /// <summary>Saving didn't work (or null, clear it): they can change it and try again.</summary>
+        public void EditorMessage(string message)
+        {
+            editorError.text = message ?? "";
+            editorError.EnableInClassList("hidden", string.IsNullOrEmpty(message));
+            editorSave.SetEnabled(true);
+        }
+
+        /// <summary>Show the town editor (save: with this name), or go back to how a signed-in player's sidebar is.</summary>
+        public void SetEditor(bool on, Action<string> save, Action back)
+        {
+            onEditorSave = save;
+            onEditorBack = back;
+            editorBox.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
+            foreach (var bit in playingBits) bit.style.display = on ? DisplayStyle.None : DisplayStyle.Flex;
+            if (!on) ShowDetail(playingDetail.text);
+            seedRow.style.display = actions.style.display = settingsSection.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
+            exploreButton.style.display = on ? DisplayStyle.None : DisplayStyle.Flex;
+            // Everything else is about playing.
+            int settings = sections.Count - 1;
+            for (int i = 0; i < settings; i++) sections[i].body.parent.style.display = on ? DisplayStyle.None : DisplayStyle.Flex;
+            Open(on ? settings : -1);
+            if (on)
+            {
+                editorName.value = "";
+                EditorMessage(null);
+            }
+        }
 
         public void SetLoading(bool loading)
         {

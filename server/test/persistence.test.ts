@@ -98,6 +98,11 @@ test('towns: three at most, and houses: one account, two people, free again when
   await p.claimHome(them.id, stranger.id, 5, 6);
   assert.deepEqual((await p.listHomes(me.id, made[0].id)).map((h) => [h.x, h.mine]).sort(), [[5, false], [7, true]]);
 
+  // A town from the editor: its own key, and only one town to a key (the limit's full: someone else tries).
+  const edited = await p.createTown(them.id, 'Edited', `seed=edited-${made[0].id}&width=96`);
+  assert.equal(edited.key, `seed=edited-${made[0].id}&width=96`);
+  await assert.rejects(p.createTown(them.id, 'Copy', edited.key), /called Edited/);
+
   // Deleting a town: only its maker; those who lived there choose again; a free slot for another.
   await assert.rejects(p.ownTownKey(them.id, made[0].id), /Only whoever/);
   await assert.rejects(p.deleteTown(them.id, made[0].id), /No such town/);

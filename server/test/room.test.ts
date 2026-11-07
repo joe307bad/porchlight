@@ -260,6 +260,23 @@ test('towns: three each and delete one to make another, and houses for two', asy
   assert.equal((await api('mayor', 'POST', '/mp/towns', { name: 'Four' })).status, 201);
 });
 
+test('the town editor saves a town by name: its own key, once, and it counts towards the limit', async () => {
+  const key = 'seed=my-town&width=96&roadDensity=0.5';
+  const saved = await api('editor', 'POST', '/mp/towns', { name: 'My Town', key });
+  assert.equal(saved.status, 201);
+  assert.deepEqual([saved.json.name, saved.json.key, saved.json.mine], ['My Town', key, true]);
+  const again = await api('someone', 'POST', '/mp/towns', { name: 'Copy', key });
+  assert.equal(again.status, 409);
+  assert.match(again.json.error, /My Town/);
+  assert.equal((await api('someone', 'POST', '/mp/towns', { name: 'Maple', key: 'seed=maple-hollow' })).status, 409);
+  for (const bad of ['nonsense', 'seed=', 'seed=a&b=<script>', 'x=1&seed=a', 5, `seed=${'a'.repeat(512)}`]) {
+    assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Bad', key: bad })).status, 400, String(bad));
+  }
+  assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Two', key: 'seed=two' })).status, 201);
+  assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Three', key: 'seed=three' })).status, 201);
+  assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Four', key: 'seed=four' })).status, 409);
+});
+
 test('passengers ride with a driver, up to three to a car', async () => {
   const names = ['Driver', 'P1', 'P2', 'P3', 'P4'];
   const ids: string[] = [];

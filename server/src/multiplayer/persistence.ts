@@ -116,6 +116,16 @@ export function cleanLook(raw: unknown): string | null {
   return typeof raw === 'string' && /^[a-z0-9][a-z0-9/_-]{0,63}$/.test(raw) && !raw.includes('..') ? raw : null;
 }
 
+/**
+ * A town's key as the game writes it (its seed, then the settings that differ
+ * from the defaults, form-encoded), or null. The game grows the town from it; here it's only a name.
+ */
+export function cleanTownKey(raw: unknown): string | null {
+  return typeof raw === 'string' && raw.length <= 512 && /^seed=[A-Za-z0-9*._%+-]+(&[A-Za-z0-9]+=[0-9.eE+-]+)*$/.test(raw) ? raw : null;
+}
+
+const townExists = (name: string) => new CharacterError(`That town already exists: it's called ${name}.`, 409);
+
 export interface Persistence {
   /** Migrated and reachable at least once: until then joins are refused. */
   readonly ready: boolean;
@@ -139,7 +149,8 @@ export interface Persistence {
   listTowns(accountId: string): Promise<TownInfo[]>;
   /** The town's key if this account made it; throws otherwise (or if it's gone). */
   ownTownKey(accountId: string, townId: string): Promise<string>;
-  createTown(accountId: string, name: string): Promise<TownInfo>;
+  /** A new town: this key (from the town editor), or a fresh seed's. */
+  createTown(accountId: string, name: string, key?: string): Promise<TownInfo>;
   /** Everyone who lived there starts again from choosing a town (what they've earned stays). */
   deleteTown(accountId: string, townId: string): Promise<void>;
   listHomes(accountId: string, townId: string): Promise<HomeInfo[]>;
@@ -367,13 +378,17 @@ export class PgPersistence implements Persistence {
     return town.key;
   }
 
-  async createTown(accountId: string, name: string): Promise<TownInfo> {
+  async createTown(accountId: string, name: string, key?: string): Promise<TownInfo> {
     return this.db.transaction(async (tx) => {
       // Lock the account row so two creates at once can't both slip under the limit.
       await tx.select({ id: players.id }).from(players).where(eq(players.id, accountId)).for('update');
       const [{ n }] = await tx.select({ n: count() }).from(towns).where(eq(towns.createdBy, accountId));
       if (n >= MAX_TOWNS) throw tooManyTowns();
-      const [town] = await tx.insert(towns).values({ name, key: newTownKey(), createdBy: accountId }).returning({ id: towns.id, name: towns.name, key: towns.key });
+      const [town] = await tx.insert(towns).values({ name, key: key ?? newTownKey(), createdBy: accountId }).onConflictDoNothing({ target: towns.key }).returning({ id: towns.id, name: towns.name, key: towns.key });
+      if (!town) {
+        const [same] = await tx.select({ name: towns.name }).from(towns).where(eq(towns.key, key ?? ''));
+        throw townExists(same?.name ?? 'something else');
+      }
       return { ...town, mine: true, residents: 0 };
     });
   }
@@ -644,10 +659,12 @@ export class MemoryPersistence implements Persistence {
     return town.key;
   }
 
-  async createTown(accountId: string, name: string): Promise<TownInfo> {
+  async createTown(accountId: string, name: string, key?: string): Promise<TownInfo> {
     this.check();
     if ([...this.towns.values()].filter((t) => t.createdBy === accountId).length >= MAX_TOWNS) throw tooManyTowns();
-    const town = { id: crypto.randomUUID(), name, key: newTownKey(), createdBy: accountId };
+    const same = [...this.towns.values()].find((t) => t.key === key);
+    if (same) throw townExists(same.name);
+    const town = { id: crypto.randomUUID(), name, key: key ?? newTownKey(), createdBy: accountId };
     this.towns.set(town.id, town);
     return { id: town.id, name, key: town.key, mine: true, residents: 0 };
   }

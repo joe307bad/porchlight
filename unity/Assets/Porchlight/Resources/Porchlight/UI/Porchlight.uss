@@ -698,6 +698,34 @@ Label {
     font-size: 12px;
 }
 
+.picker-editor {
+    margin: 12px 0 0 0;
+    padding: 9px 14px;
+    border-width: 0;
+    border-radius: 0;
+    background-color: #3b3934;
+    color: #efe6cf;
+    font-size: 13px;
+}
+
+.picker-editor:hover {
+    background-color: #4a473f;
+}
+
+.picker-editor:disabled {
+    opacity: 0.5;
+}
+
+.editor-box {
+    margin-bottom: 14px;
+}
+
+.editor-title {
+    margin-bottom: 6px;
+    font-size: 18px;
+    color: #efe6cf;
+}
+
 /* The controller's place on a screen. */
 .pad-on {
     border-width: 2px;

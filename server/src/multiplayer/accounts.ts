@@ -8,7 +8,7 @@
 //   PUT    /mp/characters/:id/town   { town } move them to a town (out of any house they had)
 //   PUT    /mp/characters/:id/home   { x, y } move them into the house at this tile of their town
 //   GET    /mp/towns                 every town, and how many more this account can make
-//   POST   /mp/towns                 { name } → a new one (MAX_TOWNS at most: delete one to make another)
+//   POST   /mp/towns                 { name, key? } → a new one, from the town editor's key or a fresh seed (MAX_TOWNS at most: delete one to make another)
 //   DELETE /mp/towns/:id             delete one of this account's (not while anyone's playing there)
 //   GET    /mp/towns/:id/homes       the houses people live in there
 //   GET    /mp/progress              the missions and unlocks, and which this account has earned
@@ -21,7 +21,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { SESSION_COOKIE, type SessionPayload } from '../app.ts';
 import { parseCookies, unseal } from '../cookies.ts';
 import type { Mission } from '../missions.ts';
-import { CharacterError, cleanLook, cleanName, MAX_TOWNS, TOWN_NAME_MAX, type Persistence } from './persistence.ts';
+import { CharacterError, cleanLook, cleanName, cleanTownKey, MAX_TOWNS, TOWN_NAME_MAX, type Persistence } from './persistence.ts';
 import { lookAllowed, UNLOCK_NAMES, UNLOCKS } from './protocol.ts';
 
 export interface GameDeps {
@@ -123,9 +123,12 @@ export function createCharacterRoutes(deps: GameDeps) {
           return send(200, { towns: towns.map((t) => ({ ...t, playing: deps.playingIn(t.key) })), made: towns.filter((t) => t.mine).length, max: MAX_TOWNS });
         }
         if (req.method === 'POST' && path === TOWNS) {
-          const name = cleanName((await json<{ name?: unknown }>()).name, TOWN_NAME_MAX);
+          const body = await json<{ name?: unknown; key?: unknown }>();
+          const name = cleanName(body.name, TOWN_NAME_MAX);
           if (!name) throw new CharacterError(`Town names are 1 to ${TOWN_NAME_MAX} characters.`);
-          const town = await deps.persistence.createTown(account.id, name);
+          const key = body.key === undefined ? undefined : cleanTownKey(body.key);
+          if (key === null) throw new CharacterError("That isn't a town.");
+          const town = await deps.persistence.createTown(account.id, name, key);
           return send(201, { ...town, playing: 0 });
         }
         if (req.method === 'DELETE' && parts.length === 3) {

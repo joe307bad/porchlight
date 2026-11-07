@@ -314,7 +314,7 @@ namespace Porchlight.App
         // Which town?
 
         /// <summary>Every town, to live in; or making one, up to the limit (past it, delete one first).</summary>
-        public void Towns(Character c, Action<Character> chosen, Action back, string message = null)
+        public void Towns(Character c, Action<Character> chosen, Action back, Action editor, string message = null)
         {
             var card = Screen($"Where does {c.name} live?", "Anyone can live in any town, and visit the others. Each town has room for everyone, and a house has room for two.");
             var thisMenu = menu;
@@ -325,7 +325,7 @@ namespace Porchlight.App
             var limit = El.Text("", "picker-hint");
             limit.style.whiteSpace = WhiteSpace.Normal;
 
-            void Reload() => Towns(c, chosen, back);
+            void Reload() => Towns(c, chosen, back, editor);
 
             void MoveIn(string town) => Account.MoveToTown(platform, origin, c.id, town, (moved, err) =>
             {
@@ -343,7 +343,7 @@ namespace Porchlight.App
                     return;
                 }
                 make.SetEnabled(false);
-                Account.CreateTown(platform, origin, name.value.Trim(), (town, err) =>
+                Account.CreateTown(platform, origin, name.value.Trim(), null, (town, err) =>
                 {
                     if (town != null) MoveIn(town.id);
                     else
@@ -355,6 +355,8 @@ namespace Porchlight.App
             }
             card.Add(limit);
             (name, make) = NameForm(card, thisMenu, "A new town’s name", "Make", 24, () => Pick(TOWN_FIRST) + " " + Pick(TOWN_LAST), Submit);
+            var design = thisMenu.Add(El.Btn("Open the town editor", "Design a town: its seed, its size, its streets. Then save it by name.", editor, "picker-editor", "semibold", "press"), editor);
+            card.Add(design);
             card.Add(error);
             card.Add(El.Link("Back", back));
 
@@ -370,6 +372,7 @@ namespace Porchlight.App
                 bool full = towns.made >= towns.max;
                 limit.text = full ? $"You’ve made {towns.made} of {towns.max} towns. Delete one to make another." : $"You’ve made {towns.made} of {towns.max} towns.";
                 make.SetEnabled(!full);
+                design.SetEnabled(!full);
                 foreach (var t in towns.towns) list.Add(TownRow(t, c, thisMenu, MoveIn, Reload, error));
                 thisMenu.MoveTo(list.Q<UiButton>(className: "picker-play"));
             });

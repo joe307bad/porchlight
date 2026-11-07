@@ -182,9 +182,13 @@ namespace Porchlight.App
                 done(list, null);
             });
 
-        public static void CreateTown(INetPlatform net, string origin, string name, Action<Town, string> done) =>
-            Call(net, origin, "POST", "/towns", new Dictionary<string, object> { ["name"] = name },
-                (json, err) => done(err != null ? null : TownFrom(json), err));
+        /// <summary>A new town: from the town editor's key, or (null) a fresh seed.</summary>
+        public static void CreateTown(INetPlatform net, string origin, string name, string key, Action<Town, string> done)
+        {
+            var body = new Dictionary<string, object> { ["name"] = name };
+            if (key != null) body["key"] = key;
+            Call(net, origin, "POST", "/towns", body, (json, err) => done(err != null ? null : TownFrom(json), err));
+        }
 
         public static void DeleteTown(INetPlatform net, string origin, string id, Action<string> done) =>
             Call(net, origin, "DELETE", "/towns/" + Id(id), null, (_, err) => done(err));

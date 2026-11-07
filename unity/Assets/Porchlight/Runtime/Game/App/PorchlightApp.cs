@@ -580,7 +580,7 @@ namespace Porchlight.App
             });
         }
 
-        void ShowCharacters(string message = null) => door.Characters(Settle, ChooseTown, message);
+        void ShowCharacters(string message = null) => door.Characters(Settle, c => ChooseTown(c), message);
 
         /// <summary>This character, please: on to whatever they haven't chosen yet, or into their town.</summary>
         void Settle(Character c)
@@ -590,7 +590,68 @@ namespace Porchlight.App
             else PlayAs(c, true);
         }
 
-        void ChooseTown(Character c) => door.Towns(c, moved => ChooseHouse(moved), () => ShowCharacters());
+        void ChooseTown(Character c, string message = null) => door.Towns(c, moved => ChooseHouse(moved), () => ShowCharacters(), () => OpenEditor(c), message);
+
+        // The town editor: the blueprint and every setting, for a town to save by name.
+
+        /// <summary>Who the town's being made for (null: not in the editor).</summary>
+        Character editingFor;
+
+        void OpenEditor(Character c)
+        {
+            door.Close();
+            editingFor = c;
+            root.RemoveFromClassList("choosing");
+            sidebar.SetEditor(true, SaveTown, LeaveEditor);
+            SetSidebarOpen(true);
+            footer.style.display = DisplayStyle.Flex;
+            var fresh = GenParams.Defaults;
+            sidebar.SetParams(fresh);
+            autoFit = true;
+            Regenerate(RandomSeed(), fresh);
+        }
+
+        void CloseEditor()
+        {
+            editingFor = null;
+            sidebar.SetEditor(false, null, null);
+            footer.style.display = DisplayStyle.None;
+            root.AddToClassList("choosing");
+            if (Screen.width / dpr <= 720) SetSidebarOpen(false);
+        }
+
+        void LeaveEditor()
+        {
+            var c = editingFor;
+            CloseEditor();
+            ChooseTown(c);
+        }
+
+        /// <summary>Save the town on the map by this name, and move them there to choose a house.</summary>
+        void SaveTown(string name)
+        {
+            var c = editingFor;
+            if (c == null) return;
+            if (Homes.All(model).Count == 0)
+            {
+                sidebar.EditorMessage("This town has no houses to live in. Try more buildings, or another seed.");
+                return;
+            }
+            Account.CreateTown(platform, origin, name, TownKey, (town, err) =>
+            {
+                if (town == null)
+                {
+                    sidebar.EditorMessage(err);
+                    return;
+                }
+                Account.MoveToTown(platform, origin, c.id, town.id, (moved, refused) =>
+                {
+                    CloseEditor();
+                    if (moved != null) ChooseHouse(moved);
+                    else ChooseTown(c, refused);
+                });
+            });
+        }
 
         /// <summary>Their town's map, to choose a house on.</summary>
         void ChooseHouse(Character c, string note = null)
@@ -748,6 +809,7 @@ namespace Porchlight.App
             door?.Update(input.Pad, input.Connected);
             housePicker?.Update(input.Pad, input.Connected);
             journal?.Update(input.Pad);
+            if (editingFor != null && input.Pad.Pressed(Button.B)) LeaveEditor();
         }
 
         /// <summary>
