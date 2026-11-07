@@ -295,6 +295,23 @@ namespace Porchlight.Rendering
             }
         }
 
+        /// <summary>Everyone here, for the tracks they leave in rain and snow (a driver's are their car's).</summary>
+        public void Movers(List<Weather.Mover> into)
+        {
+            foreach (var r in remotes.Values)
+            {
+                if (r.walker == null || r.state == null || r.state.anim == Protocol.ANIM_RIDE) continue;
+                into.Add(new Weather.Mover
+                {
+                    x = r.walker.x,
+                    y = r.walker.y,
+                    fx = Math.Sin(r.walker.heading),
+                    fy = Math.Cos(r.walker.heading),
+                    wheels = r.state.anim == Protocol.ANIM_DRIVE,
+                });
+            }
+        }
+
         /// <summary>Where this player is drawn now, if they're in view.</summary>
         public Vec2? PositionOf(string key) => remotes.TryGetValue(key, out var r) ? new Vec2(r.walker.x, r.walker.y) : (Vec2?)null;
 

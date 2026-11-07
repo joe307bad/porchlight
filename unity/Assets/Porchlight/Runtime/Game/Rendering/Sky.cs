@@ -84,15 +84,21 @@ namespace Porchlight.Rendering
         /// Light the scene for this frame. `focus`: what the camera looks at (world);
         /// `roomLight`: inside a building, where its ceiling light is.
         /// </summary>
+        /// <summary>How grey it is (0 clear, 1 heavy cloud): the weather's.</summary>
+        public float Overcast;
+        static readonly Color Overcasting = new Color(0.62f, 0.66f, 0.7f);
+
         public void Update(double dusk, bool night, bool fog, double fogNear, double fogFar, Vector3 focus,
             IReadOnlyList<Lamp> lamps, IReadOnlyList<double> levels, Vector3? roomLight)
         {
             float d = (float)dusk;
             var sky = Color.Lerp(DaySky, NightSky, d);
+            // Under cloud (rain, snow): a grey sky and a weaker sun.
+            sky = Color.Lerp(sky, Color.Lerp(Overcasting, NightSky, d), Overcast * 0.85f);
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = sky;
             sun.color = Color.Lerp(DaySun, NightSun, d);
-            sun.intensity = Mathf.Lerp(1.6f, 0.22f, d);
+            sun.intensity = Mathf.Lerp(1.6f, 0.22f, d) * (1 - 0.6f * Overcast);
             RenderSettings.ambientSkyColor = Color.Lerp(DayAmbient, NightAmbient, d);
             RenderSettings.ambientEquatorColor = Color.Lerp(DayHorizon, NightHorizon, d);
             RenderSettings.ambientGroundColor = Color.Lerp(DayGround, NightGround, d);

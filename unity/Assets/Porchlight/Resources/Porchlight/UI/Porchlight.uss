@@ -294,6 +294,15 @@ Label {
     color: #efe6cf;
 }
 
+/* Biomes: the weather, one tick per line. */
+.sb-biomes {
+    padding: 2px 0 4px 0;
+}
+
+.sb-biomes .check {
+    margin: 3px 0;
+}
+
 .player-row {
     flex-direction: row;
     align-items: center;

@@ -28,6 +28,8 @@ namespace Porchlight.UI
         public Action OnBack;
         public Action OnResetParams;
         public Action OnMissionsRefresh;
+        /// <summary>The weather asked for: raining, snowing (neither: sunny).</summary>
+        public Action<bool, bool> OnWeather;
     }
 
     public static class El
@@ -266,6 +268,7 @@ namespace Porchlight.UI
             body.Add(Section("Controls", controls));
             body.Add(Section("Players", playersList));
             body.Add(Section("Missions", missions));
+            body.Add(Section("Biomes", BuildBiomes(h)));
             settingsSection = Section("Map settings", settings);
             body.Add(settingsSection);
             if (h.SignedIn) settingsSection.style.display = DisplayStyle.None;
@@ -295,6 +298,45 @@ namespace Porchlight.UI
             SyncPlaying();
             SetExploring(false);
             root.RegisterCallback<GeometryChangedEvent>(_ => collapse.text = root.parent != null && root.parent.ClassListContains("sidebar-closed") ? "‹" : "›");
+        }
+
+        Toggle sunny, rainy, snowy;
+
+        /// <summary>
+        /// The weather, as a list to tick: sunny (the default), rainy, snowing. Rain and snow can
+        /// fall together; ticking sunny clears them, and with neither ticked it's sunny.
+        /// </summary>
+        VisualElement BuildBiomes(SidebarHandlers h)
+        {
+            var box = El.Box("sb-biomes");
+            Toggle Check(string text)
+            {
+                var t = new Toggle { text = text, focusable = false };
+                t.AddToClassList("check");
+                box.Add(t);
+                return t;
+            }
+            sunny = Check("Sunny");
+            rainy = Check("Rainy");
+            snowy = Check("Snowing");
+            void Changed(bool rain, bool snow)
+            {
+                SetWeather(rain, snow);
+                h.OnWeather?.Invoke(rain, snow);
+            }
+            sunny.RegisterValueChangedCallback(e => Changed(e.newValue ? false : rainy.value, e.newValue ? false : snowy.value));
+            rainy.RegisterValueChangedCallback(e => Changed(e.newValue, snowy.value));
+            snowy.RegisterValueChangedCallback(e => Changed(rainy.value, e.newValue));
+            SetWeather(false, false);
+            return box;
+        }
+
+        /// <summary>Show the weather (without telling anyone it changed).</summary>
+        public void SetWeather(bool rain, bool snow)
+        {
+            rainy.SetValueWithoutNotify(rain);
+            snowy.SetValueWithoutNotify(snow);
+            sunny.SetValueWithoutNotify(!rain && !snow);
         }
 
         /// <summary>One of the sidebar's sections: a heading that opens it and closes the others.</summary>

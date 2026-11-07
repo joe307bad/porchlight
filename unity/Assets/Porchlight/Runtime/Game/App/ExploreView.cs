@@ -237,6 +237,10 @@ namespace Porchlight.App
         /// </summary>
         public Func<bool, (Vec2 at, double heading)?> HomeDoor;
         readonly List<MyCar> cars = new List<MyCar>();
+        /// <summary>Rain and snow over this town (asked for whatever town it is: wantRain, wantSnow).</summary>
+        Weather weather;
+        bool wantRain, wantSnow;
+        readonly List<Weather.Mover> movers = new List<Weather.Mover>();
         int? driving;
         AutoDrive autoDrive;
         public Action OnAutoChange;
@@ -334,6 +338,8 @@ namespace Porchlight.App
         /// <summary>SetTown a part at a time, each named once it's done. Don't update the view till it's through.</summary>
         public IEnumerable<string> SetTownSteps(TownModel model)
         {
+            weather?.Dispose();
+            weather = null;
             remotes?.Clear();
             world?.Dispose();
             fleet?.Dispose();
@@ -411,7 +417,45 @@ namespace Porchlight.App
             }
             basePeople = people.Count;
             yield return "people";
+            weather = new Weather(world) { Rain = wantRain, Snow = wantSnow };
+            foreach (var step in weather.Settle()) yield return step;
         }
+
+        /// <summary>Raining, snowing, both, or neither (sunny). Kept from town to town.</summary>
+        public void SetWeather(bool rain, bool snow)
+        {
+            wantRain = rain;
+            wantSnow = snow;
+            if (weather == null) return;
+            weather.Rain = rain;
+            weather.Snow = snow;
+        }
+
+        public string WeatherReport() => weather?.Report() ?? "no weather";
+
+        void UpdateWeather(double dt)
+        {
+            if (weather == null) return;
+            movers.Clear();
+            if (player != null && !InCar && player.speed > 0.05) movers.Add(Foot(player));
+            foreach (var c in cars)
+                if (Math.Abs(c.car.speed) > 0.05) movers.Add(Wheels(c.car.x, c.car.y, c.car.heading));
+            foreach (var p in people)
+                if (p.speed > 0.05) movers.Add(Foot(p));
+            if (traffic != null)
+                foreach (var c in traffic.cars)
+                    if (c.speed > 0.05) movers.Add(Wheels(c.x, c.y, c.heading));
+            remotes?.Movers(movers);
+            float span = camera.orthographic ? camera.orthographicSize * 2 * (float)Aspect : 30;
+            weather.Update(dt, WorldOf(focus.x, focus.y, focus.z), span, (float)dusk, movers);
+        }
+
+        // Walkers face (sin, cos) of their heading; cars (cos, sin).
+        static Weather.Mover Foot(Walker w) =>
+            new Weather.Mover { x = w.x, y = w.y, fx = Math.Sin(w.heading), fy = Math.Cos(w.heading) };
+
+        static Weather.Mover Wheels(double x, double y, double heading) =>
+            new Weather.Mover { x = x, y = y, fx = Math.Cos(heading), fy = Math.Sin(heading), wheels = true };
 
         /// <summary>Put a new character with the given look at the town's spawn point (or swap the look in place).</summary>
         public void Spawn(string look)
@@ -2035,6 +2079,7 @@ namespace Porchlight.App
                 return;
             }
             camera.enabled = true;
+            UpdateWeather(dt);
             var p = player;
             if (p != null && playerAvatar != null)
             {
@@ -2387,6 +2432,7 @@ namespace Porchlight.App
                     : 0.9 + 0.1 * Math.Sin(t * 11 + lamp.phase) * Math.Sin(t * 3.7 + lamp.phase * 2);
                 lampLevels[i] = dusk * flicker;
             }
+            sky.Overcast = weather?.Overcast ?? 0;
             sky.Update(dusk, night, mode == CameraMode.Close || Overridden, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, roomLight);
             // Televisions: a cold blue flicker in a few windows, each group to its own programme.
             for (int g = 0; g < world.screens.Count; g++)

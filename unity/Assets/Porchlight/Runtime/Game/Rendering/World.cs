@@ -174,8 +174,47 @@ namespace Porchlight.Rendering
             AddFountain();
             _ = palette.Material;
             yield return "signs";
+            Survey();
             StaticBatchingUtility.Combine(still.gameObject);
             yield return "batching";
+        }
+
+        /// <summary>The material the ground, roads and sheds are drawn with (the weather wets it).</summary>
+        public Material GroundMaterial => palette.Material;
+
+        /// <summary>How high the town reaches over each tile (map y * width + x): where rain and snow land.</summary>
+        public float[] surface;
+
+        /// <summary>Everything standing that could hold snow: its mesh, where it is, and its bounds (world).</summary>
+        public readonly List<(Mesh mesh, Matrix4x4 at, Bounds bounds)> tops = new List<(Mesh, Matrix4x4, Bounds)>();
+
+        /// <summary>For the weather: the town's height over each tile, and what stands in it (before batching merges it).</summary>
+        void Survey()
+        {
+            int w = model.width, h = model.height;
+            surface = new float[w * h];
+            var parked = new HashSet<Transform>();
+            foreach (var p in parkedCars) parked.Add(p.transform);
+            foreach (var f in root.GetComponentsInChildren<MeshFilter>(true))
+            {
+                var r = f.GetComponent<MeshRenderer>();
+                if (r == null || f.sharedMesh == null) continue;
+                bool isParked = false;
+                for (var t = f.transform; t != null && !isParked; t = t.parent) isParked = parked.Contains(t);
+                if (isParked) continue; // they drive off
+                var b = r.bounds;
+                if (b.max.y < 0.1f) continue; // the ground, roads and water
+                tops.Add((f.sharedMesh, f.transform.localToWorldMatrix, b));
+                if (b.size.x > 24 || b.size.z > 24) continue; // one mesh for things all over town (the sheds): no single top
+                int x0 = Mathf.Max(0, Mathf.FloorToInt(b.min.x)), x1 = Mathf.Min(w - 1, Mathf.FloorToInt(b.max.x));
+                int y0 = Mathf.Max(0, Mathf.FloorToInt(-b.max.z)), y1 = Mathf.Min(h - 1, Mathf.FloorToInt(-b.min.z));
+                for (int y = y0; y <= y1; y++)
+                    for (int x = x0; x <= x1; x++)
+                    {
+                        int i = y * w + x;
+                        if (b.max.y > surface[i]) surface[i] = b.max.y;
+                    }
+            }
         }
 
         public void SetParkedVisible(int i, bool visible) => Show(parkedCars[i], visible);

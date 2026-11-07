@@ -407,6 +407,12 @@ namespace Porchlight.App
             var renderers = FindObjectsByType<Renderer>();
             Debug.Log($"smoke: {frames / ((platform.Now() - start) / 1000):0} fps, {renderers.Length} renderers ({renderers.Count(r => r.isPartOfStaticBatch)} static-batched), {UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / 1048576} MB allocated, {UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() / 1048576} MB reserved, {GC.GetTotalMemory(false) / 1048576} MB managed");
             Debug.Log($"smoke: after auto walk player={iso?.PlayerPosition} auto={iso?.IsAuto}");
+            // Rain and snow together, for a few seconds: what falls, lands, settles and is tracked.
+            iso?.SetWeather(true, true);
+            double weatherUntil = platform.Now() + 4000;
+            while (platform.Now() < weatherUntil) await Task.Yield();
+            Debug.Log($"smoke: weather: {iso?.WeatherReport()}");
+            iso?.SetWeather(false, false);
             iso?.SetAuto(false);
             var story = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_MISSION");
             if (!string.IsNullOrEmpty(story)) await SmokeMission(System.IO.File.ReadAllText(story));
@@ -674,6 +680,7 @@ namespace Porchlight.App
                 OnExplore = () => _ = Explore(),
                 OnBack = () => LeaveExplore(),
                 OnResetParams = ResetParams,
+                OnWeather = SetWeather,
                 OnMissionsRefresh = RefreshMissions,
             }, SetSidebarOpen);
             if (user != null)
@@ -686,6 +693,10 @@ namespace Porchlight.App
             // Small screens start with the map, not the controls.
             if (Screen.width / dpr <= 720) SetSidebarOpen(false);
             if (!online && platform.Load(DEBUG_KEY) == "1") SetDebugOpen(true);
+            var weather = (platform.Load(WEATHER_KEY) ?? "").Split(',');
+            raining = Array.IndexOf(weather, "rain") >= 0;
+            snowing = Array.IndexOf(weather, "snow") >= 0;
+            sidebar.SetWeather(raining, snowing);
 
             Regenerate(seed, @params);
             loader.Step("app");
@@ -1158,6 +1169,7 @@ namespace Porchlight.App
         {
             overlay = new ExploreOverlay(isoHost) { Dpr = dpr };
             iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
+            iso.SetWeather(raining, snowing);
             iso.OnTake = car => net?.Take(car);
             portraits ??= new Portraits(ModelLibrary.Instance);
             overlay.SignedIn = online;
@@ -1289,6 +1301,18 @@ namespace Porchlight.App
         }
 
         /// <summary>Signed in: whoever's playing goes online (if they aren't yet).</summary>
+        const string WEATHER_KEY = "porchlight.weather";
+        bool raining, snowing;
+
+        /// <summary>The Biomes list: this browser's weather, from town to town (not shared with others).</summary>
+        void SetWeather(bool rain, bool snow)
+        {
+            raining = rain;
+            snowing = snow;
+            platform.Save(WEATHER_KEY, (rain ? "rain," : "") + (snow ? "snow" : ""));
+            iso?.SetWeather(rain, snow);
+        }
+
         void Connect()
         {
             if (playing == null || iso == null || net != null) return;
