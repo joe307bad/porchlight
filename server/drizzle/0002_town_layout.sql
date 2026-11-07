@@ -1,0 +1,1 @@
+ALTER TABLE "towns" ADD COLUMN "layout" text;

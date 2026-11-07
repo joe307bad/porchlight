@@ -29,6 +29,8 @@ export const towns = pgTable('towns', {
   key: text('key').notNull().unique(),
   /** Who made it (they can delete it); null for the towns that come with the game. */
   createdBy: uuid('created_by').references(() => players.id, { onDelete: 'cascade' }),
+  /** For a town that comes with the game: which generation of it this is, so a new one can rehouse everyone. */
+  layout: text('layout'),
   createdAt: at('created_at').notNull().defaultNow(),
 });
 

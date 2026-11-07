@@ -135,3 +135,45 @@ test('a starter town that no longer comes with the game goes on the next start, 
   assert.equal((await p.listTowns(me.id)).filter((t) => t.name === 'Porchlight').length, 1);
   await next.close();
 });
+
+test('regenerating a town that comes with the game gives everyone a new house, households together', { skip }, async () => {
+  const p = db!;
+  const id = crypto.randomUUID();
+  const town = { name: `Town ${id}`, key: `seed=first-${id}`, houses: [[1, 1], [2, 2], [3, 3]] as [number, number][] };
+  await p.settleStarterTown(town);
+  const me = await p.account(`${sub}-rehoused`, 'Me');
+  const them = await p.account(`${sub}-neighbour`, 'Them');
+  const placed = (await p.listTowns(me.id)).find((t) => t.key === town.key)!;
+  const [a, b, c] = await Promise.all(['A', 'B', 'NoHouse'].map((n) => p.createCharacter(me.id, n, null)));
+  const d = await p.createCharacter(them.id, 'D', null);
+  for (const ch of [a, b, c]) await p.moveToTown(me.id, ch.id, placed.id);
+  await p.moveToTown(them.id, d.id, placed.id);
+  await p.claimHome(me.id, a.id, 1, 1);
+  await p.claimHome(me.id, b.id, 1, 1);
+  await p.claimHome(them.id, d.id, 2, 2);
+  const base = { town: town.key, y: 0, rotY: 1, look: '', x: 5, z: 6, version: 1 };
+  await p.save([{ ...base, characterId: a.id }]);
+
+  // The same again: nothing moves.
+  await p.settleStarterTown(town);
+  assert.deepEqual((await p.character(me.id, a.id))?.home?.house, { x: 1, y: 1 });
+  assert.equal((await p.loadState(a.id))?.town, town.key);
+
+  // Regenerated, under a new key: same town, new houses, and nobody standing anywhere.
+  const next = { ...town, key: `seed=second-${id}`, houses: [[7, 7], [8, 8]] as [number, number][] };
+  await p.settleStarterTown(next);
+  const [ha, hb, hc, hd] = await Promise.all([p.character(me.id, a.id), p.character(me.id, b.id), p.character(me.id, c.id), p.character(them.id, d.id)]);
+  assert.deepEqual([ha?.home?.townId, ha?.home?.townKey], [placed.id, next.key]);
+  assert.deepEqual(ha?.home?.house, hb?.home?.house);
+  assert.notDeepEqual(ha?.home?.house, hd?.home?.house);
+  for (const h of [ha, hd]) assert.ok(next.houses.some(([x, y]) => x === h?.home?.house?.x && y === h?.home?.house?.y));
+  assert.equal(hc?.home?.house, null);
+  assert.equal(hc?.home?.townId, placed.id);
+  assert.equal((await p.loadState(a.id))?.town, '');
+  assert.equal((await p.listHomes(me.id, placed.id)).length, 2);
+
+  // More households than houses: whoever doesn't fit chooses again.
+  await p.settleStarterTown({ ...next, houses: [[9, 9]] });
+  const homed = [(await p.character(me.id, a.id))?.home?.house, (await p.character(them.id, d.id))?.home?.house];
+  assert.equal(homed.filter(Boolean).length, 1);
+});

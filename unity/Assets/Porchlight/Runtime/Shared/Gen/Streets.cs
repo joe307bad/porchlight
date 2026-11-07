@@ -27,8 +27,6 @@ namespace Porchlight.Gen
         const int PATH_COMPONENT_MIN = 150;
         const double DUPLICATE_DISTANCE = 1.5;
         const int MAX_DUPLICATE_PASSES = 200;
-        /// <summary>How often a dead end that could be joined up is kept as a cul-de-sac instead.</summary>
-        const double CUL_DE_SAC_CHANCE = 0.5;
         /// <summary>A cul-de-sac runs at least this far from its junction to the middle of its bulb (tiles).</summary>
         const double CUL_DE_SAC_LENGTH = 4;
         const int MAX_PRUNE_PASSES = 50;
@@ -316,9 +314,9 @@ namespace Porchlight.Gen
                 return true;
             }
             bool CulDeSac(int node, RoadEdge e) =>
-                Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id) && rng.Chance(CUL_DE_SAC_CHANCE);
+                Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id) && rng.Chance(p.culDeSacs);
 
-            ConnectDeadEnds(g, keep, p.streetSegment * 1.8, FirstHit, LandOk, AngleClash, Joinable, CulDeSac);
+            ConnectDeadEnds(g, keep, p.streetSegment * p.deadEndReach, FirstHit, LandOk, AngleClash, Joinable, CulDeSac);
             AddFootpaths(model, g, water, cost, slope, terrainInfo, C);
 
             RoadGraphOps.Planarize(g);

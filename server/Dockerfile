@@ -8,6 +8,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
 COPY drizzle ./drizzle
 COPY missions ./missions
+COPY towns ./towns
 USER node
 ENV NODE_ENV=production PORT=3017
 EXPOSE 3017

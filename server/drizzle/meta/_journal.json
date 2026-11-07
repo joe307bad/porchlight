@@ -15,6 +15,13 @@
       "when": 1794016705502,
       "tag": "0001_towns_homes_progress",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794022849531,
+      "tag": "0002_town_layout",
+      "breakpoints": true
     }
   ]
 }

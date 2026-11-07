@@ -36,6 +36,10 @@ namespace Porchlight.Model
         public double streetSegment = 5;
         public double streetSpacing = 9;
         public double streetWidth = 1;
+        /// <summary>How often a dead end that could be joined up is kept as a cul-de-sac instead.</summary>
+        public double culDeSacs = 0.5;
+        /// <summary>How far ahead a dead end looks for a road to join, in street segments.</summary>
+        public double deadEndReach = 1.8;
         // lots and buildings
         public double lotMinSize = 8;
         public double lotMaxSize = 30;
@@ -84,6 +88,8 @@ namespace Porchlight.Model
                 "streetSegment" => streetSegment,
                 "streetSpacing" => streetSpacing,
                 "streetWidth" => streetWidth,
+                "culDeSacs" => culDeSacs,
+                "deadEndReach" => deadEndReach,
                 "lotMinSize" => lotMinSize,
                 "lotMaxSize" => lotMaxSize,
                 "buildingDensity" => buildingDensity,
@@ -122,6 +128,8 @@ namespace Porchlight.Model
                     case "streetSegment": streetSegment = value; break;
                     case "streetSpacing": streetSpacing = value; break;
                     case "streetWidth": streetWidth = value; break;
+                    case "culDeSacs": culDeSacs = value; break;
+                    case "deadEndReach": deadEndReach = value; break;
                     case "lotMinSize": lotMinSize = value; break;
                     case "lotMaxSize": lotMaxSize = value; break;
                     case "buildingDensity": buildingDensity = value; break;
@@ -204,6 +212,8 @@ namespace Porchlight.Model
             S("streetSegment", "Segment length", "Streets", 3, 10, 0.5),
             S("streetSpacing", "Side street spacing", "Streets", 5, 20, 1),
             S("streetWidth", "Street width", "Streets", 0.5, 2, 0.25),
+            S("culDeSacs", "Cul-de-sacs", "Streets", 0, 1, 0.05),
+            S("deadEndReach", "Dead ends reach", "Streets", 1, 8, 0.1),
             S("lotMinSize", "Lot min size", "Lots & buildings", 4, 40, 1),
             S("lotMaxSize", "Lot max size", "Lots & buildings", 12, 120, 1),
             S("buildingDensity", "Building density", "Lots & buildings", 0, 1, 0.01),

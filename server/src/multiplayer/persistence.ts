@@ -8,7 +8,9 @@
 // without DATABASE_URL (multiplayer works, nothing outlives the process).
 
 import { fileURLToPath } from 'node:url';
-import { and, asc, count, eq, isNull, notInArray, sql } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { and, asc, count, eq, inArray, isNull, ne, notInArray, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -84,14 +86,19 @@ export const MAX_TOWNS = 3;
 export const MAX_RESIDENTS = 2;
 const NAME_MAX = 20;
 export const TOWN_NAME_MAX = 24;
+/** A town that comes with the game: only the game can generate it, so `npm run town` saves its houses in a file (towns/). */
+export interface StarterTown {
+  name: string;
+  key: string;
+  /** A tile of each house. */
+  houses: [number, number][];
+}
+
 /**
  * The town that comes with the game, the same for everyone (and nobody can delete it): as big and
- * built up as the map settings go, with no water. Written as the game writes a key (see
- * `dotnet run --project "unity/Tools~/Checks" -- homes`), since this is also its room's name.
+ * built up as the map settings go, with no water and few cul-de-sacs.
  */
-export const STARTER_TOWNS = [
-  { name: 'Porchlight', key: 'seed=porchlight&width=256&height=256&edgeFalloff=0&waterFraction=0&rockSlope=0.1&riverCount=0&townRadius=0.5&maxRoadSlope=0.1&roadDensity=1&lotMinSize=4&lotMaxSize=12&buildingDensity=1&innerCity=1&towerFloors=16&driveways=0&gardens=0' },
-];
+export const STARTER_TOWNS: StarterTown[] = [JSON.parse(readFileSync(new URL('../../towns/porchlight.json', import.meta.url), 'utf8'))];
 const newTownKey = (): string => `seed=${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
 const tooManyTowns = () => new CharacterError(`You can have up to ${MAX_TOWNS} towns. Delete one to make another.`, 409);
 const houseTaken = () => new CharacterError('Someone else lives in that house.', 409);
@@ -239,7 +246,7 @@ export class PgPersistence implements Persistence {
           .where(isNull(sessions.endedAt))
           .returning({ id: sessions.id });
         if (crashed.length) console.log(`game db: closed ${crashed.length} session(s) left open by a crash`);
-        await this.db.insert(towns).values(STARTER_TOWNS).onConflictDoNothing({ target: towns.key });
+        for (const town of STARTER_TOWNS) await this.settleStarterTown(town);
         // Only starter towns have no maker: any that no longer come with the game go, and those who lived there choose again.
         await this.db.delete(towns).where(and(isNull(towns.createdBy), notInArray(towns.key, STARTER_TOWNS.map((t) => t.key))));
         this.ready = true;
@@ -436,6 +443,53 @@ export class PgPersistence implements Persistence {
     });
   }
 
+  /**
+   * On starting, nobody's playing: a town that comes with the game, up to date with its file. If it's
+   * been regenerated, those who lived there move to a new house each (a household together, wherever
+   * the house falls), and where anyone was standing there no longer means anything.
+   */
+  async settleStarterTown(town: StarterTown): Promise<void> {
+    const layout = createHash('sha256').update(JSON.stringify([town.key, town.houses])).digest('hex');
+    await this.db.transaction(async (tx) => {
+      const [was] = await tx.select({ id: towns.id, key: towns.key, layout: towns.layout }).from(towns).where(and(isNull(towns.createdBy), eq(towns.name, town.name))).for('update');
+      if (was?.layout === layout) return;
+      const [clash] = await tx.select({ name: towns.name }).from(towns).where(was ? and(eq(towns.key, town.key), ne(towns.id, was.id)) : eq(towns.key, town.key));
+      if (clash) {
+        // A player's already made this very town: keep what we have rather than not start.
+        console.error(`game db: can't regenerate ${town.name}: its key is already the town ${clash.name}`);
+        return;
+      }
+      if (!was) {
+        await tx.insert(towns).values({ name: town.name, key: town.key, layout });
+        return;
+      }
+      await tx.update(towns).set({ key: town.key, layout }).where(eq(towns.id, was.id));
+      const residents = await tx.select({ character: characters.id, home: homes.id, playerId: homes.playerId }).from(characters).innerJoin(homes, eq(characters.homeId, homes.id)).where(eq(homes.townId, was.id));
+      const households = new Map<string, { playerId: string; characters: string[] }>();
+      for (const r of residents) {
+        const h = households.get(r.home) ?? { playerId: r.playerId, characters: [] };
+        h.characters.push(r.character);
+        households.set(r.home, h);
+      }
+      await tx.delete(homes).where(eq(homes.townId, was.id));
+      const free = [...town.houses];
+      for (let i = free.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [free[i], free[j]] = [free[j], free[i]];
+      }
+      let housed = 0;
+      for (const h of households.values()) {
+        const tile = free.pop();
+        if (!tile) break; // more households than houses: the rest choose again
+        const [home] = await tx.insert(homes).values({ townId: was.id, x: tile[0], y: tile[1], playerId: h.playerId }).returning({ id: homes.id });
+        await tx.update(characters).set({ homeId: home.id }).where(inArray(characters.id, h.characters));
+        housed++;
+      }
+      await tx.update(characterState).set({ town: '' }).where(inArray(characterState.town, [was.key, town.key]));
+      console.log(`game db: ${town.name} regenerated: ${housed} of ${households.size} household(s) rehoused`);
+    });
+  }
+
   async claimHome(accountId: string, characterId: string, x: number, y: number): Promise<void> {
     if (!isUuid(characterId)) throw noSuchCharacter();
     await this.db.transaction(async (tx) => {
@@ -533,7 +587,7 @@ export class MemoryPersistence implements Persistence {
   constructor() {
     for (const t of STARTER_TOWNS) {
       const id = crypto.randomUUID();
-      this.towns.set(id, { id, ...t, createdBy: null });
+      this.towns.set(id, { id, name: t.name, key: t.key, createdBy: null });
     }
   }
 

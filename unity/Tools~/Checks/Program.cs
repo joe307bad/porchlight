@@ -5,7 +5,8 @@
 //   dotnet run --project "unity/Tools~/Checks" -- net '<json>'      # play the real game server (NetCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- mission <file>    # play a compiled mission (MissionCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- chase [count]     # set chasers after someone (ChaseCheck.cs)
-//   dotnet run --project "unity/Tools~/Checks" -- homes             # the town that comes with the game has houses to live in
+//   dotnet run --project "unity/Tools~/Checks" -- homes             # the town that comes with the game has houses to live in, and is up to date (from the repo's root)
+//   dotnet run --project "unity/Tools~/Checks" -- town <file> [key] # regenerate it into its file (`npm run town` in server/)
 //   dotnet run --project "unity/Tools~/Checks" -- measure <seed> 'width=256&riverCount=0'   # how big and built up a town is
 //   dotnet run --project "unity/Tools~/Checks" -- traffic <seed> 'width=256&riverCount=0'   # how smooth its traffic looks following a host, as the host slows down
 
@@ -25,6 +26,7 @@ static class Program
         if (args.Length > 0 && args[0] == "chase") return ChaseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
         if (args.Length > 0 && args[0] == "homes") return HomesCheck();
         if (args.Length > 2 && args[0] == "measure") return Measure(args[1], args[2]);
+        if (args.Length > 1 && args[0] == "town") return RegenerateTown(args[1], args.Length > 2 ? args[2] : null);
         if (args.Length > 2 && args[0] == "traffic") return TrafficCheck(args[1], args[2]);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
@@ -50,7 +52,7 @@ static class Program
         int built = m.buildings.Sum(b => b.tiles.Count);
         int water = m.heightmap.Count(h => h <= m.waterLevel);
         string bad = Ports(m, layout) ?? Zoo(m, layout) ?? CulDeSacs(m, layout) ?? Turning(layout);
-        Console.WriteLine($"{m.width}x{m.height} buildings {m.buildings.Count} houses {houses.Count} built {100.0 * built / (m.width * m.height):0.0}% lots {m.lots.Count} roads {m.roads.edges.Count} water {water} rivers {m.rivers.Count} bridges {m.bridges.Count} docks {m.docks.Count} zoo {(m.zoo != null ? "yes" : "no")} airport {(m.airport != null ? "yes" : "no")} cars {layout.cars.Count} gen {gen:0.00}s layout {lay:0.00}s {(bad == null ? "ok" : "FAIL " + bad)}");
+        Console.WriteLine($"{m.width}x{m.height} buildings {m.buildings.Count} houses {houses.Count} built {100.0 * built / (m.width * m.height):0.0}% lots {m.lots.Count} roads {m.roads.edges.Count} cul-de-sacs {Raster.Bulbs(m.roads.edges).Count} water {water} rivers {m.rivers.Count} bridges {m.bridges.Count} docks {m.docks.Count} zoo {(m.zoo != null ? "yes" : "no")} airport {(m.airport != null ? "yes" : "no")} cars {layout.cars.Count} gen {gen:0.00}s layout {lay:0.00}s {(bad == null ? "ok" : "FAIL " + bad)}");
         return bad == null ? 0 : 1;
     }
 
@@ -108,30 +110,82 @@ static class Program
         return 0;
     }
 
+    /// <summary>A town key's seed and settings (what the game's ParseUrlState does, for keys with nothing to unescape).</summary>
+    static (string seed, GenParams settings) ParseKey(string key)
+    {
+        var settings = new Dictionary<string, double>();
+        string seed = null;
+        foreach (var kv in key.Split('&'))
+        {
+            if (kv.StartsWith("seed=")) seed = kv.Substring(5);
+            else settings[kv.Split('=')[0]] = double.Parse(kv.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return (seed, GenParams.Normalize(settings));
+    }
+
+    /// <summary>The key as the game would write it (EncodeUrlState): anything else would be another room.</summary>
+    static string WrittenKey(string seed, GenParams p)
+    {
+        var written = new List<string> { "seed=" + seed };
+        foreach (var spec in ParamSpec.All)
+            if (p[spec.key] != GenParams.Defaults[spec.key]) written.Add(spec.key + "=" + Porchlight.Core.Numbers.NumberToString(p[spec.key]));
+        return string.Join("&", written);
+    }
+
+    /// <summary>Generate a town and check it has what the game needs: its houses' tiles, or why it won't do.</summary>
+    static (List<int[]> houses, string error) StarterHouses(string key)
+    {
+        var (seed, settings) = ParseKey(key);
+        if (WrittenKey(seed, settings) != key) return (null, $"the game writes this key as {WrittenKey(seed, settings)}");
+        var model = Generator.Generate(seed, settings, check: true);
+        var houses = Porchlight.Explore.Homes.All(model);
+        int lost = houses.Count(b => { var a = Porchlight.Explore.Homes.Anchor(b); return Porchlight.Explore.Homes.At(houses, a.x, a.y) != b; });
+        if (houses.Count < 10 || lost != 0 || model.zoo == null) return (null, $"{houses.Count} houses, {lost} not found by their tile, zoo {(model.zoo != null ? "yes" : "no")}");
+        return (houses.Select(b => { var a = Porchlight.Explore.Homes.Anchor(b); return new[] { a.x, a.y }; }).ToList(), null);
+    }
+
+    static string Quoted(string text) => System.Text.Json.JsonSerializer.Serialize(text, new System.Text.Json.JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+
+    static string HousesJson(IEnumerable<int[]> houses) => string.Join(",", houses.Select(h => $"[{h[0]},{h[1]}]"));
+
+    /// <summary>
+    /// Regenerate the town that comes with the game (optionally from a new key) into its file. When the
+    /// server next starts and finds the file changed, it gives everyone who lived there a new house.
+    /// </summary>
+    static int RegenerateTown(string file, string newKey)
+    {
+        var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(file)).RootElement;
+        string name = doc.GetProperty("name").GetString();
+        string key = newKey ?? doc.GetProperty("key").GetString();
+        var (houses, error) = StarterHouses(key);
+        if (error != null)
+        {
+            Console.WriteLine($"FAIL {name}: {error}. {file} left as it was.");
+            return 1;
+        }
+        var was = doc.GetProperty("houses").EnumerateArray().Select(h => new[] { h[0].GetInt32(), h[1].GetInt32() }).ToList();
+        bool same = key == doc.GetProperty("key").GetString() && HousesJson(was) == HousesJson(houses);
+        System.IO.File.WriteAllText(file, $"{{\n  \"name\": {Quoted(name)},\n  \"key\": {Quoted(key)},\n  \"houses\": [{HousesJson(houses)}]\n}}\n");
+        Console.WriteLine(same
+            ? $"{name}: no change ({houses.Count} houses)."
+            : $"{name}: {houses.Count} houses, was {was.Count}. Everyone there gets a new house when the server next starts with this file.");
+        return 0;
+    }
+
     static int HomesCheck()
     {
         int failed = 0;
-        // The town that comes with the game (server/: STARTER_TOWNS), then fresh seeds. A key has to be written as the game writes it, or it's another room.
-        const string STARTER = "seed=porchlight&width=256&height=256&edgeFalloff=0&waterFraction=0&rockSlope=0.1&riverCount=0&townRadius=0.5&maxRoadSlope=0.1&roadDensity=1&lotMinSize=4&lotMaxSize=12&buildingDensity=1&innerCity=1&towerFloors=16&driveways=0&gardens=0";
-        foreach (string key in new[] { STARTER, "seed=a1b2c3d4e5f6", "seed=0f9e8d7c6b5a", "seed=123456789abc" })
+        // The town that comes with the game: its file has to be what the generator makes now.
+        const string FILE = "server/towns/porchlight.json";
+        var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(FILE)).RootElement;
+        var (starter, error) = StarterHouses(doc.GetProperty("key").GetString());
+        var listed = doc.GetProperty("houses").EnumerateArray().Select(h => new[] { h[0].GetInt32(), h[1].GetInt32() });
+        if (error == null && HousesJson(listed) != HousesJson(starter)) error = "the generator has changed since it was saved: run `npm run town` in server/ to regenerate it and rehouse everyone";
+        Console.WriteLine($"{(error == null ? "ok" : "FAIL")} {doc.GetProperty("name").GetString()}: {(error ?? starter.Count + " houses")}");
+        if (error != null) failed++;
+        foreach (string seed in new[] { "a1b2c3d4e5f6", "0f9e8d7c6b5a", "123456789abc" })
         {
-            var settings = new Dictionary<string, double>();
-            string seed = null;
-            foreach (var kv in key.Split('&'))
-            {
-                if (kv.StartsWith("seed=")) seed = kv.Substring(5);
-                else settings[kv.Split('=')[0]] = double.Parse(kv.Split('=')[1], System.Globalization.CultureInfo.InvariantCulture);
-            }
-            var parsed = GenParams.Normalize(settings);
-            var written = new List<string> { "seed=" + seed };
-            foreach (var spec in ParamSpec.All)
-                if (parsed[spec.key] != GenParams.Defaults[spec.key]) written.Add(spec.key + "=" + Porchlight.Core.Numbers.NumberToString(parsed[spec.key]));
-            if (string.Join("&", written) != key)
-            {
-                Console.WriteLine($"FAIL {seed}: the game writes this key as {string.Join("&", written)}");
-                failed++;
-            }
-            var model = Generator.Generate(seed, parsed, check: true);
+            var model = Generator.Generate(seed, GenParams.Normalize(new Dictionary<string, double>()), check: true);
             var houses = Porchlight.Explore.Homes.All(model);
             int lost = houses.Count(b => { var a = Porchlight.Explore.Homes.Anchor(b); return Porchlight.Explore.Homes.At(houses, a.x, a.y) != b; });
             bool ok = houses.Count >= 10 && lost == 0 && model.zoo != null;
@@ -140,12 +194,6 @@ static class Program
         }
         return failed == 0 ? 0 : 1;
     }
-
-    /// <summary>
-    /// Grows `count` towns from fixed seeds, over a spread of sizes and densities,
-    /// with the generator checking every stage's invariants, and twice each: the
-    /// same seed must give the same town (everyone in a room grows it themselves).
-    /// </summary>
     static int Towns(int count)
     {
         int failed = 0;
