@@ -1,9 +1,8 @@
 // Rain and snow. What falls follows the camera, and lands where the town's top is (the
 // roofs, trees and streets: TownWorld.surface, how high the town reaches over each tile).
-// It only builds up on the yards and the roofs: rain leaves a film of water on the yards,
-// runs along the gutters and splashes; snow settles on the roofs and deepens in the yards.
-// Whatever moves through either leaves tracks (wheels, feet) that fill in again while it
-// keeps coming down. Sunny is neither: what's left dries and melts away.
+// Snow only stays on the roofs; rain splashes, and leaves a film of water on the yards
+// that people's feet and cars' wheels mark, filling in again while it keeps raining.
+// Sunny is neither: what's left dries and melts away.
 
 using System;
 using System.Collections.Generic;
@@ -36,7 +35,7 @@ namespace Porchlight.Rendering
         // How fast it comes and goes (per second).
         const double WETTING = 1 / 6.0, DRYING = 1 / 25.0, SNOWING = 1 / 25.0, MELTING = 1 / 30.0, CLOUDING = 1 / 5.0;
         // How fast tracks fill in while it's falling (share of full a second).
-        const double RAIN_REFILL = 1 / 8.0, SNOW_REFILL = 1 / 50.0;
+        const double RAIN_REFILL = 1 / 8.0;
         // Falling, per tile of ground in view, per second.
         const float RAIN_DENSITY = 2.2f, SNOW_DENSITY = 0.7f;
         /// <summary>Below a tile's top by more than this, a face is inside something (a room's furniture), out of the weather.</summary>
@@ -46,15 +45,12 @@ namespace Porchlight.Rendering
         readonly int w, h;
         readonly GameObject root;
         readonly System.Random random = new System.Random(7);
-        double wet, depth, overcast, time;
+        double wet, depth, overcast;
         ParticleSystem rain, snow, splash;
         Material rainMaterial, snowMaterial, splashMaterial;
         Texture2D dot;
         ParticleSystem.Particle[] buffer = new ParticleSystem.Particle[0];
-        Cover film, sheet;
-        GameObject flow;
-        Material flowMaterial;
-        Texture2D streaks;
+        Cover film;
         /// <summary>Settled snow is built in squares of this many tiles.</summary>
         const int AREA = 32;
         /// <summary>Faces smaller than this (tiles squared) are trim: no snow on them.</summary>
@@ -94,7 +90,6 @@ namespace Porchlight.Rendering
         /// </summary>
         public void Update(double dt, Vector3 focus, float span, float dusk, List<Mover> movers)
         {
-            time += dt;
             wet = Ease(wet, Rain ? 1 : 0, WETTING, DRYING, dt);
             depth = Ease(depth, Snow ? 1 : 0, SNOWING, MELTING, dt);
             overcast = Ease(overcast, Rain || Snow ? 1 : 0, CLOUDING, CLOUDING, dt);
@@ -102,34 +97,19 @@ namespace Porchlight.Rendering
             if (Rain && rain == null) MakeRain();
             if (Snow && snow == null) MakeSnow();
             span = Mathf.Clamp(span * 1.4f, 20, 64);
-            float snowTop = SnowY();
             if (rain != null) Fall(rain, Rain, RAIN_DENSITY, focus, span, 14, 0.2f, new Color(0.78f, 0.84f, 0.95f, 0.45f), rainMaterial, dusk, true, 0.03f);
-            if (snow != null) Fall(snow, Snow, SNOW_DENSITY, focus, span, 7, 12f, new Color(1, 1, 1, 0.95f), snowMaterial, dusk, false, snowTop);
+            if (snow != null) Fall(snow, Snow, SNOW_DENSITY, focus, span, 7, 12f, new Color(1, 1, 1, 0.95f), snowMaterial, dusk, false, 0.03f);
 
-            // The yards: under a film of water, or a deepening layer of snow (the streets stay clear).
+            // The yards: under a film of water while it rains. (Snow only stays on the roofs.)
             if (wet > 0.001 && film == null) film = new Cover("rain film", world, new Color32(40, 52, 64, 255), new Color(1, 1, 1, 0), 0.95f, root.transform, 0.2f);
-            if (depth > 0.001 && sheet == null) sheet = new Cover("snow", world, new Color32(244, 247, 252, 255), new Color(1, 1, 1, 0), 0.25f, root.transform, 0.18f);
             film?.Level((float)(wet * 0.5), 0.031f);
-            sheet?.Level((float)Math.Min(1, depth * 2.5), snowTop);
             foreach (var m in movers)
             {
                 if (film != null && wet > 0.05) Mark(film, m);
-                if (sheet != null && depth > 0.05) Mark(sheet, m);
             }
             film?.Heal(Rain ? RAIN_REFILL : 0, dt);
-            sheet?.Heal(Snow ? SNOW_REFILL : 0, dt);
             film?.Apply(dt);
-            sheet?.Apply(dt);
 
-            // Running along the gutters once it's properly wet.
-            float running = Mathf.Clamp01(((float)wet - 0.3f) / 0.7f);
-            if (running > 0 && flow == null) MakeFlow();
-            if (flow != null)
-            {
-                flow.SetActive(running > 0.01f);
-                flowMaterial.SetColor(BaseColor, new Color(0.72f, 0.82f, 0.95f, 0.6f * running));
-                flowMaterial.SetTextureOffset(BaseMap, new Vector2(0, (float)(-time * 0.9 % 1)));
-            }
 
             // Settled on every roof, ledge and tree.
             if (depth > 0.001 || shells.Count > 0)
@@ -138,8 +118,6 @@ namespace Porchlight.Rendering
 
         static double Ease(double v, double to, double up, double down, double dt) =>
             v < to ? Math.Min(to, v + up * dt) : Math.Max(to, v - down * dt);
-
-        float SnowY() => 0.034f + (float)depth * 0.06f;
 
         /// <summary>How high the town reaches over a map point (outside it: below the slab).</summary>
         float Top(float x, float y)
@@ -441,63 +419,6 @@ namespace Porchlight.Rendering
             }
         }
 
-        // Gutters ------------------------------------------------------------------------------
-
-        /// <summary>Water running along both kerbs of every street.</summary>
-        void MakeFlow()
-        {
-            var verts = new List<Vector3>();
-            var uvs = new List<Vector2>();
-            var tris = new List<int>();
-            const float HALF = 0.07f, Y = 0.036f;
-            foreach (var r in world.layout.roads)
-            {
-                if (r.kind == RoadKind.Path || r.points.Count < 2) continue;
-                foreach (int side in new[] { 1, -1 })
-                {
-                    var line = Layout.OffsetPolyline(r.points, side * (r.width / 2 + Layout.PARKING - 0.08));
-                    double along = 0;
-                    for (int i = 0; i < line.Count; i++)
-                    {
-                        var prev = line[Math.Max(0, i - 1)];
-                        var next = line[Math.Min(line.Count - 1, i + 1)];
-                        double dx = next.x - prev.x, dy = next.y - prev.y, len = Math.Sqrt(dx * dx + dy * dy);
-                        if (len < 1e-6) continue;
-                        double nx = -dy / len * HALF, ny = dx / len * HALF;
-                        if (i > 0) along += Math.Sqrt(Math.Pow(line[i].x - line[i - 1].x, 2) + Math.Pow(line[i].y - line[i - 1].y, 2));
-                        int at = verts.Count;
-                        verts.Add(Coords.Map(line[i].x + nx, line[i].y + ny, Y));
-                        verts.Add(Coords.Map(line[i].x - nx, line[i].y - ny, Y));
-                        uvs.Add(new Vector2(0, (float)(along / 1.6)));
-                        uvs.Add(new Vector2(1, (float)(along / 1.6)));
-                        if (i > 0 && at >= 2)
-                        {
-                            tris.AddRange(new[] { at - 2, at - 1, at, at - 1, at + 1, at });
-                        }
-                    }
-                }
-            }
-            streaks = new Texture2D(8, 64, TextureFormat.RGBA32, false) { name = "running water", wrapMode = TextureWrapMode.Repeat };
-            var px = new Color32[8 * 64];
-            var rng = new System.Random(3);
-            for (int y = 0; y < 64; y++)
-            {
-                for (int x = 0; x < 8; x++)
-                {
-                    double ripple = 0.5 + 0.5 * Math.Sin(y / 64.0 * Math.PI * 6 + x * 1.3 + rng.NextDouble() * 0.8);
-                    double edge = 1 - Math.Abs(x - 3.5) / 4.5;
-                    px[y * 8 + x] = new Color32(255, 255, 255, (byte)(255 * Math.Clamp(edge * (0.35 + 0.65 * ripple), 0, 1)));
-                }
-            }
-            streaks.SetPixels32(px);
-            streaks.Apply(false);
-            flowMaterial = new Material(ModelLibrary.Instance.clear) { name = "running water" };
-            flowMaterial.SetTexture(BaseMap, streaks);
-            flowMaterial.SetFloat(Smoothness, 0.95f);
-            if (flowMaterial.HasProperty(Cull)) flowMaterial.SetFloat(Cull, 0);
-            flow = Piece("gutters", verts, null, uvs, tris, flowMaterial);
-        }
-
         // Settled snow --------------------------------------------------------------------------
 
         /// <summary>
@@ -652,9 +573,8 @@ namespace Porchlight.Rendering
         public void Dispose()
         {
             film?.Dispose();
-            sheet?.Dispose();
             foreach (var m in meshes) UnityEngine.Object.Destroy(m);
-            foreach (var o in new UnityEngine.Object[] { rainMaterial, snowMaterial, splashMaterial, flowMaterial, shellMaterial, dot, streaks })
+            foreach (var o in new UnityEngine.Object[] { rainMaterial, snowMaterial, splashMaterial, shellMaterial, dot })
                 if (o != null) UnityEngine.Object.Destroy(o);
             if (root != null) UnityEngine.Object.Destroy(root);
         }
