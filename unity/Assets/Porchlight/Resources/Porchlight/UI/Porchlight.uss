@@ -581,8 +581,8 @@ Label {
 .signin-logo {
     width: 26px;
     height: 38px;
-    margin-right: 10px;
-    translate: 0 -10px;
+    margin-right: 2px;
+    translate: 0 -5px;
     flex-shrink: 0;
 }
 

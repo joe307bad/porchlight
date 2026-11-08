@@ -333,7 +333,7 @@ namespace Porchlight.EditorTools
         [MenuItem("Porchlight/Build desktop app (macOS)")]
         public static void BuildMacApp()
         {
-            UnityEditor.OSXStandalone.UserBuildSettings.architecture = UnityEditor.Build.OSArchitecture.x64ARM64;
+            MacUniversal();
             if (Application.platform != RuntimePlatform.OSXEditor || Environment.GetEnvironmentVariable("PORCHLIGHT_NO_BURST") == "1") NoBurst("StandaloneOSX");
             Build(BuildTarget.StandaloneOSX, "Builds/macOS-app/Porchlight.app", true);
         }
@@ -351,6 +351,23 @@ namespace Porchlight.EditorTools
                     "{\n  \"MonoBehaviour\": {\n    \"Version\": 4,\n    \"EnableBurstCompilation\": false\n  }\n}\n");
             AssetDatabase.Refresh();
             Debug.Log("Porchlight: Burst off for " + string.Join(", ", targets));
+        }
+
+        /// <summary>
+        /// Both kinds of Mac in one app. The setting lives in the Mac build module, which only
+        /// some editors have (CI's WebGL and Windows images don't): reached by name, so this
+        /// file compiles without it.
+        /// </summary>
+        static void MacUniversal()
+        {
+            var settings = Type.GetType("UnityEditor.OSXStandalone.UserBuildSettings, UnityEditor.OSXStandalone.Extensions", false);
+            var arch = settings?.GetProperty("architecture", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (arch == null)
+            {
+                Debug.LogWarning("Porchlight: no macOS build module here; building for this Mac's kind only");
+                return;
+            }
+            arch.SetValue(null, Enum.Parse(arch.PropertyType, "x64ARM64"));
         }
 
         const string AppIconPath = "Assets/Porchlight/Branding/AppIcon.png";
