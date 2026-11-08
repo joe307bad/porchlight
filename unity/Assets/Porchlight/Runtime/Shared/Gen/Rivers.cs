@@ -145,6 +145,11 @@ namespace Porchlight.Gen
                     if (riverAt[c] >= 0) break;
                 }
                 if (cells.Count < p.riverMinLength) continue;
+                // Keep clear of the gates: the highways come in there.
+                int clear = (int)Math.Ceiling(p.riverMaxWidth) + 4;
+                bool nearGate = false;
+                foreach (int cell in cells) if (TerrainStage.NearGate(cell % w, cell / w, w, h, clear)) nearGate = true;
+                if (nearGate) continue;
                 int id = paths.Count;
                 foreach (int cell in cells) if (riverAt[cell] < 0) riverAt[cell] = id;
                 paths.Add(cells);

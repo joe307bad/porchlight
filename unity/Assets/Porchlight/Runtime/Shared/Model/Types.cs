@@ -277,6 +277,16 @@ namespace Porchlight.Model
         public TileGrid tiles;
         public Vec2 spawn;
 
+        /// <summary>
+        /// A stretch of highway, the junction or a plot (County/RoadSpaces), not a town: null in a
+        /// town. Tiles marked here are drawn by the stretch next to this one (they overlap a little,
+        /// so a car is on both while it crosses).
+        /// </summary>
+        public byte[] foreign;
+        /// <summary>A road space's name for signs ("North road"), or null.</summary>
+        public string roadName;
+        public bool IsRoad => roadName != null;
+
         public DebugFields fields;
 
         /// <summary>A model with every layer present but empty; pipeline stages fill it in.</summary>

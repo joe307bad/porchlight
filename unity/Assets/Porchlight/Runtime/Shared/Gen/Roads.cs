@@ -172,10 +172,40 @@ namespace Porchlight.Gen
                 });
             }
             RoadGraphOps.Planarize(builder);
+            PruneCenterStub(builder, Center(centerCell));
             var next = model.With();
             next.roads = RoadGraphOps.Compact(builder);
             next.bridges = RoadGraphOps.ComputeBridges(next, Raster.WaterMask(next));
             return next;
+        }
+
+        /// <summary>The longest stub (tiles) left poking past a junction at the town centre.</summary>
+        const double STUB = 3;
+
+        /// <summary>
+        /// The main roads all head for the centre's tile, so when one comes in beside it
+        /// the others join it there and the last tile is left as a stub: a dead end too
+        /// short for a car to turn round in. Drop it; the junction is the centre now.
+        /// </summary>
+        static void PruneCenterStub(GraphBuilder g, Vec2 center)
+        {
+            var degree = new Dictionary<int, int>();
+            foreach (var e in RoadGraphOps.LiveEdges(g))
+            {
+                degree[e.from] = (degree.TryGetValue(e.from, out int a) ? a : 0) + 1;
+                degree[e.to] = (degree.TryGetValue(e.to, out int b) ? b : 0) + 1;
+            }
+            foreach (var e in RoadGraphOps.LiveEdges(g))
+            {
+                int end = Geo.Dist(g.nodes[e.from].at, center) < 0.01 ? e.from : Geo.Dist(g.nodes[e.to].at, center) < 0.01 ? e.to : -1;
+                if (end < 0 || degree[end] != 1) continue;
+                int other = end == e.from ? e.to : e.from;
+                if (degree[other] >= 3 && Geo.PolylineLength(e.points) <= STUB)
+                {
+                    g.dead.Add(e.id);
+                    return;
+                }
+            }
         }
 
         public List<string> Check(TownModel model)

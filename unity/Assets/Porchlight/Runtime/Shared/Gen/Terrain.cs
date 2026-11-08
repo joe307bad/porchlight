@@ -64,11 +64,89 @@ namespace Porchlight.Gen
                 }
             }
 
+            GatePads(hm, w, h, p.waterFraction > 0 ? Percentile(hm, p.waterFraction) : -1, p.maxRoadSlope);
             double waterLevel = p.waterFraction > 0 ? Percentile(hm, p.waterFraction) : -1;
             var next = model.With();
             next.heightmap = hm;
             next.waterLevel = waterLevel;
             return next;
+        }
+
+        /// <summary>How far in from its edge a gate's pad reaches (tiles), at least.</summary>
+        const int PAD_DEPTH = 10;
+        /// <summary>Half the pad's width.</summary>
+        const int PAD_HALF = 3;
+        /// <summary>How far beyond the pad the ground eases back to what it was (tiles): at least this, more where it's far off.</summary>
+        const int PAD_FADE = 8;
+        const int PAD_FADE_MAX = 28;
+        /// <summary>How far over the water the pad sits.</summary>
+        const double PAD_FREEBOARD = 0.03;
+
+        /// <summary>
+        /// Level, dry ground behind each gate (Compass), so a gate is never in a lake or on
+        /// a slope too steep for its road. The pad sits at the ground's own mean height
+        /// there (or just over the water), and eases back slowly enough that the slope
+        /// stays well under what a road can climb.
+        /// </summary>
+        static void GatePads(float[] hm, int w, int h, double waterLevel, double maxRoadSlope)
+        {
+            int depth = Math.Max(PAD_DEPTH, Math.Min(w, h) / 10);
+            var original = (float[])hm.Clone();
+            foreach (var side in Compass.Sides)
+            {
+                var (gx, gy) = Compass.GateTile(side, w, h);
+                var o = Compass.Outward(side);
+                int ix = -(int)o.x, iy = -(int)o.y; // inward
+                double Off(int x, int y)
+                {
+                    int dx = x - gx, dy = y - gy;
+                    int along = dx * ix + dy * iy;
+                    if (along < 0) return double.PositiveInfinity;
+                    int across = Math.Abs(dx * iy - dy * ix);
+                    return Math.Max(0, across - PAD_HALF) + Math.Max(0, along - depth);
+                }
+                int reach = depth + PAD_FADE_MAX;
+                int x0 = Math.Max(0, gx - reach), x1 = Math.Min(w - 1, gx + reach);
+                int y0 = Math.Max(0, gy - reach), y1 = Math.Min(h - 1, gy + reach);
+                double sum = 0;
+                int count = 0;
+                for (int y = y0; y <= y1; y++)
+                    for (int x = x0; x <= x1; x++)
+                        if (Off(x, y) == 0)
+                        {
+                            sum += original[y * w + x];
+                            count++;
+                        }
+                double level = Math.Min(1, Math.Max(count > 0 ? sum / count : 0.5, waterLevel + PAD_FREEBOARD));
+                // Ease back over enough tiles that the steepest step (smoothstep's is 1.5x the mean) stays at half a road's limit.
+                double far = 0;
+                for (int y = y0; y <= y1; y++)
+                    for (int x = x0; x <= x1; x++)
+                        if (Off(x, y) <= PAD_FADE_MAX) far = Math.Max(far, Math.Abs(original[y * w + x] - level));
+                int fade = Math.Max(PAD_FADE, Math.Min(PAD_FADE_MAX, (int)Math.Ceiling(1.5 * far / (0.5 * maxRoadSlope))));
+                for (int y = y0; y <= y1; y++)
+                {
+                    for (int x = x0; x <= x1; x++)
+                    {
+                        double off = Off(x, y);
+                        if (off >= fade) continue;
+                        double t = 1 - Smoothstep(off / fade);
+                        int i = y * w + x;
+                        hm[i] = (float)(hm[i] + (level - hm[i]) * t);
+                    }
+                }
+            }
+        }
+
+        /// <summary>True within r tiles (either way) of a gate's tile.</summary>
+        public static bool NearGate(int x, int y, int w, int h, int r)
+        {
+            foreach (var side in Compass.Sides)
+            {
+                var (gx, gy) = Compass.GateTile(side, w, h);
+                if (Math.Abs(x - gx) <= r && Math.Abs(y - gy) <= r) return true;
+            }
+            return false;
         }
 
         public List<string> Check(TownModel model)

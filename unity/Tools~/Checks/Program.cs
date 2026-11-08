@@ -8,6 +8,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- homes             # the town that comes with the game has houses to live in, and is up to date (from the repo's root)
 //   dotnet run --project "unity/Tools~/Checks" -- town <file> [key] # regenerate it into its file (`npm run town` in server/)
 //   dotnet run --project "unity/Tools~/Checks" -- measure <seed> 'width=256&riverCount=0'   # how big and built up a town is
+//   dotnet run --project "unity/Tools~/Checks" -- county [vectors-file] # the county: its spaces, highways and rooms (CountyCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- traffic <seed> 'width=256&riverCount=0'   # how smooth its traffic looks following a host, as the host slows down
 
 using System;
@@ -29,6 +30,7 @@ static class Program
         if (args.Length > 2 && args[0] == "measure") return Measure(args[1], args[2]);
         if (args.Length > 1 && args[0] == "town") return RegenerateTown(args[1], args.Length > 2 ? args[2] : null);
         if (args.Length > 2 && args[0] == "traffic") return TrafficCheck(args[1], args[2]);
+        if (args.Length > 0 && args[0] == "county") return CountyCheck.Run(args.Length > 1 ? args[1] : null);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
@@ -125,7 +127,7 @@ static class Program
     }
 
     /// <summary>The key as the game would write it (EncodeUrlState): anything else would be another room.</summary>
-    static string WrittenKey(string seed, GenParams p)
+    internal static string WrittenKey(string seed, GenParams p)
     {
         var written = new List<string> { "seed=" + seed };
         foreach (var spec in ParamSpec.All)
@@ -166,7 +168,8 @@ static class Program
         }
         var was = doc.GetProperty("houses").EnumerateArray().Select(h => new[] { h[0].GetInt32(), h[1].GetInt32() }).ToList();
         bool same = key == doc.GetProperty("key").GetString() && HousesJson(was) == HousesJson(houses);
-        System.IO.File.WriteAllText(file, $"{{\n  \"name\": {Quoted(name)},\n  \"key\": {Quoted(key)},\n  \"houses\": [{HousesJson(houses)}]\n}}\n");
+        string place = doc.TryGetProperty("place", out var pl) ? $"\n  \"place\": {Quoted(pl.GetString())}," : "";
+        System.IO.File.WriteAllText(file, $"{{\n  \"name\": {Quoted(name)},{place}\n  \"key\": {Quoted(key)},\n  \"houses\": [{HousesJson(houses)}]\n}}\n");
         Console.WriteLine(same
             ? $"{name}: no change ({houses.Count} houses)."
             : $"{name}: {houses.Count} houses, was {was.Count}. Everyone there gets a new house when the server next starts with this file.");

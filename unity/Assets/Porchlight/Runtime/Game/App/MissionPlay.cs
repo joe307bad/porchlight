@@ -755,7 +755,7 @@ namespace Porchlight.App
             if (crowd < 0 || crowd > 1) throw new Exception("a crowd is 0 to 1");
             var world = view.world;
             var course = Porchlight.Explore.Course.Longest(world.layout.roads, world.model.width, world.model.height)
-                ?? throw new Exception("this town's streets don't run from one corner to the other");
+                ?? throw new Exception("this town's streets don't run right across it");
             if (races.TryGetValue(role, out var old)) old.scene.Dispose();
             races[role] = new Race { course = course, run = new CourseRun(course), scene = new RaceCourse(course, crowd, view, rng) };
             // On foot, the ribbon holds you to the course; and on your screen there are no cars on the move.

@@ -27,7 +27,6 @@ namespace Porchlight.Model
         public double riverMaxWidth = 4;
         // town
         public double townRadius = 0.36;
-        public double gateCount = 3;
         public double maxRoadSlope = 0.04;
         public double bridgeCost = 12;
         public double mainRoadWidth = 2;
@@ -80,7 +79,6 @@ namespace Porchlight.Model
                 "riverMinLength" => riverMinLength,
                 "riverMaxWidth" => riverMaxWidth,
                 "townRadius" => townRadius,
-                "gateCount" => gateCount,
                 "maxRoadSlope" => maxRoadSlope,
                 "bridgeCost" => bridgeCost,
                 "mainRoadWidth" => mainRoadWidth,
@@ -120,7 +118,6 @@ namespace Porchlight.Model
                     case "riverMinLength": riverMinLength = value; break;
                     case "riverMaxWidth": riverMaxWidth = value; break;
                     case "townRadius": townRadius = value; break;
-                    case "gateCount": gateCount = value; break;
                     case "maxRoadSlope": maxRoadSlope = value; break;
                     case "bridgeCost": bridgeCost = value; break;
                     case "mainRoadWidth": mainRoadWidth = value; break;
@@ -204,7 +201,6 @@ namespace Porchlight.Model
             S("riverMinLength", "Min length", "Rivers", 8, 80, 1),
             S("riverMaxWidth", "Max width", "Rivers", 1, 8, 0.5),
             S("townRadius", "Town radius", "Town & roads", 0.15, 0.5, 0.01),
-            S("gateCount", "Gates", "Town & roads", 2, 4, 1),
             S("maxRoadSlope", "Max road slope", "Town & roads", 0.02, 0.1, 0.001),
             S("bridgeCost", "Bridge cost", "Town & roads", 2, 60, 1),
             S("mainRoadWidth", "Main road width", "Town & roads", 1, 3, 0.25),

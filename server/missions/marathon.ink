@@ -1,9 +1,9 @@
 # title: Marathon runner
-# summary: Run the town's longest race, from one corner of the map to the other, between the ribbons and the cheering crowds. The clock starts as you cross the start line. Every town keeps its own best times.
+# summary: Run the town's longest race, right across the map from one side to the other, between the ribbons and the cheering crowds. The clock starts as you cross the start line. Every town keeps its own best times.
 # unlocks: sprint
 
 // Everything this mission is lives in this file: the course (the longest way
-// from one corner of the town to the other, along its streets, fenced with
+// right across the town (corner to corner, or gate to gate), along its streets, fenced with
 // ribbon and lined with people), the clock, the town's best times and what
 // finishing earns. The game only knows the building blocks below (see
 // README.md in this folder).
@@ -32,7 +32,7 @@ VAR best = 0
 ~ best = town_record()
 ~ put_you("race", "start")
 It's marathon day! The whole town has come out to watch.
-The course runs {km(metres)} along the streets, from one corner of town to the other. Stay between the ribbons all the way.
+The course runs {km(metres)} along the streets, right across town. Stay between the ribbons all the way.
 { best > 0:
     The record here is {clock(best)}, run by {town_record_holder()}.
 - else:

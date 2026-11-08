@@ -58,6 +58,8 @@ namespace Porchlight.Explore
         /// <summary>How far back from a dead end a car starts its U-turn (tiles), and how slow it goes round (against cruising).</summary>
         const double UTURN = 1.4;
         const double UTURN_SPEED = 0.25;
+        /// <summary>A dead end shorter than this (tiles) is a stub, too short to turn round in: traffic keeps out.</summary>
+        const double SHORTEST_DEAD_END = 4;
         /// <summary>TrafficCar.next / prev for a U-turn at a dead end.</summary>
         public const int ROUND = -2;
 
@@ -90,7 +92,7 @@ namespace Porchlight.Explore
             for (int i = 0; i < roads.Count; i++)
             {
                 var r = roads[i];
-                if (r.kind == RoadKind.Path || lengths[i] < 1 || (r.kind == RoadKind.Street && dead.Contains(i))) continue;
+                if (r.kind == RoadKind.Path || lengths[i] < 1 || (dead.Contains(i) && (r.kind == RoadKind.Street || lengths[i] < SHORTEST_DEAD_END))) continue;
                 mains.Add(i);
                 foreach (int n in new[] { r.from, r.to })
                 {

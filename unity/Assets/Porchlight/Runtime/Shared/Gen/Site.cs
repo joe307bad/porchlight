@@ -1,7 +1,7 @@
 // Stage 3: pick the town center and the gates where main roads leave the map.
 // The center scores well when the ground is flat, dry, near (not on) a river,
-// and not too far from the middle of the map. Gates are spread around the map
-// edge on dry tiles a road can reach from the center.
+// and not too far from the middle of the map. There's a gate in the middle of
+// each edge (Compass), where the highways to the next towns come in.
 
 using System;
 using System.Collections.Generic;
@@ -86,71 +86,10 @@ namespace Porchlight.Gen
             if (best < 0) best = Grid.Index(w / 2, h / 2, w);
             var center = new Vec2((best % w) + 0.5, best / w + 0.5);
 
-            var reach = new byte[w * h];
-            var queue = new List<int> { best };
-            reach[best] = 1;
-            for (int head = 0; head < queue.Count; head++)
-            {
-                int c = queue[head];
-                int cx = c % w;
-                int cy = (c - cx) / w;
-                foreach (var (dx, dy) in Grid.DIRS8)
-                {
-                    int nx = cx + dx, ny = cy + dy;
-                    if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-                    int j = Grid.Index(nx, ny, w);
-                    if (reach[j] == 0 && Numbers.IsFinite(cost[j]))
-                    {
-                        reach[j] = 1;
-                        queue.Add(j);
-                    }
-                }
-            }
-            var edgeCells = new List<int>();
-            for (int x = 0; x < w; x++)
-            {
-                edgeCells.Add(Grid.Index(x, 0, w));
-                edgeCells.Add(Grid.Index(x, h - 1, w));
-            }
-            for (int y = 1; y < h - 1; y++)
-            {
-                edgeCells.Add(Grid.Index(0, y, w));
-                edgeCells.Add(Grid.Index(w - 1, y, w));
-            }
-            var open = new List<int>();
-            foreach (int c in edgeCells) if (reach[c] != 0 && water[c] == 0) open.Add(c);
-
+            // The gates: one in the middle of each edge (Compass), where the highways
+            // come in. The terrain stage keeps a dry, level pad behind each.
             var gates = new List<Vec2>();
-            double minSpacing = (2.0 * (w + h)) / (p.gateCount * 2.5);
-            double baseAngle = rng.Range(0, Math.PI * 2);
-            for (int g = 0; g < p.gateCount && open.Count > 0; g++)
-            {
-                double angle = baseAngle + (g * Math.PI * 2) / p.gateCount + rng.Range(-0.3, 0.3);
-                var ideal = RayToEdge(center, angle, w, h);
-                int pick = -1;
-                double pickD = double.PositiveInfinity;
-                foreach (int c in open)
-                {
-                    var pt = new Vec2((c % w) + 0.5, c / w + 0.5);
-                    bool tooClose = false;
-                    foreach (var q in gates)
-                    {
-                        if (Numbers.Hypot(q.x - pt.x, q.y - pt.y) < minSpacing)
-                        {
-                            tooClose = true;
-                            break;
-                        }
-                    }
-                    if (tooClose) continue;
-                    double d = Numbers.Hypot(pt.x - ideal.x, pt.y - ideal.y);
-                    if (d < pickD)
-                    {
-                        pickD = d;
-                        pick = c;
-                    }
-                }
-                if (pick >= 0) gates.Add(new Vec2((pick % w) + 0.5, pick / w + 0.5));
-            }
+            foreach (var side in Compass.Sides) gates.Add(Compass.GateCenter(side, w, h));
 
             var next = model.With();
             next.center = center;
@@ -167,25 +106,15 @@ namespace Porchlight.Gen
             int cx = (int)Math.Floor(model.center.x);
             int cy = (int)Math.Floor(model.center.y);
             if (model.heightmap[Grid.Index(cx, cy, w)] < model.waterLevel) errors.Add("town center is in water");
-            if (model.gates.Count < 1) errors.Add("no gate could be placed: no map edge is reachable by road");
-            foreach (var g in model.gates)
+            if (model.gates.Count != 4) errors.Add($"{model.gates.Count} gates, not one on each side");
+            var water = Raster.WaterMask(model);
+            for (int g = 0; g < model.gates.Count && g < 4; g++)
             {
-                int gx = (int)Math.Floor(g.x), gy = (int)Math.Floor(g.y);
-                if (gx != 0 && gy != 0 && gx != w - 1 && gy != h - 1) errors.Add($"gate {gx},{gy} is not on the map edge");
+                var (gx, gy) = Compass.GateTile(Compass.Sides[g], w, h);
+                if ((int)Math.Floor(model.gates[g].x) != gx || (int)Math.Floor(model.gates[g].y) != gy) errors.Add($"the {Compass.Name(Compass.Sides[g])} gate isn't in the middle of its edge");
+                else if (water[Grid.Index(gx, gy, w)] != 0) errors.Add($"the {Compass.Name(Compass.Sides[g])} gate is in water");
             }
             return errors;
-        }
-
-        static Vec2 RayToEdge(Vec2 from, double angle, int w, int h)
-        {
-            double dx = Math.Cos(angle);
-            double dy = Math.Sin(angle);
-            double t = double.PositiveInfinity;
-            if (dx > 1e-9) t = Math.Min(t, (w - from.x) / dx);
-            if (dx < -1e-9) t = Math.Min(t, -from.x / dx);
-            if (dy > 1e-9) t = Math.Min(t, (h - from.y) / dy);
-            if (dy < -1e-9) t = Math.Min(t, -from.y / dy);
-            return new Vec2(from.x + dx * t, from.y + dy * t);
         }
     }
 }

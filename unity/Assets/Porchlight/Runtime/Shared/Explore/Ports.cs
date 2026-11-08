@@ -106,6 +106,9 @@ namespace Porchlight.Explore
                 foreach (int t in lakes[id])
                 {
                     if (clear[t] < CLEARANCE) continue;
+                    // The map's edge is a shore too.
+                    int tx = t % w, ty = t / w;
+                    if (Math.Min(Math.Min(tx, ty), Math.Min(w - 1 - tx, h - 1 - ty)) + 1 < CLEARANCE) continue;
                     open[t] = 1;
                     count++;
                 }

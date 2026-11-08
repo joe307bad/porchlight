@@ -1,5 +1,5 @@
 // A race course over a town's streets (Marathon Runner): a long way from one
-// corner of the map to the opposite one, made of long straight runs along the
+// corner of the map to the opposite one (or one gate to the opposite gate), made of long straight runs along the
 // widest streets. Streets are worth their length (narrow ones much less than
 // main roads), and every turn costs as much as a good stretch of running, so
 // the course is the corner-to-corner way with the most straight, wide running
@@ -103,7 +103,10 @@ namespace Porchlight.Explore
             return l < 1e-9 ? new Vec2(1, 0) : new Vec2((to.x - from.x) / l, (to.y - from.y) / l);
         }
 
-        /// <summary>The town's marathon course: null if its streets don't join two opposite corners.</summary>
+        /// <summary>Ends at least this share of the map's diagonal apart count as across the town.</summary>
+        public const double FAR_APART = 0.6;
+
+        /// <summary>The town's marathon course: null if its streets don't join two opposite corners or gates.</summary>
         public static Course Longest(IReadOnlyList<RoadStroke> strokes, double width, double height)
         {
             var net = new Net();
@@ -142,14 +145,23 @@ namespace Porchlight.Explore
                 }
                 return best;
             }
-            var corners = new[] { new Vec2(0, 0), new Vec2(width, 0), new Vec2(width, height), new Vec2(0, height) };
-            var near = new int[4];
-            for (int k = 0; k < 4; k++) near[k] = Near(corners[k]);
+            // The corners, and the middle of each edge (where the gates are, and the main roads run in):
+            // a course goes from one to the one opposite, corner to corner or gate to gate.
+            var ends = new[]
+            {
+                new Vec2(0, 0), new Vec2(width, 0), new Vec2(width, height), new Vec2(0, height),
+                new Vec2(width / 2, 0), new Vec2(width, height / 2), new Vec2(width / 2, height), new Vec2(0, height / 2),
+            };
+            var near = new int[ends.Length];
+            for (int k = 0; k < ends.Length; k++) near[k] = Near(ends[k]);
 
-            // Both diagonals, each laid out and lengthened: the one with the more running for its turns.
+            // Each way across laid out and lengthened: the one with the more running for its turns,
+            // of those whose ends are well apart (most of the way across the map), if any are.
+            double diagonal = Numbers.Hypot(width, height);
             Course best = null;
             double bestScore = double.NegativeInfinity;
-            foreach (var (sIdx, tIdx) in new[] { (0, 2), (1, 3) })
+            bool bestFar = false;
+            foreach (var (sIdx, tIdx) in new[] { (0, 2), (1, 3), (4, 6), (5, 7) })
             {
                 if (near[sIdx] == near[tIdx]) continue;
                 var path = Across(net, near[sIdx], near[tIdx]);
@@ -159,8 +171,11 @@ namespace Porchlight.Explore
                 foreach (var e in path) across += e.length;
                 Lengthen(net, path, nodes, Math.Min(MAX_LENGTH, Math.Max(across * MAX_STRETCH, across)));
                 double score = Score(path, nodes);
-                if (score <= bestScore) continue;
+                bool far = Geo.Dist(net.nodeAt[near[sIdx]], net.nodeAt[near[tIdx]]) >= diagonal * FAR_APART;
+                if (bestFar && !far) continue;
+                if (score <= bestScore && far == bestFar) continue;
                 bestScore = score;
+                bestFar = far;
                 best = Build(strokes, path, nodes);
             }
             return best;
