@@ -1423,6 +1423,11 @@ namespace Porchlight.App
             iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
             iso.SetWeather(raining, snowing);
             iso.OnTake = car => net?.Take(car);
+            iso.OnTripEnd = () =>
+            {
+                tripTo = null;
+                OfferDirections();
+            };
             portraits ??= new Portraits(ModelLibrary.Instance);
             overlay.SignedIn = online;
             iso.HomeDoor = saved =>
@@ -1618,6 +1623,8 @@ namespace Porchlight.App
                 })
                 { Net = net, Frame = netFrame, OnSpace = DroveInto };
                 county.EnterRoom();
+                // Now the houses in the county's other towns have roads to them.
+                OfferDirections();
             });
         }
 
@@ -1694,12 +1701,99 @@ namespace Porchlight.App
             Account.ListCharacters(platform, origin, (list, err) =>
             {
                 if (list == null || playing?.id != mine) return;
+                accountCharacters = list;
+                OfferDirections();
                 var others = list.Where(c => c.inUse && !string.IsNullOrEmpty(c.town) && c.id != mine && c.town != TownKey).ToList();
                 string shown = string.Join(",", others.Select(c => c.id));
                 if (shown == joinsShown) return;
                 joinsShown = shown;
                 sidebar.SetJoins(others.Select(c => (c.name, (Action)(() => JoinWhereverNow(c.id)))).ToList());
             });
+        }
+
+        /// <summary>The account's characters, as last asked (OfferJoins): whose houses there are directions to.</summary>
+        List<Character> accountCharacters;
+        /// <summary>Whose house (a character's id) you're being shown the way to, across the county; null: nobody's.</summary>
+        string tripTo;
+
+        /// <summary>
+        /// Buttons under the name for directions to the account's houses: in this town, or in any
+        /// town of the county (your own towns too, out along the highways); one to stop, on the way.
+        /// </summary>
+        void OfferDirections()
+        {
+            // A town loaded afresh ends any trip without a word.
+            if (iso == null || !iso.OnTrip) tripTo = null;
+            if (playing == null || iso == null || accountCharacters == null)
+            {
+                sidebar.SetDirections(null);
+                return;
+            }
+            var rows = new List<(string text, Action go)>();
+            foreach (var c in accountCharacters)
+            {
+                var h = c.home;
+                if (h == null || !h.hasHouse || string.IsNullOrEmpty(h.townKey) || TownSpace(h.townKey) == null && h.townKey != TownKey) continue;
+                string label = c.id == playing.id ? "your house" : $"{c.name}'s house";
+                string text = tripTo == c.id ? $"Stop directions to {label}" : h.townKey == TownKey ? $"Directions to {label}" : $"Directions to {label} in {h.townName}";
+                string id = c.id, townKey = h.townKey, townName = h.townName;
+                int x = h.x, y = h.y;
+                rows.Add((text, () => DirectionsTo(id, townKey, townName, x, y, label)));
+            }
+            sidebar.SetDirections(rows);
+        }
+
+        /// <summary>The county's space for this town (by its key), if it's one of the county's.</summary>
+        Space TownSpace(string townKey) => county?.map.spaces.Find(s => s.kind == SpaceKind.Town && s.townKey == townKey);
+
+        /// <summary>
+        /// The way to a house, shown as you go: in another town of the county, out by the right gate and
+        /// along the highways (CountyRoute), then along its streets to the door. Already on the way there: stop.
+        /// </summary>
+        void DirectionsTo(string id, string townKey, string townName, int x, int y, string label)
+        {
+            if (iso == null) return;
+            if (tripTo == id)
+            {
+                iso.Trip(null);
+                return;
+            }
+            if (TownSpace(townKey) == null && townKey != TownKey)
+            {
+                overlay?.Flash($"There's no road to {townName} from here");
+                return;
+            }
+            tripTo = id;
+            iso.Trip(from =>
+            {
+                if (iso?.world == null) return null;
+                var here = county?.Active;
+                bool there = here != null ? here.kind == SpaceKind.Town && here.townKey == townKey : townKey == TownKey;
+                if (there)
+                {
+                    var house = Homes.At(iso.world.model.buildings, x, y);
+                    var door = house != null ? Homes.Door(iso.world.rooms, house.id) : null;
+                    if (door == null) return null;
+                    return (door.Value.at, label, true);
+                }
+                var dest = TownSpace(townKey);
+                if (here == null || dest == null) return null;
+                var stop = CountyRoute.Next(county.map, here, here.ToWorld(from), dest);
+                if (stop == null) return null;
+                return (here.ToLocal(stop.Value.at), stop.Value.name, false);
+            });
+            overlay?.Flash(townKey == TownKey ? $"Directions to {label}" : $"Directions to {label} in {townName}: {Directions.FormatDistance(TripLength(townKey))} by road");
+            OfferDirections();
+        }
+
+        /// <summary>From where you are to the town, along the highways (tiles, roughly).</summary>
+        double TripLength(string townKey)
+        {
+            var here = county?.Active;
+            var dest = TownSpace(townKey);
+            var at = iso?.PlayerPosition;
+            if (here == null || dest == null || at == null) return 0;
+            return CountyRoute.Next(county.map, here, here.ToWorld(at.Value), dest)?.remaining ?? 0;
         }
 
         /// <summary>A Join button: they may have moved on since it appeared, so ask where they are now.</summary>
@@ -1746,6 +1840,10 @@ namespace Porchlight.App
             joining = null;
             joinsShown = "";
             sidebar.SetJoins(null);
+            accountCharacters = null;
+            tripTo = null;
+            iso?.Trip(null);
+            sidebar.SetDirections(null);
             LeaveExplore(true);
             OpenFrontDoor(message);
         }

@@ -634,6 +634,24 @@ namespace Porchlight.UI
             top.Insert(top.IndexOf(links) + 1, joinRows);
         }
 
+        VisualElement directionRows;
+        string directionsShown = "";
+
+        /// <summary>Directions to the account's houses (in this town or out along the highways), under the name; null or empty: none.</summary>
+        public void SetDirections(List<(string text, Action go)> rows)
+        {
+            string shown = rows == null ? "" : string.Join("|", rows.Select(r => r.text));
+            if (shown == directionsShown && (directionRows != null) == (shown != "")) return;
+            directionsShown = shown;
+            directionRows?.RemoveFromHierarchy();
+            directionRows = null;
+            if (rows == null || rows.Count == 0) return;
+            directionRows = El.Box("sb-joins");
+            foreach (var (text, go) in rows)
+                directionRows.Add(El.Btn(text, "The way there, shown as you go: out along the highways, if it's in another town", go, "press"));
+            top.Insert(top.IndexOf(links) + 1, directionRows);
+        }
+
         public void SetAccount(string name, string email, Action onSignOut)
         {
             accountName = name;

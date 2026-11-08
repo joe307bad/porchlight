@@ -278,6 +278,16 @@ namespace Porchlight.App
         /// <summary>Where a mission is showing the way to (Guide), and what to call it.</summary>
         Func<Vec2?> guideTo;
         string guideName;
+        /// <summary>
+        /// Directions across the county (Trip): asked each second, from where you are in the space you're in,
+        /// where to head in it and what's there; `final` once it's the place itself. Kept from space to space.
+        /// </summary>
+        Func<Vec2, (Vec2 at, string name, bool final)?> trip;
+        (Vec2 at, string name, bool final)? tripStop;
+        /// <summary>The trip's done (you got there) or stopped.</summary>
+        public Action OnTripEnd;
+        /// <summary>How close to the place counts as there, on a trip (tiles): parked out front will do.</summary>
+        const double TRIP_REACHED = 3.0;
         /// <summary>Besides you, who opens doors by walking up to them (a mission's people).</summary>
         public readonly List<Vec2> DoorOpeners = new List<Vec2>();
         bool inDialogue;
@@ -375,6 +385,8 @@ namespace Porchlight.App
             overlay.SetWaypoint(null);
             overlay.CloseMap();
             guideTo = null;
+            trip = null;
+            tripStop = null;
             findRoute = new List<Vec2>();
             findSteps = null;
             ClearFindPath();
@@ -503,6 +515,9 @@ namespace Porchlight.App
             waypoint = null;
             overlay.SetWaypoint(null);
             guideTo = null;
+            // A trip carries on into the next space: where to head is asked afresh, in its terms.
+            tripStop = null;
+            findTimer = 0;
             findRoute = new List<Vec2>();
             findSteps = null;
             ClearFindPath();
@@ -998,6 +1013,34 @@ namespace Porchlight.App
 
         public string Finding => finding;
 
+        /// <summary>
+        /// Directions across the county, kept as you drive from space to space (null: stop). A waypoint,
+        /// a player you're finding or a mission's guide wins while there is one.
+        /// </summary>
+        public void Trip(Func<Vec2, (Vec2 at, string name, bool final)?> to)
+        {
+            bool had = trip != null;
+            trip = to;
+            tripStop = null;
+            findTimer = 0;
+            if (to != null)
+            {
+                finding = null;
+                waypoint = null;
+                overlay.SetWaypoint(null);
+                return;
+            }
+            if (had && finding == null && waypoint == null && guideTo == null)
+            {
+                findRoute = new List<Vec2>();
+                findSteps = null;
+                ClearFindPath();
+            }
+            if (had) OnTripEnd?.Invoke();
+        }
+
+        public bool OnTrip => trip != null;
+
         /// <summary>Show the way to this spot (in place of any player you were being shown the way to).</summary>
         public void SetWaypoint(Vec2 at)
         {
@@ -1021,7 +1064,10 @@ namespace Porchlight.App
         public void CloseMap() => overlay.CloseMap();
 
         /// <summary>Where you're being shown the way to: your waypoint, the player you're finding, or where a mission's guiding you.</summary>
-        Vec2? FindTarget => waypoint ?? (finding != null ? PositionOf(finding) : guideTo?.Invoke());
+        Vec2? FindTarget => waypoint ?? (finding != null ? PositionOf(finding) : guideTo != null ? guideTo() : tripStop?.at);
+
+        /// <summary>The trip's the one being shown the way of (nothing else wins over it just now).</summary>
+        bool Tripping => trip != null && waypoint == null && finding == null && guideTo == null;
 
         /// <summary>The way to the nearest other player, or (already showing one) stop.</summary>
         public void FindNearest()
@@ -1066,7 +1112,7 @@ namespace Porchlight.App
         void UpdateFind(double dt)
         {
             findTimer -= dt;
-            if ((finding == null && waypoint == null && guideTo == null) || player == null || world == null) return;
+            if ((finding == null && waypoint == null && guideTo == null && trip == null) || player == null || world == null) return;
             var from = new Vec2(player.x, player.y);
             if (waypoint != null && Geo.Dist(from, waypoint.Value) < WAYPOINT_REACHED)
             {
@@ -1076,10 +1122,28 @@ namespace Porchlight.App
             }
             if (findTimer > 0) return;
             findTimer = 1;
+            bool tripping = Tripping;
+            if (tripping) tripStop = trip(from);
             var target = FindTarget;
-            if (target == null) return;
-            string name = waypoint != null ? "your waypoint" : finding != null ? others.FirstOrDefault(o => o.key == finding).name ?? "them" : guideName;
-            if (waypoint == null && Geo.Dist(from, target.Value) < 1.5)
+            if (target == null)
+            {
+                if (tripping)
+                {
+                    findRoute = new List<Vec2>();
+                    findSteps = null;
+                    ClearFindPath();
+                }
+                return;
+            }
+            string name = waypoint != null ? "your waypoint" : finding != null ? others.FirstOrDefault(o => o.key == finding).name ?? "them" : tripping ? tripStop.Value.name : guideName;
+            if (tripping && tripStop.Value.final && Geo.Dist(from, target.Value) < TRIP_REACHED)
+            {
+                Trip(null);
+                overlay.Flash($"You've arrived at {name}");
+                return;
+            }
+            // On a trip, a gate or the end of a stretch is only on the way: drive on through it.
+            if (waypoint == null && !(tripping && !tripStop.Value.final) && Geo.Dist(from, target.Value) < 1.5)
             {
                 findRoute = new List<Vec2>();
                 findSteps = new List<Step> { new Step { kind = StepKind.Arrive, text = finding != null ? $"You're with {name}" : $"You're at {name}", distance = 0 } };

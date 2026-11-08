@@ -60,6 +60,17 @@ static class CountyCheck
             towns.AddRange(mine);
             var map = CountyMap.Build(towns, "acct");
             var errors = Check(map);
+            // Directions from Porchlight (and from a city across the county) to a house in each of your own towns, driven.
+            foreach (var t in mine)
+            {
+                var dest = map.towns[t.place];
+                foreach (var start in new[] { map.towns[Place.Porchlight], map.towns[Place.East] })
+                {
+                    var (error, km, spaces) = Trip(map, start, dest);
+                    if (error != null) errors.Add($"directions from {start.name} to a house in {dest.name}: {error}");
+                    else Console.WriteLine($"ok directions ({name}): {start.name} to a house in {dest.name}, {Numbers.ToFixed(km, 1)} km through {spaces} spaces");
+                }
+            }
             foreach (var e in errors) Console.WriteLine($"FAIL county ({name}): {e}");
             if (errors.Count == 0)
                 Console.WriteLine($"ok county ({name}): {map.spaces.Count} spaces, {map.highways.Count} highways, {Numbers.ToFixed(map.highways.Sum(h => h.length) * Directions.METRES_PER_TILE / 1000, 1)} km of road");
@@ -255,7 +266,90 @@ static class CountyCheck
         return errors;
     }
 
-    static readonly Dictionary<string, (TownModel, Func<double, double, bool>)> towns = new Dictionary<string, (TownModel, Func<double, double, bool>)>();
+    static readonly Dictionary<string, (TownModel model, IsoLayout layout, StreetNames names)> streets = new Dictionary<string, (TownModel, IsoLayout, StreetNames)>();
+
+    /// <summary>A space's streets, as the game has them (a town grown from its key, a road space built), once.</summary>
+    static (TownModel model, IsoLayout layout, StreetNames names) Streets(CountyMap map, Space s)
+    {
+        string key = s.kind == SpaceKind.Town ? s.townKey : $"{s.kind}:{s.id}:{s.x0},{s.y0}";
+        if (streets.TryGetValue(key, out var t)) return t;
+        TownModel model;
+        if (s.kind == SpaceKind.Town)
+        {
+            var (seed, p) = Program.ParseKey(s.townKey);
+            model = Generator.Generate(seed, p);
+        }
+        else model = RoadSpaces.Build(map, s);
+        var layout = Layout.Build(model);
+        return streets[key] = (model, layout, StreetNaming.Name(model, layout.roads));
+    }
+
+    /// <summary>
+    /// Follow the directions (CountyRoute) from the middle of `start` to a house in `dest`, as the game
+    /// shows them: along each space's streets to where they say, into whichever space takes you over,
+    /// and once in the town, along its streets to the house. Null if you get there.
+    /// </summary>
+    static (string error, double km, int spaces) Trip(CountyMap map, Space start, Space dest)
+    {
+        var here = start;
+        var pos = new Vec2(start.x0 + start.width / 2.0, start.y0 + start.height / 2.0);
+        double travelled = 0;
+        int count = 1;
+        for (int leg = 0; leg < 200; leg++)
+        {
+            var (model, layout, names) = Streets(map, here);
+            Vec2 target;
+            string name;
+            var stop = CountyRoute.Next(map, here, pos, dest);
+            if (here.id == dest.id)
+            {
+                var houses = Homes.All(model);
+                if (houses.Count == 0) return ($"{dest.name} has no houses", 0, count);
+                var house = houses[houses.Count / 2];
+                target = here.ToWorld(new Vec2(house.tiles[0].x + 0.5, house.tiles[0].y + 0.5));
+                name = "the house";
+            }
+            else if (stop == null) return ($"no way on from {Describe(here)}", 0, count);
+            else
+            {
+                target = stop.Value.at;
+                name = stop.Value.name;
+            }
+            var way = StreetRoute.Between(layout.roads, here.ToLocal(pos), here.ToLocal(target));
+            if (way == null) return ($"no streets in {Describe(here)} from {N(pos.x)},{N(pos.y)} to {name}", 0, count);
+            Directions.ForDrive(names, way.stretches, name);
+            if (here.id == dest.id) return (null, (travelled + Length(way.points)) * Directions.METRES_PER_TILE / 1000, count);
+            // Along the way, till another space takes you over.
+            Space next = null;
+            var pts = Geo.SamplePolyline(way.points, 0.25);
+            for (int i = 0; i < pts.Count; i++)
+            {
+                var w = here.ToWorld(pts[i]);
+                if (i > 0) travelled += Geo.Dist(pts[i - 1], pts[i]);
+                var at = map.SpaceAt(w, here);
+                if (at != null && at.id != here.id)
+                {
+                    next = at;
+                    pos = w;
+                    break;
+                }
+            }
+            if (next == null) return ($"stuck in {Describe(here)} at {name}", 0, count);
+            if (Environment.GetEnvironmentVariable("TRIP_DEBUG") != null) Console.WriteLine($"  {Describe(here)} -> {Describe(next)} at {N(pos.x)},{N(pos.y)} aiming {name} {N(target.x)},{N(target.y)}");
+            here = next;
+            count++;
+        }
+        return ("still going after 200 spaces", 0, count);
+    }
+
+    static double Length(List<Vec2> pts)
+    {
+        double d = 0;
+        for (int i = 1; i < pts.Count; i++) d += Geo.Dist(pts[i - 1], pts[i]);
+        return d;
+    }
+
+    static readonly Dictionary<string, (TownModel, Func<double, double, bool>)> towns =new Dictionary<string, (TownModel, Func<double, double, bool>)>();
 
     /// <summary>Where a car can go in a town (grown from its key, once).</summary>
     static (TownModel, Func<double, double, bool>) TownDrive(string key)

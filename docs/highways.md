@@ -26,6 +26,7 @@ The plan below is now in the code. How it's used day to day is in `unity/README.
 - `CountyDrive` builds spaces as you approach, switches you into them with a floating origin, and changes rooms at the territory line.
 - `NetFrame` translates positions between each room's terms and the space you're in.
 - Planes fly and land anywhere over the countryside.
+- Directions to any of the account's houses in another town of the county, your own towns included: out by the right gate and along the highways, then along the town's streets to the door (`County/CountyRoute`, followed end to end by `Checks county`).
 
 **Where it differs from the plan below**
 - **Two towns are held at once:** the one you're in and the next, so turning round is cheap.
