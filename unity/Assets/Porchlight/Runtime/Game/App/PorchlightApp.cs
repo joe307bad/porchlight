@@ -933,6 +933,55 @@ namespace Porchlight.App
             GoTo(them);
         }
 
+        /// <summary>The town on screen's id on the server (null: not known yet).</summary>
+        string townIdOnScreen;
+        string townIdFor;
+
+        /// <summary>
+        /// Who lives where in the town on screen, asked of the server afresh (on entering the town,
+        /// and each time the big map comes up): every lived-in house but your own goes on the maps.
+        /// </summary>
+        void RefreshNeighbours()
+        {
+            if (!online || overlay == null || iso?.world == null) return;
+            string key = TownKey;
+            void Ask(string townId)
+            {
+                Account.ListHomes(platform, origin, townId, (homes, _) =>
+                {
+                    if (homes == null || key != TownKey || iso?.world == null) return;
+                    var own = HouseOfHome();
+                    var houses = new List<IList<Vec2>>();
+                    foreach (var h in homes)
+                    {
+                        var b = Homes.At(iso.world.model.buildings, h.x, h.y);
+                        if (b != null && b != own && b.footprint != null) houses.Add(b.footprint);
+                    }
+                    overlay.SetNeighbours(houses);
+                });
+            }
+            var home = playing?.home;
+            if (home != null && home.townKey == key && !string.IsNullOrEmpty(home.townId))
+            {
+                Ask(home.townId);
+                return;
+            }
+            if (townIdFor == key && townIdOnScreen != null)
+            {
+                Ask(townIdOnScreen);
+                return;
+            }
+            // Visiting: which town this is, by its key.
+            Account.ListTowns(platform, origin, (list, _) =>
+            {
+                var town = list?.towns.Find(t => t.key == key);
+                if (town == null || key != TownKey) return;
+                townIdFor = key;
+                townIdOnScreen = town.id;
+                Ask(town.id);
+            });
+        }
+
         /// <summary>Your house, if you're in your own town and it's there.</summary>
         Building HouseOfHome()
         {
@@ -1182,6 +1231,7 @@ namespace Porchlight.App
             missionPanel = new MissionPanel(isoHost);
             overlay.OnPersonBox = ChooseLook;
             overlay.OnCarBox = ChooseCar;
+            overlay.OnMapOpened = RefreshNeighbours;
             iso.OnPadAction = action =>
             {
                 if (action == PadAction.Menu)
@@ -1329,6 +1379,8 @@ namespace Porchlight.App
             if (isoTown != model) return;
             net?.Enter(new TownKey { key = EncodeUrlState(seed, @params), width = model.width, height = model.height });
             overlay?.SetHome(DoorOfHome()?.at, HouseOfHome()?.footprint);
+            overlay?.SetNeighbours(null);
+            RefreshNeighbours();
             // Joining is for someone in another town, and which that is has just changed.
             if (playing != null) OfferJoins();
         }

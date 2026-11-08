@@ -87,6 +87,36 @@ namespace Porchlight.UI
 
         Vec2? home;
         IList<Vec2> homeHouse;
+        List<IList<Vec2>> neighbours = new List<IList<Vec2>>();
+
+        /// <summary>The houses other people live in (and your other characters' houses), drawn on the maps in their own colour.</summary>
+        public void SetNeighbours(List<IList<Vec2>> houses)
+        {
+            neighbours = houses ?? new List<IList<Vec2>>();
+            minimapOverlay.MarkDirtyRepaint();
+            bigMapMarks?.MarkDirtyRepaint();
+        }
+
+        /// <summary>The big map has just been brought up (the app asks the server who lives where again).</summary>
+        public Action OnMapOpened;
+
+        /// <summary>Everyone else's houses: lived in, so not yours, in a colour of their own.</summary>
+        void NeighbourHouses(Painter2D painter, Func<Vec2, Vector2> to)
+        {
+            foreach (var house in neighbours)
+            {
+                if (house == null || house.Count < 3) continue;
+                painter.BeginPath();
+                painter.MoveTo(to(house[0]));
+                for (int i = 1; i < house.Count; i++) painter.LineTo(to(house[i]));
+                painter.ClosePath();
+                painter.fillColor = Coords.Hex(0x7fb2e5);
+                painter.Fill();
+                painter.lineWidth = 1;
+                painter.strokeColor = Coords.Hex(0x2e241d);
+                painter.Stroke();
+            }
+        }
 
         /// <summary>Your house, in a colour no other building is.</summary>
         void HomeHouse(Painter2D painter, Func<Vec2, Vector2> to)
@@ -142,6 +172,7 @@ namespace Porchlight.UI
                 ? $"Left stick moves the cross · A sets a waypoint · Y clears it · X {(SignedIn ? "opens the Journal" : "back to the town map")} · B or Start closes"
                 : "Click to set a waypoint · M or Esc closes";
             FitBigMap();
+            OnMapOpened?.Invoke();
         }
 
         public void CloseMap()
@@ -223,6 +254,7 @@ namespace Porchlight.UI
                     painter.Fill();
                 }
             }
+            NeighbourHouses(painter, P);
             HomeHouse(painter, P);
             if (home != null) HomeMark(painter, P(home.Value), 8);
             if (waypoint != null) Waypoint(painter, P(waypoint.Value), 1);
@@ -577,6 +609,7 @@ namespace Porchlight.UI
                 painter.lineCap = LineCap.Butt;
                 painter.Stroke();
             }
+            NeighbourHouses(painter, P);
             HomeHouse(painter, P);
             if (home != null) HomeMark(painter, P(home.Value), 4);
             if (goal != null)
