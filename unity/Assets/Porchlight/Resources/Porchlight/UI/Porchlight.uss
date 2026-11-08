@@ -582,6 +582,7 @@ Label {
     width: 26px;
     height: 38px;
     margin-right: 10px;
+    translate: 0 -10px;
     flex-shrink: 0;
 }
 
