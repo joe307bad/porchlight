@@ -15,7 +15,16 @@ namespace Porchlight.App
             var gate = new VisualElement { name = "signin" };
             gate.AddToClassList("overlay");
             var card = El.Box("card", "signin-card");
-            card.Add(El.Text("Porchlight", "signin-title"));
+            // The lantern, beside the name.
+            var brand = new VisualElement();
+            brand.AddToClassList("signin-brand");
+            var logo = new Image { image = UnityEngine.Resources.Load<UnityEngine.Texture2D>("Porchlight/UI/LogoShadow"), scaleMode = UnityEngine.ScaleMode.ScaleToFit };
+            logo.AddToClassList("signin-logo");
+            if (logo.image == null) UnityEngine.Debug.LogWarning("porchlight: no logo for the sign-in card");
+            else UnityEngine.Debug.Log("porchlight: the sign-in card");
+            brand.Add(logo);
+            brand.Add(El.Text("Porchlight", "signin-title"));
+            card.Add(brand);
             UnityEngine.UIElements.Button button = null;
             button = El.Btn(label ?? (provider == "google" ? "Sign in with Google" : "Sign in"), null, () =>
             {

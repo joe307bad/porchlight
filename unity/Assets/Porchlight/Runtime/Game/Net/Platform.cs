@@ -29,9 +29,31 @@ namespace Porchlight.App
 
         public double Now() => Time.realtimeSinceStartupAsDouble * 1000;
 
+        /// <summary>Where the desktop app plays (unless PORCHLIGHT_ORIGIN says otherwise).</summary>
+        public const string DESKTOP_ORIGIN = "https://porchlight.joebad.com/";
+
+        /// <summary>
+        /// The desktop app (built with PORCHLIGHT_DESKTOP, by desktop.yml), or any
+        /// build run with PORCHLIGHT_DESKTOP=1: signs in through the system browser
+        /// (NativeSignIn) and keeps its session, where a dev build plays offline.
+        /// </summary>
+        public static bool Desktop
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return false;
+#elif PORCHLIGHT_DESKTOP
+                return true;
+#else
+                return Environment.GetEnvironmentVariable("PORCHLIGHT_DESKTOP") == "1";
+#endif
+            }
+        }
+
         /// <summary>
         /// Off the web there are no browser cookies: a session to send instead
-        /// (PORCHLIGHT_COOKIE, e.g. "pl_session=…"), or null to play offline.
+        /// (PORCHLIGHT_COOKIE, e.g. "pl_session=…", or the desktop app's own), or null to play offline.
         /// </summary>
         public static string Cookie
         {
@@ -40,12 +62,15 @@ namespace Porchlight.App
 #if UNITY_WEBGL && !UNITY_EDITOR
                 return null;
 #else
-                return Environment.GetEnvironmentVariable("PORCHLIGHT_COOKIE");
+                string given = Environment.GetEnvironmentVariable("PORCHLIGHT_COOKIE");
+                if (!string.IsNullOrEmpty(given)) return given;
+                string kept = Desktop ? NativeSignIn.Session : null;
+                return kept == null ? null : "pl_session=" + kept;
 #endif
             }
         }
 
-        /// <summary>Whether this platform can sign in at all (a browser, or a session handed over).</summary>
+        /// <summary>Whether this platform can sign in at all (a browser, the desktop app, or a session handed over).</summary>
         public static bool CanSignIn
         {
             get
@@ -53,9 +78,47 @@ namespace Porchlight.App
 #if UNITY_WEBGL && !UNITY_EDITOR
                 return true;
 #else
-                return !string.IsNullOrEmpty(Cookie);
+                return Desktop || !string.IsNullOrEmpty(Cookie);
 #endif
             }
+        }
+
+        /// <summary>
+        /// The desktop app's page reload: start it afresh (through the launcher, which
+        /// brings in a waiting update too) and close this one. False where it can't.
+        /// </summary>
+        public bool Relaunch()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return false;
+#else
+            try
+            {
+                string data = Application.dataPath;
+                if (Application.platform == RuntimePlatform.OSXPlayer)
+                {
+                    // …/Porchlight.app/Contents
+                    string bundle = System.IO.Path.GetDirectoryName(data);
+                    System.Diagnostics.Process.Start("/usr/bin/open", "-n \"" + bundle + "\"");
+                }
+                else if (Application.platform == RuntimePlatform.WindowsPlayer)
+                {
+                    // …\Porchlight_Data, beside the launcher and the game.
+                    string dir = System.IO.Path.GetDirectoryName(data);
+                    string launcher = System.IO.Path.Combine(dir, "PorchlightLauncher.exe");
+                    string exe = System.IO.File.Exists(launcher) ? launcher : System.IO.Path.Combine(dir, "Porchlight.exe");
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false, WorkingDirectory = dir });
+                }
+                else return false;
+                Application.Quit();
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("porchlight: couldn't start again: " + e.Message);
+                return false;
+            }
+#endif
         }
 
         public IWebSocket NewSocket()
@@ -105,7 +168,12 @@ namespace Porchlight.App
                 return PL_Location();
 #else
                 string hash = Environment.GetEnvironmentVariable("PORCHLIGHT_HASH");
-                return (Environment.GetEnvironmentVariable("PORCHLIGHT_ORIGIN") ?? "http://localhost:3017/") + (string.IsNullOrEmpty(hash) ? "" : "#" + hash.TrimStart('#'));
+#if PORCHLIGHT_DESKTOP
+                const string HOME = DESKTOP_ORIGIN;
+#else
+                const string HOME = "http://localhost:3017/";
+#endif
+                return (Environment.GetEnvironmentVariable("PORCHLIGHT_ORIGIN") ?? HOME) + (string.IsNullOrEmpty(hash) ? "" : "#" + hash.TrimStart('#'));
 #endif
             }
         }

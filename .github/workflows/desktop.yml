@@ -1,0 +1,178 @@
+name: Desktop
+
+# The desktop app, for Windows and macOS, released on GitHub for every push to
+# main as version 0.0.<run number>. Velopack (vpk) packs each build with a
+# delta from the release before it; the installed app's launcher
+# (desktop/Launcher) downloads the newest in the background while you play,
+# and it's applied the next time you start it. See desktop/README.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One at a time and in order: each release's delta is made from the one before.
+concurrency:
+  group: desktop
+  cancel-in-progress: false
+
+env:
+  VERSION: 0.0.${{ github.run_number }}
+  VPK_VERSION: 1.2.161
+  REPO_URL: https://github.com/${{ github.repository }}
+
+jobs:
+  # --- The game, built in Unity's Docker image (game-ci), for each system ------
+  unity:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: windows
+            target: StandaloneWindows64
+            method: Porchlight.EditorTools.Setup.BuildWindowsApp
+            dir: Windows
+          - name: mac
+            target: StandaloneOSX
+            method: Porchlight.EditorTools.Setup.BuildMacApp
+            dir: macOS-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unity licence
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "::error::The UNITY_LICENSE secret isn't set, so the game can't be built. See infra/README.md > One-time setup."
+            exit 1
+          fi
+
+      # As in deploy.yml: the import cache for exactly these sources (and this system).
+      - uses: actions/cache@v4
+        with:
+          path: unity/Library
+          key: unity-library-${{ matrix.name }}-${{ hashFiles('unity/Assets/**', 'unity/Packages/**', 'unity/ProjectSettings/**') }}
+
+      - name: Game — ${{ matrix.name }} build
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity
+          targetPlatform: ${{ matrix.target }}
+          buildMethod: ${{ matrix.method }}
+          customParameters: -porchlightVersion ${{ env.VERSION }}
+
+      # A tarball, as artifacts don't keep the executable bit.
+      - name: Bundle the build
+        run: |
+          sudo chown -R "$(id -u)" unity/Builds
+          rm -rf unity/Builds/${{ matrix.dir }}/*_DoNotShip
+          tar -czf game-${{ matrix.name }}.tar.gz -C unity/Builds/${{ matrix.dir }} .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: game-${{ matrix.name }}
+          path: game-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  # --- Packed by Velopack, each on its own system -------------------------------
+  windows:
+    needs: unity
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: game-windows
+      - name: Game and launcher side by side
+        run: |
+          mkdir app
+          tar -xzf game-windows.tar.gz -C app
+          dotnet publish desktop/Launcher -c Release -r win-x64 -o launcher -p:Version=$VERSION --nologo
+          cp launcher/PorchlightLauncher.exe app/
+          ls app
+      - name: Pack
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dotnet tool install -g vpk --version $VPK_VERSION
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          # The release before, for the delta (none the first time).
+          vpk download github --repoUrl $REPO_URL --token $GH_TOKEN --channel win -o releases || echo "no earlier release"
+          vpk pack --packId Porchlight --packVersion $VERSION --packTitle Porchlight --packAuthors Porchlight \
+            --packDir app --mainExe PorchlightLauncher.exe --icon desktop/AppIcon.ico \
+            --channel win -o releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: releases-win
+          path: releases
+          if-no-files-found: error
+          retention-days: 3
+
+  mac:
+    needs: unity
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: game-mac
+      - name: Pack
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir game && tar -xzf game-mac.tar.gz -C game
+          dotnet tool install -g vpk --version $VPK_VERSION
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          vpk download github --repoUrl $REPO_URL --token $GH_TOKEN --channel osx -o releases || echo "no earlier release"
+          desktop/pack-mac.sh game/Porchlight.app $VERSION releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: releases-osx
+          path: releases
+          if-no-files-found: error
+          retention-days: 3
+
+  # --- One release with both, published ----------------------------------------
+  release:
+    needs: [windows, mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: releases-win
+          path: releases-win
+      - uses: actions/download-artifact@v4
+        with:
+          name: releases-osx
+          path: releases-osx
+      - name: Publish v${{ env.VERSION }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dotnet tool install -g vpk --version $VPK_VERSION
+          export PATH="$PATH:$HOME/.dotnet/tools"
+          common=(--repoUrl "$REPO_URL" --token "$GH_TOKEN" --tag "v$VERSION" --releaseName "Porchlight $VERSION" --targetCommitish "$GITHUB_SHA" --publish)
+          vpk upload github "${common[@]}" --channel win -o releases-win
+          vpk upload github "${common[@]}" --channel osx -o releases-osx --merge

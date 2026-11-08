@@ -566,6 +566,25 @@ Label {
     text-shadow: 4px 4px 0 #000000;
 }
 
+/* The lantern beside the name, its shadow (baked into the picture) like the name's. */
+.signin-brand {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.signin-brand > .signin-title {
+    margin-bottom: 0;
+}
+
+.signin-logo {
+    width: 35px;
+    height: 52px;
+    margin-right: 14px;
+    flex-shrink: 0;
+}
+
 .signin-button {
     padding: 11px 16px;
     border-width: 0;

@@ -260,6 +260,24 @@ namespace Porchlight.App
 
         void BeginSignIn()
         {
+            // Smoke run (PORCHLIGHT_SMOKE_SIGNIN=1, against a stand-in auth service): the desktop
+            // sign-in with a fetch for a browser, then who that made us, then forgotten again.
+            if (Platform.Desktop && Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_SIGNIN") == "1")
+            {
+                NativeSignIn.Open = url => platform.Request("GET", url, null, (st, _) => Debug.Log($"smoke: signin: the browser came back with {st}"));
+                NativeSignIn.Begin(origin, problem =>
+                {
+                    Debug.Log($"smoke: signin: {problem ?? "signed in"}, cookie {(Platform.Cookie != null ? "kept" : "none")}");
+                    Account.FetchMe(platform, origin, (u, _, err, status) =>
+                    {
+                        Debug.Log($"smoke: signin: /auth/me {status} as {u?.name ?? err}");
+                        NativeSignIn.Forget();
+                        Debug.Log($"smoke: signin: forgotten, cookie {(Platform.Cookie != null ? "kept" : "none")}");
+                        Application.Quit(0);
+                    });
+                });
+                return;
+            }
             if (!Platform.CanSignIn)
             {
                 // Off the web with no session handed over: play alone.
@@ -319,14 +337,45 @@ namespace Porchlight.App
                     return;
                 }
                 // The card straight away; the scenery behind it can follow.
-                var gate = SignInGate.Show(root, provider, error ?? err, () =>
-                {
-                    string returnTo = platform.PathName + platform.Search + platform.Hash;
-                    platform.Navigate("/auth/login?returnTo=" + Uri.EscapeDataString(returnTo));
-                });
+                var gate = SignInGate.Show(root, provider, error ?? err, () => SignIn(provider));
                 // Not a first load to time: the next one will most likely be signed in.
                 HideLoader(false);
                 AfterPaint(StartAttract);
+            });
+        }
+
+        /// <summary>Off to sign in: the page goes to the auth service; the desktop app sends the system browser, and starts again signed in.</summary>
+        void SignIn(string provider)
+        {
+            if (!Platform.Desktop)
+            {
+                string returnTo = platform.PathName + platform.Search + platform.Hash;
+                platform.Navigate("/auth/login?returnTo=" + Uri.EscapeDataString(returnTo));
+                return;
+            }
+            NativeSignIn.Begin(origin, problem =>
+            {
+                if (problem == null && platform.Relaunch()) return;
+                root.Q("signin")?.RemoveFromHierarchy();
+                // Signed in, somewhere it can't start again (the editor): ask who, as a reload would.
+                if (problem == null) AskWho(null, platform.Now() + SERVER_WAIT_MS);
+                else SignInGate.Show(root, provider, problem, () => SignIn(provider));
+            });
+        }
+
+        /// <summary>Signed out: the page goes via the auth service; the desktop app forgets its session and starts again.</summary>
+        void SignOut()
+        {
+            if (!Platform.Desktop)
+            {
+                platform.PostForm("/auth/logout");
+                return;
+            }
+            // Ends the sign-in at Keycloak too, then forgets it here, whatever the answer.
+            platform.Request("POST", origin + "/auth/logout", null, (_, __) =>
+            {
+                NativeSignIn.Forget();
+                if (!platform.Relaunch()) Application.Quit();
             });
         }
 
@@ -753,7 +802,7 @@ namespace Porchlight.App
             }, SetSidebarOpen);
             if (user != null)
             {
-                sidebar.SetAccount(user.name, user.email, () => platform.PostForm("/auth/logout"));
+                sidebar.SetAccount(user.name, user.email, SignOut);
                 footer.style.display = DisplayStyle.None;
                 panel.root.style.visibility = Visibility.Hidden;
             }
@@ -777,7 +826,7 @@ namespace Porchlight.App
         void OpenFrontDoor(string message = null)
         {
             root.AddToClassList("choosing");
-            door ??= new FrontDoor(root, platform, origin, () => portraits ??= new Portraits(ModelLibrary.Instance), () => RandomSeed(), () => platform.PostForm("/auth/logout"));
+            door ??= new FrontDoor(root, platform, origin, () => portraits ??= new Portraits(ModelLibrary.Instance), () => RandomSeed(), SignOut);
             door.Listed = () =>
             {
                 loader.Step("characters");

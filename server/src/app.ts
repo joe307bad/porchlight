@@ -7,6 +7,16 @@
 //   POST /auth/logout                    clear the cookie, end the Keycloak session
 //   GET  /auth/health
 //
+// The desktop app (desktop/, no browser cookies of its own) signs in through
+// the system browser and a loopback address, as native apps do (RFC 8252):
+//
+//   GET  /auth/login?native=<port>&challenge=<S256 of a verifier>
+//        the same handshake, but at the end the browser goes to
+//        http://127.0.0.1:<port>/?code=<one-time code> (no cookie set there)
+//   POST /auth/native {code, verifier}
+//        the app trades the code (one use, two minutes) and the verifier only
+//        it knows for the session value, which it then sends as the cookie
+//
 // Two cookies, both HttpOnly + SameSite=Lax (+ Secure over HTTPS):
 //   pl_signin   the in-flight handshake (state, nonce, PKCE verifier), 10 minutes, /auth only
 //   pl_session  who signed in and their id token, for as long as Keycloak's session
@@ -14,17 +24,54 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Config } from './config.ts';
 import { clearCookie, parseCookies, seal, serializeCookie, unseal } from './cookies.ts';
-import { authorizeUrl, exchangeCode, logoutUrl, randomToken, type Identity } from './oidc.ts';
+import { authorizeUrl, codeChallenge, exchangeCode, logoutUrl, randomToken, type Identity } from './oidc.ts';
 
 export const SESSION_COOKIE = 'pl_session';
 export const SIGNIN_COOKIE = 'pl_signin';
 const SIGNIN_TTL = 600;
+/** How long the desktop app has to trade its code for the session (ms). */
+const HANDOFF_MS = 120_000;
+
+interface Native {
+  port: number;
+  challenge: string;
+}
 
 interface Pending {
   state: string;
   nonce: string;
   verifier: string;
   returnTo: string;
+  native?: Native;
+}
+
+interface Handoff {
+  payload: SessionPayload;
+  seconds: number;
+  challenge: string;
+  until: number;
+}
+
+/** The desktop app's loopback port and PKCE challenge, if this is its sign-in; null if it isn't, 'bad' if they're malformed. */
+export function nativeOf(port: string | null, challenge: string | null): Native | null | 'bad' {
+  if (port === null && challenge === null) return null;
+  const n = Number(port);
+  if (!Number.isInteger(n) || n < 1024 || n > 65535 || !challenge || !/^[A-Za-z0-9_-]{43}$/.test(challenge)) return 'bad';
+  return { port: n, challenge };
+}
+
+async function readJson(req: IncomingMessage, limit = 4096): Promise<Record<string, unknown> | null> {
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > limit) return null;
+  }
+  try {
+    const v = JSON.parse(body);
+    return v && typeof v === 'object' ? v : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface SessionPayload {
@@ -42,8 +89,13 @@ export function safeReturnTo(raw: string | null): string {
 
 type Exchange = (config: Config, code: string, verifier: string, nonce: string) => Promise<Identity>;
 
-export function createHandler(config: Config, exchange: Exchange = exchangeCode) {
+export function createHandler(config: Config, exchange: Exchange = exchangeCode, now: () => number = Date.now) {
   const signinCookie = { path: '/auth', secure: config.secureCookies };
+  // The desktop app's codes waiting to be traded: in memory, as they last two minutes at most.
+  const handoffs = new Map<string, Handoff>();
+  const sweep = () => {
+    for (const [code, h] of handoffs) if (h.until <= now()) handoffs.delete(code);
+  };
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', config.appUrl);
@@ -68,11 +120,14 @@ export function createHandler(config: Config, exchange: Exchange = exchangeCode)
       }
 
       if (req.method === 'GET' && url.pathname === '/auth/login') {
+        const native = nativeOf(url.searchParams.get('native'), url.searchParams.get('challenge'));
+        if (native === 'bad') return send(400, { error: 'bad native sign-in' });
         const pending: Pending = {
           state: randomToken(),
           nonce: randomToken(),
           verifier: randomToken(),
           returnTo: safeReturnTo(url.searchParams.get('returnTo')),
+          ...(native ? { native } : {}),
         };
         const cookie = serializeCookie(SIGNIN_COOKIE, seal(config.sessionSecret, pending, SIGNIN_TTL), {
           ...signinCookie,
@@ -84,8 +139,9 @@ export function createHandler(config: Config, exchange: Exchange = exchangeCode)
       if (req.method === 'GET' && url.pathname === '/auth/callback') {
         const pending = unseal<Pending>(config.sessionSecret, cookies.get(SIGNIN_COOKIE));
         const done = clearCookie(SIGNIN_COOKIE, signinCookie);
+        const back = pending?.native ? `http://127.0.0.1:${pending.native.port}/` : null;
         const fail = (message: string) =>
-          redirect(`${config.appUrl}/?auth_error=${encodeURIComponent(message)}`, [done]);
+          redirect(back ? `${back}?error=${encodeURIComponent(message)}` : `${config.appUrl}/?auth_error=${encodeURIComponent(message)}`, [done]);
 
         const error = url.searchParams.get('error');
         if (error) return fail(url.searchParams.get('error_description') ?? error);
@@ -106,11 +162,36 @@ export function createHandler(config: Config, exchange: Exchange = exchangeCode)
           email: identity.email,
           idToken: identity.idToken,
         };
+        if (back && pending.native) {
+          // The desktop app: a one-time code to its loopback address, and no cookie in this browser.
+          sweep();
+          const handoff = randomToken();
+          handoffs.set(handoff, { payload, seconds: identity.sessionSeconds, challenge: pending.native.challenge, until: now() + HANDOFF_MS });
+          return redirect(`${back}?code=${encodeURIComponent(handoff)}`, [done]);
+        }
         const cookie = serializeCookie(SESSION_COOKIE, seal(config.sessionSecret, payload, identity.sessionSeconds), {
           maxAge: identity.sessionSeconds,
           secure: config.secureCookies,
         });
         return redirect(`${config.appUrl}${pending.returnTo}`, [done, cookie]);
+      }
+
+      if (req.method === 'POST' && url.pathname === '/auth/native') {
+        const body = await readJson(req);
+        const code = typeof body?.code === 'string' ? body.code : '';
+        const verifier = typeof body?.verifier === 'string' ? body.verifier : '';
+        const h = handoffs.get(code);
+        // One go only, right verifier or not.
+        handoffs.delete(code);
+        if (!h || h.until <= now() || codeChallenge(verifier) !== h.challenge) {
+          return send(400, { error: 'Sign-in was interrupted. Please try again.' });
+        }
+        return send(200, {
+          session: seal(config.sessionSecret, h.payload, h.seconds, now()),
+          seconds: h.seconds,
+          name: h.payload.name,
+          email: h.payload.email,
+        });
       }
 
       if (req.method === 'POST' && url.pathname === '/auth/logout') {

@@ -319,15 +319,65 @@ namespace Porchlight.EditorTools
         [MenuItem("Porchlight/Build macOS")]
         public static void BuildMac() => Build(BuildTarget.StandaloneOSX, "Builds/macOS/Porchlight.app");
 
-        static void Build(BuildTarget target, string path)
+        // The desktop app (desktop.yml): Windows and macOS (both kinds of Mac), signing in
+        // through the system browser to the live server, with the lantern for an icon and
+        // `-porchlightVersion 0.0.N` for a version. Velopack and desktop/Launcher do the rest.
+
+        [MenuItem("Porchlight/Build desktop app (Windows)")]
+        public static void BuildWindowsApp()
+        {
+            if (Application.platform != RuntimePlatform.WindowsEditor || Environment.GetEnvironmentVariable("PORCHLIGHT_NO_BURST") == "1") NoBurst("StandaloneWindows", "StandaloneWindows64");
+            Build(BuildTarget.StandaloneWindows64, "Builds/Windows/Porchlight.exe", true);
+        }
+
+        [MenuItem("Porchlight/Build desktop app (macOS)")]
+        public static void BuildMacApp()
+        {
+            UnityEditor.OSXStandalone.UserBuildSettings.architecture = UnityEditor.Build.OSArchitecture.x64ARM64;
+            if (Application.platform != RuntimePlatform.OSXEditor || Environment.GetEnvironmentVariable("PORCHLIGHT_NO_BURST") == "1") NoBurst("StandaloneOSX");
+            Build(BuildTarget.StandaloneOSX, "Builds/macOS-app/Porchlight.app", true);
+        }
+
+        /// <summary>
+        /// Burst links native code with the target system's own tools (Apple's, Microsoft's), so
+        /// it can't build a Mac or Windows player anywhere else: built elsewhere (desktop.yml builds
+        /// on Linux), or with PORCHLIGHT_NO_BURST=1, the jobs it would compile run as managed code.
+        /// The settings file is the build machine's only (desktop.yml's is thrown away).
+        /// </summary>
+        static void NoBurst(params string[] targets)
+        {
+            foreach (var t in targets)
+                File.WriteAllText($"ProjectSettings/BurstAotSettings_{t}.json",
+                    "{\n  \"MonoBehaviour\": {\n    \"Version\": 4,\n    \"EnableBurstCompilation\": false\n  }\n}\n");
+            AssetDatabase.Refresh();
+            Debug.Log("Porchlight: Burst off for " + string.Join(", ", targets));
+        }
+
+        const string AppIconPath = "Assets/Porchlight/Branding/AppIcon.png";
+
+        static void Desktop()
+        {
+            var args = Environment.GetCommandLineArgs();
+            int at = Array.IndexOf(args, "-porchlightVersion");
+            if (at >= 0 && at + 1 < args.Length) PlayerSettings.bundleVersion = args[at + 1];
+            var icon = AssetDatabase.LoadAssetAtPath<Texture2D>(AppIconPath);
+            // Every size from the one picture (Unity scales it).
+            var standalone = UnityEditor.Build.NamedBuildTarget.Standalone;
+            if (icon != null) PlayerSettings.SetIcons(standalone, Enumerable.Repeat(icon, PlayerSettings.GetIconSizes(standalone, IconKind.Application).Length).ToArray(), IconKind.Application);
+            else Debug.LogWarning("Porchlight: no app icon at " + AppIconPath);
+        }
+
+        static void Build(BuildTarget target, string path, bool desktop = false)
         {
             Run();
+            if (desktop) Desktop();
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
                 scenes = new[] { ScenePath },
                 locationPathName = path,
                 target = target,
                 options = BuildOptions.None,
+                extraScriptingDefines = desktop ? new[] { "PORCHLIGHT_DESKTOP" } : null,
             });
             var s = report.summary;
             Debug.Log($"Porchlight: build {s.result} in {s.totalTime} ({s.totalErrors} errors, {s.totalWarnings} warnings) → {path}");

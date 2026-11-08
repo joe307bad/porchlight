@@ -45,3 +45,6 @@ Tools~/**/obj/
 /Assets/Porchlight/Resources/Porchlight/Library.asset
 /Assets/Porchlight/Resources/Porchlight/Library.asset.meta
 !Tools~/Checks/Checks.csproj
+
+# Burst switched off for a cross-built desktop player (Editor/Setup.cs NoBurst): that machine only.
+ProjectSettings/BurstAotSettings_*.json
