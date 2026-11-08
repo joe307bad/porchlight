@@ -497,6 +497,15 @@ namespace Porchlight.App
             }
         }
 
+        /// <summary>You sprint faster (the `sprint` unlock).</summary>
+        public bool FastSprint
+        {
+            set
+            {
+                if (player != null) player.sprint = value ? Player.FAST_SPRINT : Player.SPRINT;
+            }
+        }
+
         /// <summary>How fast you walk and run, against your usual.</summary>
         public double YourPace
         {
@@ -1083,6 +1092,9 @@ namespace Porchlight.App
 
         /// <summary>Could a car be here (on a road, its parking lanes, a driveway…)?</summary>
         public bool CanDriveAt(double x, double y) => canDrive(x, y);
+
+        /// <summary>Could someone stand here (on open ground, clear of walls and sheds)?</summary>
+        public bool CanStandAt(double x, double y) => world != null && open.Length > 0 && Player.Standable(x, y, open, world.model, world.solids, walkPaved);
 
         public bool InRoom => room != null;
 

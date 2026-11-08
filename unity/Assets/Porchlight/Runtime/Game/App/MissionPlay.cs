@@ -145,6 +145,32 @@ namespace Porchlight.App
             public bool running;
         }
 
+        /// <summary>A race course as a role: the way, how far you've got along it, and its ribbon and crowds.</summary>
+        sealed class Race
+        {
+            public Course course;
+            public CourseRun run;
+            public RaceCourse scene;
+        }
+
+        /// <summary>A stopwatch: counting up from when it starts (as you cross a course's start line) until it stops (you finish).</summary>
+        sealed class Watch
+        {
+            public string label, role;
+            public double time;
+            public bool started, stopped;
+        }
+
+        /// <summary>
+        /// This mission's best times in this town, as the server had them when it began (0: none): yours,
+        /// and the town's and who ran it. The story's record() keeps a new one (OnRecord sends it).
+        /// </summary>
+        public sealed class Times
+        {
+            public double mine, best;
+            public string holder = "";
+        }
+
         static readonly Color SirenRed = Coords.Hex(0xff2a2a);
         static readonly Color SirenBlue = Coords.Hex(0x2a6bff);
 
@@ -197,6 +223,11 @@ namespace Porchlight.App
         DriveGrid grid;
         /// <summary>The story's unlock (Catalog.UNLOCKS): the app keeps it.</summary>
         public Action<string> OnUnlock;
+        /// <summary>A time the story keeps (record): the app sends it to the server, for this town.</summary>
+        public Action<double> OnRecord;
+        readonly Times times;
+        readonly Dictionary<string, Race> races = new Dictionary<string, Race>();
+        Watch watch;
         Clock clock;
         readonly Firefight fight;
         /// <summary>The car you had before the story gave you one (your_car): -1 none; null if it hasn't.</summary>
@@ -221,16 +252,33 @@ namespace Porchlight.App
         {
             get
             {
-                if (clock == null) return objective;
-                int s = (int)Math.Ceiling(clock.left);
-                string time = $"{clock.label} {s / 60}:{s % 60:00}{(clock.running ? "" : " (stopped)")}";
-                return objective.Length == 0 ? time : $"{objective} · {time}";
+                string text = objective;
+                if (clock != null)
+                {
+                    int s = (int)Math.Ceiling(clock.left);
+                    string time = $"{clock.label} {s / 60}:{s % 60:00}{(clock.running ? "" : " (stopped)")}";
+                    text = text.Length == 0 ? time : $"{text} · {time}";
+                }
+                if (watch != null)
+                {
+                    int tenths = (int)Math.Floor(watch.time * 10);
+                    string time = $"{watch.label} {tenths / 600}:{tenths / 10 % 60:00}.{tenths % 10}";
+                    if (races.TryGetValue(watch.role, out var race))
+                    {
+                        double km = Directions.METRES_PER_TILE / 1000;
+                        time += watch.started ? $" · {race.run.progress * km:0.0} of {race.course.Length * km:0.0} km" : " · cross the start line";
+                    }
+                    text = text.Length == 0 ? time : $"{text} · {time}";
+                }
+                return text;
             }
         }
         /// <summary>The mission's fires and the turret (the smoke run aims it).</summary>
         public Firefight Fight => fight;
         /// <summary>The role's marked spot, if it has one (the smoke run parks in it).</summary>
         public Vehicle.Spot? SpotOf(string role) => roles.TryGetValue(role ?? "", out var r) && r.Marked ? r.spot : null;
+        /// <summary>The role's race course, if it's one (the smoke run runs it).</summary>
+        public Course CourseOf(string role) => races.TryGetValue(role ?? "", out var r) ? r.course : null;
         /// <summary>Which of the conversation's choices the keys or pad are on.</summary>
         public int Highlighted => highlighted;
         /// <summary>How many cars are after you.</summary>
@@ -244,8 +292,9 @@ namespace Porchlight.App
             return $"{cops.Count(c => c.duty != Duty.Driving)} officers out, nearest stopped car {stopped:0.0} tiles off";
         }
 
-        public MissionPlay(string id, string title, string story, ExploreView view, ModelLibrary library, GameInput input)
+        public MissionPlay(string id, string title, string story, ExploreView view, ModelLibrary library, GameInput input, Times times = null)
         {
+            this.times = times ?? new Times();
             this.id = id;
             this.title = title;
             this.view = view;
@@ -273,6 +322,9 @@ namespace Porchlight.App
             foreach (var cop in standing.Values.SelectMany(l => l)) DisposeCop(cop);
             standing.Clear();
             clock = null;
+            watch = null;
+            foreach (var r in races.Values) r.scene.Dispose();
+            races.Clear();
             fight.Dispose();
             GiveCarBack();
             view.Obstacles.Clear();
@@ -297,8 +349,9 @@ namespace Porchlight.App
 
         public void Hint(string when, string role, string text)
         {
-            if (when != "always" && when != "no_car" && when != "near" && when != "near_driving")
-                throw new Exception($"no such condition '{when}' (always, no_car, near or near_driving)");
+            if (when != "always" && when != "no_car" && when != "near" && when != "near_driving" && when != "off_course")
+                throw new Exception($"no such condition '{when}' (always, no_car, near, near_driving or off_course)");
+            if (when == "off_course" && !races.ContainsKey(role ?? "")) throw new Exception($"no course called '{role}' (call course first)");
             if (string.IsNullOrEmpty(text)) return;
             hints.Add(new HintLine { when = when, role = role ?? "", text = text });
         }
@@ -554,6 +607,17 @@ namespace Porchlight.App
 
         public void PutYou(string role, string at)
         {
+            if (races.TryGetValue(role ?? "", out var race))
+            {
+                if (at != "start" && at != "finish") throw new Exception($"put you where on a course? '{at}' (start or finish)");
+                // Just behind the line, facing the way it runs; a new run from the start.
+                double s = at == "start" ? 0.15 : race.course.Length - 0.3;
+                var (point, along, _) = race.course.At(s);
+                view.PutPlayer(point, DetMath.Atan2(along.x, along.y));
+                race.run.progress = at == "start" ? 0 : s;
+                if (watch != null && watch.role == role && at == "start") watch = new Watch { label = watch.label, role = watch.role };
+                return;
+            }
             var r = RoleOf(role);
             var to = WhereOf(at);
             if (to == Where.Car) throw new Exception("put you where? 'car' (inside, door or kerb)");
@@ -680,6 +744,63 @@ namespace Porchlight.App
             fight.Offer(role, r.door, crew, look);
         }
 
+        public int Course(string role, double crowd)
+        {
+            if (string.IsNullOrEmpty(role)) throw new Exception("a course needs a role's name");
+            if (roles.ContainsKey(role) || chases.ContainsKey(role)) throw new Exception($"'{role}' is already another role");
+            if (crowd < 0 || crowd > 1) throw new Exception("a crowd is 0 to 1");
+            var world = view.world;
+            var course = Porchlight.Explore.Course.Longest(world.layout.roads, world.model.width, world.model.height)
+                ?? throw new Exception("this town's streets don't run from one corner to the other");
+            if (races.TryGetValue(role, out var old)) old.scene.Dispose();
+            races[role] = new Race { course = course, run = new CourseRun(course), scene = new RaceCourse(course, crowd, view, rng) };
+            return (int)Math.Round(course.Length * Directions.METRES_PER_TILE);
+        }
+
+        public void Stopwatch(string label, string role)
+        {
+            if (string.IsNullOrEmpty(label))
+            {
+                watch = null;
+                return;
+            }
+            if (!string.IsNullOrEmpty(role) && !races.ContainsKey(role)) throw new Exception($"no course called '{role}' (call course first)");
+            watch = new Watch { label = label, role = role ?? "", started = string.IsNullOrEmpty(role) };
+        }
+
+        public double StopwatchTime() => watch != null ? Math.Round(watch.time, 2) : throw new Exception("there's no stopwatch (call stopwatch first)");
+
+        public double Record(double seconds)
+        {
+            if (!(seconds > 0)) throw new Exception("a record needs a time");
+            double before = times.mine;
+            if (before <= 0 || seconds < before) times.mine = seconds;
+            OnRecord?.Invoke(seconds);
+            return before;
+        }
+
+        public double TownRecord() => times.best;
+
+        public string TownRecordHolder() => times.holder ?? "";
+
+        /// <summary>The courses: how far you've got along each (on foot and on the ground only), their crowds, and the stopwatch.</summary>
+        void UpdateRaces(double dt)
+        {
+            var you = view.PlayerPosition;
+            bool counts = !view.InCar && view.YourHeight < 0.5;
+            foreach (var race in races.Values)
+            {
+                if (you != null) race.run.Step(you.Value, counts);
+                race.scene.Update(dt, you);
+            }
+            if (watch == null || watch.stopped) return;
+            races.TryGetValue(watch.role, out var on);
+            if (!watch.started && on != null && on.run.progress > 0.6) watch.started = true;
+            // It doesn't run while you read.
+            if (watch.started && !view.InDialogue) watch.time += dt;
+            if (on != null && on.run.Finished) watch.stopped = true;
+        }
+
         /// <summary>Somewhere for a chase's car to start (or start again): in a parking lane out of the way, else nearer, else further.</summary>
         Vehicle.Spot? StartFor(Vec2 you, List<Vec2> busy)
         {
@@ -768,6 +889,7 @@ namespace Porchlight.App
         public bool Met(string wait, string role)
         {
             if (wait == "countdown") return clock != null && clock.left <= 0;
+            if (wait == "finished") return races.TryGetValue(role ?? "", out var race) && race.run.Finished;
             if (wait == "out") return fight.Out(role);
             if (wait == "doused") return fight.TakeDoused(role);
             if (wait == "caught")
@@ -1152,6 +1274,11 @@ namespace Porchlight.App
             {
                 case "always":
                     return true;
+                case "off_course":
+                {
+                    var you = view.PlayerPosition;
+                    return you != null && races.TryGetValue(h.role, out var race) && !race.run.Finished && !race.run.OnCourse(you.Value);
+                }
                 case "no_car":
                     return view.OwnVehicle == null;
                 case "near":
@@ -1235,6 +1362,7 @@ namespace Porchlight.App
             UpdateBeacon(WaitingToTalk(), dt);
             UpdateDot();
             UpdateChases(dt);
+            UpdateRaces(dt);
             if (clock != null)
             {
                 clock.running = clock.when == "always" || (roles.TryGetValue(clock.role, out var r) && YouInside(r) == (clock.when == "inside"));

@@ -9,7 +9,8 @@
 // and @outside zoo: you're in or out of the role's grounds, @caught police:
 // the role's chasers have had you, @countdown: the countdown's run out,
 // @doused fire: one of the role's burning windows has gone out, @out fire:
-// they all have, @wait 3: three seconds on). The story changes the town through its EXTERNAL
+// they all have, @finished race: you've run the role's course to its finish,
+// @wait 3: three seconds on). The story changes the town through its EXTERNAL
 // functions, generic building blocks the world (IMissionWorld) carries out:
 // what a mission is about lives in its story, not here. Pure: the game
 // supplies the world.
@@ -96,7 +97,26 @@ namespace Porchlight.Missions
         /// you do. "" role takes it away (and you down from it).
         /// </summary>
         void Turret(string role, int crew, string look);
-        /// <summary>Is this wait met yet? talk, parked, idle, inside, outside, caught, doused or out for a role, or countdown.</summary>
+        /// <summary>
+        /// A race course as a role: the longest way along the streets from one corner of the town to the
+        /// opposite one, fenced with ribbon both sides and lined with people (`crowd` 0 to 1, how packed).
+        /// put_you(role, "start") puts you on its start line. Returns how long it is, in metres.
+        /// </summary>
+        int Course(string role, double crowd);
+        /// <summary>
+        /// A stopwatch shown called label: with a course's role, it starts as you cross its start line and
+        /// stops as you finish (@finished); with "" it starts now. "" label takes it away.
+        /// </summary>
+        void Stopwatch(string label, string role);
+        /// <summary>The stopwatch's time, in seconds (to the hundredth).</summary>
+        double StopwatchTime();
+        /// <summary>Keep a time as yours for this mission in this town (if it's your best there); your best there before it (0: none).</summary>
+        double Record(double seconds);
+        /// <summary>This town's best time for this mission, by anyone, as the mission began (0: none yet).</summary>
+        double TownRecord();
+        /// <summary>Who ran it ("" none).</summary>
+        string TownRecordHolder();
+        /// <summary>Is this wait met yet? talk, parked, idle, inside, outside, caught, doused, out or finished for a role, or countdown.</summary>
         bool Met(string wait, string role);
         /// <summary>Who plays the role, for their lines (null: no such role).</summary>
         string NameOf(string role);
@@ -111,7 +131,7 @@ namespace Porchlight.Missions
 
     public struct MissionWait
     {
-        /// <summary>talk, parked, idle, inside, outside, caught, doused, out, countdown or wait.</summary>
+        /// <summary>talk, parked, idle, inside, outside, caught, doused, out, finished, countdown or wait.</summary>
         public string kind;
         public string role;
         /// <summary>For @wait: how many seconds.</summary>
@@ -120,8 +140,8 @@ namespace Porchlight.Missions
 
     public sealed class MissionScript
     {
-        /// <summary>The waits the town knows (@talk, @parked, @idle, @inside, @outside, @caught, @doused and @out a role, @countdown, @wait seconds).</summary>
-        static readonly string[] WAITS = { "talk", "parked", "idle", "inside", "outside", "caught", "doused", "out", "countdown", "wait" };
+        /// <summary>The waits the town knows (@talk, @parked, @idle, @inside, @outside, @caught, @doused, @out and @finished a role, @countdown, @wait seconds).</summary>
+        static readonly string[] WAITS = { "talk", "parked", "idle", "inside", "outside", "caught", "doused", "out", "finished", "countdown", "wait" };
 
         readonly Story story;
         readonly IMissionWorld world;
@@ -185,6 +205,12 @@ namespace Porchlight.Missions
             Bind("your_car", a => { world.YourCar(Str(a, 0)); return null; });
             Bind("fire", a => world.Fire(Str(a, 0), (int)Math.Round(Num(a, 1))));
             Bind("turret", a => { world.Turret(Str(a, 0), (int)Math.Round(Num(a, 1)), Str(a, 2)); return null; });
+            Bind("course", a => world.Course(Str(a, 0), Num(a, 1)));
+            Bind("stopwatch", a => { world.Stopwatch(Str(a, 0), Str(a, 1)); return null; });
+            Bind("stopwatch_time", a => (float)world.StopwatchTime());
+            Bind("record", a => (float)world.Record(Num(a, 0)));
+            Bind("town_record", a => (float)world.TownRecord());
+            Bind("town_record_holder", a => world.TownRecordHolder() ?? "");
             Pump();
         }
 

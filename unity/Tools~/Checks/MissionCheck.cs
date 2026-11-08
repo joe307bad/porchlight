@@ -15,11 +15,11 @@ static class MissionCheck
 {
     sealed class Town : IMissionWorld
     {
-        static readonly string[] HINTS = { "always", "no_car", "near", "near_driving" };
+        static readonly string[] HINTS = { "always", "no_car", "near", "near_driving", "off_course" };
         static readonly string[] SETTINGS = { "talk_reach", "talk_reach_car", "park_reach", "park_speed", "park_angle", "car_reach", "walk_speed",
             "your_pace", "chase_speed", "chase_speed_car", "pull_up", "officer_speed", "officer_reach", "ring", "catch_reach", "catch_time",
             "douse_time", "water_speed", "aim_speed" };
-        static readonly string[] UNLOCKS = { "animals", "firefighter" };
+        static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint" };
         static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church", "zoo" };
         static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
         static readonly string[] PLACES = { "inside", "door", "kerb", "car" };
@@ -45,6 +45,9 @@ static class MissionCheck
         /// <summary>Each burning role's windows still alight, the role the turret's offered for, and the car the story gave you.</summary>
         readonly Dictionary<string, int> burning = new Dictionary<string, int>();
         string turret = "", car = "";
+        /// <summary>Courses, and the stopwatch ("" none) and which course it's on.</summary>
+        readonly HashSet<string> courses = new HashSet<string>();
+        string stopwatch = "", stopwatchOn = "";
 
         static void OneOf(string what, string value, string[] known)
         {
@@ -66,6 +69,7 @@ static class MissionCheck
         public void Hint(string when, string role, string text)
         {
             OneOf("condition", when, HINTS);
+            if (when == "off_course" && !courses.Contains(role)) throw new Exception($"no course called '{role}'");
             log.Add($"hint {when} {role}: {text}");
         }
         public void ClearHints() => log.Add("clear hints");
@@ -178,6 +182,12 @@ static class MissionCheck
         }
         public void PutYou(string role, string at)
         {
+            if (courses.Contains(role))
+            {
+                OneOf("place on a course", at, new[] { "start", "finish" });
+                log.Add($"put you at the {at} of {role}");
+                return;
+            }
             Placed(role);
             OneOf("place", at, PLACES);
             log.Add($"put you {at} {role}");
@@ -244,6 +254,29 @@ static class MissionCheck
             turret = role;
             log.Add(role == "" ? "turret off" : $"turret at {role}, {crew} crew");
         }
+        public int Course(string role, double crowd)
+        {
+            if (string.IsNullOrEmpty(role) || placed.Contains(role) || chases.Contains(role)) throw new Exception($"a course needs a role of its own, not '{role}'");
+            if (crowd < 0 || crowd > 1) throw new Exception("a crowd is 0 to 1");
+            courses.Add(role);
+            log.Add($"course {role}, crowd {crowd}");
+            return 4321;
+        }
+        public void Stopwatch(string label, string role)
+        {
+            if (!string.IsNullOrEmpty(label) && role != "" && !courses.Contains(role)) throw new Exception($"no course called '{role}'");
+            stopwatch = label ?? "";
+            stopwatchOn = stopwatch == "" ? "" : role;
+            log.Add(stopwatch == "" ? "stopwatch off" : $"stopwatch {label} on {role}");
+        }
+        public double StopwatchTime() => stopwatch != "" ? 754.32 : throw new Exception("there's no stopwatch");
+        public double Record(double seconds)
+        {
+            log.Add($"record {seconds}");
+            return 0;
+        }
+        public double TownRecord() => 0;
+        public string TownRecordHolder() => "";
         public string NameOf(string role) => names.TryGetValue(role, out var n) ? n : null;
 
         /// <summary>
@@ -257,6 +290,7 @@ static class MissionCheck
             if ((wait == "inside" || wait == "outside") && !placed.Contains(role)) return false;
             if (wait == "caught" && (!chases.Contains(role) || catches > 0)) return false;
             if (wait == "countdown" && !clock) return false;
+            if (wait == "finished" && (!courses.Contains(role) || stopwatchOn != role)) return false;
             // A fire goes out a window at a time, and only with the turret there to do it.
             if ((wait == "doused" || wait == "out") && (turret != role || !burning.TryGetValue(role, out int left) || left == 0 || (wait == "doused") != (left > 1))) return false;
             if (asked.Add($"{wait} {role} {log.Count}")) return false;
@@ -269,7 +303,7 @@ static class MissionCheck
         public int Cargo => cargo;
         /// <summary>Still looking like something else, or chased, at the end.</summary>
         public string Loose => look != "" ? $"still looking like {look}" : chases.Count > 0 ? $"still chased by {string.Join(", ", chases)}" : clock ? "a countdown still running"
-            : car != "" ? $"still in the story's {car}" : turret != "" ? "a turret still offered" : burning.Count > 0 ? "a fire still burning" : null;
+            : car != "" ? $"still in the story's {car}" : turret != "" ? "a turret still offered" : burning.Count > 0 ? "a fire still burning" : stopwatch != "" ? "a stopwatch still showing" : null;
     }
 
     public static int Run(string path)

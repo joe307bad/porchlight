@@ -69,6 +69,21 @@ namespace Porchlight.App
     }
 
     /// <summary>A house someone lives in.</summary>
+    /// <summary>A mission's best times in one town: fastest first, one per account.</summary>
+    public sealed class Board
+    {
+        public readonly List<BoardRow> best = new List<BoardRow>();
+        /// <summary>This account's best there (0: none).</summary>
+        public double mine;
+    }
+
+    public sealed class BoardRow
+    {
+        public string name;
+        public double seconds;
+        public bool mine;
+    }
+
     public sealed class HomeRow
     {
         public int x, y;
@@ -233,6 +248,22 @@ namespace Porchlight.App
                     p.unlocks.Add(new UnlockProgress { id = Json.Str(u, "id"), name = Json.Str(u, "name"), at = Json.Str(u, "at"), mission = Json.Str(u, "mission") });
                 done(p, null);
             });
+
+        /// <summary>done(board, error): a mission's best times in a town (its key), fastest first, and this account's.</summary>
+        public static void FetchRecords(INetPlatform net, string origin, string town, string mission, Action<Board, string> done) =>
+            Call(net, origin, "GET", $"/records?town={Uri.EscapeDataString(town)}&mission={Uri.EscapeDataString(mission)}", null, (json, err) => done(err != null ? null : BoardFrom(json), err));
+
+        /// <summary>Keep a time a character ran (if it's the account's best in the town): done(board after, error).</summary>
+        public static void KeepRecord(INetPlatform net, string origin, string town, string mission, string character, double seconds, Action<Board, string> done) =>
+            Call(net, origin, "POST", "/records", new Dictionary<string, object> { ["town"] = town, ["mission"] = mission, ["character"] = character, ["seconds"] = seconds }, (json, err) => done(err != null ? null : BoardFrom(json), err));
+
+        static Board BoardFrom(object json)
+        {
+            var b = new Board { mine = Json.Num(json, "mine", 0) };
+            foreach (var r in Json.Arr(json, "best") ?? new List<object>())
+                b.best.Add(new BoardRow { name = Json.Str(r, "name"), seconds = Json.Num(r, "seconds", 0), mine = r is Dictionary<string, object> d && d.TryGetValue("mine", out var m) && m is bool yes && yes });
+            return b;
+        }
 
         /// <summary>
         /// done(user, provider, error, status): the user when signed in; otherwise the

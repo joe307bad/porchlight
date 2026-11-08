@@ -46,7 +46,9 @@ namespace Porchlight.Explore
     public sealed class Player : Walker
     {
         const double PLAYER_SPEED = 3.4;
-        const double SPRINT = 1.8;
+        public const double SPRINT = 1.8;
+        /// <summary>Sprinting once `sprint` is unlocked (Marathon Runner): faster still.</summary>
+        public const double FAST_SPRINT = 2.4;
         const double EDGE = 0.2;
         public const double PLAYER_RADIUS = 0.1;
         const double AUTO_SPEED = 1.8;
@@ -65,6 +67,8 @@ namespace Porchlight.Explore
         public bool jumpHeld;
         /// <summary>How fast they walk and run, against a person's usual (a mission can slow you down).</summary>
         public double pace = 1;
+        /// <summary>How much faster than running a sprint is (FAST_SPRINT once it's unlocked).</summary>
+        public double sprint = SPRINT;
         double vx, vy;
         double buffered;
 
@@ -151,7 +155,7 @@ namespace Porchlight.Explore
                 y = next.y;
                 return;
             }
-            double top = PLAYER_SPEED * pace * (sprinting ? SPRINT : 1);
+            double top = PLAYER_SPEED * pace * (sprinting ? sprint : 1);
             double tx = dir != null ? dir.Value.x * top : 0;
             double ty = dir != null ? dir.Value.y * top : 0;
             bool air = lift > 0;

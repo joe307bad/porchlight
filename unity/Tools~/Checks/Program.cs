@@ -25,11 +25,12 @@ static class Program
         if (args.Length > 1 && args[0] == "mission") return MissionCheck.Run(args[1]);
         if (args.Length > 0 && args[0] == "chase") return ChaseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
         if (args.Length > 0 && args[0] == "homes") return HomesCheck();
+        if (args.Length > 0 && args[0] == "course") return CourseCheck.Run(System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(args.Length > 1 ? args[1] : "server/towns/porchlight.json")).RootElement.GetProperty("key").GetString());
         if (args.Length > 2 && args[0] == "measure") return Measure(args[1], args[2]);
         if (args.Length > 1 && args[0] == "town") return RegenerateTown(args[1], args.Length > 2 ? args[2] : null);
         if (args.Length > 2 && args[0] == "traffic") return TrafficCheck(args[1], args[2]);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
-        Console.Error.WriteLine("usage: towns [count] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
+        Console.Error.WriteLine("usage: towns [count] | course [town.json] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
     }
 
@@ -111,7 +112,7 @@ static class Program
     }
 
     /// <summary>A town key's seed and settings (what the game's ParseUrlState does, for keys with nothing to unescape).</summary>
-    static (string seed, GenParams settings) ParseKey(string key)
+    internal static (string seed, GenParams settings) ParseKey(string key)
     {
         var settings = new Dictionary<string, double>();
         string seed = null;

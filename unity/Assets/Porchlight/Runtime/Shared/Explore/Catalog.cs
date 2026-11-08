@@ -145,9 +145,10 @@ namespace Porchlight.Explore
         /// <summary>
         /// What a character can unlock (a mission's unlock; the server keeps them): `animals`,
         /// to be one of the zoo's animals (the character menu offers them after the people);
-        /// `firefighter`, to be the firefighter, and to have the fire engine in the car box.
+        /// `firefighter`, to be the firefighter, and to have the fire engine in the car box;
+        /// `sprint`, to sprint faster on foot (Marathon Runner).
         /// </summary>
-        public static readonly string[] UNLOCKS = { "animals", "firefighter" };
+        public static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint" };
 
         /// <summary>The car models the car box offers with these unlocks (indices into CARS): every car, the fire engine once unlocked.</summary>
         public static int[] GarageCars(ICollection<string> unlocks) =>

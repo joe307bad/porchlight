@@ -418,6 +418,8 @@ namespace Porchlight.App
             if (!string.IsNullOrEmpty(story)) await SmokeMission(System.IO.File.ReadAllText(story));
             var fire = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_FIRE");
             if (!string.IsNullOrEmpty(fire)) await SmokeFire(System.IO.File.ReadAllText(fire));
+            var marathon = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_MARATHON");
+            if (!string.IsNullOrEmpty(marathon)) await SmokeMarathon(System.IO.File.ReadAllText(marathon));
             SmokeZoo();
             // The animals unlocked: offered in the character box, and one to be.
             Unlock("animals");
@@ -524,6 +526,51 @@ namespace Porchlight.App
             if (iso.IsDriving) iso.ToggleCar();
             EndMission(null);
             Debug.Log($"smoke: mission: ended, look={iso.LookOverride ?? "(yourself)"}");
+        }
+
+        /// <summary>
+        /// The smoke run runs the marathon too (PORCHLIGHT_SMOKE_MARATHON: its story as the server
+        /// compiles it): the course built, ribbon and crowd and all, then you along it from the start
+        /// line to the finish a hop at a time, the stopwatch going, the time kept and the sprint earned.
+        /// </summary>
+        async Task SmokeMarathon(string story)
+        {
+            double began = platform.Now();
+            double kept = 0;
+            string earned = null;
+            mission = new MissionPlay("marathon", "Marathon", story, iso, ModelLibrary.Instance, input, new MissionPlay.Times()) { OnUnlock = what => earned = what, OnRecord = s => kept = s };
+            var course = mission.CourseOf("race");
+            var renderers = FindObjectsByType<Renderer>();
+            Debug.Log($"smoke: marathon: course {course?.Length * Directions.METRES_PER_TILE:0} m over {course?.roads.Count} streets, built in {platform.Now() - began:0} ms, {renderers.Count(r => r.name.StartsWith("race"))} race meshes ({renderers.Where(r => r.name.StartsWith("race crowd")).Sum(r => r.GetComponent<MeshFilter>().sharedMesh.vertexCount)} crowd vertices), error={mission.script.Error}");
+            if (course == null) return;
+            float worst = 0;
+            int frames = 0;
+            async Task Frame()
+            {
+                if (mission?.script.Line != null) mission.script.Advance();
+                frames++;
+                worst = Math.Max(worst, Time.unscaledDeltaTime);
+                await Task.Yield();
+            }
+            for (int i = 0; i < 20 && mission?.script.Line != null; i++) await Frame();
+            Debug.Log($"smoke: marathon: at the start: '{mission?.CurrentObjective}', player={iso.PlayerPosition}");
+            // A short cut first: straight to halfway gains nothing.
+            var (half, _, _) = course.At(course.Length / 2);
+            iso.PutPlayer(half, 0);
+            for (int i = 0; i < 5; i++) await Frame();
+            Debug.Log($"smoke: marathon: after a short cut: '{mission?.CurrentObjective}'");
+            for (double s = 0.15; s <= course.Length + 0.5 && mission != null && !mission.script.Done; s += 0.5)
+            {
+                var (p, along, _) = course.At(s);
+                iso.PutPlayer(p, DetMath.Atan2(along.x, along.y));
+                await Frame();
+                if (s < 3 || frames % 400 == 0) Debug.Log($"smoke: marathon: {s:0} tiles along: '{mission?.CurrentObjective}'");
+            }
+            for (int i = 0; i < 60 && mission != null && !mission.script.Done; i++) await Frame();
+            Debug.Log($"smoke: marathon: done={mission?.script.Done} error={mission?.script.Error} kept={kept:0.00}s earned={earned} frames={frames} longest={worst * 1000:0} ms");
+            Unlock("sprint");
+            Debug.Log($"smoke: marathon: sprint unlocked={Unlocks.Contains("sprint")}");
+            EndMission(null);
         }
 
         /// <summary>
@@ -1066,6 +1113,7 @@ namespace Porchlight.App
             {
                 iso.viewport = ScreenRect(isoHost);
                 if (exploring) ZoomWithWheel();
+                iso.FastSprint = Unlocks.Contains("sprint");
                 iso.Update();
                 UpdateMission();
                 UpdateGarage();
@@ -1508,6 +1556,7 @@ namespace Porchlight.App
         {
             if (what == "animals") overlay?.Notify("Unlocked for all your characters: the zoo's animals. Choose one from the character box.");
             if (what == "firefighter") overlay?.Notify("Unlocked for all your characters: the firefighter and the fire engine. Find them in the character and car boxes.");
+            if (what == "sprint") overlay?.Notify("Unlocked for all your characters: a faster sprint. Hold Shift (or RT) to try it.");
         }
 
         /// <summary>The car box: a grid of every car (the fire engine once it's unlocked), and the one picked is yours, brought right beside you (in place of any other).</summary>
@@ -1683,19 +1732,69 @@ namespace Porchlight.App
                     overlay.Notify($"Couldn't start the mission: {err}");
                     return;
                 }
-                EndMission(null);
-                try
+                // This town's best times first: the story may say the record from its first line.
+                FetchTimes(id, times =>
                 {
-                    mission = new MissionPlay(id, info.title, story, iso, ModelLibrary.Instance, input) { OnUnlock = Unlock };
-                }
-                catch (Exception e)
+                    if (missionStarting != null || !exploring || iso?.world == null) return;
+                    EndMission(null);
+                    string town = TownKey;
+                    try
+                    {
+                        mission = new MissionPlay(id, info.title, story, iso, ModelLibrary.Instance, input, times) { OnUnlock = Unlock, OnRecord = seconds => KeepTime(town, id, seconds) };
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogException(e);
+                        overlay.Notify($"Couldn't start the mission: {e.Message}");
+                        return;
+                    }
+                    overlay.Flash($"Mission: {info.title}");
+                    ShowMissions();
+                });
+            });
+        }
+
+        /// <summary>Dev mode's best times (town key and mission → seconds): gone with the page.</summary>
+        readonly Dictionary<string, double> devTimes = new Dictionary<string, double>();
+
+        /// <summary>This mission's best times in the town on screen: the server's (signed in), else dev mode's own; none if the server doesn't answer.</summary>
+        void FetchTimes(string id, Action<MissionPlay.Times> done)
+        {
+            string key = $"{TownKey}\n{id}";
+            if (!online || playing == null)
+            {
+                devTimes.TryGetValue(key, out double mine);
+                done(new MissionPlay.Times { mine = mine, best = mine, holder = mine > 0 ? "you" : "" });
+                return;
+            }
+            Account.FetchRecords(platform, origin, TownKey, id, (board, _) =>
+            {
+                var times = new MissionPlay.Times();
+                if (board != null)
                 {
-                    Debug.LogException(e);
-                    overlay.Notify($"Couldn't start the mission: {e.Message}");
-                    return;
+                    times.mine = board.mine;
+                    if (board.best.Count > 0)
+                    {
+                        times.best = board.best[0].seconds;
+                        times.holder = board.best[0].name ?? "";
+                    }
                 }
-                overlay.Flash($"Mission: {info.title}");
-                ShowMissions();
+                done(times);
+            });
+        }
+
+        /// <summary>A time the mission keeps: for this town, with the account (signed in) or for the session (dev mode).</summary>
+        void KeepTime(string town, string id, double seconds)
+        {
+            if (!online || playing == null)
+            {
+                string key = $"{town}\n{id}";
+                if (!devTimes.TryGetValue(key, out double had) || seconds < had) devTimes[key] = seconds;
+                return;
+            }
+            Account.KeepRecord(platform, origin, town, id, playing.id, seconds, (_, err) =>
+            {
+                if (err != null) overlay?.Notify($"Couldn't keep your time: {err}");
             });
         }
 

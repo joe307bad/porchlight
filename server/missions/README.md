@@ -4,7 +4,7 @@ Each `.ink` file here is a mission, written in [ink](https://github.com/inkle/in
 
 The file name is the mission's id (lowercase letters, digits and dashes: `delivery.ink` is `delivery`). Errors in a file show in the sidebar under its name, and in the server's log.
 
-To try a mission outside the game, open it in [Inky](https://github.com/inkle/inky): the stand-in functions at the bottom of each file let it play there. `npm test` checks every mission compiles and uses only the building blocks and waits the game has, and plays `delivery`, `chase` and `firefighter` through against a stand-in town that checks each block is used right. `node scripts/mission.ts <id>` prints the compiled story, which `dotnet run --project unity/Tools~/Checks -- mission <file>` plays through the game's runtime against a pretend town.
+To try a mission outside the game, open it in [Inky](https://github.com/inkle/inky): the stand-in functions at the bottom of each file let it play there. `npm test` checks every mission compiles and uses only the building blocks and waits the game has, and plays `delivery`, `chase`, `firefighter` and `marathon` through against a stand-in town that checks each block is used right. `node scripts/mission.ts <id>` prints the compiled story, which `dotnet run --project unity/Tools~/Checks -- mission <file>` plays through the game's runtime against a pretend town.
 
 ## Name and summary
 
@@ -40,7 +40,7 @@ Ordinary choices are the player's to pick:
 
 ## Everything a mission is, is in its file
 
-The game knows no missions. It knows a small set of **building blocks** (put a role in a building, put someone there, have them walk, hold things and put them on your car, mark a spot to park in, show the way, change what you look like, give you a car, send cars after you, run a clock, set a building alight and give you a water turret to put it out, give a reward) and a few **waits**. A mission puts these together into whatever it is about. `delivery.ink` builds "carry boxes from one house to another" out of `walk`, `pause`, `hold`, `put_in_car` and so on, in its own helper functions (`carry_out`, `carry_in`). `chase.ink` builds "a penguin escapes the zoo" out of `place` (the zoo), `look`, `put_you`, `standby`, `chase`, `countdown` and `unlock`, and the waits `@outside`, `@caught` and `@countdown`. `firefighter.ink` builds "save three burning houses" out of `look`, `your_car` (the fire engine), `place`, `fire`, `mark_spot`, `turret` and `unlock`, and the waits `@parked`, `@doused` and `@out`. Who's in a mission, their names, what the boxes look like, the hints you see, how precisely you must park: all of that is in the story. A new kind of mission needs no new build of the game as long as these blocks can make it. A new block does need a build: add it to `IMissionWorld` and `MissionScript` (`unity/Assets/Porchlight/Runtime/Shared/Missions`), `MissionPlay`, the stand-in towns in `unity/Tools~/Checks/MissionCheck.cs` and `test/missions.test.ts`, and this page.
+The game knows no missions. It knows a small set of **building blocks** (put a role in a building, put someone there, have them walk, hold things and put them on your car, mark a spot to park in, show the way, change what you look like, give you a car, send cars after you, run a clock, set a building alight and give you a water turret to put it out, lay out a race course and time you along it, keep a best time, give a reward) and a few **waits**. A mission puts these together into whatever it is about. `delivery.ink` builds "carry boxes from one house to another" out of `walk`, `pause`, `hold`, `put_in_car` and so on, in its own helper functions (`carry_out`, `carry_in`). `chase.ink` builds "a penguin escapes the zoo" out of `place` (the zoo), `look`, `put_you`, `standby`, `chase`, `countdown` and `unlock`, and the waits `@outside`, `@caught` and `@countdown`. `firefighter.ink` builds "save three burning houses" out of `look`, `your_car` (the fire engine), `place`, `fire`, `mark_spot`, `turret` and `unlock`, and the waits `@parked`, `@doused` and `@out`. `marathon.ink` builds "run the town's longest race" out of `course`, `put_you`, `stopwatch`, `record`, `town_record` and `unlock`, and the wait `@finished`. Who's in a mission, their names, what the boxes look like, the hints you see, how precisely you must park: all of that is in the story. A new kind of mission needs no new build of the game as long as these blocks can make it. A new block does need a build: add it to `IMissionWorld` and `MissionScript` (`unity/Assets/Porchlight/Runtime/Shared/Missions`), `MissionPlay`, the stand-in towns in `unity/Tools~/Checks/MissionCheck.cs` and `test/missions.test.ts`, and this page.
 
 Spelling it all out makes the files long. That's intended: the story is the mission.
 
@@ -58,6 +58,7 @@ A choice whose text starts with `@` is a **wait**. It's never shown. The game pi
 | `@caught role` | An officer from one of the role's chase cars (`chase`) has stood by the player (`catch_reach`) for `catch_time` seconds. The player on foot or in a car; never while flying. Each catch counts afresh. |
 | `@doused role` | One of the role's burning windows or its door (`fire`) has gone out. Each counts afresh, so a loop hears of every one. |
 | `@out role` | Every one of the role's burning windows, and its door, is out. Put it before `@doused` where both wait: the last window meets both. |
+| `@finished role` | The player has run the role's course (`course`) all the way to its finish line, in order, on foot. The stopwatch on it stops there. |
 | `@countdown` | The clock (`countdown`) has run out. |
 | `@wait 3` | Three seconds have passed. |
 
@@ -74,7 +75,7 @@ Roles are any names you like (`sender`, `drop`, `aunt`). Each is one building at
 | Function | What it does |
 | --- | --- |
 | `objective(text)` | The line at the top of the directions panel saying what to do next. `""` clears it. |
-| `hint(when, role, text)` | A prompt at the bottom of the screen, shown while `when` holds: `"always"`; `"no_car"` (the player has no car of their own); `"near"` (they're within 3 tiles of the role: its marked spot, else its person, else the pavement outside); `"near_driving"` (the same, driving their own car). The first that holds shows. "Press Enter to talk to …" shows over all of them. |
+| `hint(when, role, text)` | A prompt at the bottom of the screen, shown while `when` holds: `"always"`; `"no_car"` (the player has no car of their own); `"near"` (they're within 3 tiles of the role: its marked spot, else its person, else the pavement outside); `"near_driving"` (the same, driving their own car); `"off_course"` (they've strayed from the role's course, `course`). The first that holds shows. "Press Enter to talk to …" shows over all of them. |
 | `clear_hints()` | Every hint goes. |
 | `guide(role, to, label)` | Shows the player the way, with turn-by-turn directions and a dotted path, to the role's `"spot"`, `"person"`, `"house"` (the pavement outside) or `"door"` (just outside it), called `label`. `guide("", "", "")` stops. |
 | `dot(role, to)` | A blue dot on the ground at the same places, with no way shown to it: for somewhere close by. `dot("", "")` clears it. |
@@ -116,11 +117,22 @@ Roles are any names you like (`sender`, `drop`, `aunt`). Each is one building at
 | `fire(role, windows)` | The role's building is alight: up to `windows` (1 to 8) of the windows a fire engine parked out front can reach, those facing the street first, and its front door, each with flames and a glowing pane and smoke pouring out of its top, with a column of smoke over the roof that can be seen from streets away. Water on a burning window or the door for `douse_time` seconds puts it out (it dies down as it's doused, and steams). `@doused role` hears of each one, `@out role` of the last. It returns how many are burning (those windows and the door), which can be fewer than asked for plus one: a house can have fewer windows facing the street. `fire(role, 0)` puts it all out at once. Calling it again for the same role lights it afresh (after `place` has moved the role, a new building). |
 | `turret(role, crew, model)` | A water turret on the roof of the player's car, theirs to climb up to: at the wheel, stopped, they press A (or Enter). Up there the camera is behind the turret; the stick (or the arrows, or WASD) turns it all the way round and tips it up and down, and holding A, RT or RB (or Space) sprays (A and RB because Firefox gives some pads no triggers); a reticle shows where the water will land, orange when that's a burning window; B (or G) climbs back down to the wheel. It points at the role's building to begin with. `crew` (0 to 6) people looking like `model` (`""` for the firefighter) stand round the car with hoses and spray wherever the player's water lands; each puts a little more water on a window. `turret("", 0, "")` takes it all away (and the player down from it). |
 
+### Races
+
+| Function | What it does |
+| --- | --- |
+| `course(role, crowd)` | A race course as a role: the longest way along the town's streets from one corner of the map to the opposite one (of the two diagonals, the longer, then lengthened round the block wherever that doesn't pass a junction twice). Ribbon on posts runs along both kerbs, an arch stands over the start line and a chequered one over the finish, and people line the road, `crowd` (0 to 1) how packed: thickest by the start and the finish, with a few dozen by the ribbon wherever the player is, turning to watch and waving them on. `put_you(role, "start")` puts the player on the start line (`"finish"` just short of the finish). Progress counts only along the course, stretch by stretch, on foot and on the ground: a short cut to a later stretch, or a car, gains nothing. Returns its length in metres. |
+| `stopwatch(label, role)` | A stopwatch in the directions panel (`label m:ss.t`, and with a course, how far along it you are): with a course's role, it starts as the player crosses its start line and stops as they finish; with `""` it starts now. It doesn't run while the player reads. `stopwatch("", "")` takes it away. |
+| `stopwatch_time()` | The stopwatch's time, in seconds (to the hundredth). |
+| `record(seconds)` | Keeps a time as the player's for this mission in this town (the town's key: its seed and settings), if it's their account's best there. Returns their best there before it (0: none). Kept on the server (`/mp/records`), one per account per town, under the name of the character who ran it; in dev mode, until the page closes. |
+| `town_record()` | This town's best time for this mission, by anyone, as the mission began (0: none yet). |
+| `town_record_holder()` | Who ran it (`""`: no one). |
+
 ### Rewards
 
 | Function | What it does |
 | --- | --- |
-| `unlock(what)` | Something the player keeps for good: `"animals"`, so the character box offers the zoo's animals after the people; `"firefighter"`, so the character box offers the firefighter and the car box the fire engine. Kept with the account, on the server: every one of its characters has it, in every town, and playing the mission again doesn't earn it twice. In dev mode (no server) it lasts until the page closes. |
+| `unlock(what)` | Something the player keeps for good: `"animals"`, so the character box offers the zoo's animals after the people; `"firefighter"`, so the character box offers the firefighter and the car box the fire engine; `"sprint"`, so the player sprints faster on foot. Kept with the account, on the server: every one of its characters has it, in every town, and playing the mission again doesn't earn it twice. In dev mode (no server) it lasts until the page closes. |
 
 ### Errands
 
@@ -151,6 +163,6 @@ Ink functions that call these, recursively for a count, keep a mission tidy (see
 
 ## Notes
 
-- A mission's people, spots and fires are the player's alone. Others in the town don't see them.
+- A mission's people, spots, fires and courses are the player's alone. Others in the town don't see them. Best times (`record`) are shared: everyone in the town sees its record.
 - A mission in progress doesn't save. Leaving the town ends the one being played.
 - Reaching the end of the story (with no error) counts as finishing the mission: it's kept with the account, for the Journal. Abandoned missions don't count. Every mission's only ending is the win today; a mission that can be lost will need a new block to say so.
