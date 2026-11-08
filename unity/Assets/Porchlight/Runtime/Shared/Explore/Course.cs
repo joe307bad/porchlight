@@ -23,6 +23,8 @@ namespace Porchlight.Explore
         public readonly List<Vec2> points = new List<Vec2>();
         /// <summary>At each point, how far from the middle the asphalt goes (tiles).</summary>
         public readonly List<double> half = new List<double>();
+        /// <summary>At each point, how far from the middle the asphalt goes on the stretch that leaves it (tiles): at a junction, the next road's.</summary>
+        readonly List<double> halfOut = new List<double>();
         /// <summary>At each point, how far along it is (tiles).</summary>
         public readonly List<double> at = new List<double>();
         /// <summary>The roads it runs along, in order (indices into the town's roads).</summary>
@@ -328,11 +330,14 @@ namespace Porchlight.Explore
                     var p = r.points[forward ? k : r.points.Count - 1 - k];
                     if (c.points.Count > 0 && Geo.Dist(c.points[c.points.Count - 1], p) < 1e-6)
                     {
+                        // The junction: as wide as the wider road there, and what leaves it is this road.
                         c.half[c.half.Count - 1] = Math.Max(c.half[c.half.Count - 1], hw);
+                        c.halfOut[c.halfOut.Count - 1] = hw;
                         continue;
                     }
                     c.points.Add(p);
                     c.half.Add(hw);
+                    c.halfOut.Add(hw);
                 }
             }
             c.at.Add(0);
@@ -361,8 +366,8 @@ namespace Porchlight.Explore
                 var b = points[keep[i + 1]];
                 double l = Math.Max(1e-9, Geo.Dist(a, b));
                 normal[i] = new Vec2(-(b.y - a.y) / l * side, (b.x - a.x) / l * side);
-                // A stretch between two kept points is all one road but for its ends (where a width change is kept), so its middle says its width.
-                off[i] = half[(keep[i] + keep[i + 1]) / 2] + extra;
+                // A stretch between two kept points is all one width (a change of width is kept), the width of the road leaving its first.
+                off[i] = halfOut[keep[i]] + extra;
             }
             Vec2 Shift(int seg, int point) => new Vec2(points[keep[point]].x + normal[seg].x * off[seg], points[keep[point]].y + normal[seg].y * off[seg]);
             o.Add((Shift(0, 0), at[keep[0]]));
@@ -403,8 +408,8 @@ namespace Porchlight.Explore
         {
             var keep = new bool[points.Count];
             keep[0] = keep[points.Count - 1] = true;
-            // Where one road gives way to a wider or narrower one, the edge steps: keep the point.
-            for (int k = 1; k + 1 < points.Count; k++) if (Math.Abs(half[k] - half[k - 1]) > 1e-6 || Math.Abs(half[k] - half[k + 1]) > 1e-6) keep[k] = true;
+            // Where one road gives way to a wider or narrower one (at the junction they share), the edge steps: keep the point.
+            for (int k = 1; k + 1 < points.Count; k++) if (Math.Abs(halfOut[k] - halfOut[k - 1]) > 1e-6) keep[k] = true;
             var spans = new Stack<(int, int)>();
             spans.Push((0, points.Count - 1));
             while (spans.Count > 0)
@@ -476,6 +481,47 @@ namespace Porchlight.Explore
             double f = seg > 1e-9 ? (s - at[k - 1]) / seg : 0;
             var d = seg > 1e-9 ? new Vec2((b.x - a.x) / seg, (b.y - a.y) / seg) : new Vec2(1, 0);
             return (new Vec2(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f), d, half[k - 1] + (half[k] - half[k - 1]) * f);
+        }
+
+        /// <summary>The most `Covers` looks past the asphalt (tiles).</summary>
+        public const double COVER_REACH = 2;
+        /// <summary>Which stretches (k: from point k-1 to point k) pass near each tile, for Covers.</summary>
+        Dictionary<long, List<int>> near;
+
+        /// <summary>Is `p` on the course's asphalt, or within `margin` (up to COVER_REACH) of it?</summary>
+        public bool Covers(Vec2 p, double margin)
+        {
+            margin = Math.Min(margin, COVER_REACH);
+            if (near == null)
+            {
+                near = new Dictionary<long, List<int>>();
+                for (int k = 1; k < points.Count; k++)
+                {
+                    var a = points[k - 1];
+                    var b = points[k];
+                    double pad = Math.Max(half[k - 1], half[k]) + COVER_REACH;
+                    int x0 = (int)Math.Floor(Math.Min(a.x, b.x) - pad), x1 = (int)Math.Floor(Math.Max(a.x, b.x) + pad);
+                    int y0 = (int)Math.Floor(Math.Min(a.y, b.y) - pad), y1 = (int)Math.Floor(Math.Max(a.y, b.y) + pad);
+                    for (int x = x0; x <= x1; x++)
+                        for (int y = y0; y <= y1; y++)
+                        {
+                            long key = ((long)x << 32) ^ (uint)y;
+                            if (!near.TryGetValue(key, out var list)) near[key] = list = new List<int>();
+                            list.Add(k);
+                        }
+                }
+            }
+            if (!near.TryGetValue(((long)Math.Floor(p.x) << 32) ^ (uint)(int)Math.Floor(p.y), out var ks)) return false;
+            foreach (int k in ks)
+            {
+                var a = points[k - 1];
+                var b = points[k];
+                double dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+                double t = l2 > 1e-12 ? Math.Max(0, Math.Min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+                double d = Numbers.Hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+                if (d <= half[k - 1] + (half[k] - half[k - 1]) * t + margin) return true;
+            }
+            return false;
         }
 
         /// <summary>

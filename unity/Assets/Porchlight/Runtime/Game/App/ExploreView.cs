@@ -500,6 +500,14 @@ namespace Porchlight.App
         /// <summary>Fences you can't walk through on foot (a mission's race course), or null.</summary>
         public Barrier Fences;
 
+        /// <summary>
+        /// A road closed to cars on this screen (a race course you're running), or null: cars on it,
+        /// in traffic or driven by other players, aren't drawn here. They're still there for everyone else.
+        /// </summary>
+        public Course Closed;
+
+        bool ClosedAt(double x, double y) => Closed != null && Closed.Covers(new Vec2(x, y), RaceCourse.CLEAR);
+
         /// <summary>You sprint faster (the `sprint` unlock).</summary>
         public bool FastSprint
         {
@@ -2125,9 +2133,10 @@ namespace Porchlight.App
                 avatars[k].Update(q, dt);
                 avatars[k].SetWaving(q.waving > 0);
             }
+            if (remotes != null) remotes.Hidden = Closed != null ? ClosedAt : (Func<double, double, bool>)null;
             remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
             if (riding != null) FollowRide();
-            fleet?.Update(dusk);
+            fleet?.Update(dusk, Closed != null ? ClosedAt : (Func<double, double, bool>)null);
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);

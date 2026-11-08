@@ -60,6 +60,12 @@ namespace Porchlight.Rendering
         readonly GameObject root;
         readonly TextMeshPro text;
 
+        public bool Visible
+        {
+            get => root.activeSelf;
+            set { if (root.activeSelf != value) root.SetActive(value); }
+        }
+
         public NameTag(string label, string key, Transform parent)
         {
             root = new GameObject("tag " + label);
@@ -235,6 +241,9 @@ namespace Porchlight.Rendering
             foreach (var key in remotes.Keys.ToList()) if (!seen.Contains(key)) Drop(key);
         }
 
+        /// <summary>Where cars aren't drawn on this screen (a race course you're running), or null: a driver there, car and tag, and anyone riding with them.</summary>
+        public Func<double, double, bool> Hidden;
+
         /// <summary>Pose everyone for this frame. `myCar`: where your car is, while you're driving.</summary>
         public void Update(double dt, Vec2? myCar, double dusk)
         {
@@ -281,6 +290,9 @@ namespace Porchlight.Rendering
                     r.tagText = label;
                     r.tag.Place(w.x, height + w.lift, w.y);
                 }
+                bool gone = driving && Hidden != null && Hidden(w.x, w.y);
+                if (r.car != null) r.car.Visible = !gone;
+                r.tag.Visible = !gone;
             }
             foreach (var key in order)
             {
@@ -292,6 +304,7 @@ namespace Porchlight.Rendering
                 r.walker.y = car.Value.y;
                 double height = CAR_TAG_HEIGHT + TAG_STACK * (seat.TryGetValue(key, out int st) ? st : 1);
                 r.tag.Place(car.Value.x, height + r.walker.lift, car.Value.y);
+                r.tag.Visible = Hidden == null || !Hidden(car.Value.x, car.Value.y);
             }
         }
 

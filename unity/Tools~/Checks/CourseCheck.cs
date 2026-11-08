@@ -76,7 +76,27 @@ static class CourseCheck
                     tries++;
                     if (course.Nearest(p, 0, course.Length).d > half + 0.3) escaped++;
                 }
+            // The ribbon keeps to the edge: nowhere does it cut in towards the middle of the road (as it did where a wide road met a narrow one).
+            int cutIn = 0;
+            foreach (int side in new[] { 1, -1 })
+                foreach (var (p, _) in course.Side(side, 0.04))
+                {
+                    var n = course.Nearest(p, 0, course.Length);
+                    if (n.d < 0.4) cutIn++;
+                }
+            // The road's closed to cars for the runner: all along the middle is covered, and well off it isn't.
+            int open = 0, shut = 0;
+            for (double s = 0; s <= course.Length; s += 0.5)
+            {
+                var (mid, along, half) = course.At(s);
+                if (!course.Covers(mid, 0.35)) open++;
+                var off = new Vec2(mid.x - along.y * (half + 3), mid.y + along.x * (half + 3));
+                if (course.Covers(off, 0.35) && PastEveryEdge(course, off) > 0.4) shut++;
+            }
             var problems = new List<string>();
+            if (cutIn > 0) problems.Add($"the ribbon cuts in towards the middle {cutIn} times");
+            if (open > 0) problems.Add($"{open} points of the course not closed to cars");
+            if (shut > 0) problems.Add($"{shut} points off the course closed to cars");
             if (twice > 0) problems.Add($"{twice} junctions twice");
             if (span < diag * 0.6) problems.Add($"only {span:0} tiles corner to corner");
             if (!run.Finished) problems.Add($"run along it, got {run.progress:0} of {course.Length:0}");
@@ -122,6 +142,22 @@ static class CourseCheck
             Console.WriteLine($"{(ok ? "ok" : "FAIL")} {name}: {course.Length * Directions.METRES_PER_TILE / 1000:0.0} km over {course.roads.Count} streets, ends {span:0} tiles apart (diagonal {diag:0}), {course.points.Count} points, {fence.Count} fence segments held {tries - escaped} of {tries}, {ms:0} ms{(ok ? "" : ": " + string.Join(", ", problems))}");
         }
         return failed == 0 ? 0 : 1;
+    }
+
+    /// <summary>How far `p` is past the asphalt's edge of the nearest stretch of the course, every stretch looked at (negative: on it).</summary>
+    static double PastEveryEdge(Course course, Vec2 p)
+    {
+        double best = double.PositiveInfinity;
+        for (int k = 1; k < course.points.Count; k++)
+        {
+            var a = course.points[k - 1];
+            var b = course.points[k];
+            double dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+            double t = l2 > 1e-12 ? Math.Max(0, Math.Min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2)) : 0;
+            double d = Numbers.Hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t));
+            best = Math.Min(best, d - (course.half[k - 1] + (course.half[k] - course.half[k - 1]) * t));
+        }
+        return best;
     }
 
     /// <summary>Does the course turn a corner where its i-th street meets the next?</summary>

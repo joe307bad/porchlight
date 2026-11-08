@@ -22,6 +22,8 @@ namespace Porchlight.App
     {
         /// <summary>The ribbon stands this far out past the asphalt (tiles), clear of the parked cars.</summary>
         public const double FENCE = 0.04;
+        /// <summary>A car this far past the asphalt (its nose through the ribbon) is on the closed road, and not drawn for the runner (tiles).</summary>
+        public const double CLEAR = 0.35;
         const double TAPE_LOW = 0.15, TAPE_HIGH = 0.18, POST_HIGH = 0.2;
         const double STRIPE = 0.22;
         const int POST_EVERY = 4;

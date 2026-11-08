@@ -141,14 +141,15 @@ namespace Porchlight.Rendering
             Update(0);
         }
 
-        public void Update(double dusk)
+        /// <summary>Put the cars where the traffic has them: all but those taken, and those `hidden` says not to draw here.</summary>
+        public void Update(double dusk, Func<double, double, bool> hidden = null)
         {
             for (int i = 0; i < views.Count; i++)
             {
                 var c = traffic.cars[i];
                 var v = views[i];
-                v.Visible = !c.taken;
-                if (c.taken) continue;
+                v.Visible = !c.taken && (hidden == null || !hidden(c.x, c.y));
+                if (!v.Visible) continue;
                 v.Place(c.x, c.y, CarView.RotOf(c.heading));
                 v.Lights(dusk);
             }
