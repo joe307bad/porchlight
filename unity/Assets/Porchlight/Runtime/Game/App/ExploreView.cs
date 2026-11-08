@@ -497,6 +497,9 @@ namespace Porchlight.App
             }
         }
 
+        /// <summary>Fences you can't walk through on foot (a mission's race course), or null.</summary>
+        public Barrier Fences;
+
         /// <summary>You sprint faster (the `sprint` unlock).</summary>
         public bool FastSprint
         {
@@ -1869,6 +1872,7 @@ namespace Porchlight.App
                 double heading = p.heading - Clamp1(inputV.x) * TURN_RATE * dt;
                 var ahead = new Vec2(Math.Sin(heading), Math.Cos(heading));
                 double back = Clamp1(inputV.y);
+                if (p != null) p.barrier = Fences;
                 p.Update(back != 0 ? new Vec2(-ahead.x * back, -ahead.y * back) : (Vec2?)null, dt, world.model, open, world.solids, walkPaved);
                 p.heading = heading;
             }
@@ -1876,6 +1880,7 @@ namespace Porchlight.App
             {
                 var d = Orbit.ScreenToWorld(inputV, inputYaw);
                 double k = Math.Min(1, Numbers.Hypot(inputV.x, inputV.y));
+                if (p != null) p.barrier = Fences;
                 p?.Update(d != null ? new Vec2(d.Value.x * k, d.Value.y * k) : (Vec2?)null, dt, world.model, open, world.solids, walkPaved);
             }
             UpdateDoors(dt);

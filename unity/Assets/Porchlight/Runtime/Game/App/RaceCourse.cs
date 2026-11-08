@@ -21,7 +21,7 @@ namespace Porchlight.App
     public sealed class RaceCourse
     {
         /// <summary>The ribbon stands this far out past the asphalt (tiles), clear of the parked cars.</summary>
-        const double FENCE = 0.04;
+        public const double FENCE = 0.04;
         const double TAPE_LOW = 0.15, TAPE_HIGH = 0.18, POST_HIGH = 0.2;
         const double STRIPE = 0.22;
         const int POST_EVERY = 4;
@@ -58,6 +58,9 @@ namespace Porchlight.App
             public double wave;
         }
 
+        /// <summary>How each person standing still came out of the bake: how tall, and how wide for it (arms out in a T is about 1; at ease, under half).</summary>
+        public readonly List<string> Baked = new List<string>();
+
         readonly Course course;
         readonly ExploreView view;
         readonly Rng rng;
@@ -78,6 +81,12 @@ namespace Porchlight.App
             var palette = new Palette();
             var sides = new[] { Offset(1, FENCE), Offset(-1, FENCE) };
             foreach (var side in sides) Fence(side, palette);
+            // Closed off behind the start line and past the finish: the course is the only way.
+            if (sides[0].Count > 1 && sides[1].Count > 1)
+            {
+                Fence(new List<(Vec2 p, double s)> { (sides[0][0].p, 1), (sides[1][0].p, 1) }, palette);
+                Fence(new List<(Vec2 p, double s)> { (sides[0][sides[0].Count - 1].p, 1), (sides[1][sides[1].Count - 1].p, 1) }, palette);
+            }
             Arch(0.6, palette, false);
             Arch(course.Length - 0.6, palette, true);
             crowd = Math.Max(0, Math.Min(1, crowd));
@@ -121,41 +130,8 @@ namespace Porchlight.App
             return DetMath.Atan2(mid.x - p.x, mid.y - p.y) + rng.Range(-0.35, 0.35);
         }
 
-        /// <summary>
-        /// The course's edge on one side (+1 left of the way it runs, -1 right), `extra` past the asphalt,
-        /// with each point's distance along the course; the inside of a tight bend is trimmed rather than looped.
-        /// </summary>
-        List<(Vec2 p, double s)> Offset(int side, double extra)
-        {
-            var pts = course.points;
-            var o = new List<(Vec2, double)>();
-            for (int k = 0; k < pts.Count; k++)
-            {
-                var a = pts[Math.Max(0, k - 1)];
-                var b = pts[k];
-                var c = pts[Math.Min(pts.Count - 1, k + 1)];
-                Vec2 N(Vec2 from, Vec2 to)
-                {
-                    double l = Geo.Dist(from, to);
-                    return l < 1e-9 ? new Vec2(0, 0) : new Vec2(-(to.y - from.y) / l * side, (to.x - from.x) / l * side);
-                }
-                var n1 = k > 0 ? N(a, b) : N(b, c);
-                var n2 = k < pts.Count - 1 ? N(b, c) : n1;
-                var m = new Vec2(n1.x + n2.x, n1.y + n2.y);
-                double ml = Numbers.Hypot(m.x, m.y);
-                m = ml < 1e-9 ? n1 : new Vec2(m.x / ml, m.y / ml);
-                double off = (course.half[k] + extra) / Math.Max(0.5, Geo.Dot(m, n1));
-                var q = new Vec2(b.x + m.x * off, b.y + m.y * off);
-                var along = new Vec2(c.x - a.x, c.y - a.y);
-                if (o.Count > 0)
-                {
-                    var (last, _) = o[o.Count - 1];
-                    if (Geo.Dot(new Vec2(q.x - last.x, q.y - last.y), along) <= 0) continue;
-                }
-                o.Add((q, course.at[k]));
-            }
-            return o;
-        }
+        /// <summary>The course's edge on one side, `extra` past the asphalt, each point with how far along the course it is.</summary>
+        List<(Vec2 p, double s)> Offset(int side, double extra) => course.Side(side, extra);
 
         /// <summary>Points every `step` along a line, each with how far along the course it is.</summary>
         static List<(Vec2 p, double s)> Resample(List<(Vec2 p, double s)> line, double step)
@@ -203,8 +179,6 @@ namespace Porchlight.App
                 }
                 var p = marks[i].p;
                 var q = marks[i + 1].p;
-                // Not across the start or the finish line.
-                if (marks[i].s < 0.2 || marks[i + 1].s > course.Length - 0.2) continue;
                 int color = i % 2 == 0 ? RED : WHITE;
                 var n = new V3(-(q.y - p.y), 0, q.x - p.x);
                 var back = new V3(q.y - p.y, 0, -(q.x - p.x));
@@ -327,13 +301,22 @@ namespace Porchlight.App
         {
             var holder = new GameObject("race crowd pose");
             var avatar = Avatar.Of(look, rng.Next(), holder.transform);
+            // Posed by their Animator: made to run even off screen (people cull theirs when no one sees
+            // them, which would leave them in the T of their bind pose), into a moment of standing at ease.
+            foreach (var animator in avatar.root.GetComponentsInChildren<Animator>(true))
+            {
+                animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                animator.Update(0);
+                animator.Update((float)rng.Range(0.3, 2.5));
+            }
             var into = avatar.root.transform.worldToLocalMatrix;
             var parts = new List<Template>();
             foreach (var smr in avatar.root.GetComponentsInChildren<SkinnedMeshRenderer>(true))
             {
+                // Baked in the renderer's own space without its scale, which its full matrix then puts back.
                 var mesh = new Mesh { indexFormat = IndexFormat.UInt32 };
-                smr.BakeMesh(mesh, true);
-                parts.Add(new Template { mesh = mesh, materials = smr.sharedMaterials, local = into * Matrix4x4.TRS(smr.transform.position, smr.transform.rotation, Vector3.one) });
+                smr.BakeMesh(mesh, false);
+                parts.Add(new Template { mesh = mesh, materials = smr.sharedMaterials, local = into * smr.transform.localToWorldMatrix });
             }
             foreach (var mf in avatar.root.GetComponentsInChildren<MeshFilter>(true))
             {
@@ -343,6 +326,29 @@ namespace Porchlight.App
             }
             avatar.Dispose();
             UnityEngine.Object.Destroy(holder);
+            // A person their usual height, standing on the ground: measured, and put right if the bake wasn't.
+            float lo = float.PositiveInfinity, hi = float.NegativeInfinity, wide = 0;
+            foreach (var t in parts)
+            {
+                var b = t.mesh.bounds;
+                for (int corner = 0; corner < 8; corner++)
+                {
+                    var c = t.local.MultiplyPoint3x4(new Vector3((corner & 1) == 0 ? b.min.x : b.max.x, (corner & 2) == 0 ? b.min.y : b.max.y, (corner & 4) == 0 ? b.min.z : b.max.z));
+                    lo = Math.Min(lo, c.y);
+                    hi = Math.Max(hi, c.y);
+                    wide = Math.Max(wide, Math.Max(Math.Abs(c.x), Math.Abs(c.z)) * 2);
+                }
+            }
+            // Exactly as tall as the same person walking about (sized by where their head starts, as an Avatar is),
+            // whatever scale the bake came out at, with their feet on the ground.
+            float tall = hi - lo;
+            var person = ModelLibrary.Instance.Character(look);
+            double h = !float.IsNaN(person.headY) ? person.headY / 0.71 : Math.Max(1e-3, person.maxY - person.minY);
+            float should = (float)((person.maxY - person.minY) * Avatar.PERSON_HEIGHT / h);
+            float k = should / Math.Max(1e-4f, tall);
+            var fix = Matrix4x4.Translate(new Vector3(0, -lo * k, 0)) * Matrix4x4.Scale(Vector3.one * k);
+            foreach (var t in parts) t.local = fix * t.local;
+            Baked.Add($"{look.Substring(look.IndexOf('/') + 1)} baked {tall:0.00} tall, stands {should:0.00}, {wide / Math.Max(1e-4f, tall):0.00} wide for its height");
             return parts;
         }
 

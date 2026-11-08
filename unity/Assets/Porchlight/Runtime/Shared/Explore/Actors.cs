@@ -69,6 +69,8 @@ namespace Porchlight.Explore
         public double pace = 1;
         /// <summary>How much faster than running a sprint is (FAST_SPRINT once it's unlocked).</summary>
         public double sprint = SPRINT;
+        /// <summary>Fences you can't walk through (a race course's ribbon), or null.</summary>
+        public Barrier barrier;
         double vx, vy;
         double buffered;
 
@@ -187,7 +189,7 @@ namespace Porchlight.Explore
                     if (mx == 0 && my == 0) continue;
                     double nx = ClampX(x + mx);
                     double ny = ClampY(y + my);
-                    if (CanStand(nx, ny, open, model, paved) && (solids == null || !solids.Hits(nx, ny, PLAYER_RADIUS)))
+                    if (CanStand(nx, ny, open, model, paved) && (solids == null || !solids.Hits(nx, ny, PLAYER_RADIUS)) && (barrier == null || !barrier.Blocks(x, y, nx, ny, PLAYER_RADIUS)))
                     {
                         dx = nx - x;
                         dy = ny - y;

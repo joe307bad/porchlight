@@ -279,6 +279,8 @@ namespace Porchlight.App
         public Vehicle.Spot? SpotOf(string role) => roles.TryGetValue(role ?? "", out var r) && r.Marked ? r.spot : null;
         /// <summary>The role's race course, if it's one (the smoke run runs it).</summary>
         public Course CourseOf(string role) => races.TryGetValue(role ?? "", out var r) ? r.course : null;
+        /// <summary>How the role's crowd came out of the bake (the smoke run says).</summary>
+        public IReadOnlyList<string> CrowdOf(string role) => races.TryGetValue(role ?? "", out var r) ? r.scene.Baked : null;
         /// <summary>Which of the conversation's choices the keys or pad are on.</summary>
         public int Highlighted => highlighted;
         /// <summary>How many cars are after you.</summary>
@@ -325,6 +327,7 @@ namespace Porchlight.App
             watch = null;
             foreach (var r in races.Values) r.scene.Dispose();
             races.Clear();
+            view.Fences = null;
             fight.Dispose();
             GiveCarBack();
             view.Obstacles.Clear();
@@ -754,6 +757,8 @@ namespace Porchlight.App
                 ?? throw new Exception("this town's streets don't run from one corner to the other");
             if (races.TryGetValue(role, out var old)) old.scene.Dispose();
             races[role] = new Race { course = course, run = new CourseRun(course), scene = new RaceCourse(course, crowd, view, rng) };
+            // On foot, the ribbon holds you to the course.
+            view.Fences = course.Fence(RaceCourse.FENCE);
             return (int)Math.Round(course.Length * Directions.METRES_PER_TILE);
         }
 

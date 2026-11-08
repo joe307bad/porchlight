@@ -543,6 +543,27 @@ namespace Porchlight.App
             var renderers = FindObjectsByType<Renderer>();
             Debug.Log($"smoke: marathon: course {course?.Length * Directions.METRES_PER_TILE:0} m over {course?.roads.Count} streets, built in {platform.Now() - began:0} ms, {renderers.Count(r => r.name.StartsWith("race"))} race meshes ({renderers.Where(r => r.name.StartsWith("race crowd")).Sum(r => r.GetComponent<MeshFilter>().sharedMesh.vertexCount)} crowd vertices), error={mission.script.Error}");
             if (course == null) return;
+            foreach (var line in mission.CrowdOf("race") ?? new List<string>()) Debug.Log($"smoke: marathon: crowd {line}");
+            int held = 0, tried = 0;
+            for (double s = 1; s < course.Length - 1; s += course.Length / 40)
+            {
+                var (p, along, width) = course.At(s);
+                foreach (int side in new[] { 1, -1 })
+                {
+                    tried++;
+                    // Walking straight out sideways, a little at a time, as feet do: held if still on the course
+                    // (at a corner, sideways is down the next stretch, which is fine).
+                    var at = p;
+                    for (int k = 0; k < 120 && iso.Fences != null; k++)
+                    {
+                        var next = new Vec2(at.x + along.y * side * 0.05, at.y - along.x * side * 0.05);
+                        if (iso.Fences.Blocks(at.x, at.y, next.x, next.y, Player.PLAYER_RADIUS)) break;
+                        at = next;
+                    }
+                    if (iso.Fences != null && course.Nearest(at, 0, course.Length).d <= width + 0.3) held++;
+                }
+            }
+            Debug.Log($"smoke: marathon: ribbon of {iso.Fences?.Count} pieces held {held} of {tried} steps off the course");
             float worst = 0;
             int frames = 0;
             async Task Frame()
