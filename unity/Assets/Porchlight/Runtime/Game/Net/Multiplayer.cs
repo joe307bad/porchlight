@@ -160,15 +160,28 @@ namespace Porchlight.App
         /// <summary>The tab came back into view: say where we are now.</summary>
         public void Visible() => Send(true);
 
-        /// <summary>Play this town (leaving any other).</summary>
-        public void Enter(TownKey t)
+        /// <summary>Where we're driving in from next door (the new room's frame: x, height, z, yaw), for the next join; else null.</summary>
+        double[] arriving;
+
+        /// <summary>
+        /// Play this town (leaving any other). `arrive`: driving (or flying) in from the room next door,
+        /// here in the new room's terms ({x, height, z, yaw}): carry on from where you are, rather than
+        /// start where the server last saved you.
+        /// </summary>
+        public void Enter(TownKey t, double[] arrive = null)
         {
             if (town != null && town.key == t.key && (room != null || retry != null)) return;
             town = t;
+            arriving = arrive;
+            // Already placed: the spawn the room sends isn't where to go.
+            if (arrive != null) placedIn = t.key;
             if (stopped) return;
             retries = 0;
             Join();
         }
+
+        /// <summary>The room this tab is in (or joining): its town's key.</summary>
+        public string RoomKey => town?.key;
 
         /// <summary>Leave the room for good (switching character, or closing).</summary>
         public void Close()
@@ -274,6 +287,8 @@ namespace Porchlight.App
             if (t == null) return;
             int gen = generation;
             var options = new Dictionary<string, object> { ["town"] = t.key, ["width"] = t.width, ["height"] = t.height, ["character"] = character.id, ["tab"] = Account.Tab };
+            if (arriving != null)
+                options["arrive"] = new Dictionary<string, object> { ["x"] = arriving[0], ["y"] = arriving[1], ["z"] = arriving[2], ["yaw"] = arriving[3] };
             SetStatus(NetStatus.Joining);
             // The room can fill up between matchmaking and joining: try once more.
             client.JoinOrCreate(Protocol.CITY_ROOM, options, (r, err) =>
@@ -308,6 +323,8 @@ namespace Porchlight.App
                 return;
             }
             room = r;
+            // Rejoining later (a dropped connection) is from wherever we are then.
+            arriving = null;
             seq = 0;
             epoch = 0;
             lastSent = "";

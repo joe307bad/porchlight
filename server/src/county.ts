@@ -53,6 +53,8 @@ const VACANT = 64;
 const STRETCH = 180;
 const VERGE = 14;
 const CORRIDOR = 24;
+/** How far a highway's end stretches reach into the spaces at its ends (CountyMap.INSET). */
+const INSET = 3;
 const MINE_ROW = -(SLOT + GAP + SLOT);
 const JUNCTION_Y = Math.trunc((MINE_ROW + SLOT) / 2) - JUNCTION / 2;
 export const PRIVATE_LINE = (JUNCTION_Y + JUNCTION) / 2;
@@ -241,10 +243,10 @@ export class County {
       let x1 = Math.ceil(maxX + VERGE), y1 = Math.ceil(maxY + VERGE);
       const clip = (gate: Vec, side: Side) => {
         // C#'s Math.Round rounds halves to even, but a gate's edge coordinate is always whole.
-        if (side === 'north') y1 = Math.min(y1, Math.round(gate.y));
-        else if (side === 'south') y0 = Math.max(y0, Math.round(gate.y));
-        else if (side === 'east') x0 = Math.max(x0, Math.round(gate.x));
-        else x1 = Math.min(x1, Math.round(gate.x));
+        if (side === 'north') y1 = Math.min(y1, Math.round(gate.y) + INSET);
+        else if (side === 'south') y0 = Math.max(y0, Math.round(gate.y) - INSET);
+        else if (side === 'east') x0 = Math.max(x0, Math.round(gate.x) - INSET);
+        else x1 = Math.min(x1, Math.round(gate.x) + INSET);
       };
       if (k2 === 0) clip(p0, fromSide);
       if (k2 === n - 1) clip(p3, toSide);

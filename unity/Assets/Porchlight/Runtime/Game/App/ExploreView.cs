@@ -289,6 +289,15 @@ namespace Porchlight.App
         public Func<(Vector3 at, Vector3 look)?> CameraOverride;
         /// <summary>The sign-in screen's town: no controls, an auto walk and a slowly turning camera.</summary>
         public bool Attract;
+        /// <summary>
+        /// In the county (CountyDrive): towns are built without the slab round them, and beyond the
+        /// space you're in is open country (in its terms, x and y), where a plane can fly low and land.
+        /// </summary>
+        public bool InCounty;
+        public Func<double, double, bool> Countryside;
+        /// <summary>The weather settling on a space you've just driven into, a step a frame.</summary>
+        IEnumerator<string> settling;
+        public ModelLibrary Library => library;
         Func<double, double, bool> canDrive = (x, y) => false;
         Func<double, double, bool> canSail = (x, y) => false;
         /// <summary>What's drawn as sidewalk or road, short of sheds and hangars: walkable where it overhangs a closed tile (the water's edge).</summary>
@@ -381,11 +390,23 @@ namespace Porchlight.App
             lastSpot = null;
             player = null;
             playerAvatar = null;
-            world = new TownWorld(model, library, stepwise: true);
+            world = new TownWorld(model, library, stepwise: true, inCounty: InCounty);
             remotes = new RemotePlayers(world.root.transform, library);
             yield return "layout";
             foreach (var part in world.Build()) yield return part;
             snap = true;
+            Ways();
+            yield return "ways";
+            Populate();
+            yield return "people";
+            weather = new Weather(world) { Rain = wantRain, Snow = wantSnow };
+            foreach (var step in weather.Settle()) yield return step;
+        }
+
+        /// <summary>Where you can walk, drive, sail and fly in the town on screen.</summary>
+        void Ways()
+        {
+            var model = world.model;
             open = WalkMask();
             var paved = Vehicle.Paved(model, world.layout);
             var use = world.layout.use;
@@ -396,12 +417,25 @@ namespace Porchlight.App
                 byte u = use[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), width)];
                 return u != Use.SHED && u != Use.HANGAR;
             };
-            canDrive = Vehicle.Drivable(model, world.layout);
+            var drivable = Vehicle.Drivable(model, world.layout);
+            int w = model.width, h = model.height;
+            // Off the map, in the county, is open country: a plane comes down in a field, and a car can follow it.
+            canDrive = (x, y) => x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 ? drivable(x, y) : Countryside != null && Countryside(x, y);
             canSail = Vehicle.Sailable(model, world.layout);
             skyFloor = SkyFloor();
             overlay.SetTown(model);
-            yield return "ways";
+        }
 
+        /// <summary>The town's traffic and townsfolk (a stretch of highway, the junction or a plot has none).</summary>
+        void Populate()
+        {
+            var model = world.model;
+            if (model.IsRoad)
+            {
+                traffic = null;
+                basePeople = 0;
+                return;
+            }
             traffic = new Traffic(world.layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             fleet = new Fleet(traffic, library, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
@@ -416,9 +450,96 @@ namespace Porchlight.App
                 avatars.Add(a);
             }
             basePeople = people.Count;
-            yield return "people";
+        }
+
+        /// <summary>
+        /// Drive (or walk, or fly) on into the next space of the county, built already beside this one:
+        /// it's `dx`, `dy` tiles on from this one's corner. You and whatever you're driving carry on, moved
+        /// into its terms; the town you've left keeps nothing of yours (its traffic, its people, your other
+        /// cars, any route). The camera moves with everything (CountyDrive moves the spaces' roots), so
+        /// nothing on screen jumps.
+        /// </summary>
+        public void SwitchSpace(TownWorld next, double dx, double dy)
+        {
+            weather?.Dispose();
+            weather = null;
+            settling = null;
+            remotes?.Clear();
+            fleet?.Dispose();
+            fleet = null;
+            traffic = null;
+            foreach (var a in avatars) a.Dispose();
+            avatars.Clear();
+            people.Clear();
+            followers.Clear();
+            trail.Clear();
+            noticing = null;
+            followersAboard = false;
+            foreach (var k in keepers.Values) k.avatar.Dispose();
+            keepers.Clear();
+            shownRooms.Clear();
+            room = null;
+            var keep = driving != null ? cars[driving.Value] : null;
+            foreach (var c in cars) if (c != keep) RemoveCar(c);
+            cars.Clear();
+            if (keep != null)
+            {
+                cars.Add(keep);
+                driving = 0;
+            }
+            if (autoDrive != null)
+            {
+                autoDrive = null;
+                OnAutoChange?.Invoke();
+            }
+            takenParked.Clear();
+            taken.Clear();
+            takenSynced = false;
+            sync.Clear();
+            foreach (var v in othersParked.Values) v.Dispose();
+            othersParked.Clear();
+            othersParkedAt.Clear();
+            finding = null;
+            waypoint = null;
+            overlay.SetWaypoint(null);
+            guideTo = null;
+            findRoute = new List<Vec2>();
+            findSteps = null;
+            ClearFindPath();
+            ClearRoute();
+            DoorOpeners.Clear();
+            Obstacles.Clear();
+            lastSpot = null;
+
+            // You, in the new space's terms, drawn in it.
+            if (player != null)
+            {
+                player.x -= dx;
+                player.y -= dy;
+                if (player.IsAuto) player.StartAuto(next.sidewalks, autoRng);
+            }
+            if (keep != null)
+            {
+                keep.car.x -= dx;
+                keep.car.y -= dy;
+                keep.view.root.transform.SetParent(next.root.transform, false);
+            }
+            playerAvatar?.root.transform.SetParent(next.root.transform, false);
+            // The camera's smoothing too: map terms are (x, height, map y); the scene's are (x, height, -map y).
+            focus -= new Vector3((float)dx, 0, (float)dy);
+            focusFollow.Shift(-dx, 0, -dy);
+            lookFollow.Shift(-dx, 0, -dy);
+            var scene = new Vector3((float)-dx, 0, (float)dy);
+            chasePos += scene;
+            chaseLook += scene;
+            camera.transform.position += scene;
+
+            world = next;
+            remotes = new RemotePlayers(world.root.transform, library);
+            Ways();
+            Populate();
             weather = new Weather(world) { Rain = wantRain, Snow = wantSnow };
-            foreach (var step in weather.Settle()) yield return step;
+            settling = weather.Settle().GetEnumerator();
         }
 
         /// <summary>Raining, snowing, both, or neither (sunny). Kept from town to town.</summary>
@@ -712,7 +833,7 @@ namespace Porchlight.App
             authority = host;
             if (!authority || world == null) return;
             // Carry on from where the host had everyone.
-            foreach (var c in traffic.cars) if (!c.taken) traffic.Adopt(c);
+            if (traffic != null) foreach (var c in traffic.cars) if (!c.taken) traffic.Adopt(c);
             foreach (var q in people) q.Rejoin(world.sidewalks);
             sync.Clear();
         }
@@ -1553,11 +1674,11 @@ namespace Porchlight.App
             return o;
         }
 
-        /// <summary>The lowest a plane may fly at (x, y); Infinity off the map, which it can't fly past.</summary>
+        /// <summary>The lowest a plane may fly at (x, y); off the map, the open country in the county (Infinity elsewhere: it can't fly past).</summary>
         double FloorAt(double x, double y)
         {
             int w = world.model.width, h = world.model.height;
-            if (x < 0.5 || y < 0.5 || x > w - 0.5 || y > h - 0.5) return double.PositiveInfinity;
+            if (x < 0.5 || y < 0.5 || x > w - 0.5 || y > h - 0.5) return Countryside != null && Countryside(x, y) ? 0 : double.PositiveInfinity;
             return skyFloor[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), w)];
         }
 
@@ -2105,6 +2226,7 @@ namespace Porchlight.App
                 return;
             }
             camera.enabled = true;
+            if (settling != null && !settling.MoveNext()) settling = null;
             UpdateWeather(dt);
             var p = player;
             if (p != null && playerAvatar != null)

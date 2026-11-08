@@ -71,6 +71,8 @@ namespace Porchlight.Explore
             var ofRoad = new List<int>();
             foreach (int g in ofRoadGroup) ofRoad.Add(index[g]);
             GiveNames(model, roads, streets, new Rng($"{model.seed}::streets"));
+            // A stretch of highway (or the junction, or a plot) is all the one road.
+            if (model.roadName != null) foreach (var st in streets) st.name = model.roadName;
             return new StreetNames { streets = streets, ofRoad = ofRoad };
         }
 

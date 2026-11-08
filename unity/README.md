@@ -8,8 +8,8 @@ The server is `server/`, Node and Colyseus. It handles sign-in, the characters, 
 
 | Folder | What's in it |
 | --- | --- |
-| `Assets/Porchlight/Runtime/Shared` | Engine-free C#: the town generator, the explore simulation (walking, driving, traffic, directions), the network client (msgpack, the Colyseus schema decoder, rooms), and missions as they play (`Missions/`, running ink). It builds on plain .NET too, so `Tools~/Checks` can test it without Unity. |
-| `Assets/Porchlight/Runtime/Game` | The Unity side. `Rendering`: the 3D town as GameObjects, people, cars, the sky and lights. `UI`: the blueprint, sidebar, overlay, sign-in, character picker and a mission's conversation (UI Toolkit). `App`: the explore view, input, a mission's people and parking spots (`MissionPlay`), and the app itself (`PorchlightApp`). `Net`: multiplayer, accounts, the mission list, and the platform layer. |
+| `Assets/Porchlight/Runtime/Shared` | Engine-free C#: the town generator, the county the towns make (`County/`: where each goes, the highways between them, which room owns which ground, and each road space as a town of its own), the explore simulation (walking, driving, traffic, directions), the network client (msgpack, the Colyseus schema decoder, rooms), and missions as they play (`Missions/`, running ink). It builds on plain .NET too, so `Tools~/Checks` can test it without Unity. |
+| `Assets/Porchlight/Runtime/Game` | The Unity side. `Rendering`: the 3D town as GameObjects, people, cars, the sky and lights. `UI`: the blueprint, sidebar, overlay, sign-in, character picker and a mission's conversation (UI Toolkit). `App`: the explore view, input, a mission's people and parking spots (`MissionPlay`), driving the county from town to town (`CountyDrive`), and the app itself (`PorchlightApp`). `Net`: multiplayer, accounts, the mission list, and the platform layer. |
 | `Assets/Ink` | ink's runtime engine, as it is upstream (MIT), which plays the missions. |
 | `Assets/Porchlight/Models` | The Kenney and RG Poly models (glTF), imported by glTFast. |
 | `Assets/Porchlight/Editor` | `Setup.cs`, which sets up the project and makes the builds (the **Porchlight** menu, or batch mode). `Library.cs` turns the models into the game's prefabs. |
@@ -27,6 +27,16 @@ Everything is Unity's own; there are no custom shaders:
 - **The town:** GameObjects. What never moves is combined with static batching. Procedural parts (ground, roads, walls) are meshes coloured through a palette texture, so they draw with URP Lit like everything else.
 - **Light:** a directional sun with URP soft shadows, Trilight ambient, and linear fog for the close-up camera. Clouds by day and twinkling stars by night are particle-material quads on a shell round the camera, drawn first and nearer than the fog (plus flat clouds over the town for the orbit camera). A global volume adds bloom and Neutral tonemapping. At night, bulbs and windows glow, and a few real point lights follow the street lamps nearest the camera.
 - **Showing through buildings:** two URP Render Objects passes. One draws you (and the car you drive) in orange wherever you're hidden. The other draws name tags (TextMeshPro) over everything.
+
+## Driving the county
+
+Signed in, the town on screen is one of the county's (see `infra/README.md`, The county), and you can drive out of any of its gates along the highway to the next town, or take a plane and fly anywhere over the fields, with no loading screen. `CountyDrive` does it:
+
+- **Spaces:** each town, the junction north of Porchlight, each of your empty plots and each stretch of highway (at most 180 tiles) is a space with its own tile grid; a road space is built as a town of its own (`County/RoadSpaces`), so walking, driving and drawing take it as they are. You're in one at a time; next to each other they overlap a little (a highway reaches 3 tiles into the town at its end), so the car is on both while it crosses.
+- **Building as you go:** road spaces within 240 tiles of you are built, and the nearest towns within 330 (two at most: the one you're in and the next), a few milliseconds a frame. Off the web a town grows on a worker thread; on the web a stage a step. Spaces well behind are let go. A town's parts (its houses, its rooms) are each still built in one go, so a big town can cost a hitch of a frame or two as it goes up.
+- **Moving in:** over the line into the next space, once it's built, the view moves into it (`ExploreView.SwitchSpace`): you and the car you're driving carry on, in its terms; the space you've left keeps nothing of yours. The space you're in is always at the scene's origin, so every built space shifts by the same amount and nothing on screen moves. If the next space isn't built yet, you wait at its edge. Missions keep you in the town you started them in, and start only in a town.
+- **The countryside:** one ground under the whole county, with holes for the towns. Off a town's map is open country: a plane flies low and lands anywhere, and a car can follow it.
+- **Rooms:** over into another room's ground (see The county), this tab leaves its room and joins that one, carrying on from where it is; `NetFrame` gives each room positions in its own terms, and shares the room's traffic and townsfolk only while you're in its town (on the road, your traffic is your own).
 
 ## Running it
 
@@ -48,6 +58,7 @@ This starts Keycloak, the database and the server. It builds the game if there's
 
 ```
 dotnet run --project "unity/Tools~/Checks" -- towns 60     # towns grow with every invariant checked, and repeat exactly
+dotnet run --project "unity/Tools~/Checks" -- county server/test/county-vectors.json   # the county lays out, drives end to end, and the server's copy agrees
 
 node unity/Tools~/net/server.ts                              # a game server; prints a line of JSON
 dotnet run --project "unity/Tools~/Checks" -- net '<that line>'   # two C# clients play it

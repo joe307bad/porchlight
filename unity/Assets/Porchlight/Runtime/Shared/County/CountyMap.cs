@@ -104,6 +104,12 @@ namespace Porchlight.County
         public const double STRETCH = 180;
         /// <summary>Countryside either side of a highway's stretch, in its space (tiles).</summary>
         public const int VERGE = 14;
+        /// <summary>
+        /// How far a highway's first and last stretches reach into the spaces at its ends (tiles): a
+        /// car can't quite reach a town's edge (it stops a little short), so the two overlap there,
+        /// and the car is on both while it crosses.
+        /// </summary>
+        public const int INSET = 3;
         /// <summary>How far out from the road a highway still counts as its own room's (tiles); further, the countryside's nearest.</summary>
         public const double CORRIDOR = 24;
         /// <summary>The top of the row of your own slots (world y).</summary>
@@ -303,10 +309,10 @@ namespace Porchlight.County
         {
             switch (side)
             {
-                case Side.North: y1 = Math.Min(y1, (int)Math.Round(gate.y)); break;
-                case Side.South: y0 = Math.Max(y0, (int)Math.Round(gate.y)); break;
-                case Side.East: x0 = Math.Max(x0, (int)Math.Round(gate.x)); break;
-                default: x1 = Math.Min(x1, (int)Math.Round(gate.x)); break;
+                case Side.North: y1 = Math.Min(y1, (int)Math.Round(gate.y) + INSET); break;
+                case Side.South: y0 = Math.Max(y0, (int)Math.Round(gate.y) - INSET); break;
+                case Side.East: x0 = Math.Max(x0, (int)Math.Round(gate.x) - INSET); break;
+                default: x1 = Math.Min(x1, (int)Math.Round(gate.x) + INSET); break;
             }
         }
 
@@ -388,15 +394,24 @@ namespace Porchlight.County
         /// <summary>Your own part of the county (north of the line): your towns there, nobody else's.</summary>
         public static bool IsPrivateGround(Vec2 world) => world.y < PRIVATE_LINE;
 
+        /// <summary>A town, the junction or a plot takes over this far inside its edge (tiles)...</summary>
+        public const double ENTER = 1.5;
+        /// <summary>...and keeps you till you're this close to it (a car stops 0.55 short of a town's edge).</summary>
+        public const double STAY = 0.75;
+
+        static bool Inside(Space s, Vec2 p, double inset) =>
+            p.x >= s.x0 + inset && p.y >= s.y0 + inset && p.x <= s.x0 + s.width - inset && p.y <= s.y0 + s.height - inset;
+
         /// <summary>
-        /// The space to be in at this point: a town, the junction or a plot you're inside;
-        /// else the stretch of highway you're nearest, if you're inside it; else null (the
-        /// countryside, where only a plane goes). `current` wins while it still holds you.
+        /// The space to be in at this point: a town, the junction or a plot you're well inside;
+        /// else the stretch of highway you're on (where it overlaps a town's edge too); else the
+        /// town you're at the edge of; else null (the countryside, where only a plane goes).
+        /// `current` keeps you while it still holds you, so nothing flickers back and forth.
         /// </summary>
         public Space SpaceAt(Vec2 world, Space current = null)
         {
-            if (current != null && current.kind != SpaceKind.Highway && current.Contains(world.x, world.y)) return current;
-            foreach (var s in spaces) if (s.kind != SpaceKind.Highway && s.Contains(world.x, world.y)) return s;
+            if (current != null && current.kind != SpaceKind.Highway && Inside(current, world, STAY)) return current;
+            foreach (var s in spaces) if (s.kind != SpaceKind.Highway && Inside(s, world, ENTER)) return s;
             Space best = null;
             double bestD = double.PositiveInfinity;
             foreach (var hw in highways)
@@ -414,16 +429,16 @@ namespace Porchlight.County
                     }
                 }
             }
-            if (best != null && current != null && current.kind == SpaceKind.Highway && current.Contains(world.x, world.y))
+            if (best != null && current != null && current.kind == SpaceKind.Highway && current.Contains(world.x, world.y) && current.highway == best.highway && best.id != current.id)
             {
                 // Along the same highway, hand over a little past the cut, not on it.
-                if (current.highway == best.highway && best.id != current.id)
-                {
-                    var (sAt, _) = Nearest(highways[current.highway], world);
-                    if (sAt > current.s0 - HANDOVER && sAt < current.s1 + HANDOVER) return current;
-                }
+                var (sAt, _) = Nearest(highways[current.highway], world);
+                if (sAt > current.s0 - HANDOVER && sAt < current.s1 + HANDOVER) return current;
             }
-            return best;
+            if (best != null) return best;
+            if (current != null && current.Contains(world.x, world.y)) return current;
+            foreach (var s in spaces) if (s.kind != SpaceKind.Highway && s.Contains(world.x, world.y)) return s;
+            return null;
         }
 
         /// <summary>How far past the cut between two stretches (tiles) you go before the next one takes over.</summary>

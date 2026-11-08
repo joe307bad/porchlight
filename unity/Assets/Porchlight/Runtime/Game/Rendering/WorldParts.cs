@@ -594,6 +594,7 @@ namespace Porchlight.Rendering
                 for (int x = 0; x < w; x++)
                 {
                     int i = Grid.Index(x, y, w);
+                    if (model.foreign != null && model.foreign[i] != 0) continue; // the next stretch's to plant
                     byte use = layout.use[i];
                     byte terrain = tiles.terrain[i];
                     if (tiles.overlay[i] != Overlay.NONE) continue;

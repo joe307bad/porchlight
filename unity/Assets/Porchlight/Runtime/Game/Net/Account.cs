@@ -59,6 +59,10 @@ namespace Porchlight.App
         /// <summary>This account made it (and can delete it).</summary>
         public bool mine;
         public int residents, playing;
+        /// <summary>Where it is in the county: a town that comes with the game's place ("porchlight", "east"...), or null.</summary>
+        public string place;
+        /// <summary>One of this account's: which of its three places north of Porchlight it's in (0-2), or -1.</summary>
+        public int slot = -1;
     }
 
     /// <summary>Every town there is, and how many of them this account has made of how many it can.</summary>
@@ -66,6 +70,8 @@ namespace Porchlight.App
     {
         public List<Town> towns = new List<Town>();
         public int made, max;
+        /// <summary>The account's id: its part of the county's room is named for it.</summary>
+        public string account;
     }
 
     /// <summary>A house someone lives in.</summary>
@@ -189,6 +195,8 @@ namespace Porchlight.App
             mine = t is Dictionary<string, object> d && d.TryGetValue("mine", out var m) && m is bool b && b,
             residents = (int)Json.Num(t, "residents", 0),
             playing = (int)Json.Num(t, "playing", 0),
+            place = Json.Str(t, "place"),
+            slot = t is Dictionary<string, object> ds && ds.TryGetValue("slot", out var sl) && sl != null ? (int)Json.Num(t, "slot", -1) : -1,
         };
 
         public static void ListTowns(INetPlatform net, string origin, Action<TownList, string> done) =>
@@ -199,7 +207,7 @@ namespace Porchlight.App
                     done(null, err);
                     return;
                 }
-                var list = new TownList { made = (int)Json.Num(json, "made", 0), max = (int)Json.Num(json, "max", 0) };
+                var list = new TownList { made = (int)Json.Num(json, "made", 0), max = (int)Json.Num(json, "max", 0), account = Json.Str(json, "account") };
                 foreach (var t in Json.Arr(json, "towns") ?? new List<object>()) list.towns.Add(TownFrom(t));
                 done(list, null);
             });

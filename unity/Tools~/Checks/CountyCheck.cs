@@ -125,7 +125,20 @@ static class CountyCheck
                 bool overlap = a.x0 < b.x0 + b.width && b.x0 < a.x0 + a.width && a.y0 < b.y0 + b.height && b.y0 < a.y0 + a.height;
                 if (!overlap) continue;
                 bool neighbours = a.kind == SpaceKind.Highway && b.kind == SpaceKind.Highway && a.highway == b.highway && Math.Abs(map.highways[a.highway].segments.IndexOf(a.id) - map.highways[a.highway].segments.IndexOf(b.id)) == 1;
-                if (!neighbours) errors.Add($"{Describe(a)} overlaps {Describe(b)}");
+                // A highway's end stretches reach a little way into the spaces at its ends, and no further.
+                bool end = false;
+                foreach (var (hwSpace, other) in new[] { (a, b), (b, a) })
+                {
+                    if (hwSpace.kind != SpaceKind.Highway || other.kind == SpaceKind.Highway) continue;
+                    var hw = map.highways[hwSpace.highway];
+                    if (other.id != hw.a.space && other.id != hw.b.space) continue;
+                    int depth = Math.Min(Math.Min(hwSpace.x0 + hwSpace.width - other.x0, other.x0 + other.width - hwSpace.x0), Math.Min(hwSpace.y0 + hwSpace.height - other.y0, other.y0 + other.height - hwSpace.y0));
+                    end = depth <= CountyMap.INSET;
+                }
+                // Two highways out of one small town can pass close by its corner: they share the ground (each draws the tiles nearer its own road).
+                bool sameTown = a.kind == SpaceKind.Highway && b.kind == SpaceKind.Highway && a.highway != b.highway
+                    && new[] { map.highways[a.highway].a.space, map.highways[a.highway].b.space }.Intersect(new[] { map.highways[b.highway].a.space, map.highways[b.highway].b.space }).Any();
+                if (!neighbours && !end && !sameTown) errors.Add($"{Describe(a)} overlaps {Describe(b)}");
             }
         }
         foreach (var hw in map.highways)
@@ -169,10 +182,18 @@ static class CountyCheck
                 var model = RoadSpaces.Build(map, s);
                 var layout = Layout.Build(model);
                 var drive = Vehicle.Drivable(model, layout);
-                var paved = Vehicle.Paved(model, layout);
-                var traffic = new Traffic(layout, new Rng("county"), Catalog.PickCarModel);
-                for (int k = 0; k < 20; k++) traffic.Update(0.05, null);
-                built[s.id] = (model, (x, y) => drive(x, y) && paved(x, y));
+                var paved = model.tiles;
+                var names = StreetNaming.Name(model, layout.roads);
+                if (names.streets.Exists(st => st.name != s.name)) errors.Add($"{Describe(s)}: a road there isn't called {s.name}");
+                // Asphalt (the tiles' own road), not just anywhere a car can go.
+                bool OnRoad(double x, double y)
+                {
+                    int tx = (int)Math.Floor(x), ty = (int)Math.Floor(y);
+                    if (tx < 0 || ty < 0 || tx >= model.width || ty >= model.height) return false;
+                    byte o = paved.overlay[ty * model.width + tx];
+                    return o == Overlay.ROAD_MAIN || o == Overlay.BRIDGE;
+                }
+                built[s.id] = (model, (x, y) => drive(x, y) && OnRoad(x, y));
             }
             catch (Exception e)
             {
@@ -204,7 +225,47 @@ static class CountyCheck
                 if (!b.drive(l.x, l.y)) errors.Add($"{Describe(end)} has no road at its {Compass.Name(port.side)} edge for {hw.name}");
             }
         }
+        // Out of the towns that come with the game and back: well inside the town, the town's road;
+        // at its edge, the highway's too, so the car is on both while it crosses.
+        foreach (var hw in map.highways)
+        {
+            foreach (var (port, sAt) in new[] { (hw.a, 0.0), (hw.b, hw.length) })
+            {
+                var town = map.spaces[port.space];
+                if (town.kind != SpaceKind.Town || CountyMap.IsMine(town.place)) continue;
+                var (tModel, tDrive) = TownDrive(town.townKey);
+                var gate = CountyMap.PortPoint(town, port.side);
+                var o = Compass.Outward(port.side);
+                foreach (double inward in new[] { CountyMap.ENTER, 1.0, CountyMap.STAY + 0.05 })
+                {
+                    var w = new Vec2(gate.x - o.x * inward, gate.y - o.y * inward);
+                    var l = town.ToLocal(w);
+                    if (!tDrive(l.x, l.y)) errors.Add($"{town.name} has no road {inward} tiles in from its {Compass.Name(port.side)} gate");
+                    var seg = map.spaces[port.space == hw.a.space ? hw.segments[0] : hw.segments[hw.segments.Count - 1]];
+                    if (inward <= CountyMap.ENTER && built.TryGetValue(seg.id, out var b))
+                    {
+                        var sl = seg.ToLocal(w);
+                        if (!b.drive(sl.x, sl.y)) errors.Add($"{hw.name} has no road {inward} tiles inside {town.name}'s {Compass.Name(port.side)} gate");
+                    }
+                    var at = map.SpaceAt(w, inward >= CountyMap.ENTER ? null : seg);
+                    if (inward < CountyMap.STAY + 0.1 && at?.id != seg.id) errors.Add($"at {town.name}'s {Compass.Name(port.side)} edge you're in {(at == null ? "nothing" : Describe(at))}, not on {hw.name}");
+                }
+            }
+        }
         return errors;
+    }
+
+    static readonly Dictionary<string, (TownModel, Func<double, double, bool>)> towns = new Dictionary<string, (TownModel, Func<double, double, bool>)>();
+
+    /// <summary>Where a car can go in a town (grown from its key, once).</summary>
+    static (TownModel, Func<double, double, bool>) TownDrive(string key)
+    {
+        if (towns.TryGetValue(key, out var t)) return t;
+        var (seed, p) = Program.ParseKey(key);
+        var model = Generator.Generate(seed, p);
+        var layout = Layout.Build(model);
+        var drive = Vehicle.Drivable(model, layout);
+        return towns[key] = (model, drive);
     }
 
     static string Describe(Space s) => $"{s.name} ({s.kind.ToString().ToLowerInvariant()} {s.x0},{s.y0} {s.width}x{s.height})";

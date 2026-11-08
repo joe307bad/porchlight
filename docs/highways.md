@@ -2,6 +2,42 @@
 
 How Porchlight could link its towns with highways so you can drive from one town to the next with no loading screen.
 
+## What's built
+
+The plan below is now in the code. How it's used day to day is in `unity/README.md` (Driving the county) and `infra/README.md` (The county).
+
+**Generator**
+- Every town has four gates, one in the middle of each edge, on a level, dry pad that rivers keep away from.
+- Porchlight is regenerated: 1,509 houses, everyone rehoused.
+
+**The county**
+- There are three new public cities: Lanternport (east, 224×192, a harbour), Ember Crossing (south, 256×256, towers) and Juniper Falls (west, 144×160, hills and rivers).
+- `Shared/County` lays out the county and builds each road space as a town. `server/src/county.ts` does the same layout on the server, held to it by test vectors.
+- `Checks county` drives every highway end to end, crossing every hand-over, including into the real public cities.
+
+**Server**
+- Rooms own territories: their town, half of each of their highways, and the nearest countryside.
+- A join can say where it's `arrive`-ing.
+- The north room (`north:<account>`) holds the junction and your empty plots.
+- `towns.slot` records which of your three places a town is in.
+- Night and day are the same across the whole county.
+
+**Game**
+- `CountyDrive` builds spaces as you approach, switches you into them with a floating origin, and changes rooms at the territory line.
+- `NetFrame` translates positions between each room's terms and the space you're in.
+- Planes fly and land anywhere over the countryside.
+
+**Where it differs from the plan below**
+- **Two towns are held at once:** the one you're in and the next, so turning round is cheap.
+- **Highway stretches are short spaces of their own:** at most 180 tiles, about 15 of them per highway once building and release ranges are counted. A highway is not one long space.
+- **Building is not yet split finely:** a town's parts (its houses, its rooms) are each still built in a single step, so a big town can cost a frame or two as it goes up. Splitting those parts further is the next step if it shows.
+- **No highway traffic yet:** the roads are yours alone.
+
+**Not yet tried in Unity.** This session had no editor. The shared code is tested on .NET. The game code compiles against Unity's reference assemblies, with stubs standing in for the packages they lack. The parts to try first:
+- the floating-origin shift of a static-batched town;
+- the hand-over at a town's gate, in a car and on foot;
+- frame times while a town builds on the web.
+
 This is research, not a commitment. Wherever a number below comes from the code, it gives the file and line (paths are under `unity/Assets/Porchlight/Runtime/` unless they say otherwise). Numbers taken from outside sources are linked at the end, and anything unmeasured is marked **(measure)**.
 
 ---
@@ -131,8 +167,8 @@ For worlds generated lazily, Minecraft-style, put one town per region. Place eac
 | South city | 0..256, 656..912 | spoke: 400 tiles straight |
 | West city | −656..−400, 0..256 | spoke: 400 tiles straight |
 | East↔South, South↔West rims | — | quarter-circle curves of about 830 tiles, each split into 2 highway segments (under the 655-tile limit), with a rest stop in the middle |
-| Junction | about (128, −400) | end of the north highway |
-| Private slots 1–3 | about 1 km north, spread west to east | the loop's segments are 400–600 tiles each |
+| Junction | 104..152, −352..−304 | end of the north highway (about 300 tiles long) |
+| Private slots 1–3 | y −912..−656, x as West, Porchlight, East | the loop's segments are 400–700 tiles each |
 
 The 400-tile gap comes from the budget in §5. Re-run that sum once the build has been measured.
 

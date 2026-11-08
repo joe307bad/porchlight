@@ -12,6 +12,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Porchlight.Core;
+using Porchlight.County;
 using Porchlight.Explore;
 using Porchlight.Gen;
 using Porchlight.Model;
@@ -23,6 +24,7 @@ using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 using Debug = UnityEngine.Debug;
 using Rect = UnityEngine.Rect;
+using Space = Porchlight.County.Space;
 
 namespace Porchlight.App
 {
@@ -67,6 +69,10 @@ namespace Porchlight.App
         bool online;
         User user;
         Multiplayer net;
+        /// <summary>Signed in, the county round the town on screen: its highways out to the next towns (CountyDrive).</summary>
+        CountyDrive county;
+        /// <summary>What the room sees of the game, in its own terms (the county's spaces each have their own).</summary>
+        NetFrame netFrame;
         /// <summary>Who's playing (signed in): chosen at the front door.</summary>
         Character playing;
         FrontDoor door;
@@ -1080,6 +1086,7 @@ namespace Porchlight.App
             door.Close();
             net?.Close();
             net = null;
+            if (county != null) county.Net = null;
             if (iso != null) iso.TeleportHook = null;
             await Run(ShowTownSteps(c.home.townKey), "town/");
             // Generated afresh, a town can have changed since they moved in.
@@ -1109,6 +1116,7 @@ namespace Porchlight.App
             door.Close();
             net?.Close();
             net = null;
+            if (county != null) county.Net = null;
             if (iso != null) iso.TeleportHook = null;
             playing = c;
             preferHome = false;
@@ -1254,6 +1262,11 @@ namespace Porchlight.App
                 if (exploring) ZoomWithWheel();
                 iso.FastSprint = Unlocks.Contains("sprint");
                 iso.Update();
+                if (county != null)
+                {
+                    county.Paused = mission != null || missionStarting != null;
+                    county.Update();
+                }
                 UpdateMission();
                 UpdateGarage();
                 UpdatePlayers();
@@ -1357,10 +1370,13 @@ namespace Porchlight.App
                 // A new town: drop the old walk and start afresh at the new town's spawn point.
                 // (All at once: the town is in play, with others' moves arriving, so it can't be half built.)
                 EndMission(null);
+                StopCounty();
+                iso.InCounty = online;
                 iso.SetTown(model);
                 isoTown = model;
                 SpawnCharacter();
                 EnterTown();
+                StartCounty();
                 yield return "world";
             }
             else if (iso != null && iso.IsAuto)
@@ -1485,6 +1501,8 @@ namespace Porchlight.App
                 {
                     EndMission(null);
                     isoTown = null;
+                    StopCounty();
+                    iso.InCounty = online;
                     await Run(iso.SetTownSteps(model), "world/");
                     isoTown = model;
                     SpawnCharacter();
@@ -1494,6 +1512,7 @@ namespace Porchlight.App
                 // Online: into this town's room, as whoever's playing.
                 Connect();
                 EnterTown();
+                StartCounty();
                 if (!missionsAsked) RefreshMissions();
             }
             catch (Exception err)
@@ -1550,21 +1569,113 @@ namespace Porchlight.App
             iso?.SetWeather(rain, snow);
         }
 
+        /// <summary>Out of the county (a town loaded afresh, or signed out): the spaces built round the town go.</summary>
+        void StopCounty()
+        {
+            county?.Dispose();
+            county = null;
+            if (netFrame != null) netFrame.county = null;
+        }
+
+        /// <summary>
+        /// Signed in: the county round the town on screen (Porchlight, the cities, and the account's own
+        /// towns in their places), so you can drive and fly on out of it to the others.
+        /// </summary>
+        void StartCounty()
+        {
+            if (!online || iso?.world == null || county != null) return;
+            string key = TownKey;
+            var on = model;
+            Account.ListTowns(platform, origin, (list, err) =>
+            {
+                if (list == null || county != null || !exploring || iso?.world == null || iso.world.model != on || key != TownKey) return;
+                var placed = new List<PlacedTown>();
+                foreach (var t in list.towns)
+                {
+                    Place? where = null;
+                    if (!t.mine && t.place != null && Enum.TryParse(t.place, true, out Place p)) where = p;
+                    else if (t.mine && t.slot >= 0 && t.slot < 3) where = CountyMap.MineSlot(t.slot);
+                    if (where == null) continue;
+                    var state = ParseUrlState(t.key);
+                    placed.Add(new PlacedTown { place = where.Value, name = t.name, key = t.key, width = (int)state.@params.width, height = (int)state.@params.height });
+                }
+                CountyMap plan;
+                try
+                {
+                    plan = CountyMap.Build(placed, list.account);
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("county: " + e.Message);
+                    return;
+                }
+                var here = plan.spaces.Find(sp => sp.kind == SpaceKind.Town && sp.townKey == key);
+                if (here == null) return; // not a town of the county (one someone else made)
+                county = new CountyDrive(iso, plan, here, k =>
+                {
+                    var st = ParseUrlState(k);
+                    return (st.seed, st.@params);
+                })
+                { Net = net, Frame = netFrame, OnSpace = DroveInto };
+                county.EnterRoom();
+            });
+        }
+
+        /// <summary>Driven (or flown) into another space of the county: into a town, it's the town on screen now.</summary>
+        void DroveInto(Space space, TownModel town)
+        {
+            if (space.kind != SpaceKind.Town || town == null)
+            {
+                // On the road: no house of yours or neighbours' here.
+                overlay?.SetHome(null, null);
+                overlay?.SetNeighbours(null);
+                return;
+            }
+            var state = ParseUrlState(space.townKey);
+            seed = state.seed;
+            @params = state.@params;
+            model = town;
+            isoTown = town;
+            sidebar.SetSeed(seed);
+            sidebar.SetParams(@params);
+            map.marker = null;
+            map.SetModel(model);
+            map.Redraw();
+            overlay?.SetHome(DoorOfHome()?.at, HouseOfHome()?.footprint);
+            overlay?.SetNeighbours(null);
+            RefreshNeighbours();
+            overlay?.Flash($"Welcome to {space.name}");
+            if (playing != null) OfferJoins();
+        }
+
         void Connect()
         {
             if (playing == null || iso == null || net != null) return;
-            net = new Multiplayer(iso, playing, origin, platform, timers);
+            netFrame = new NetFrame(iso);
+            net = new Multiplayer(netFrame, playing, origin, platform, timers);
+            netFrame.Room = () => net?.RoomKey;
             net.onStatus = s => sidebar.SetOnline(s.state, s.here, s.why);
             net.onUnlockedElsewhere = SayUnlocked;
             net.onInUse = () => SwitchCharacter(InUse(playing));
-            iso.TeleportHook = (x, z) => net?.Teleport(x, z) ?? false;
+            iso.TeleportHook = (x, z) =>
+            {
+                if (net == null) return false;
+                var (rx, rz) = netFrame.ToRoom(x, z);
+                return net.Teleport(rx, rz);
+            };
+            if (county != null)
+            {
+                county.Net = net;
+                county.Frame = netFrame;
+            }
         }
 
         /// <summary>Play the town on screen with everyone else in it (no-op when it's already the one).</summary>
         void EnterTown()
         {
             if (isoTown != model) return;
-            net?.Enter(new TownKey { key = EncodeUrlState(seed, @params), width = model.width, height = model.height });
+            if (county != null) county.EnterRoom();
+            else net?.Enter(new TownKey { key = EncodeUrlState(seed, @params), width = model.width, height = model.height });
             overlay?.SetHome(DoorOfHome()?.at, HouseOfHome()?.footprint);
             overlay?.SetNeighbours(null);
             RefreshNeighbours();
@@ -1628,6 +1739,7 @@ namespace Porchlight.App
             journal?.Close();
             net?.Close();
             net = null;
+            if (county != null) county.Net = null;
             if (iso != null) iso.TeleportHook = null;
             FrontDoor.Forget(platform);
             playing = null;
@@ -1859,6 +1971,11 @@ namespace Porchlight.App
         void StartMission(string id)
         {
             if (iso == null || !exploring) return;
+            if (iso.world?.model.IsRoad == true)
+            {
+                overlay.Flash("Missions start in town.");
+                return;
+            }
             missionStarting = id;
             overlay.Flash("Starting the mission…");
             MissionCatalog.Get(platform, origin, id, (info, story, err) =>

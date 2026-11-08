@@ -118,11 +118,18 @@ namespace Porchlight.Rendering
         readonly List<GameObject> parkedCars = new List<GameObject>();
         readonly Dictionary<int, Interior> interiors = new Dictionary<int, Interior>();
 
-        /// <summary>`stepwise`: only begun; <see cref="Build"/> does the rest, a part at a time.</summary>
-        public TownWorld(TownModel model, ModelLibrary library, bool stepwise = false)
+        /// <summary>
+        /// In the county (CountyDrive): the countryside goes on past the map's edge, so no slab walls
+        /// round it; and a road space draws only its own ground (not the tiles the next one draws).
+        /// </summary>
+        readonly bool inCounty;
+
+        /// <summary>`stepwise`: only begun; <see cref="Build"/> does the rest, a part at a time. `inCounty`: no slab round it.</summary>
+        public TownWorld(TownModel model, ModelLibrary library, bool stepwise = false, bool inCounty = false)
         {
             this.model = model;
             this.library = library;
+            this.inCounty = inCounty;
             palette = new Palette();
             layout = Layout.Build(model);
             names = StreetNaming.Name(model, layout.roads);
@@ -206,6 +213,10 @@ namespace Porchlight.Rendering
             foreach (var p in parkedCars) parked.Add(p.transform);
             var buildings = new Dictionary<Transform, int>();
             for (int i = 0; i < shells.Count; i++) buildings[shells[i].transform] = i;
+            // In the town's own terms (where its corner is the origin): a space of the county is built off to
+            // one side of the one you're in, and is at the origin by the time its weather starts.
+            var origin = root.transform.position;
+            var toTown = Matrix4x4.Translate(-origin);
             foreach (var f in root.GetComponentsInChildren<MeshFilter>(true))
             {
                 var r = f.GetComponent<MeshRenderer>();
@@ -214,15 +225,16 @@ namespace Porchlight.Rendering
                 for (var t = f.transform; t != null && !isParked; t = t.parent) isParked = parked.Contains(t);
                 if (isParked) continue; // they drive off
                 var b = r.bounds;
+                b.center -= origin;
                 if (b.max.y < 0.1f) continue; // the ground, roads and water
-                tops.Add((f.sharedMesh, f.transform.localToWorldMatrix, b));
+                tops.Add((f.sharedMesh, toTown * f.transform.localToWorldMatrix, b));
                 int owner = -2;
                 for (var t = f.transform; t != null && owner == -2; t = t.parent)
                 {
                     if (buildings.TryGetValue(t, out int i)) owner = i;
                     else if (t.name == "sheds") owner = -1;
                 }
-                if (owner != -2) roofs.Add((f.sharedMesh, f.transform.localToWorldMatrix, b, owner));
+                if (owner != -2) roofs.Add((f.sharedMesh, toTown * f.transform.localToWorldMatrix, b, owner));
                 if (b.size.x > 24 || b.size.z > 24) continue; // one mesh for things all over town (the sheds): no single top
                 int x0 = Mathf.Max(0, Mathf.FloorToInt(b.min.x)), x1 = Mathf.Min(w - 1, Mathf.FloorToInt(b.max.x));
                 int y0 = Mathf.Max(0, Mathf.FloorToInt(-b.max.z)), y1 = Mathf.Min(h - 1, Mathf.FloorToInt(-b.min.z));
@@ -298,6 +310,7 @@ namespace Porchlight.Rendering
                 for (int x = 0; x < w; x++)
                 {
                     int i = Grid.Index(x, y, w);
+                    if (model.foreign != null && model.foreign[i] != 0) continue; // the next stretch's to draw
                     byte terrain = tiles.terrain[i];
                     byte overlay = tiles.overlay[i];
                     byte use = layout.use[i];
@@ -323,6 +336,7 @@ namespace Porchlight.Rendering
                     if (Wet(x + 1, y)) b.Quad(v(x + 1, 0, y), v(x + 1, 0, y + 1), v(x + 1, BED_Y, y + 1), v(x + 1, BED_Y, y), bank, new V3(1, 0, 0));
                 }
             }
+            if (inCounty) return b; // the countryside carries on
             b.Quad(v(0, 0, 0), v(w, 0, 0), v(w, -SLAB, 0), v(0, -SLAB, 0), C.slab, new V3(0, 0, -1));
             b.Quad(v(0, 0, h), v(w, 0, h), v(w, -SLAB, h), v(0, -SLAB, h), C.slab, new V3(0, 0, 1));
             b.Quad(v(0, 0, 0), v(0, 0, h), v(0, -SLAB, h), v(0, -SLAB, 0), C.slab, new V3(-1, 0, 0));
@@ -369,7 +383,7 @@ namespace Porchlight.Rendering
                     foreach (bool atEnd in new[] { false, true })
                     {
                         var p = atEnd ? r.points[r.points.Count - 1] : r.points[0];
-                        if (!InMap(p)) continue;
+                        if (!InMap(p) || model.IsRoad) continue; // a road space's road carries on into the next
                         if (Bulb(r, atEnd)) b.Disc(p, bulb + extra / 2, y, color, 36);
                         else b.Disc(p, (r.width + extra) / 2, y, color);
                     }

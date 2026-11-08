@@ -122,6 +122,17 @@ namespace Porchlight.Explore
             this.maxSpeed = maxSpeed;
         }
 
+        /// <summary>Everything it follows moved by this much at once (the world's origin moved): move with it, no easing.</summary>
+        public void Shift(double dx, double dy, double dz)
+        {
+            lx += dx;
+            ly += dy;
+            lz += dz;
+            ax += dx;
+            ay += dy;
+            az += dz;
+        }
+
         public void Update(double tx, double ty, double tz, double dt, bool snap = false)
         {
             if (snap || !started)
