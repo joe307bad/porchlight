@@ -34,11 +34,11 @@ namespace Porchlight.Rendering
         static readonly int Cull = Shader.PropertyToID("_Cull");
 
         // How fast it comes and goes (per second).
-        const double WETTING = 1 / 6.0, DRYING = 1 / 25.0, SNOWING = 1 / 45.0, MELTING = 1 / 30.0, CLOUDING = 1 / 5.0;
+        const double WETTING = 1 / 6.0, DRYING = 1 / 25.0, SNOWING = 1 / 25.0, MELTING = 1 / 30.0, CLOUDING = 1 / 5.0;
         // How fast tracks fill in while it's falling (share of full a second).
         const double RAIN_REFILL = 1 / 8.0, SNOW_REFILL = 1 / 50.0;
         // Falling, per tile of ground in view, per second.
-        const float RAIN_DENSITY = 2.2f, SNOW_DENSITY = 0.22f;
+        const float RAIN_DENSITY = 2.2f, SNOW_DENSITY = 0.7f;
         /// <summary>Below a tile's top by more than this, a face is inside something (a room's furniture), out of the weather.</summary>
         const float SHELTERED = 1.4f;
 
@@ -158,7 +158,7 @@ namespace Porchlight.Rendering
             var shape = ps.shape;
             shape.scale = new Vector3(span, column, span);
             var emission = ps.emission;
-            emission.rateOverTime = falling ? Mathf.Min(isRain ? 5000 : 1200, density * span * span) : 0;
+            emission.rateOverTime = falling ? Mathf.Min(isRain ? 5000 : 4000, density * span * span) : 0;
             material.SetColor(BaseColor, color * new Color(1 - 0.55f * dusk, 1 - 0.5f * dusk, 1 - 0.4f * dusk, 1));
             Land(ps, isRain, floor);
         }
@@ -218,6 +218,8 @@ namespace Porchlight.Rendering
             r.material = material;
             r.shadowCastingMode = ShadowCastingMode.Off;
             r.receiveShadows = false;
+            // Right by the camera a particle would fill the screen: no bigger than this share of it.
+            r.maxParticleSize = 0.012f;
             return ps;
         }
 
@@ -250,16 +252,17 @@ namespace Porchlight.Rendering
         {
             snowMaterial = Materials.Particles(Color.white);
             snowMaterial.SetTexture(BaseMap, Dot());
-            snow = MakeSystem("snow", 6000, 9f, new ParticleSystem.MinMaxCurve(0.06f, 0.12f), snowMaterial, ParticleSystemRenderMode.Billboard);
+            // Heavy: thick and quick, small flakes (however close the camera comes).
+            snow = MakeSystem("snow", 16000, 6f, new ParticleSystem.MinMaxCurve(0.025f, 0.05f), snowMaterial, ParticleSystemRenderMode.Billboard);
             var v = snow.velocityOverLifetime;
             v.enabled = true;
             v.space = ParticleSystemSimulationSpace.World;
             v.x = new ParticleSystem.MinMaxCurve(-0.3f, 0.5f);
-            v.y = new ParticleSystem.MinMaxCurve(-1.7f, -1.1f);
+            v.y = new ParticleSystem.MinMaxCurve(-2.6f, -1.8f);
             v.z = new ParticleSystem.MinMaxCurve(-0.3f, 0.3f);
             var noise = snow.noise;
             noise.enabled = true;
-            noise.strength = 0.45f;
+            noise.strength = 0.3f;
             noise.frequency = 0.35f;
             noise.scrollSpeed = 0.2f;
             snow.Play();
@@ -269,17 +272,23 @@ namespace Porchlight.Rendering
         Texture2D Dot()
         {
             if (dot != null) return dot;
-            const int S = 16;
-            dot = new Texture2D(S, S, TextureFormat.RGBA32, false) { name = "weather dot", wrapMode = TextureWrapMode.Clamp };
+            const int S = 64;
+            dot = new Texture2D(S, S, TextureFormat.RGBA32, true)
+            {
+                name = "weather dot",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Trilinear,
+            };
             var px = new Color32[S * S];
             for (int y = 0; y < S; y++)
                 for (int x = 0; x < S; x++)
                 {
                     float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), new Vector2(S / 2f, S / 2f)) / (S / 2f);
-                    px[y * S + x] = new Color32(255, 255, 255, (byte)(255 * Mathf.Clamp01(1 - d * d)));
+                    float a = Mathf.Clamp01(1 - d * d);
+                    px[y * S + x] = new Color32(255, 255, 255, (byte)(255 * a * a));
                 }
             dot.SetPixels32(px);
-            dot.Apply(false);
+            dot.Apply(true);
             return dot;
         }
 
