@@ -300,33 +300,36 @@ namespace Porchlight.UI
             root.RegisterCallback<GeometryChangedEvent>(_ => collapse.text = root.parent != null && root.parent.ClassListContains("sidebar-closed") ? "‹" : "›");
         }
 
-        Toggle sunny, rainy, snowy;
+        VisualElement sunnyTick, rainyTick, snowyTick;
+        bool rainOn, snowOn;
 
         /// <summary>
         /// The weather, as a list to tick: sunny (the default), rainy, snowing. Rain and snow can
-        /// fall together; ticking sunny clears them, and with neither ticked it's sunny.
+        /// fall together; ticking sunny clears them, and with neither ticked it's sunny. Rows of
+        /// plain elements (a box and a name), like the Players list, rather than Toggles, which
+        /// don't draw in this panel.
         /// </summary>
         VisualElement BuildBiomes(SidebarHandlers h)
         {
             var box = El.Box("sb-biomes");
-            Toggle Check(string text)
-            {
-                var t = new Toggle { text = text, focusable = false };
-                t.AddToClassList("check");
-                box.Add(t);
-                return t;
-            }
-            sunny = Check("Sunny");
-            rainy = Check("Rainy");
-            snowy = Check("Snowing");
             void Changed(bool rain, bool snow)
             {
                 SetWeather(rain, snow);
                 h.OnWeather?.Invoke(rain, snow);
             }
-            sunny.RegisterValueChangedCallback(e => Changed(e.newValue ? false : rainy.value, e.newValue ? false : snowy.value));
-            rainy.RegisterValueChangedCallback(e => Changed(e.newValue, snowy.value));
-            snowy.RegisterValueChangedCallback(e => Changed(rainy.value, e.newValue));
+            VisualElement Row(string text, Action click)
+            {
+                var row = new Button(click) { focusable = false };
+                row.AddToClassList("player-row");
+                var tick = El.Box("player-tick");
+                row.Add(tick);
+                row.Add(El.Text(text, "player-name"));
+                box.Add(row);
+                return tick;
+            }
+            sunnyTick = Row("Sunny", () => Changed(false, false));
+            rainyTick = Row("Rainy", () => Changed(!rainOn, snowOn));
+            snowyTick = Row("Snowing", () => Changed(rainOn, !snowOn));
             SetWeather(false, false);
             return box;
         }
@@ -334,9 +337,11 @@ namespace Porchlight.UI
         /// <summary>Show the weather (without telling anyone it changed).</summary>
         public void SetWeather(bool rain, bool snow)
         {
-            rainy.SetValueWithoutNotify(rain);
-            snowy.SetValueWithoutNotify(snow);
-            sunny.SetValueWithoutNotify(!rain && !snow);
+            rainOn = rain;
+            snowOn = snow;
+            sunnyTick.EnableInClassList("on", !rain && !snow);
+            rainyTick.EnableInClassList("on", rain);
+            snowyTick.EnableInClassList("on", snow);
         }
 
         /// <summary>One of the sidebar's sections: a heading that opens it and closes the others.</summary>

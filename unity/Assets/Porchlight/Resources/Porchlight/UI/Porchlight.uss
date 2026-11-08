@@ -294,13 +294,9 @@ Label {
     color: #efe6cf;
 }
 
-/* Biomes: the weather, one tick per line. */
+/* Biomes: the weather, one tick per line (drawn as the Players list's rows). */
 .sb-biomes {
     padding: 2px 0 4px 0;
-}
-
-.sb-biomes .check {
-    margin: 3px 0;
 }
 
 .player-row {
