@@ -81,6 +81,10 @@ test('towns: three at most, and houses: one account, two people, free again when
   for (const ch of [a, b, c]) await p.moveToTown(me.id, ch.id, made[0].id);
   await p.moveToTown(them.id, stranger.id, made[0].id);
   await assert.rejects(p.moveToTown(them.id, a.id, made[0].id), /No such character/);
+  // Everyone who's moved there counts, whoever's account they're on (and only there).
+  const counted = await p.listTowns(them.id);
+  assert.equal(counted.find((t) => t.id === made[0].id)?.residents, 4);
+  assert.equal(counted.find((t) => t.id === made[1].id)?.residents, 0);
 
   await p.claimHome(me.id, a.id, 5, 6);
   await p.claimHome(me.id, b.id, 5, 6);

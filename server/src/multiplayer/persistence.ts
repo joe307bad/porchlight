@@ -374,8 +374,10 @@ export class PgPersistence implements Persistence {
   }
 
   async listTowns(accountId: string): Promise<TownInfo[]> {
+    // Spelled out: in a one-table select drizzle writes columns without their table, which inside
+    // the subquery made "id" the character's own, so every town counted 0 residents.
     const rows = await this.db
-      .select({ id: towns.id, name: towns.name, key: towns.key, createdBy: towns.createdBy, residents: sql<number>`(select count(*)::int from ${characters} where ${characters.townId} = ${towns.id})` })
+      .select({ id: towns.id, name: towns.name, key: towns.key, createdBy: towns.createdBy, residents: sql<number>`(select count(*)::int from "characters" where "characters"."town_id" = "towns"."id")` })
       .from(towns)
       .orderBy(sql`${towns.createdBy} is not null`, towns.createdAt, towns.name);
     return rows.map(({ createdBy, ...t }) => ({ ...t, mine: createdBy === accountId }));
