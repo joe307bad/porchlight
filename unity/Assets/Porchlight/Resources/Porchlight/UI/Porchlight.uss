@@ -1389,6 +1389,44 @@ Label {
     font-size: 13px;
 }
 
+/* The big map's tabs: the town, or the county round it. */
+.bigmap-tabs {
+    flex-direction: row;
+    margin-bottom: 10px;
+}
+
+.bigmap-tab {
+    min-width: 96px;
+    padding: 6px 14px;
+    font-size: 13px;
+    background-color: rgba(28, 27, 24, 0.92);
+}
+
+.bigmap-tab.chosen {
+    background-color: #efe6cf;
+    color: #1d1c1a;
+    -unity-font-style: bold;
+}
+
+.county-label {
+    position: absolute;
+    translate: -50% -100%;
+    padding: 1px 6px;
+    background-color: rgba(28, 27, 24, 0.85);
+    color: #f4f1ea;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.county-label.mine {
+    background-color: rgba(84, 62, 128, 0.92);
+}
+
+.county-label.home {
+    -unity-font-style: bold;
+    font-size: 14px;
+}
+
 /* Missions: the sidebar's list, the objective atop the street panel, and the conversation. */
 .missions-refresh {
     margin-bottom: 12px;

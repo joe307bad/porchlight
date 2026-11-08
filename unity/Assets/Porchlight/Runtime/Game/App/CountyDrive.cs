@@ -21,6 +21,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Porchlight.Core;
 using Porchlight.County;
@@ -101,10 +102,21 @@ namespace Porchlight.App
             this.parseKey = parseKey;
             active = start;
             built[start.id] = new Built { space = start, model = view.world.model, world = view.world, ready = true };
+            Terrain = CountyTerrain.Build(map);
             countryside = Countryside();
+            Hills(countryside.transform);
             Place(countryside.transform, 0, 0);
             view.Countryside = (x, y) => OpenCountry(active.ToWorld(new Vec2(x, y)));
+            view.Rise = (x, y) =>
+            {
+                var w = active.ToWorld(new Vec2(x, y));
+                return Terrain.Height(w.x, w.y);
+            };
+            view.Neighbours = () => built.Values.Where(b => b.world != null).Select(b => b.world);
         }
+
+        /// <summary>The hills between the towns.</summary>
+        public readonly CountyTerrain Terrain;
 
         /// <summary>Back out of the county (to a town loaded afresh): every space but the one on screen goes.</summary>
         public void Dispose()
@@ -113,8 +125,11 @@ namespace Porchlight.App
                 if (b.world != null && b.world != view.world) b.world.Dispose();
             built.Clear();
             job = null;
+            foreach (var f in countryside.GetComponentsInChildren<MeshFilter>()) UnityEngine.Object.Destroy(f.sharedMesh);
             UnityEngine.Object.Destroy(countryside);
             view.Countryside = null;
+            view.Rise = null;
+            view.Neighbours = null;
             if (Frame != null) Frame.county = null;
         }
 
@@ -350,6 +365,52 @@ namespace Porchlight.App
             r.sharedMaterial = Materials.Lit(GRASS);
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             return go;
+        }
+
+        /// <summary>The hills' mesh is cut into squares of this many grid cells, so the ones out of view aren't drawn.</summary>
+        const int HILL_CHUNK = 48;
+
+        /// <summary>
+        /// The hills (CountyTerrain) over the countryside, in squares: just a hair over the flat ground
+        /// where they meet it, so the two never flicker through each other.
+        /// </summary>
+        void Hills(Transform parent)
+        {
+            var t = Terrain;
+            var material = Materials.Lit(GRASS);
+            for (int cj = 0; cj < t.ny - 1; cj += HILL_CHUNK)
+                for (int ci = 0; ci < t.nx - 1; ci += HILL_CHUNK)
+                {
+                    int w = Math.Min(HILL_CHUNK, t.nx - 1 - ci), h = Math.Min(HILL_CHUNK, t.ny - 1 - cj);
+                    var verts = new List<Vector3>((w + 1) * (h + 1));
+                    for (int j = 0; j <= h; j++)
+                        for (int i = 0; i <= w; i++)
+                        {
+                            double x = t.x0 + (ci + i) * CountyTerrain.CELL, y = t.y0 + (cj + j) * CountyTerrain.CELL;
+                            verts.Add(Coords.Map(x, y, COUNTRY_Y + 0.006 + t.At(ci + i, cj + j)));
+                        }
+                    var tris = new List<int>();
+                    for (int j = 0; j < h; j++)
+                        for (int i = 0; i < w; i++)
+                        {
+                            float top = Math.Max(Math.Max(t.At(ci + i, cj + j), t.At(ci + i + 1, cj + j)), Math.Max(t.At(ci + i, cj + j + 1), t.At(ci + i + 1, cj + j + 1)));
+                            if (top <= 0) continue;
+                            int v = j * (w + 1) + i;
+                            tris.AddRange(new[] { v, v + w + 1, v + 1, v + 1, v + w + 1, v + w + 2 });
+                        }
+                    if (tris.Count == 0) continue;
+                    var mesh = new Mesh { name = "hills" };
+                    mesh.SetVertices(verts);
+                    mesh.SetTriangles(tris, 0);
+                    mesh.RecalculateNormals();
+                    mesh.RecalculateBounds();
+                    var go = new GameObject("hills");
+                    go.transform.SetParent(parent, false);
+                    go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                    var r = go.AddComponent<MeshRenderer>();
+                    r.sharedMaterial = material;
+                    r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                }
         }
 
         // Rooms -----------------------------------------------------------------------------------

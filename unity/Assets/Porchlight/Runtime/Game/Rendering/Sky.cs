@@ -128,6 +128,9 @@ namespace Porchlight.Rendering
             }
         }
 
+        /// <summary>The scene's origin has moved this far in the world (the county's floating origin): the sky keeps to the world.</summary>
+        public void Shift(Vector3 by) => heavens.Shift(by);
+
         public void Dispose()
         {
             heavens.Dispose();

@@ -109,9 +109,15 @@ function gateEdge(side: Side, w: number, h: number): Vec {
 const outward = (side: Side): Vec => (side === 'north' ? { x: 0, y: -1 } : side === 'east' ? { x: 1, y: 0 } : side === 'south' ? { x: 0, y: 1 } : { x: -1, y: 0 });
 const dist = (a: Vec, b: Vec): number => Math.hypot(a.x - b.x, a.y - b.y);
 
-function sampleBezier(p0: Vec, p1: Vec, p2: Vec, p3: Vec, step: number): Vec[] {
+/** How far a highway winds either side of its curve, at most (tiles), about how long each S is, and the tightest the wind alone may bend. */
+const WIND = 48, WIND_LENGTH = 380, BEND = 110;
+
+/** One S of the wind, p in [0, 1): parabolas, no sines, so it's the game's to the last digit. */
+const wave = (p: number): number => (p < 0.5 ? 16 * p * (0.5 - p) : -16 * (p - 0.5) * (1 - p));
+
+function sampleBezier(p0: Vec, p1: Vec, p2: Vec, p3: Vec, step: number, wind = 0): Vec[] {
   const FINE = 4096;
-  const fine: Vec[] = [];
+  let fine: Vec[] = [];
   const acc: number[] = [];
   for (let i = 0; i <= FINE; i++) {
     const t = i / FINE;
@@ -119,6 +125,30 @@ function sampleBezier(p0: Vec, p1: Vec, p2: Vec, p3: Vec, step: number): Vec[] {
     const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
     fine.push({ x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y });
     acc.push(i === 0 ? 0 : acc[i - 1] + dist(fine[i - 1], fine[i]));
+  }
+  if (wind !== 0) {
+    // Sideways off the curve, as CountyMap.SampleBezier winds it.
+    const length = acc[FINE];
+    const waves = Math.max(1, Math.floor(length / WIND_LENGTH + 0.5));
+    const span = length / waves;
+    const amp = wind * Math.min(WIND, (span * span) / (32 * BEND));
+    const wound: Vec[] = [];
+    for (let i = 0; i <= FINE; i++) {
+      const prev = fine[Math.max(0, i - 1)];
+      const next = fine[Math.min(FINE, i + 1)];
+      const tx = next.x - prev.x, ty = next.y - prev.y;
+      const len = Math.sqrt(tx * tx + ty * ty);
+      const u = acc[i] / length;
+      let fade = 4 * u * (1 - u);
+      fade *= fade;
+      const phase = u * waves;
+      const off = amp * fade * wave(phase - Math.floor(phase));
+      wound.push(len > 0 ? { x: fine[i].x - (ty / len) * off, y: fine[i].y + (tx / len) * off } : fine[i]);
+    }
+    fine = wound;
+    fine[0] = p0;
+    fine[FINE] = p3;
+    for (let i = 1; i <= FINE; i++) acc[i] = acc[i - 1] + dist(fine[i - 1], fine[i]);
   }
   const total = acc[FINE];
   const n = Math.max(1, Math.ceil(total / step));
@@ -223,7 +253,7 @@ export class County {
     const chord = dist(p0, p3);
     const straight = Math.abs(d0.x + d3.x) < 1e-9 && Math.abs(d0.y + d3.y) < 1e-9 && Math.abs((p3.x - p0.x) * d0.y - (p3.y - p0.y) * d0.x) < 1e-9;
     const k = straight ? chord / 3 : chord * 0.5523;
-    const points = sampleBezier(p0, { x: p0.x + d0.x * k, y: p0.y + d0.y * k }, { x: p3.x + d3.x * k, y: p3.y + d3.y * k }, p3, SAMPLE);
+    const points = sampleBezier(p0, { x: p0.x + d0.x * k, y: p0.y + d0.y * k }, { x: p3.x + d3.x * k, y: p3.y + d3.y * k }, p3, SAMPLE, this.highways.length % 2 === 0 ? 1 : -1);
     const atS = [0];
     for (let i = 1; i < points.length; i++) atS.push(atS[i - 1] + dist(points[i - 1], points[i]));
     const hw: Highway = { a: from.id, b: to.id, points, at: atS, length: atS[atS.length - 1], segments: [] };

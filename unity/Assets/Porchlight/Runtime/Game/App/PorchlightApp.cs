@@ -1580,6 +1580,29 @@ namespace Porchlight.App
             county?.Dispose();
             county = null;
             if (netFrame != null) netFrame.county = null;
+            overlay?.SetCounty(null, null, null, null, null);
+        }
+
+        /// <summary>Where you are in the county (world tiles), for its map.</summary>
+        Vec2? WhereInCounty()
+        {
+            var at = iso?.PlayerPosition;
+            var here = county?.Active;
+            return at != null && here != null ? here.ToWorld(at.Value) : (Vec2?)null;
+        }
+
+        /// <summary>On a trip to another town, the way there from where you are (world tiles), for the county's map; null: none.</summary>
+        List<Vec2> TripWay()
+        {
+            var from = WhereInCounty();
+            var dest = tripTown != null ? TownSpace(tripTown) : null;
+            var here = county?.Active;
+            if (tripTo == null || from == null || dest == null || here == null || here.id == dest.id) return null;
+            var stop = CountyRoute.Next(county.map, here, from.Value, dest);
+            if (stop == null) return null;
+            var way = new List<Vec2> { from.Value, stop.Value.at };
+            way.AddRange(CountyRoute.Ahead(county.map, here, from.Value, dest, double.PositiveInfinity));
+            return way;
         }
 
         /// <summary>
@@ -1625,6 +1648,8 @@ namespace Porchlight.App
                 county.EnterRoom();
                 // Now the houses in the county's other towns have roads to them.
                 OfferDirections();
+                // And the big map has a County tab.
+                overlay?.SetCounty(plan, county.Terrain, WhereInCounty, TripWay, playing?.home?.townKey);
             });
         }
 
@@ -1715,6 +1740,10 @@ namespace Porchlight.App
         List<Character> accountCharacters;
         /// <summary>Whose house (a character's id) you're being shown the way to, across the county; null: nobody's.</summary>
         string tripTo;
+        /// <summary>The town (its key) that house is in.</summary>
+        string tripTown;
+        /// <summary>The way shown runs on past the space you're in all the way to the town's gate (so its end, and every dot laid back from it, stays put).</summary>
+        const double TRIP_AHEAD = double.PositiveInfinity;
 
         /// <summary>
         /// Buttons under the name for directions to the account's houses: in this town, or in any
@@ -1764,6 +1793,7 @@ namespace Porchlight.App
                 return;
             }
             tripTo = id;
+            tripTown = townKey;
             iso.Trip(from =>
             {
                 if (iso?.world == null) return null;
@@ -1774,13 +1804,16 @@ namespace Porchlight.App
                     var house = Homes.At(iso.world.model.buildings, x, y);
                     var door = house != null ? Homes.Door(iso.world.rooms, house.id) : null;
                     if (door == null) return null;
-                    return (door.Value.at, label, true);
+                    return (door.Value.at, label, true, (List<Vec2>)null);
                 }
                 var dest = TownSpace(townKey);
                 if (here == null || dest == null) return null;
-                var stop = CountyRoute.Next(county.map, here, here.ToWorld(from), dest);
+                var w = here.ToWorld(from);
+                var stop = CountyRoute.Next(county.map, here, w, dest);
                 if (stop == null) return null;
-                return (here.ToLocal(stop.Value.at), stop.Value.name, false);
+                // And on along the highways, in this space's terms, for the dots to run on over.
+                var ahead = CountyRoute.Ahead(county.map, here, w, dest, TRIP_AHEAD).Select(here.ToLocal).ToList();
+                return (here.ToLocal(stop.Value.at), stop.Value.name, false, ahead);
             });
             overlay?.Flash(townKey == TownKey ? $"Directions to {label}" : $"Directions to {label} in {townName}: {Directions.FormatDistance(TripLength(townKey))} by road");
             OfferDirections();
@@ -2022,6 +2055,8 @@ namespace Porchlight.App
                 if (code == Key.V && !repeat) ToggleCloseUp();
                 if (code == Key.C) NewLook();
                 if (code == Key.M && !repeat) iso.ToggleMap();
+                // On the big map, Tab: the town or the county round it.
+                if (code == Key.Tab && !repeat && iso.MapOpen) overlay.SwitchMapTab(1);
                 if (code == Key.Escape)
                 {
                     if (iso.MapOpen) iso.CloseMap();

@@ -77,6 +77,10 @@ namespace Porchlight.App
         Action<Vec2> OnWaypointPick { set; }
         /// <summary>Your waypoint, for the maps to mark (null: none).</summary>
         void SetWaypoint(Vec2? at);
+        /// <summary>The big map's other tab (the town, or the county round it), where there's a county.</summary>
+        void SwitchMapTab(int by);
+        /// <summary>The big map shows the county (not the town): no reticle to move.</summary>
+        bool CountyShown { get; }
     }
 
     public sealed class ExploreView : INetHost
@@ -282,8 +286,8 @@ namespace Porchlight.App
         /// Directions across the county (Trip): asked each second, from where you are in the space you're in,
         /// where to head in it and what's there; `final` once it's the place itself. Kept from space to space.
         /// </summary>
-        Func<Vec2, (Vec2 at, string name, bool final)?> trip;
-        (Vec2 at, string name, bool final)? tripStop;
+        Func<Vec2, (Vec2 at, string name, bool final, List<Vec2> ahead)?> trip;
+        (Vec2 at, string name, bool final, List<Vec2> ahead)? tripStop;
         /// <summary>The trip's done (you got there) or stopped.</summary>
         public Action OnTripEnd;
         /// <summary>How close to the place counts as there, on a trip (tiles): parked out front will do.</summary>
@@ -305,6 +309,9 @@ namespace Porchlight.App
         /// </summary>
         public bool InCounty;
         public Func<double, double, bool> Countryside;
+        /// <summary>In the county, how high the hills rise at (x, y) in the space's terms (tiles; 0 on the flat): no driving or walking up them, and a plane keeps over them.</summary>
+        public Func<double, double, double> Rise;
+        bool Hilly(double x, double y) => Rise != null && Rise(x, y) >= Porchlight.County.CountyTerrain.LEVEL;
         /// <summary>The weather settling on a space you've just driven into, a step a frame.</summary>
         IEnumerator<string> settling;
         public ModelLibrary Library => library;
@@ -432,7 +439,7 @@ namespace Porchlight.App
             var drivable = Vehicle.Drivable(model, world.layout);
             int w = model.width, h = model.height;
             // Off the map, in the county, is open country: a plane comes down in a field, and a car can follow it.
-            canDrive = (x, y) => x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 ? drivable(x, y) : Countryside != null && Countryside(x, y);
+            canDrive = (x, y) => x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 ? drivable(x, y) && !Hilly(x, y) : Countryside != null && Countryside(x, y) && !Hilly(x, y);
             canSail = Vehicle.Sailable(model, world.layout);
             skyFloor = SkyFloor();
             overlay.SetTown(model);
@@ -473,7 +480,9 @@ namespace Porchlight.App
         /// </summary>
         public void SwitchSpace(TownWorld next, double dx, double dy)
         {
-            weather?.Dispose();
+            // The scene moves by this (the space ahead comes to the origin).
+            var scene = new Vector3((float)-dx, 0, (float)dy);
+            var falling = weather;
             weather = null;
             settling = null;
             remotes?.Clear();
@@ -515,12 +524,21 @@ namespace Porchlight.App
             waypoint = null;
             overlay.SetWaypoint(null);
             guideTo = null;
-            // A trip carries on into the next space: where to head is asked afresh, in its terms.
+            // A trip carries on into the next space: where to head is asked afresh, in its terms. Until
+            // then the way shown stays as it is (on the space behind, which moves with everything else),
+            // and is drawn again over it in a frame, so the dots never stop and start.
             tripStop = null;
             findTimer = 0;
-            findRoute = new List<Vec2>();
-            findSteps = null;
-            ClearFindPath();
+            if (trip != null)
+            {
+                findRoute = findRoute.Select(q => new Vec2(q.x - dx, q.y - dy)).ToList();
+            }
+            else
+            {
+                findRoute = new List<Vec2>();
+                findSteps = null;
+                ClearFindPath();
+            }
             ClearRoute();
             DoorOpeners.Clear();
             Obstacles.Clear();
@@ -544,17 +562,23 @@ namespace Porchlight.App
             focus -= new Vector3((float)dx, 0, (float)dy);
             focusFollow.Shift(-dx, 0, -dy);
             lookFollow.Shift(-dx, 0, -dy);
-            var scene = new Vector3((float)-dx, 0, (float)dy);
             chasePos += scene;
             chaseLook += scene;
             camera.transform.position += scene;
+            sky.Shift(-scene);
 
             world = next;
             remotes = new RemotePlayers(world.root.transform, library);
             Ways();
             Populate();
+            // The weather goes on as it was: the rain in the air, how wet and grey, carried over.
             weather = new Weather(world) { Rain = wantRain, Snow = wantSnow };
-            settling = weather.Settle().GetEnumerator();
+            if (falling != null)
+            {
+                falling.HandOn(weather, scene);
+                falling.Dispose();
+            }
+            else settling = weather.Settle().GetEnumerator();
         }
 
         /// <summary>Raining, snowing, both, or neither (sunny). Kept from town to town.</summary>
@@ -1017,7 +1041,7 @@ namespace Porchlight.App
         /// Directions across the county, kept as you drive from space to space (null: stop). A waypoint,
         /// a player you're finding or a mission's guide wins while there is one.
         /// </summary>
-        public void Trip(Func<Vec2, (Vec2 at, string name, bool final)?> to)
+        public void Trip(Func<Vec2, (Vec2 at, string name, bool final, List<Vec2> ahead)?> to)
         {
             bool had = trip != null;
             trip = to;
@@ -1125,16 +1149,8 @@ namespace Porchlight.App
             bool tripping = Tripping;
             if (tripping) tripStop = trip(from);
             var target = FindTarget;
-            if (target == null)
-            {
-                if (tripping)
-                {
-                    findRoute = new List<Vec2>();
-                    findSteps = null;
-                    ClearFindPath();
-                }
-                return;
-            }
+            // Not known just now (a space just driven into, still settling): the way shown stays as it was.
+            if (target == null) return;
             string name = waypoint != null ? "your waypoint" : finding != null ? others.FirstOrDefault(o => o.key == finding).name ?? "them" : tripping ? tripStop.Value.name : guideName;
             if (tripping && tripStop.Value.final && Geo.Dist(from, target.Value) < TRIP_REACHED)
             {
@@ -1162,7 +1178,15 @@ namespace Porchlight.App
                 findRoute = new List<Vec2> { from, target.Value };
                 findSteps = null;
             }
-            DrawFindPath(target.Value);
+            // On a trip, on along the highways ahead (past the spaces built so far): the dots run on unbroken.
+            var ahead = tripping ? tripStop.Value.ahead : null;
+            if (ahead != null && ahead.Count > 1)
+            {
+                findRoute = new List<Vec2>(findRoute);
+                foreach (var q in ahead)
+                    if (Geo.Dist(findRoute[findRoute.Count - 1], q) > 1e-6) findRoute.Add(q);
+            }
+            DrawFindPath(tripping && !tripStop.Value.final ? (Vec2?)null : target.Value);
         }
 
         void ClearFindPath()
@@ -1174,17 +1198,28 @@ namespace Porchlight.App
         }
 
         static Material findMaterial;
+        /// <summary>The way's dots are drawn this far round you (tiles, either way).</summary>
+        const double FIND_DRAWN = 260;
 
-        /// <summary>The way to them as a line of dots on the ground, and a ring where they are.</summary>
-        void DrawFindPath(Vec2 target)
+        /// <summary>
+        /// The way to them as a line of dots on the ground, and a ring where they are (null: none, it's
+        /// only on the way). The dots are laid from the far end back, so where the way's end stays put they
+        /// stay put too as you go, and drawn again they land just where they were.
+        /// </summary>
+        void DrawFindPath(Vec2? target)
         {
             ClearFindPath();
             if (findRoute.Count < 2) return;
             findPalette ??= new Palette();
             var b = new MeshBuilder(findPalette);
             const int color = 0x3b9be0;
-            foreach (var p in Geo.SamplePolyline(findRoute, 0.32)) b.Disc(p, 0.065, 0.036, color, 8);
-            b.Disc(target, 0.3, 0.035, color);
+            var back = new List<Vec2>(findRoute);
+            back.Reverse();
+            // Only the dots near enough to be seen (a trip's way runs on for kilometres).
+            var near = findRoute[0];
+            foreach (var p in Geo.SamplePolyline(back, 0.32))
+                if (Math.Abs(p.x - near.x) < FIND_DRAWN && Math.Abs(p.y - near.y) < FIND_DRAWN) b.Disc(p, 0.065, 0.036, color, 8);
+            if (target != null) b.Disc(target.Value, 0.3, 0.035, color);
             findMaterial ??= Materials.Unlit(Coords.Hex(color));
             findPath = new GameObject("finding");
             findPath.transform.SetParent(world.root.transform, false);
@@ -1722,7 +1757,7 @@ namespace Porchlight.App
             {
                 byte use = world.layout.use[i];
                 bool wet = Terrain.IsWater(tiles.terrain[i]) && tiles.overlay[i] == Overlay.NONE && use != Use.DOCK;
-                o[i] = use == Use.SHED || use == Use.HANGAR || wet ? (byte)0 : (byte)1;
+                o[i] = use == Use.SHED || use == Use.HANGAR || wet || Hilly(i % world.model.width + 0.5, i / world.model.width + 0.5) ? (byte)0 : (byte)1;
             }
             return o;
         }
@@ -1742,8 +1777,10 @@ namespace Porchlight.App
         double FloorAt(double x, double y)
         {
             int w = world.model.width, h = world.model.height;
-            if (x < 0.5 || y < 0.5 || x > w - 0.5 || y > h - 0.5) return Countryside != null && Countryside(x, y) ? 0 : double.PositiveInfinity;
-            return skyFloor[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), w)];
+            // Over the county's hills, as over a roof: clear of them.
+            double hill = Hilly(x, y) ? Rise(x, y) + ROOF_CLEARANCE : 0;
+            if (x < 0.5 || y < 0.5 || x > w - 0.5 || y > h - 0.5) return Countryside != null && Countryside(x, y) ? hill : double.PositiveInfinity;
+            return Math.Max(hill, skyFloor[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), w)]);
         }
 
         Func<double, double, bool> OpenFor(Vehicle car) => car.kind == VehicleKind.Boat ? canSail : canDrive;
@@ -1932,10 +1969,16 @@ namespace Porchlight.App
             {
                 // The big map: the left stick moves the reticle, A sets a waypoint there, Y clears it, X goes back to the town map, B or Start closes.
                 padState = PadState.Idle;
+                // LB and RB: the town or the county round it.
+                if (s.Pressed(Button.LB)) overlay.SwitchMapTab(-1);
+                if (s.Pressed(Button.RB)) overlay.SwitchMapTab(1);
                 double rate = RETICLE_RATE * Math.Max(world?.model.width ?? 100, world?.model.height ?? 100) / 100;
-                if (s.move.x != 0 || s.move.y != 0) overlay.MoveReticle(new Vec2(s.move.x * rate * dt, s.move.y * rate * dt));
-                if (s.Pressed(Button.A)) SetWaypoint(overlay.Reticle);
-                if (s.Pressed(Button.Y)) ClearWaypoint();
+                if (!overlay.CountyShown)
+                {
+                    if (s.move.x != 0 || s.move.y != 0) overlay.MoveReticle(new Vec2(s.move.x * rate * dt, s.move.y * rate * dt));
+                    if (s.Pressed(Button.A)) SetWaypoint(overlay.Reticle);
+                    if (s.Pressed(Button.Y)) ClearWaypoint();
+                }
                 if (s.Pressed(Button.B) || s.Pressed(Button.Menu)) overlay.CloseMap();
                 if (s.Pressed(Button.X))
                 {
@@ -2632,6 +2675,39 @@ namespace Porchlight.App
             return H(i) * (1 - u) + H(i + 1) * u;
         }
 
+        /// <summary>In the county, the other spaces built round you (the town ahead, the road behind): their lamps are lit too.</summary>
+        public Func<IEnumerable<TownWorld>> Neighbours;
+        /// <summary>How each space round you was last lit, and how many lamps it had then (it builds them a part at a time).</summary>
+        readonly Dictionary<TownWorld, (double level, int lamps)> neighbourLit = new Dictionary<TownWorld, (double, int)>();
+
+        /// <summary>
+        /// The spaces round you, lit as the one you're in is (steadily: no flicker that far off), so a town's
+        /// lamps are already on as you drive up to it at night, not switched on as you cross into it.
+        /// </summary>
+        void LightNeighbours()
+        {
+            if (Neighbours == null) return;
+            foreach (var w in Neighbours())
+            {
+                if (w == null || w == world) continue;
+                double level = Math.Round(dusk * 0.95, 2);
+                if (neighbourLit.TryGetValue(w, out var was) && was.level == level && was.lamps == w.lamps.Count) continue;
+                neighbourLit[w] = (level, w.lamps.Count);
+                foreach (var lamp in w.lamps)
+                {
+                    Materials.SetGlow(lamp.bulb, Sky.Warm, (float)level * 3);
+                    Materials.SetTint(lamp.pool, Sky.Warm * ((float)level * 0.55f));
+                }
+            }
+            // The one you're in lights its own (with flicker); a space let go is forgotten.
+            if (neighbourLit.Count > 8)
+            {
+                var keep = new HashSet<TownWorld>(Neighbours());
+                foreach (var w in neighbourLit.Keys.ToList()) if (!keep.Contains(w)) neighbourLit.Remove(w);
+            }
+            neighbourLit.Remove(world);
+        }
+
         /// <summary>The street lamps' flicker, then the sky's light for this time of day.</summary>
         void AnimateDayNight(Vector3? roomLight)
         {
@@ -2645,6 +2721,7 @@ namespace Porchlight.App
                     : 0.9 + 0.1 * Math.Sin(t * 11 + lamp.phase) * Math.Sin(t * 3.7 + lamp.phase * 2);
                 lampLevels[i] = dusk * flicker;
             }
+            LightNeighbours();
             sky.Overcast = weather?.Overcast ?? 0;
             sky.Update(dusk, night, mode == CameraMode.Close || Overridden, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, roomLight);
             // Televisions: a cold blue flicker in a few windows, each group to its own programme.

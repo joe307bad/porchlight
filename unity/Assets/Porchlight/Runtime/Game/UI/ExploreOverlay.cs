@@ -63,6 +63,53 @@ namespace Porchlight.UI
 
         VisualElement bigMap, bigMapPicture, bigMapMarks;
         Label bigMapHint;
+        /// <summary>The big map's tabs (only with a county round the town), and its County tab.</summary>
+        VisualElement bigMapTabs;
+        UnityEngine.UIElements.Button townTab, countyTab;
+        readonly CountyMapView county = new CountyMapView();
+        bool countyShown;
+
+        /// <summary>
+        /// The county round the town (null: none, and no County tab): its towns and highways, the hills
+        /// between, where you are (world tiles) and on a trip the way there (world tiles).
+        /// </summary>
+        public void SetCounty(Porchlight.County.CountyMap map, Porchlight.County.CountyTerrain terrain, Func<Vec2?> you, Func<List<Vec2>> way, string homeKey)
+        {
+            county.You = you;
+            county.Way = way;
+            county.HomeKey = homeKey;
+            county.Set(map, terrain);
+            if (map == null) countyShown = false;
+            if (bigMap != null) ShowTab();
+        }
+
+        public bool CountyShown => countyShown && county.HasCounty;
+
+        public void SwitchMapTab(int by)
+        {
+            if (!county.HasCounty) return;
+            countyShown = !countyShown;
+            ShowTab();
+        }
+
+        /// <summary>The tab chosen on screen, its tab lit, and what the keys and buttons do there.</summary>
+        void ShowTab()
+        {
+            bool c = CountyShown;
+            bigMapTabs.style.display = county.HasCounty ? DisplayStyle.Flex : DisplayStyle.None;
+            townTab.EnableInClassList("chosen", !c);
+            countyTab.EnableInClassList("chosen", c);
+            bigMapPicture.style.display = c ? DisplayStyle.None : DisplayStyle.Flex;
+            county.Show(c && MapOpen);
+            bool pad = Gamepad.current != null;
+            string tabs = county.HasCounty ? pad ? " · LB/RB the town or the county" : " · Tab: the town or the county" : "";
+            bigMapHint.text = c
+                ? (pad ? "B or Start closes" : "M or Esc closes") + tabs
+                : (pad
+                    ? $"Left stick moves the cross · A sets a waypoint · Y clears it · X {(SignedIn ? "opens the Journal" : "back to the town map")} · B or Start closes"
+                    : "Click to set a waypoint · M or Esc closes") + tabs;
+            FitBigMap();
+        }
         Vec2 reticle;
         Vec2? waypoint;
         Action<Vec2> onWaypoint;
@@ -168,16 +215,14 @@ namespace Porchlight.UI
             reticle = waypoint ?? player ?? new Vec2(model.width / 2.0, model.height / 2.0);
             bigMapPicture.style.backgroundImage = new StyleBackground(baseTexture);
             bigMap.style.display = DisplayStyle.Flex;
-            bigMapHint.text = Gamepad.current != null
-                ? $"Left stick moves the cross · A sets a waypoint · Y clears it · X {(SignedIn ? "opens the Journal" : "back to the town map")} · B or Start closes"
-                : "Click to set a waypoint · M or Esc closes";
-            FitBigMap();
+            ShowTab();
             OnMapOpened?.Invoke();
         }
 
         public void CloseMap()
         {
             if (bigMap != null) bigMap.style.display = DisplayStyle.None;
+            county.Show(false);
         }
 
         public void MoveReticle(Vec2 by)
@@ -199,6 +244,14 @@ namespace Porchlight.UI
             });
             var frame = new VisualElement();
             frame.AddToClassList("bigmap");
+            bigMapTabs = new VisualElement();
+            bigMapTabs.AddToClassList("bigmap-tabs");
+            townTab = El.Btn("Town", "This town: set a waypoint", () => { countyShown = false; ShowTab(); }, "btn", "bigmap-tab");
+            countyTab = El.Btn("County", "Every town, and the highways out of Porchlight to them", () => { countyShown = true; ShowTab(); }, "btn", "bigmap-tab");
+            bigMapTabs.Add(townTab);
+            bigMapTabs.Add(countyTab);
+            frame.Add(bigMapTabs);
+            county.root.RegisterCallback<PointerDownEvent>(e => e.StopPropagation());
             bigMapPicture = new VisualElement();
             bigMapPicture.AddToClassList("bigmap-picture");
             bigMapMarks = new VisualElement { pickingMode = PickingMode.Ignore };
@@ -216,6 +269,8 @@ namespace Porchlight.UI
                 e.StopPropagation();
             });
             frame.Add(bigMapPicture);
+            county.Show(false);
+            frame.Add(county.root);
             bigMapHint = new Label();
             bigMapHint.AddToClassList("bigmap-hint");
             frame.Add(bigMapHint);
@@ -231,9 +286,10 @@ namespace Porchlight.UI
             if (bigMapPicture == null || model == null) return;
             float w = root.layout.width, h = root.layout.height;
             if (float.IsNaN(w) || float.IsNaN(h)) return;
-            float k = Math.Max(1, Math.Min((w - 64) / model.width, (h - 120) / model.height));
+            float k = Math.Max(1, Math.Min((w - 64) / model.width, (h - 160) / model.height));
             bigMapPicture.style.width = model.width * k;
             bigMapPicture.style.height = model.height * k;
+            county.Fit(w - 64, h - 160);
         }
 
         void DrawBigMap(MeshGenerationContext ctx)

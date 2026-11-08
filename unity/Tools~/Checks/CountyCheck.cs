@@ -183,6 +183,45 @@ static class CountyCheck
                 if (map.RoomAt(p) == null) errors.Add($"{hw.name}: no room at {Numbers.ToFixed(s, 0)}");
             }
         }
+        // The hills: level along every highway and its verges, and round every town, junction and plot; high elsewhere.
+        var built0 = System.Diagnostics.Stopwatch.StartNew();
+        var terrain = CountyTerrain.Build(map);
+        Console.WriteLine($"  hills: {terrain.nx}x{terrain.ny} points in {built0.ElapsedMilliseconds} ms");
+        foreach (var hw in map.highways)
+        {
+            for (double s = 0; s <= hw.length; s += 2)
+            {
+                var p = CountyMap.PointAt(hw, s);
+                var q = CountyMap.PointAt(hw, Math.Min(hw.length, s + 1));
+                double tx = q.x - p.x, ty = q.y - p.y, len = Math.Max(1e-9, Numbers.Hypot(tx, ty));
+                foreach (double side in new[] { 0.0, 8, -8 })
+                {
+                    var w = new Vec2(p.x - ty / len * side, p.y + tx / len * side);
+                    if (!terrain.Level(w.x, w.y)) { errors.Add($"{hw.name}: a hill {Numbers.ToFixed(terrain.Height(w.x, w.y), 2)} high {side} tiles off the road, {Numbers.ToFixed(s, 0)} tiles along"); goto nextHighway; }
+                }
+            }
+            nextHighway:;
+        }
+        foreach (var s in map.spaces)
+        {
+            if (s.kind == SpaceKind.Highway) continue;
+            for (double f = 0; f <= 1; f += 0.02)
+                foreach (var w in new[] { new Vec2(s.x0 + f * s.width, s.y0 - 2), new Vec2(s.x0 + f * s.width, s.y0 + s.height + 2), new Vec2(s.x0 - 2, s.y0 + f * s.height), new Vec2(s.x0 + s.width + 2, s.y0 + f * s.height) })
+                    if (!terrain.Level(w.x, w.y)) { errors.Add($"{s.name}: a hill by its edge"); goto nextSpace; }
+            nextSpace:;
+        }
+        double peak = 0;
+        for (int j = 0; j < terrain.ny; j++) for (int i = 0; i < terrain.nx; i++) peak = Math.Max(peak, terrain.At(i, j));
+        if (peak < CountyTerrain.PEAK * 0.5) errors.Add($"the hills only reach {Numbers.ToFixed(peak, 1)} tiles");
+        // The way shown ahead on a trip runs on along the highways to the town.
+        foreach (var t in map.towns.Values)
+        {
+            if (!CountyMap.IsMine(t.place)) continue;
+            var start = map.towns[Place.Porchlight];
+            var ahead = CountyRoute.Ahead(map, start, new Vec2(start.x0 + start.width / 2.0, start.y0 + start.height / 2.0), t, 1e9);
+            if (ahead.Count < 2 || !CountyMap.SidesOf(t.place).Any(side => Geo.Dist(ahead[ahead.Count - 1], CountyMap.PortPoint(t, side)) < 1e-6))
+                errors.Add($"the way ahead from Porchlight doesn't reach a gate of {t.name}");
+        }
         // Road spaces build, drive end to end, and hand over with road under the car on both sides.
         var built = new Dictionary<int, (TownModel model, Func<double, double, bool> drive)>();
         foreach (var s in map.spaces)

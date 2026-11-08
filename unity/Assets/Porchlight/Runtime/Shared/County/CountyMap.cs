@@ -270,7 +270,7 @@ namespace Porchlight.County
             double k = straight ? chord / 3 : chord * 0.5523;
             var p1 = new Vec2(p0.x + d0.x * k, p0.y + d0.y * k);
             var p2 = new Vec2(p3.x + d3.x * k, p3.y + d3.y * k);
-            var pts = SampleBezier(p0, p1, p2, p3, SAMPLE);
+            var pts = SampleBezier(p0, p1, p2, p3, SAMPLE, highways.Count % 2 == 0 ? 1 : -1);
             var at = new List<double> { 0 };
             for (int i = 1; i < pts.Count; i++) at.Add(at[i - 1] + Geo.Dist(pts[i - 1], pts[i]));
             var hw = new Highway
@@ -316,8 +316,23 @@ namespace Porchlight.County
             }
         }
 
-        /// <summary>Points along the curve about `step` apart (by arc length), first and last exactly on its ends.</summary>
-        public static List<Vec2> SampleBezier(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, double step)
+        /// <summary>How far a highway winds either side of its curve, at most (tiles), and about how long each S is.</summary>
+        public const double WIND = 48, WIND_LENGTH = 380;
+        /// <summary>The tightest the wind alone may bend (tiles of radius): the curve and the fade at the ends bend it a little more.</summary>
+        const double BEND = 110;
+
+        /// <summary>
+        /// One S of the wind, p in [0, 1): a smooth wave of parabolas, +1 at a quarter and -1 at three
+        /// quarters. Only sums and products (no sines), so the server (county.ts) lays it out the same.
+        /// </summary>
+        public static double Wave(double p) => p < 0.5 ? 16 * p * (0.5 - p) : -16 * (p - 0.5) * (1 - p);
+
+        /// <summary>
+        /// Points along the curve about `step` apart (by arc length), first and last exactly on its ends.
+        /// `wind` (+1 or -1, which way it starts; 0 for none): winding either side of the curve as it goes,
+        /// straight out of its ends still.
+        /// </summary>
+        public static List<Vec2> SampleBezier(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, double step, double wind = 0)
         {
             const int FINE = 4096;
             var fine = new List<Vec2>(FINE + 1);
@@ -328,6 +343,32 @@ namespace Porchlight.County
                 double a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
                 fine.Add(new Vec2(a * p0.x + b * p1.x + c * p2.x + d * p3.x, a * p0.y + b * p1.y + c * p2.y + d * p3.y));
                 acc.Add(i == 0 ? 0 : acc[i - 1] + Geo.Dist(fine[i - 1], fine[i]));
+            }
+            if (wind != 0)
+            {
+                // Sideways off the curve: a whole number of S's, faded in and out (no turn at the gates).
+                double length = acc[FINE];
+                int waves = Math.Max(1, (int)Math.Floor(length / WIND_LENGTH + 0.5));
+                double wave = length / waves;
+                double amp = wind * Math.Min(WIND, wave * wave / (32 * BEND));
+                var wound = new List<Vec2>(FINE + 1);
+                for (int i = 0; i <= FINE; i++)
+                {
+                    var prev = fine[Math.Max(0, i - 1)];
+                    var next = fine[Math.Min(FINE, i + 1)];
+                    double tx = next.x - prev.x, ty = next.y - prev.y;
+                    double len = Math.Sqrt(tx * tx + ty * ty);
+                    double u = acc[i] / length;
+                    double fade = 4 * u * (1 - u);
+                    fade *= fade;
+                    double phase = u * waves;
+                    double off = amp * fade * Wave(phase - Math.Floor(phase));
+                    wound.Add(len > 0 ? new Vec2(fine[i].x - ty / len * off, fine[i].y + tx / len * off) : fine[i]);
+                }
+                fine = wound;
+                fine[0] = p0;
+                fine[FINE] = p3;
+                for (int i = 1; i <= FINE; i++) acc[i] = acc[i - 1] + Geo.Dist(fine[i - 1], fine[i]);
             }
             double total = acc[FINE];
             int n = Math.Max(1, (int)Math.Ceiling(total / step));

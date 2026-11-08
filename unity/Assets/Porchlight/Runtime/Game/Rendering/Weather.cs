@@ -82,6 +82,38 @@ namespace Porchlight.Rendering
             yield break;
         }
 
+        /// <summary>
+        /// Driven on into the next space of the county: what's falling (every drop and flake in the air,
+        /// moved by `shift` as the scene is), how wet, how deep and how grey it is go on to its weather,
+        /// so nothing stops and starts at the line. What's settled stays with the space it's on.
+        /// </summary>
+        public void HandOn(Weather next, Vector3 shift)
+        {
+            next.wet = wet;
+            next.depth = depth;
+            next.overcast = overcast;
+            foreach (var ps in new[] { rain, snow, splash })
+            {
+                if (ps == null) continue;
+                int n = ps.particleCount;
+                if (buffer.Length < n) buffer = new ParticleSystem.Particle[n];
+                n = ps.GetParticles(buffer, n);
+                for (int i = 0; i < n; i++) buffer[i].position += shift;
+                ps.SetParticles(buffer, n);
+                ps.transform.SetParent(next.root.transform, true);
+            }
+            next.rain = rain;
+            next.snow = snow;
+            next.splash = splash;
+            next.rainMaterial = rainMaterial;
+            next.snowMaterial = snowMaterial;
+            next.splashMaterial = splashMaterial;
+            next.dot = dot;
+            rain = snow = splash = null;
+            rainMaterial = snowMaterial = splashMaterial = null;
+            dot = null;
+        }
+
         public string Report() =>
             $"{report}; falling: rain {rain?.particleCount ?? 0}, snow {snow?.particleCount ?? 0}; wet {wet:0.00}, snow depth {depth:0.00}, overcast {overcast:0.00}";
 

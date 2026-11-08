@@ -57,6 +57,14 @@ namespace Porchlight.Rendering
         /// <summary>How far out the clouds are (0 gone, 1 out), and how fast they go or come back (per second).</summary>
         float cloudsOut = -1;
         const float CLOUD_FADE = 2.5f;
+        /// <summary>
+        /// Where the scene's origin is in the world (the county moves it as you drive from space to
+        /// space): the clouds over the town keep to the world, so they don't jump when it moves.
+        /// </summary>
+        Vector3 origin;
+
+        /// <summary>The scene's origin has moved this far in the world (the floating origin).</summary>
+        public void Shift(Vector3 by) => origin += by;
 
         public Heavens(Camera camera, Transform parent)
         {
@@ -147,8 +155,10 @@ namespace Porchlight.Rendering
             fieldMaterial.SetColor(BaseColor, new Color(tint.r, tint.g, tint.b, 0.5f * over));
             // Copies of the square, 2 by 2, round the focus; the wind slides them all.
             float ox = Mathf.Repeat(Wind.x * t, FIELD_SIZE), oz = Mathf.Repeat(Wind.z * t, FIELD_SIZE);
-            float x0 = Mathf.Floor((focus.x - ox - FIELD_SIZE / 2) / FIELD_SIZE) * FIELD_SIZE + ox;
-            float z0 = Mathf.Floor((focus.z - oz - FIELD_SIZE / 2) / FIELD_SIZE) * FIELD_SIZE + oz;
+            // On the world's grid (not the scene's, which moves), then back into the scene's terms.
+            float rx = Mathf.Repeat(origin.x, FIELD_SIZE), rz = Mathf.Repeat(origin.z, FIELD_SIZE);
+            float x0 = Mathf.Floor((focus.x + rx - ox - FIELD_SIZE / 2) / FIELD_SIZE) * FIELD_SIZE + ox - rx;
+            float z0 = Mathf.Floor((focus.z + rz - oz - FIELD_SIZE / 2) / FIELD_SIZE) * FIELD_SIZE + oz - rz;
             for (int i = 0; i < field.Length; i++)
                 field[i].transform.position = new Vector3(x0 + (i & 1) * FIELD_SIZE, FIELD_HEIGHT, z0 + (i >> 1) * FIELD_SIZE);
         }

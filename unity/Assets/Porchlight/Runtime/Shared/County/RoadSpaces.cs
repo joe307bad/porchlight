@@ -16,6 +16,8 @@ namespace Porchlight.County
     {
         /// <summary>How far past its cut a highway's road carries on into the next stretch's ground (tiles).</summary>
         const double OVERLAP = 10;
+        /// <summary>A stretch draws (and plants) its ground this far either side of its road (tiles); the countryside the rest.</summary>
+        const double DRAWN = CountyTerrain.FLAT - 2;
 
         /// <summary>A road space's town: grass, its roads, and which tiles the next stretch draws.</summary>
         public static TownModel Build(CountyMap map, Space s)
@@ -88,12 +90,14 @@ namespace Porchlight.County
                     bool overlap = other.x0 < s.x0 + s.width && s.x0 < other.x0 + other.width && other.y0 < s.y0 + s.height && s.y0 < other.y0 + other.height;
                     if (overlap) ends.Add(other);
                 }
+                var verge = Geo.SimplifyRDP(line, 0.05, (a, b) => true);
                 m.foreign = new byte[s.width * s.height];
                 for (int y = 0; y < s.height; y++)
                     for (int x = 0; x < s.width; x++)
                     {
                         var w = s.ToWorld(new Vec2(x + 0.5, y + 0.5));
-                        bool theirs = false;
+                        // Off the verge, the countryside's: its hills rise there (CountyTerrain).
+                        bool theirs = Geo.DistToPolyline(w, verge) > DRAWN;
                         foreach (var e in ends) if (e.Contains(w.x, w.y)) theirs = true;
                         if (!theirs && near.Count > 1)
                         {
