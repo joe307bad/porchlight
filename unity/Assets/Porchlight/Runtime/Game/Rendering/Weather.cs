@@ -55,7 +55,8 @@ namespace Porchlight.Rendering
         const int AREA = 32;
         /// <summary>Faces smaller than this (tiles squared) are trim: no snow on them.</summary>
         const float MIN_FACE = 0.004f;
-        readonly Dictionary<int, GameObject> shells = new Dictionary<int, GameObject>();
+        /// <summary>Each area's settled snow: a piece per building (under its shell, so it's hidden with its roof), one for the sheds.</summary>
+        readonly Dictionary<int, List<GameObject>> shells = new Dictionary<int, List<GameObject>>();
         readonly Dictionary<Mesh, (Vector3[] v, int[] t)> readBack = new Dictionary<Mesh, (Vector3[] v, int[] t)>();
         List<int>[] areaTops;
         int cw, chh, shellFaces, shellLids, shellAreas;
@@ -453,15 +454,17 @@ namespace Porchlight.Rendering
             {
                 float dx = kv.Key % cw + 0.5f - fx, dy = kv.Key / cw + 0.5f - fy;
                 if (dx * dx + dy * dy > far * far) gone.Add(kv.Key);
-                else kv.Value.SetActive(show);
+                else foreach (var go in kv.Value) go.SetActive(show);
             }
             foreach (int k in gone)
             {
-                var go = shells[k];
-                var mesh = go.GetComponent<MeshFilter>().sharedMesh;
-                meshes.Remove(mesh);
-                UnityEngine.Object.Destroy(mesh);
-                UnityEngine.Object.Destroy(go);
+                foreach (var go in shells[k])
+                {
+                    var mesh = go.GetComponent<MeshFilter>().sharedMesh;
+                    meshes.Remove(mesh);
+                    UnityEngine.Object.Destroy(mesh);
+                    UnityEngine.Object.Destroy(go);
+                }
                 shells.Remove(k);
             }
             if (!show) return;
@@ -478,20 +481,20 @@ namespace Porchlight.Rendering
                 }
             if (best < 0) return;
             var built = BuildShell(best);
-            built.SetActive(true);
+            foreach (var go in built) go.SetActive(true);
             shells[best] = built;
         }
 
-        GameObject BuildShell(int area)
+        List<GameObject> BuildShell(int area)
         {
-            var verts = new List<Vector3>();
-            var normals = new List<Vector3>();
-            var tris = new List<int>();
+            var parts = new Dictionary<int, (List<Vector3> verts, List<Vector3> normals, List<int> tris)>();
             int faces = 0, lids = 0;
             foreach (int index in areaTops[area])
             {
-                var (mesh, at, bounds) = world.roofs[index];
+                var (mesh, at, bounds, building) = world.roofs[index];
                 if (mesh == null) continue;
+                if (!parts.TryGetValue(building, out var part)) parts[building] = part = (new List<Vector3>(), new List<Vector3>(), new List<int>());
+                var (verts, normals, tris) = part;
                 if (!mesh.isReadable)
                 {
                     Lid(bounds, verts, normals, tris);
@@ -530,7 +533,33 @@ namespace Porchlight.Rendering
             shellLids += lids;
             shellAreas++;
             report = $"snow settled on {shellFaces} faces and {shellLids} lids in {shellAreas} areas";
-            return Piece("settled snow", verts, normals, null, tris, shellMaterial);
+            var built = new List<GameObject>();
+            foreach (var kv in parts)
+            {
+                var (verts, normals, tris) = kv.Value;
+                if (tris.Count == 0) continue;
+                if (kv.Key < 0)
+                {
+                    built.Add(Piece("settled snow", verts, normals, null, tris, shellMaterial));
+                    continue;
+                }
+                // Into the building's own space, under it: hidden whenever its roof is.
+                var shell = world.ShellOf(kv.Key);
+                var toLocal = shell.worldToLocalMatrix;
+                var normalsToLocal = shell.localToWorldMatrix.transpose;
+                for (int i = 0; i < verts.Count; i++)
+                {
+                    verts[i] = toLocal.MultiplyPoint3x4(verts[i]);
+                    normals[i] = normalsToLocal.MultiplyVector(normals[i]).normalized;
+                }
+                var go = Piece("settled snow", verts, normals, null, tris, shellMaterial);
+                go.transform.SetParent(shell, false);
+                // Built while they're inside it, roof lifted: hidden too, till it's put back.
+                var roof = shell.GetComponentInChildren<MeshRenderer>(true);
+                go.GetComponent<MeshRenderer>().enabled = roof == null || roof.enabled;
+                built.Add(go);
+            }
+            return built;
         }
 
         static void Lid(Bounds b, List<Vector3> verts, List<Vector3> normals, List<int> tris)

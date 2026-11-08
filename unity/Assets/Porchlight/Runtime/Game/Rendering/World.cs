@@ -188,8 +188,14 @@ namespace Porchlight.Rendering
         /// <summary>Everything standing that could hold snow: its mesh, where it is, and its bounds (world).</summary>
         public readonly List<(Mesh mesh, Matrix4x4 at, Bounds bounds)> tops = new List<(Mesh, Matrix4x4, Bounds)>();
 
-        /// <summary>Of those, the buildings and the sheds: what snow settles on.</summary>
-        public readonly List<(Mesh mesh, Matrix4x4 at, Bounds bounds)> roofs = new List<(Mesh, Matrix4x4, Bounds)>();
+        /// <summary>
+        /// Of those, the buildings and the sheds: what snow settles on. `building` is which (its
+        /// shell, the room's number), so its snow goes with its roof when that's lifted; -1 the sheds.
+        /// </summary>
+        public readonly List<(Mesh mesh, Matrix4x4 at, Bounds bounds, int building)> roofs = new List<(Mesh, Matrix4x4, Bounds, int)>();
+
+        /// <summary>A building's shell (what's hidden while you're in its room).</summary>
+        public Transform ShellOf(int building) => shells[building].transform;
 
         /// <summary>For the weather: the town's height over each tile, and what stands in it (before batching merges it).</summary>
         void Survey()
@@ -198,8 +204,8 @@ namespace Porchlight.Rendering
             surface = new float[w * h];
             var parked = new HashSet<Transform>();
             foreach (var p in parkedCars) parked.Add(p.transform);
-            var buildings = new HashSet<Transform>();
-            foreach (var s in shells) buildings.Add(s.transform);
+            var buildings = new Dictionary<Transform, int>();
+            for (int i = 0; i < shells.Count; i++) buildings[shells[i].transform] = i;
             foreach (var f in root.GetComponentsInChildren<MeshFilter>(true))
             {
                 var r = f.GetComponent<MeshRenderer>();
@@ -210,9 +216,13 @@ namespace Porchlight.Rendering
                 var b = r.bounds;
                 if (b.max.y < 0.1f) continue; // the ground, roads and water
                 tops.Add((f.sharedMesh, f.transform.localToWorldMatrix, b));
-                bool building = false;
-                for (var t = f.transform; t != null && !building; t = t.parent) building = buildings.Contains(t) || t.name == "sheds";
-                if (building) roofs.Add(tops[tops.Count - 1]);
+                int owner = -2;
+                for (var t = f.transform; t != null && owner == -2; t = t.parent)
+                {
+                    if (buildings.TryGetValue(t, out int i)) owner = i;
+                    else if (t.name == "sheds") owner = -1;
+                }
+                if (owner != -2) roofs.Add((f.sharedMesh, f.transform.localToWorldMatrix, b, owner));
                 if (b.size.x > 24 || b.size.z > 24) continue; // one mesh for things all over town (the sheds): no single top
                 int x0 = Mathf.Max(0, Mathf.FloorToInt(b.min.x)), x1 = Mathf.Min(w - 1, Mathf.FloorToInt(b.max.x));
                 int y0 = Mathf.Max(0, Mathf.FloorToInt(-b.max.z)), y1 = Mathf.Min(h - 1, Mathf.FloorToInt(-b.min.z));
