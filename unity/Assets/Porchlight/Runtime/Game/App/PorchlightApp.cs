@@ -116,6 +116,9 @@ namespace Porchlight.App
             input.KeyDown += OnKeyDown;
 #if UNITY_WEBGL && !UNITY_EDITOR
             dpr = Mathf.Max(1, PlatformDpr());
+#elif !UNITY_EDITOR
+            dpr = DesktopDpr();
+            Debug.Log($"porchlight: UI scale {dpr} (screen {Screen.dpi:0} dpi)");
 #endif
             BuildCameras();
             BuildUi();
@@ -126,6 +129,20 @@ namespace Porchlight.App
         [System.Runtime.InteropServices.DllImport("__Internal")] static extern float PL_Dpr();
         static float PlatformDpr() => PL_Dpr();
 #endif
+
+        /// <summary>
+        /// The desktop's pixels to one of the UI's, as a browser's devicePixelRatio: a Mac's
+        /// Retina screen is 2 (it draws at its full resolution), Windows its scale setting
+        /// (96 dpi is 100%). PORCHLIGHT_UI_SCALE says otherwise.
+        /// </summary>
+        static float DesktopDpr()
+        {
+            if (float.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_UI_SCALE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var given) && given > 0) return given;
+            float dpi = Screen.dpi;
+            if (dpi <= 0) return 1;
+            if (Application.platform == RuntimePlatform.OSXPlayer) return dpi > 150 ? 2 : 1;
+            return Mathf.Max(1, Mathf.Round(dpi / 96f * 4) / 4);
+        }
 
         void BuildCameras()
         {

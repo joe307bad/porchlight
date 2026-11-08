@@ -579,9 +579,9 @@ Label {
 }
 
 .signin-logo {
-    width: 35px;
-    height: 52px;
-    margin-right: 14px;
+    width: 26px;
+    height: 38px;
+    margin-right: 10px;
     flex-shrink: 0;
 }
 
