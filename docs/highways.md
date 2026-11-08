@@ -12,7 +12,12 @@ This is research, not a commitment. Wherever a number below comes from the code,
 - **Don't build one big world. Build a graph of small spaces.** Each town keeps its own local coordinates and its own `w×h` arrays, so the simulation code stays as it is. Each highway becomes a small space of its own: a long, thin "town" made of nothing but a main road. You drive in exactly one space at a time and hand over to the next at a gate, where the two overlap for a few tiles. That one choice lets nearly every system (`Drivable`, `Traffic`, `Walking`, `WorldSync`, the server's bounds checks) work almost unchanged.
 - **Never hold two towns at once.** The close camera's fog ends at 60 tiles (`ExploreView.cs:108-112`). If a highway is longer than about two fog distances plus the build time at full speed, the town behind can be torn down before the town ahead is built. Memory stays at one town, as it is today.
 - **The hard part is the build budget, not the highway.** Today a town is generated and built behind a loading bar in 50 ms slices (`PorchlightApp.cs:246`), and each generation stage runs in one uninterrupted piece. To build while you drive, the work has to fit in about 4–6 ms a frame, which means splitting the big stages and `TownWorld.Build` into much smaller steps.
-- **Compute the world layout offline, as Porchlight's houses already are.** Where the towns sit, which gate links to which, and each highway's curve: a tool in `Tools~/Checks` works all of that out and commits it as `server/towns/county.json`. Server and game both read it. Only the game ever runs the generator, so we never need a TypeScript copy that agrees to the last bit.
+- **The county has a fixed shape, decided in advance** (§4.2):
+  - Porchlight sits in the middle with four gates, one at each compass point.
+  - **North** always leads to *your own* towns: a private loop of highways with up to three town slots on it.
+  - **East, south and west** lead to three public cities, joined to each other in a public ring.
+- **Every town's gate sits at the middle of an edge**, and every slot has a fixed position. So the whole layout (where each town sits, every highway, which room owns which ground) can be worked out from the town keys alone, with no generator. The server can work it out too, from a small shared piece of layout code.
+- **Planes fly between any two towns** in a straight line, over countryside that the same layout describes (§4.7).
 - **Multiplayer v1: each town room owns half of each of its highways.** At the highway's midpoint, far from anyone's line of sight, the client leaves one room and joins the next. Movement is already client-side, so the car keeps driving through the gap of about a second. Later, joining the next room early (a ghost band) can close even that gap.
 
 How long a highway needs to be, worked through in §5: roughly **300–500 tiles (1.2–2 km), or 35–60 s at boost**. That is long enough to feel like a journey, and it lines up with the ~1:15–1:20 compression Euro Truck Simulator uses.
@@ -86,26 +91,64 @@ For worlds generated lazily, Minecraft-style, put one town per region. Place eac
 - **Active space**: exactly one at a time, which is what `ExploreView` assumes today. The car's position is held in the active space's local coordinates. When it crosses the gate line (with a few tiles of hysteresis), convert its position by `offsetA − offsetB` and swap which model `ExploreView` is driving.
 - **Floating origin is unnecessary at first.** A county a few kilometres across sits well within float precision (about 1 mm of error at 10 km). Because the simulation already runs in local doubles, only the render roots carry the offset. If counties grow past ~10 km, re-centre at each space switch by moving town roots. `Combine(still.gameObject)` batches under a root that can be moved, though check that before relying on it.
 
-### 4.2 The county layout (computed offline, committed as data)
+### 4.2 The county's shape
 
-This follows the existing `npm run town` / `porchlight.json` pattern:
+```
+                 ┌──────── your private loop (yours alone) ────────┐
+                 │   [slot 1]══════════[slot 2]══════════[slot 3]  │
+                 │      ║                                   ║      │
+                 │      ╚══════════════╗   ╔════════════════╝      │
+                 │                  junction                       │
+                 └──────────────────────╫──────────────────────────┘
+                                        ║  north: private
+  [West city]═══════════════════════[PORCHLIGHT]═══════════════════════[East city]
+       ║            west: public         ║          east: public            ║
+       ║                                 ║  south: public                   ║
+       ╚═════════════ rim ═══════[South city]══════════ rim ═══════════════╝
+```
 
-1. **Run the cheap stages only.** For each candidate town key, `Generate(..., until: "site")` runs terrain, rivers and site. That is enough to know `w`, `h`, `center` and the **gates**.
-2. **Grow outward from Porchlight.** For each of Porchlight's 3 gates, pick a neighbour town:
-   - Its key is `seed=<hash(countySeed, parentKey, gateIndex)>`, with params drawn from a "county mix" (sizes, densities).
-   - Choose the neighbour gate whose outward direction best faces back, then place the neighbour so its gate sits at distance *L* (§5) along roughly the parent gate's outward direction.
-   - Reject any placement whose bounding box (plus a margin) overlaps another town or highway, and try the next seed.
-   - Do this breadth-first to a set depth, in a fixed order. It is deterministic because it runs once, offline, not lazily in the order people happen to explore.
-3. **Deal with leftover gates.** A town's other gates either lead on to the next ring of towns or become country lanes that end at a "Road closed" barrier. That is today's dead end, made deliberate.
-4. **Shape each highway** as a cubic Hermite or Bézier curve between the two gate points:
-   - The tangents are each gate's outward direction, so the road leaves each town straight.
-   - The curve is sampled every tile and the minimum radius is checked. Using `R = V²/(127(e+f))` at 127 km/h boost, real roads would want R ≈ 600 m ≈ 150 tiles. Something like 60–100 tiles is enough for a car this arcade-like.
-   - Add an S-bend or a crest where a straight line would let you see too far ahead.
-5. **Write `server/towns/county.json`**: town keys, offsets, gate pairings, highway control points and the midpoint split. A check like `homes` fails the build if the file has fallen behind the generator.
+**Public: a half wheel.** Porchlight's east, south and west gates run straight out (as spokes) to three public cities. Two rim highways link East to South and South to West, so you can drive the whole ring without passing back through Porchlight.
+- The three cities are fixed keys, the same for everyone, like Porchlight. They should be bigger and denser than a default town, so they feel like *cities*. Each has a name and is committed in `server/towns/`, the same way `porchlight.json` is.
+- Each city uses two or three of its gates: East uses W and S, South uses N, E and W, West uses E and S. Any gate left over ends in a "Road closed" barrier, a deliberate dead end.
 
-Changing the generator would move gates and invalidate the county. That is the same rule that already applies to `porchlight.json`.
+**Private: a loop off the north exit.** North of Porchlight, the highway runs to a junction. From the junction, a loop runs through **three town slots** and back again. Your up to three private towns (`MAX_TOWNS = 3`, `persistence.ts:105`) each sit in a slot.
+- **The loop keeps the same shape however many towns you have.** An empty slot is a vacant plot the road runs straight through, with a sign ("Your town could go here") that opens the town editor. With one town, the loop is still a loop.
+- **The highway goes through each town.** It comes in at one gate and leaves at another: slot 1 S→E, slot 2 W→E, slot 3 W→S. Every gate road already meets at the town centre, so the loop passes through downtown, the way old highways ran down Main Street.
+- **Everyone's north exit leads to their own loop.** Two players from different accounts can drive north together as far as the midpoint of the north highway. Past that point, each of them is in their own world, and the other fades out into the fog. That is the same effect as private towns today, now with a road in place of a menu.
+- **Which slot a town takes** needs a new `slot` column (0–2) on `towns`. A new town takes the first free slot, and deleting a town frees its slot.
 
-**Later, for a bigger or endless world:** move to the region grid (one town per region, placed by hash, linked by an RNG graph with an edge-length cap, owned by the lower region id). Every piece of that can be computed from the seed and a bounded neighbourhood, so it can grow lazily. It is only worth it once the hand-sized county feels small.
+**Gates on compass points, at edge midpoints.** Today gates are spread at a random starting angle (`Site.cs:126`), and each is moved to the nearest dry, reachable edge tile. To make the layout fixed:
+- Add a gate mode (a param, e.g. `gates=compass`) that puts the gates exactly at `(w/2, 0)` (N), `(w, h/2)` (E), `(w/2, h)` (S) and `(0, h/2)` (W).
+- The terrain stage keeps a dry band from each gate to the centre, so a gate can never land in a lake.
+- Then **a gate's position depends only on `w` and `h`**, and both are already in the key. So the layout code needs nothing from the generator.
+
+**Slots are fixed-size boxes.** Every town slot is a 256×256 box, the biggest map there is. A smaller town sits in the middle of its box, and the highway carries on through the box to reach its gate. So the shape of the county never depends on how big each town is. Rough placements (world tiles, y = south, Porchlight at 0..256):
+
+| Place | Box (x, y) | Notes |
+|---|---|---|
+| Porchlight | 0..256, 0..256 | 4 gates |
+| East city | 656..912, 0..256 | spoke: 400 tiles straight |
+| South city | 0..256, 656..912 | spoke: 400 tiles straight |
+| West city | −656..−400, 0..256 | spoke: 400 tiles straight |
+| East↔South, South↔West rims | — | quarter-circle curves of about 830 tiles, each split into 2 highway segments (under the 655-tile limit), with a rest stop in the middle |
+| Junction | about (128, −400) | end of the north highway |
+| Private slots 1–3 | about 1 km north, spread west to east | the loop's segments are 400–600 tiles each |
+
+The 400-tile gap comes from the budget in §5. Re-run that sum once the build has been measured.
+
+**Shaping each highway:** a cubic Bézier between two gate points.
+- The tangents are each gate's outward direction, so a road always leaves a town straight. The spokes are simply straight; the rims and the private loop are smooth quarter turns.
+- Sample every tile and check the minimum radius. Something like 60–100 tiles is enough for a car this arcade-like.
+- Add a crest or an S-bend where a long straight would let you see too far ahead.
+
+**One piece of layout code, in both languages.** `CountyLayout(publicKeys, myPrivateTownsBySlot)` returns the boxes, gates, highway curves and room territories. It is small (boxes, Béziers, no generator), so it can be written in C# for the game and in TypeScript for the server's bounds checks. A shared test file of example layouts checks that the two agree.
+
+**What this changes for existing towns.** Moving gates moves the main roads, and so the streets and houses too.
+- Porchlight goes from 3 random gates to 4 compass gates. That is a one-off regeneration with `npm run town`. The server already rehouses everyone (households together) when that file changes.
+- Existing private towns get compass gates as well, so their layouts change. People living in them will be asked to choose a house again; the game already does this when a house's tile no longer has a house.
+- Do it once, with a clear note to players. Keeping the old gates instead would mean a "legacy" flag in every existing town's key.
+
+**Later, for a bigger world:** add more rings beyond the cities, or move to a region grid (one town per region, placed by hash, linked by a relative-neighbourhood graph, so it can be generated lazily). Only worth it once the county feels small.
 
 ### 4.3 Building in the background
 
@@ -134,8 +177,15 @@ Distances are in tiles, measured along the highway from A's gate (*L* = total le
 
 ### 4.5 Multiplayer
 
+**Rooms own ground, called territories.** The county layout splits all the ground (towns, highways and the countryside planes fly over) into territories, and each territory belongs to exactly one room:
+- **Porchlight's room:** its box, plus the near half of all four of its highways.
+- **Each public city's room:** its box, plus the near half of its spoke and rims.
+- **Each private town's room** (owner only, as today): its slot box, plus the near half of the loop segments on either side.
+- **A new private road room per account** (e.g. `north:<accountId>`, owner only): the far half of the north highway, the junction, empty slots, and whatever is left of the loop.
+- **Countryside** (for planes): each patch goes to the nearest territory within the same world, public or your private one. Store the split as a coarse grid of 16-tile cells, the same size as the interest cells.
+
 **v1: half highways, with a short swap at the midpoint.**
-- Each town room's bounds grow to cover its own rectangle plus the near half of each of its highways. The server reads these from `county.json`, as it would any geometry. `inBounds` takes a list of rectangles or capsules instead of `0..w`.
+- Each room's bounds become its territory, not just its own rectangle. The server computes them with the shared TypeScript layout code; for private rooms it uses the owner's town keys and slots, which are already in the database. `inBounds` takes the territory instead of `0..w`.
 - Highway positions are sent to the server in the town's own coordinates. They can be negative or beyond `w`, which is fine for the schema's floats. Highway traffic sync then needs either a signed offset or its own host stream.
 - At the midpoint the client leaves A's room and joins B's. It sends `{arrive: {from: A, highway: H1, x, z, heading, speed}}` so the server places the character there instead of at their home door (today a new key goes through `ApplySpawn`).
   - The server must take that first move as the anchor. Today the first move is "taken as given" (`movement.ts:31`). Clamp it to the midpoint band so it can't be used to teleport.
@@ -149,7 +199,7 @@ Distances are in tiles, measured along the highway from A's gate (*L* = total le
 
 **A shared clock:** day/night has to come from one shared source (the county, or simply wall-clock time) rather than a separate per-town `nights` map.
 
-**Private towns**: they can stay as they are, entered by loading. Or a private town could hang off a gate of a public town on a "private road" that only its owner's characters can drive down (`mayEnter` already makes that call).
+**Private towns** are reached by the north exit (§4.2). Who may enter is still decided by `mayEnter`, now for the account's road room as well as its towns. Loading straight into a town (today's flow, and "Join") stays as fast travel.
 
 ### 4.6 What the player sees
 
@@ -157,6 +207,23 @@ Distances are in tiles, measured along the highway from A's gate (*L* = total le
 - **Signs**: "Elmford 1.4 km" at each gate, built from `Names.cs` and `Signs.cs`, plus a county view on the big map with your town highlighted. Today the minimap is a texture exactly `w×h` in size, so it will need one per space.
 - **Highway traffic**: the same `Traffic` class running on the highway space, sparse, driving the whole length and handed over to or despawned at the gates. If highway traffic ever needs to feel truly busy, IDM car-following and MOBIL lane changes are the standard models.
 - **New missions** (later): deliveries between towns, a county-wide race, "drive a friend home".
+
+### 4.7 Flying between towns
+
+Planes already have most of what they need:
+- They cruise at 20 tiles, above the tallest towers.
+- They boost to 11.1 tiles/s, which is exactly the server's speed limit.
+- They land on any open ground (`Driving.cs:6, 198`).
+
+All that keeps them in a town is `FloorAt` returning Infinity off the map (`ExploreView.cs:1557-1561`).
+
+- **Sky space.** Between towns a plane is in a "sky" space. It needs no tile grid: the floor is 0 (open countryside), and the edge of the county is the only limit. So `FloorAt` asks the active town while you are over it, and returns 0 between towns. Fly into another town's box and that town becomes the active space, just as at a gate.
+- **Land anywhere, take off anywhere.** Landing in open country already works, so a plane can set down in a field between towns. Taking off again works from any open ground too. Do you want that, or should landing be limited to airports?
+- **Build the town ahead.** A plane can come from any direction, and in a straight line, so it gets to a town sooner than the highway does. Spokes are 400 tiles either way, but between East and South (or South and West) the straight line is about 15% shorter than the rim road, and a plane can head anywhere. Each frame, cast a ray along the plane's heading. The first box it hits within about 400 tiles is the town to prepare (still one at a time). If the plane turns away, release that town.
+- **When a plane arrives before the town is built:** a cloud bank around the town (the sky already draws clouds), and a headwind. The headwind is the hidden speed cap again, dressed up as weather. Fog keeps the view to 60 tiles in the close camera. The iso camera sees a little further, so the countryside ground has to run all the way out to the next town's box.
+- **Flying north.** Over the private side, only *your* towns exist, as on the road. The territory grid decides which room you are in, by the same rule as for cars.
+- **Private towns by air:** a plane over the north side flies into your own towns and nobody else's. Another player's loop simply isn't there for you.
+- **Server:** no change to speed limits. The height cap (24) already allows cruising. The bounds check uses the territory, as cars do.
 
 ---
 
@@ -185,11 +252,14 @@ If measurements show T is much larger (Porchlight has 1,497 houses), there are t
 
 1. **Measure.** Get per-stage and per-part timings on WebGL and desktop, for Porchlight and for a default town. Also check how much memory one built town takes. *(This decides how long highways need to be.)*
 2. **Background build.** Smaller iterators, an adjustable budget, teardown spread over frames, and `Prepare/Activate/Release` instead of dispose-then-build. Done on its own, this already shrinks today's loading screens and makes "Join" smoother.
-3. **One highway, one neighbour.** A hand-written `county.json` with Porchlight plus one town on gate 0. Add `HighwayModel` as a space, the overlap and active-space switching, a countryside skirt and an open edge.
-4. **Server half-highways.** Bounds from `county.json`, the arrive-at join, eviction that allows a handover, and a shared clock.
-5. **Generate the county offline** in Checks: all of Porchlight's gates, a few rings out, "Road closed" lanes, and a staleness check.
-6. **Polish and safety valves.** Signs, the county map, highway traffic, the hidden speed cap, a tunnel or crest on each highway.
-7. **Later.** Pre-join handoff (v2), region-grid lazy worlds, private roads, missions between towns.
+3. **Compass gates.** Add the `gates=compass` mode, with gates at edge midpoints and a dry band to each. Regenerate Porchlight and rehouse its residents, then do the same for private towns.
+4. **County layout code** in C# and TypeScript, with a shared test file: boxes, gates, Bézier highways and territories, built from the public keys and an account's towns by slot. Add a `slot` column on `towns`.
+5. **East first.** Porchlight to the East city: `HighwayModel` as a space, overlap and active-space switching, countryside skirts and an open edge.
+6. **Server territories.** Bounds come from the layout, plus the arrive-at join, eviction that allows a handover, a shared clock, and the private road room.
+7. **The rest of the county.** South and West cities, the two rims with their rest stops, the north highway, the junction, the private loop and the vacant-plot signs.
+8. **Planes between towns.** Sky space, `FloorAt` returning 0 between towns, the heading ray choosing which town to build, a cloud bank as the safety valve.
+9. **Polish.** Signs ("East city 1.6 km"), a county map, highway traffic, the hidden speed cap, crests and a tunnel.
+10. **Later.** Pre-join handoff (v2), more rings, missions between towns.
 
 ## 7. Open questions
 
@@ -198,7 +268,9 @@ If measurements show T is much larger (Porchlight has 1,497 houses), there are t
 - **Do people *want* 45–60 s drives?** A fast-travel option (the current load) should stay alongside driving.
 - **What happens to a town's day/night, weather and its single traffic host** when players flow in and out continuously instead of loading in?
 - **Does the self-written Colyseus client open one WebSocket per room?** That matters for v2 pre-join. Test it with two rooms open at once.
-- **Is the county shared by everyone, or one per account?** The answer settles what happens to the 3 private towns each account can make.
+- **Can planes land in open country?** Today they can, anywhere there's room. Or should landing between towns be limited to airports?
+- **What are the three cities called, and how big are they?** 256×256 and denser than Porchlight, or Porchlight's size with a different character (harbour city, mountain town and so on)?
+- **Is it all right for every town's gates to change once?** Porchlight's 1,497 houses would be reassigned, and private towns' residents would choose their houses again.
 
 ## Sources
 
