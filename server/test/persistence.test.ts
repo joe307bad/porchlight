@@ -148,7 +148,7 @@ test('a starter town that no longer comes with the game goes on the next start, 
 test('regenerating a town that comes with the game gives everyone a new house, households together', { skip }, async () => {
   const p = db!;
   const id = crypto.randomUUID();
-  const town = { name: `Town ${id}`, key: `seed=first-${id}`, houses: [[1, 1], [2, 2], [3, 3]] as [number, number][] };
+  const town = { name: `Town ${id}`, place: 'east' as const, key: `seed=first-${id}`, houses: [[1, 1], [2, 2], [3, 3]] as [number, number][] };
   await p.settleStarterTown(town);
   const me = await p.account(`${sub}-rehoused`, 'Me');
   const them = await p.account(`${sub}-neighbour`, 'Them');

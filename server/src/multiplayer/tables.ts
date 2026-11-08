@@ -31,8 +31,10 @@ export const towns = pgTable('towns', {
   createdBy: uuid('created_by').references(() => players.id, { onDelete: 'cascade' }),
   /** For a town that comes with the game: which generation of it this is, so a new one can rehouse everyone. */
   layout: text('layout'),
+  /** For a town someone made: which of their three places north of Porchlight it's in (0-2; see county.ts). */
+  slot: integer('slot'),
   createdAt: at('created_at').notNull().defaultNow(),
-});
+}, (t) => [unique('towns_slot').on(t.createdBy, t.slot)]);
 
 /**
  * A house someone lives in. It's named by a tile of the building, not the

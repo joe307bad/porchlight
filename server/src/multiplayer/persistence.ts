@@ -10,6 +10,7 @@
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { NORTH, type Place } from '../county.ts';
 import { and, asc, count, eq, lt, inArray, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -38,6 +39,9 @@ export interface TownInfo {
   mine: boolean;
   /** How many characters live there. */
   residents: number;
+  /** Where it is in the county (county.ts): a town that comes with the game's place, or one of the account's own slots (0-2). */
+  place: Place | null;
+  slot: number | null;
 }
 
 /** A house someone lives in, by a tile of its building. */
@@ -110,16 +114,27 @@ export const TOWN_NAME_MAX = 24;
 /** A town that comes with the game: only the game can generate it, so `npm run town` saves its houses in a file (towns/). */
 export interface StarterTown {
   name: string;
+  /** Where it is in the county: porchlight, east, south or west. */
+  place: Place;
   key: string;
   /** A tile of each house. */
   houses: [number, number][];
 }
 
 /**
- * The town that comes with the game, the same for everyone (and nobody can delete it): as big and
- * built up as the map settings go, with no water and few cul-de-sacs.
+ * The towns that come with the game, the same for everyone (and nobody can delete them): Porchlight,
+ * as big and built up as the map settings go, with no water and few cul-de-sacs, and the three cities
+ * of the county round it, Lanternport (east), Ember Crossing (south) and Juniper Falls (west).
  */
-export const STARTER_TOWNS: StarterTown[] = [JSON.parse(readFileSync(new URL('../../towns/porchlight.json', import.meta.url), 'utf8'))];
+export const STARTER_TOWNS: StarterTown[] = ['porchlight', 'lanternport', 'ember-crossing', 'juniper-falls'].map((f) =>
+  JSON.parse(readFileSync(new URL(`../../towns/${f}.json`, import.meta.url), 'utf8')),
+);
+const placeOf = (key: string): Place | null => STARTER_TOWNS.find((t) => t.key === key)?.place ?? null;
+/** The first of an account's three places that's free (or null: all taken). */
+const freeSlot = (taken: (number | null)[]): number | null => {
+  for (let s = 0; s < MAX_TOWNS; s++) if (!taken.includes(s)) return s;
+  return null;
+};
 const newTownKey = (): string => `seed=${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
 const tooManyTowns = () => new CharacterError(`You can have up to ${MAX_TOWNS} towns. Delete one to make another.`, 409);
 const houseTaken = () => new CharacterError('Someone else lives in that house.', 409);
@@ -186,6 +201,11 @@ export interface Persistence {
   mayEnter(accountId: string, townKey: string): Promise<boolean>;
   /** The town's key if this account made it; throws otherwise (or if it's gone). */
   ownTownKey(accountId: string, townId: string): Promise<string>;
+  /**
+   * Whose county a room (a town's key, or `north:<account>`) is in, and that account's own towns
+   * by slot: null account for the towns that come with the game; null for a town nobody's saved.
+   */
+  countyFor(room: string): Promise<{ account: string | null; mine: { key: string; slot: number }[] } | null>;
   /** A new town: this key (from the town editor), or a fresh seed's. */
   createTown(accountId: string, name: string, key?: string): Promise<TownInfo>;
   /** Everyone who lived there starts again from choosing a town (what they've earned stays). */
@@ -435,14 +455,15 @@ export class PgPersistence implements Persistence {
     // Spelled out: in a one-table select drizzle writes columns without their table, which inside
     // the subquery made "id" the character's own, so every town counted 0 residents.
     const rows = await this.db
-      .select({ id: towns.id, name: towns.name, key: towns.key, createdBy: towns.createdBy, residents: sql<number>`(select count(*)::int from "characters" where "characters"."town_id" = "towns"."id")` })
+      .select({ id: towns.id, name: towns.name, key: towns.key, createdBy: towns.createdBy, slot: towns.slot, residents: sql<number>`(select count(*)::int from "characters" where "characters"."town_id" = "towns"."id")` })
       .from(towns)
       .where(or(isNull(towns.createdBy), eq(towns.createdBy, accountId)))
       .orderBy(sql`${towns.createdBy} is not null`, towns.createdAt, towns.name);
-    return rows.map(({ createdBy, ...t }) => ({ ...t, mine: createdBy === accountId }));
+    return rows.map(({ createdBy, ...t }) => ({ ...t, mine: createdBy === accountId, place: createdBy === null ? placeOf(t.key) : null }));
   }
 
   async mayEnter(accountId: string, townKey: string): Promise<boolean> {
+    if (townKey.startsWith(`${NORTH}:`)) return townKey === `${NORTH}:${accountId}`;
     const [town] = await this.db.select({ createdBy: towns.createdBy }).from(towns).where(eq(towns.key, townKey));
     return !town || town.createdBy === null || town.createdBy === accountId;
   }
@@ -461,18 +482,32 @@ export class PgPersistence implements Persistence {
     return town.key;
   }
 
+  async countyFor(room: string): Promise<{ account: string | null; mine: { key: string; slot: number }[] } | null> {
+    if (STARTER_TOWNS.some((t) => t.key === room)) return { account: null, mine: [] };
+    let account: string | null = null;
+    if (room.startsWith(`${NORTH}:`)) account = room.slice(NORTH.length + 1);
+    else {
+      const [town] = await this.db.select({ createdBy: towns.createdBy }).from(towns).where(eq(towns.key, room));
+      account = town?.createdBy ?? null;
+    }
+    if (!account || !isUuid(account)) return null;
+    const rows = await this.db.select({ key: towns.key, slot: towns.slot }).from(towns).where(eq(towns.createdBy, account));
+    return { account, mine: rows.filter((r): r is { key: string; slot: number } => r.slot !== null) };
+  }
+
   async createTown(accountId: string, name: string, key?: string): Promise<TownInfo> {
     return this.db.transaction(async (tx) => {
       // Lock the account row so two creates at once can't both slip under the limit.
       await tx.select({ id: players.id }).from(players).where(eq(players.id, accountId)).for('update');
-      const [{ n }] = await tx.select({ n: count() }).from(towns).where(eq(towns.createdBy, accountId));
-      if (n >= MAX_TOWNS) throw tooManyTowns();
-      const [town] = await tx.insert(towns).values({ name, key: key ?? newTownKey(), createdBy: accountId }).onConflictDoNothing({ target: towns.key }).returning({ id: towns.id, name: towns.name, key: towns.key });
+      const mine = await tx.select({ slot: towns.slot }).from(towns).where(eq(towns.createdBy, accountId));
+      const slot = freeSlot(mine.map((t) => t.slot));
+      if (mine.length >= MAX_TOWNS || slot === null) throw tooManyTowns();
+      const [town] = await tx.insert(towns).values({ name, key: key ?? newTownKey(), createdBy: accountId, slot }).onConflictDoNothing({ target: towns.key }).returning({ id: towns.id, name: towns.name, key: towns.key, slot: towns.slot });
       if (!town) {
         const [same] = await tx.select({ name: towns.name }).from(towns).where(eq(towns.key, key ?? ''));
         throw townExists(same?.name ?? 'something else');
       }
-      return { ...town, mine: true, residents: 0 };
+      return { ...town, mine: true, residents: 0, place: null };
     });
   }
 
@@ -649,7 +684,7 @@ export class MemoryPersistence implements Persistence {
   readonly accounts = new Map<string, { id: string; name: string; banned: boolean }>();
   readonly characters = new Map<string, { id: string; accountId: string; name: string; townId: string | null; house: { x: number; y: number } | null }>();
   readonly states = new Map<string, SavedState & { playSeconds: number }>();
-  readonly towns = new Map<string, { id: string; name: string; key: string; createdBy: string | null }>();
+  readonly towns = new Map<string, { id: string; name: string; key: string; createdBy: string | null; slot: number | null }>();
   readonly accountUnlocks = new Map<string, { what: string; at: string }[]>();
   readonly completions = new Map<string, Progress['completions']>();
   /** Each town and mission's times (`town\nmission`), by account. */
@@ -661,7 +696,7 @@ export class MemoryPersistence implements Persistence {
   constructor() {
     for (const t of STARTER_TOWNS) {
       const id = crypto.randomUUID();
-      this.towns.set(id, { id, name: t.name, key: t.key, createdBy: null });
+      this.towns.set(id, { id, name: t.name, key: t.key, createdBy: null, slot: null });
     }
   }
 
@@ -803,11 +838,12 @@ export class MemoryPersistence implements Persistence {
     return [...this.towns.values()]
       .filter((t) => t.createdBy === null || t.createdBy === accountId)
       .sort((a, b) => Number(a.createdBy !== null) - Number(b.createdBy !== null))
-      .map((t) => ({ id: t.id, name: t.name, key: t.key, mine: t.createdBy === accountId, residents: residents(t.id) }));
+      .map((t) => ({ id: t.id, name: t.name, key: t.key, mine: t.createdBy === accountId, residents: residents(t.id), place: t.createdBy === null ? placeOf(t.key) : null, slot: t.slot }));
   }
 
   async mayEnter(accountId: string, townKey: string): Promise<boolean> {
     this.check();
+    if (townKey.startsWith(`${NORTH}:`)) return townKey === `${NORTH}:${accountId}`;
     const town = [...this.towns.values()].find((t) => t.key === townKey);
     return !town || town.createdBy === null || town.createdBy === accountId;
   }
@@ -826,14 +862,25 @@ export class MemoryPersistence implements Persistence {
     return town.key;
   }
 
+  async countyFor(room: string): Promise<{ account: string | null; mine: { key: string; slot: number }[] } | null> {
+    this.check();
+    if (STARTER_TOWNS.some((t) => t.key === room)) return { account: null, mine: [] };
+    const account = room.startsWith(`${NORTH}:`) ? room.slice(NORTH.length + 1) : ([...this.towns.values()].find((t) => t.key === room)?.createdBy ?? null);
+    if (!account) return null;
+    const mine = [...this.towns.values()].filter((t) => t.createdBy === account && t.slot !== null).map((t) => ({ key: t.key, slot: t.slot! }));
+    return { account, mine };
+  }
+
   async createTown(accountId: string, name: string, key?: string): Promise<TownInfo> {
     this.check();
-    if ([...this.towns.values()].filter((t) => t.createdBy === accountId).length >= MAX_TOWNS) throw tooManyTowns();
+    const mine = [...this.towns.values()].filter((t) => t.createdBy === accountId);
+    const slot = freeSlot(mine.map((t) => t.slot));
+    if (mine.length >= MAX_TOWNS || slot === null) throw tooManyTowns();
     const same = [...this.towns.values()].find((t) => t.key === key);
     if (same) throw townExists(same.name);
-    const town = { id: crypto.randomUUID(), name, key: key ?? newTownKey(), createdBy: accountId };
+    const town = { id: crypto.randomUUID(), name, key: key ?? newTownKey(), createdBy: accountId, slot };
     this.towns.set(town.id, town);
-    return { id: town.id, name, key: town.key, mine: true, residents: 0 };
+    return { id: town.id, name, key: town.key, mine: true, residents: 0, place: null, slot };
   }
 
   async deleteTown(accountId: string, townId: string): Promise<void> {

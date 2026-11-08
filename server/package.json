@@ -15,7 +15,8 @@
     "test:db": "TEST_DATABASE_URL=postgres://game:devpassword@localhost:5434/city node --test test/*.test.ts",
     "bots": "node --env-file-if-exists=.env.development scripts/bots.ts",
     "db:generate": "drizzle-kit generate",
-    "town": "dotnet run --project ../unity/Tools~/Checks -- town towns/porchlight.json"
+    "town": "dotnet run --project ../unity/Tools~/Checks -- town towns/porchlight.json",
+    "towns": "for f in towns/*.json; do dotnet run --project ../unity/Tools~/Checks -- town \"$f\" || exit 1; done"
   },
   "dependencies": {
     "@colyseus/core": "^0.17.55",

@@ -21,8 +21,9 @@ import { CloseCode, Room, ServerError, type AuthContext, type Client } from '@co
 import { StateView } from '@colyseus/schema';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { Interest } from './interest.ts';
-import { MAX_SPEED, RateLimit, Strikes, clampToBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
-import { cleanLook, type EndReason, type Snapshot } from './persistence.ts';
+import { MAX_SPEED, RateLimit, Strikes, clampToBounds, inBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
+import { cleanLook, STARTER_TOWNS, type EndReason, type Snapshot } from './persistence.ts';
+import { County, mineSlot } from '../county.ts';
 import {
   ANIM_DRIVE,
   ANIM_IDLE,
@@ -90,6 +91,11 @@ interface JoinOptions {
   width?: unknown;
   height?: unknown;
   character?: unknown;
+  /**
+   * Driving (or flying) in from the next room's ground: where they are now, in this room's frame
+   * ({ x, y, z, yaw }). They carry on from there, if it's this room's ground.
+   */
+  arrive?: unknown;
   /** Which tab or device this is (it makes this up, and keeps it for as long as the tab lasts). */
   tab?: unknown;
 }
@@ -140,7 +146,25 @@ export const presence = (characterId: string, tab: string): { town: string | nul
 export const playingIn = (town: string): number => [...online.values()].filter((o) => o.room.town === town).length;
 
 /** Night or day in each town, kept while this process runs (a town's room closes when everyone's left). */
-const nights = new Map<string, boolean>();
+/** Night or day: the same all over the county, so driving to the next town doesn't change it. */
+let night = false;
+/** The rooms open in this process (to tell them all when night falls, or someone's county changes). */
+const rooms = new Set<CityRoom>();
+/** How far past its ground (tiles) a room still takes a move: the moment between crossing over and joining the next room. */
+const TERRITORY_SLACK = 16;
+
+/** An account made or deleted a town: the rooms in its part of the county work out their ground again. */
+export function countyChanged(account: string): void {
+  for (const r of rooms) if (r.countyAccount === account) void r.loadCounty();
+}
+
+/** Where someone driving in says they are (this room's frame), or null. */
+function parseArrive(raw: unknown): { x: number; y: number; z: number; yaw: number } | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const a = raw as Record<string, unknown>;
+  const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  return ok(a.x) && ok(a.z) && ok(a.yaw) ? { x: a.x, y: ok(a.y) ? a.y : 0, z: a.z, yaw: a.yaw } : null;
+}
 
 const byteLength = (v: unknown): number => (v instanceof Uint8Array ? v.byteLength : -1);
 
@@ -183,7 +207,31 @@ export class CityRoom extends Room<{ state: CityState }> {
     return deps;
   }
 
-  onCreate(options: JoinOptions): void {
+  /** The account whose part of the county this room's in (null: the public part, or no county). */
+  countyAccount: string | null = null;
+
+  /**
+   * The room's ground: its town, its half of each of its highways and the countryside nearest
+   * it (county.ts), once the county's known; until then (or for a town no one's saved), the town.
+   */
+  async loadCounty(): Promise<void> {
+    try {
+      const found = await this.deps.persistence.countyFor(this.town);
+      if (!found) return;
+      const county = new County(
+        [...STARTER_TOWNS.map((t) => ({ place: t.place, key: t.key })), ...found.mine.filter((m) => m.slot >= 0 && m.slot < 3).map((m) => ({ place: mineSlot(m.slot), key: m.key }))],
+        found.account ?? undefined,
+      );
+      if (!county.rooms().includes(this.town)) return;
+      const home = county.home(this.town);
+      this.countyAccount = found.account;
+      this.bounds = { x0: home.x0, z0: home.z0, width: home.x1 - home.x0, height: home.z1 - home.z0, owns: county.territory(this.town, TERRITORY_SLACK) };
+    } catch (err) {
+      console.error(`city: couldn't lay out ${this.town}'s county:`, (err as Error).message);
+    }
+  }
+
+  async onCreate(options: JoinOptions): Promise<void> {
     const town = typeof options.town === 'string' ? options.town : '';
     const width = Number(options.width);
     const height = Number(options.height);
@@ -192,8 +240,10 @@ export class CityRoom extends Room<{ state: CityState }> {
     }
     this.town = town;
     this.bounds = { width, height };
+    rooms.add(this);
+    await this.loadCounty();
     this.state = new CityState();
-    this.state.night = nights.get(town) ?? false;
+    this.state.night = night;
     this.state.taken = '';
     this.state.host = '';
 
@@ -247,8 +297,8 @@ export class CityRoom extends Room<{ state: CityState }> {
       const rt = this.admit(client);
       const on = (raw as { on?: unknown } | null)?.on;
       if (!rt || typeof on !== 'boolean') return;
-      this.state.night = on;
-      nights.set(this.town, on);
+      night = on;
+      for (const r of rooms) r.state.night = on;
     });
     this.onMessage(MSG_TAKE, (client, raw: unknown) => {
       const rt = this.admit(client);
@@ -337,7 +387,10 @@ export class CityRoom extends Room<{ state: CityState }> {
       const look = saved?.look ?? auth.look ?? '';
       player.appearance = look && lookAllowed(look, unlocks) ? look : '';
       let at: SpawnMessage['at'] = null;
-      if (saved && saved.town === this.town && saved.x > 0 && saved.x < this.bounds.width && saved.z > 0 && saved.z < this.bounds.height) {
+      const arrive = parseArrive(options.arrive);
+      const arriving = arrive !== null && inBounds(this.bounds, arrive.x, arrive.y, arrive.z);
+      if (arriving) at = { x: arrive.x, z: arrive.z, yaw: arrive.yaw };
+      else if (saved && saved.town === this.town && inBounds(this.bounds, saved.x, 0, saved.z)) {
         at = { x: saved.x, z: saved.z, yaw: saved.rotY };
       }
       const sessionRow = await d.persistence.openSession(auth.characterId, this.roomId);
@@ -369,6 +422,9 @@ export class CityRoom extends Room<{ state: CityState }> {
         unlocks,
         finished: false,
       });
+      // Driving in from next door: they're where they say (it's this room's ground), and their
+      // first move is held to the speed limit from there, like any other.
+      if (arriving) Object.assign(this.runtime.get(client.sessionId)!.track, { anchored: true, x: arrive.x, y: arrive.y, z: arrive.z, t: Date.now() });
       // Nobody sees them (and they're on no one's minimap) until their first
       // move says where they are: the client checks the spot against the town.
       client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
@@ -431,6 +487,7 @@ export class CityRoom extends Room<{ state: CityState }> {
   }
 
   async onDispose(): Promise<void> {
+    rooms.delete(this);
     // Normally everyone's been saved on their way out; catch anyone who wasn't.
     const left = [...this.runtime.values()].filter((rt) => !rt.finished);
     await Promise.all(left.map((rt) => this.finish(rt, this.shuttingDown ? 'shutdown' : 'timeout')));

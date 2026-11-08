@@ -379,7 +379,7 @@ async function runMarathon(mine: number, best: number, holder: string) {
 
 test('the marathon runs the course once, keeps the time, and says how it went', async () => {
   let lines = await runMarathon(0, 0, '');
-  assert.ok(lines.includes('The course runs 4.3 km along the streets, from one corner of town to the other. Stay between the ribbons all the way.'), lines.join('\n'));
+  assert.ok(lines.includes('The course runs 4.3 km along the streets, right across town. Stay between the ribbons all the way.'), lines.join('\n'));
   assert.ok(lines.includes('No one has run it in this town yet. Be the first!'));
   assert.ok(lines.includes('Your time: 12:34.32.'), lines.join('\n'));
   assert.ok(lines.includes("That's the new record for this town!"));

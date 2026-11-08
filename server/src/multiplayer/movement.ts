@@ -22,8 +22,16 @@ const MAX_GAP = 1;
 const MAX_HEIGHT = 24;
 
 export interface Bounds {
+  /** The town's rectangle (from x0, z0: 0 but for the north room, measured from the county's corner). */
   width: number;
   height: number;
+  x0?: number;
+  z0?: number;
+  /**
+   * In the county (county.ts): the room's ground besides its rectangle, its half of each highway
+   * and the countryside nearest it, for cars on the road and planes over the fields.
+   */
+  owns?: (x: number, z: number) => boolean;
 }
 
 /** The last accepted state of one player's movement. */
@@ -64,11 +72,17 @@ export function seqNewer(a: number, b: number): boolean {
   return d !== 0 && d < 0x8000;
 }
 
-export const inBounds = (b: Bounds, x: number, y: number, z: number): boolean =>
-  x >= 0 && x <= b.width && z >= 0 && z <= b.height && y >= -0.5 && y <= MAX_HEIGHT;
+const inRect = (b: Bounds, x: number, z: number): boolean => x >= (b.x0 ?? 0) && x <= (b.x0 ?? 0) + b.width && z >= (b.z0 ?? 0) && z <= (b.z0 ?? 0) + b.height;
 
+export const inBounds = (b: Bounds, x: number, y: number, z: number): boolean =>
+  (b.owns ? b.owns(x, z) : inRect(b, x, z)) && y >= -0.5 && y <= MAX_HEIGHT;
+
+/** The spot, if it's the room's; else the nearest point of its rectangle. */
 export function clampToBounds(b: Bounds, x: number, z: number): { x: number; z: number } {
-  return { x: Math.min(b.width, Math.max(0, x)), z: Math.min(b.height, Math.max(0, z)) };
+  if (b.owns ? b.owns(x, z) : inRect(b, x, z)) return { x, z };
+  const x0 = b.x0 ?? 0;
+  const z0 = b.z0 ?? 0;
+  return { x: Math.min(x0 + b.width, Math.max(x0, x)), z: Math.min(z0 + b.height, Math.max(z0, z)) };
 }
 
 export type Verdict = 'ok' | 'stale' | 'out-of-bounds' | 'too-fast';

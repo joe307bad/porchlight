@@ -456,3 +456,62 @@ test('joins are refused while the database is down', async () => {
     persistence.down = false;
   }
 });
+
+test('the county: towns have places, yours fill slots, and a room takes you out along its highways', async () => {
+  const listed = (await api('driver', 'GET', '/mp/towns')).json;
+  const places = Object.fromEntries(listed.towns.filter((t: { mine: boolean }) => !t.mine).map((t: { name: string; place: string }) => [t.name, t.place]));
+  assert.deepEqual(places, { Porchlight: 'porchlight', Lanternport: 'east', 'Ember Crossing': 'south', 'Juniper Falls': 'west' });
+  assert.ok(typeof listed.account === 'string');
+
+  // Your towns go in your three places north of Porchlight, in order, and a freed place is the next one used.
+  const made: { id: string; slot: number }[] = [];
+  for (const name of ['Up', 'Over', 'Across']) made.push((await api('driver', 'POST', '/mp/towns', { name })).json);
+  assert.deepEqual(made.map((t) => t.slot), [0, 1, 2]);
+  assert.equal((await api('driver', 'DELETE', `/mp/towns/${made[1].id}`)).status, 200);
+  assert.equal((await api('driver', 'POST', '/mp/towns', { name: 'Again' })).json.slot, 1);
+
+  // The north room (the junction and your empty plots) is yours alone.
+  const me = (await api('driver', 'POST', '/mp/characters', { name: 'Driver' })).json;
+  const north = await client('driver').joinOrCreate('city', { town: `north:${listed.account}`, width: 48, height: 48, character: me.id });
+  north.onMessage(MSG_SPAWN, () => {});
+  const stranger = (await api('hitcher', 'POST', '/mp/characters', { name: 'Hitcher' })).json;
+  await assert.rejects(client('hitcher').joinOrCreate('city', { town: `north:${listed.account}`, width: 48, height: 48, character: stranger.id }), /someone else/);
+  await north.leave();
+
+  // Driving into Porchlight off the east highway: they're where they say, out on the road.
+  const porchlight = STARTER_TOWNS[0];
+  const room = await client('driver').joinOrCreate('city', { town: porchlight.key, width: 256, height: 256, character: me.id, arrive: { x: 300, y: 0, z: 128.5, yaw: Math.PI } });
+  const spawn = await new Promise<SpawnMessage>((r) => room.onMessage(MSG_SPAWN, r));
+  assert.deepEqual(spawn.at && [spawn.at.x, spawn.at.z], [300, 128.5]);
+  // On along the highway, at speed: fine.
+  move(room, 299.5, 128.5);
+  await until('the move out on the road', () => room.state.players?.get(room.sessionId)?.x === 299.5);
+  // Teleporting a long way up it: too fast, from where they arrived.
+  const corrected = new Promise<CorrectMessage>((r) => room.onMessage(MSG_CORRECT, r));
+  move(room, 380, 128.5);
+  assert.deepEqual([(await corrected).x], [299.5]);
+  await room.leave();
+
+  // Arriving somewhere that isn't the room's ground (most of the way to Lanternport) doesn't count.
+  const far = await client('driver').joinOrCreate('city', { town: porchlight.key, width: 256, height: 256, character: me.id, arrive: { x: 620, y: 0, z: 128.5, yaw: 0 } });
+  const farSpawn = await new Promise<SpawnMessage>((r) => far.onMessage(MSG_SPAWN, r));
+  assert.deepEqual(farSpawn.at && [farSpawn.at.x, farSpawn.at.z], [299.5, 128.5]); // where they were saved, not where they said
+  await far.leave();
+});
+
+test('night falls all over the county at once', async () => {
+  const a = (await api('owl', 'POST', '/mp/characters', { name: 'Owl' })).json;
+  const b = (await api('owl', 'POST', '/mp/characters', { name: 'Lark' })).json;
+  const here = await client('owl').joinOrCreate('city', { town: STARTER_TOWNS[0].key, width: 256, height: 256, character: a.id });
+  here.onMessage(MSG_SPAWN, () => {});
+  const there = await client('owl').joinOrCreate('city', { town: STARTER_TOWNS[1].key, width: 224, height: 192, character: b.id });
+  there.onMessage(MSG_SPAWN, () => {});
+  await until('both rooms', () => here.state.night !== undefined && there.state.night !== undefined);
+  const was = here.state.night;
+  here.send(MSG_NIGHT, { on: !was });
+  await until('night in the other town too', () => there.state.night === !was);
+  here.send(MSG_NIGHT, { on: was });
+  await until('and day again', () => there.state.night === was);
+  await here.leave();
+  await there.leave();
+});

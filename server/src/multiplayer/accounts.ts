@@ -35,6 +35,8 @@ export interface GameDeps {
   isOnline(characterId: string): boolean;
   /** This character right now, as this tab sees it. */
   presence(characterId: string, tab: string): { town: string | null; session: string | null; inUse: boolean };
+  /** An account made or deleted a town: its rooms work out their ground again. */
+  countyChanged?(account: string): void;
   /** How many characters are playing in this town (its key) right now. */
   playingIn(townKey: string): number;
   /** The missions on offer. */
@@ -148,7 +150,8 @@ export function createCharacterRoutes(deps: GameDeps) {
       if (under(TOWNS)) {
         if (req.method === 'GET' && path === TOWNS) {
           const towns = await deps.persistence.listTowns(account.id);
-          return send(200, { towns: towns.map((t) => ({ ...t, playing: deps.playingIn(t.key) })), made: towns.filter((t) => t.mine).length, max: MAX_TOWNS });
+          // `account`: the north room (your own part of the county) is named for it.
+          return send(200, { towns: towns.map((t) => ({ ...t, playing: deps.playingIn(t.key) })), made: towns.filter((t) => t.mine).length, max: MAX_TOWNS, account: account.id });
         }
         if (req.method === 'POST' && path === TOWNS) {
           const body = await json<{ name?: unknown; key?: unknown }>();
@@ -157,12 +160,14 @@ export function createCharacterRoutes(deps: GameDeps) {
           const key = body.key === undefined ? undefined : cleanTownKey(body.key);
           if (key === null) throw new CharacterError("That isn't a town.");
           const town = await deps.persistence.createTown(account.id, name, key);
+          deps.countyChanged?.(account.id);
           return send(201, { ...town, playing: 0 });
         }
         if (req.method === 'DELETE' && parts.length === 3) {
           const key = await deps.persistence.ownTownKey(account.id, parts[2]);
           if (deps.playingIn(key) > 0) throw new CharacterError('Someone is playing in that town right now.', 409);
           await deps.persistence.deleteTown(account.id, parts[2]);
+          deps.countyChanged?.(account.id);
           return send(200, { ok: true });
         }
         if (req.method === 'GET' && parts.length === 4 && parts[3] === 'homes') {
