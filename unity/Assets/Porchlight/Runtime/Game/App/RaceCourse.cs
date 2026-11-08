@@ -22,8 +22,6 @@ namespace Porchlight.App
     {
         /// <summary>The ribbon stands this far out past the asphalt (tiles), clear of the parked cars.</summary>
         public const double FENCE = 0.04;
-        /// <summary>A car this far past the asphalt (its nose through the ribbon) is on the closed road, and not drawn for the runner (tiles).</summary>
-        public const double CLEAR = 0.35;
         const double TAPE_LOW = 0.15, TAPE_HIGH = 0.18, POST_HIGH = 0.2;
         const double STRIPE = 0.22;
         const int POST_EVERY = 4;
@@ -94,11 +92,13 @@ namespace Porchlight.App
             crowd = Math.Max(0, Math.Min(1, crowd));
             if (crowd > 0)
             {
-                Crowd(crowd);
-                // Where the real people stand: at the ribbon, every so often along both sides.
+                // Where the real people stand: at the ribbon, every so often along both sides, kept
+                // room for first so the still crowd fills in around them, never through them.
+                var room = new Room();
                 foreach (int side in new[] { 1, -1 })
                     foreach (var (p, s) in Resample(Offset(side, FENCE + 0.09), LIVE_STEP))
-                        if (view.CanStandAt(p.x, p.y)) liveSlots.Add(new Slot { at = p, heading = Facing(p, s) });
+                        if (view.CanStandAt(p.x, p.y) && room.Take(p)) liveSlots.Add(new Slot { at = p, heading = Facing(p, s) });
+                Crowd(crowd, room);
                 int live = (int)Math.Round(LIVE * crowd);
                 for (int i = 0; i < live; i++)
                 {
@@ -233,7 +233,37 @@ namespace Porchlight.App
 
         // The crowd standing still: rows along both sides, thickest near the ends and in bunches between.
 
-        void Crowd(double crowd)
+        /// <summary>
+        /// Room for each person in the crowd: nobody stands closer than this to anyone else (tiles,
+        /// middle to middle: a person at ease is about 0.22 across, and some are a little bigger),
+        /// so no one stands in anyone else, in a row, between rows, or round a corner where rows meet.
+        /// </summary>
+        const double ELBOW_ROOM = 0.24;
+
+        sealed class Room
+        {
+            readonly Dictionary<long, List<Vec2>> cells = new Dictionary<long, List<Vec2>>();
+
+            static long Key(int x, int y) => ((long)x << 32) ^ (uint)y;
+
+            /// <summary>Stand at `p` if there's room there (and keep it), else false.</summary>
+            public bool Take(Vec2 p)
+            {
+                int cx = (int)Math.Floor(p.x / ELBOW_ROOM), cy = (int)Math.Floor(p.y / ELBOW_ROOM);
+                for (int x = cx - 1; x <= cx + 1; x++)
+                    for (int y = cy - 1; y <= cy + 1; y++)
+                        if (cells.TryGetValue(Key(x, y), out var there))
+                            foreach (var q in there)
+                                if (Geo.Dist(p, q) < ELBOW_ROOM) return false;
+                if (!cells.TryGetValue(Key(cx, cy), out var mine)) cells[Key(cx, cy)] = mine = new List<Vec2>();
+                mine.Add(p);
+                return true;
+            }
+        }
+
+        int standing;
+
+        void Crowd(double crowd, Room room)
         {
             var parked = view.world.layout.cars.Select(c => new Vec2(c.x, c.y)).ToList();
             bool ByACar(Vec2 p)
@@ -268,7 +298,8 @@ namespace Porchlight.App
             {
                 if (rng.Next() >= weight * scale) continue;
                 var p = new Vec2(p0.x + rng.Range(-0.03, 0.03), p0.y + rng.Range(-0.03, 0.03));
-                if (!view.CanStandAt(p.x, p.y) || ByACar(p)) continue;
+                if (!view.CanStandAt(p.x, p.y) || ByACar(p) || !room.Take(p)) continue;
+                standing++;
                 string look = Look();
                 if (!templates.TryGetValue(look, out var parts)) templates[look] = parts = Bake(look);
                 double size = rng.Range(0.88, 1.08);
@@ -282,6 +313,7 @@ namespace Porchlight.App
                         list.Add(new CombineInstance { mesh = t.mesh, subMeshIndex = sub, transform = at * t.local });
                     }
             }
+            Baked.Add($"{standing} standing still and {liveSlots.Count} places by the ribbon for the lively ones, none nearer anyone than {ELBOW_ROOM} tiles");
             foreach (var chunk in chunks)
                 foreach (var kv in chunk.Value)
                 {

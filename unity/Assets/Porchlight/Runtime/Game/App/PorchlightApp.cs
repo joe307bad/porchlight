@@ -138,10 +138,61 @@ namespace Porchlight.App
         static float DesktopDpr()
         {
             if (float.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_UI_SCALE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var given) && given > 0) return given;
+#if !UNITY_WEBGL && !UNITY_EDITOR
+            // A Mac says exactly, for the screen the window's on now (it changes as the window moves).
+            if (Application.platform == RuntimePlatform.OSXPlayer)
+            {
+                float backing = MacBackingScale();
+                if (backing > 0) return backing;
+            }
+#endif
             float dpi = Screen.dpi;
             if (dpi <= 0) return 1;
             if (Application.platform == RuntimePlatform.OSXPlayer) return dpi > 150 ? 2 : 1;
             return Mathf.Max(1, Mathf.Round(dpi / 96f * 4) / 4);
+        }
+
+#if !UNITY_WEBGL && !UNITY_EDITOR
+        const string OBJC = "/usr/lib/libobjc.A.dylib";
+        [System.Runtime.InteropServices.DllImport(OBJC)] static extern IntPtr objc_getClass(string name);
+        [System.Runtime.InteropServices.DllImport(OBJC)] static extern IntPtr sel_registerName(string name);
+        [System.Runtime.InteropServices.DllImport(OBJC, EntryPoint = "objc_msgSend")] static extern IntPtr ObjcPointer(IntPtr self, IntPtr selector);
+        [System.Runtime.InteropServices.DllImport(OBJC, EntryPoint = "objc_msgSend")] static extern double ObjcDouble(IntPtr self, IntPtr selector);
+
+        /// <summary>The game window's pixels to a point (2 on a Retina screen, 1 on most others); 0 if there's no window to ask.</summary>
+        static float MacBackingScale()
+        {
+            try
+            {
+                var app = ObjcPointer(objc_getClass("NSApplication"), sel_registerName("sharedApplication"));
+                if (app == IntPtr.Zero) return 0;
+                var window = ObjcPointer(app, sel_registerName("mainWindow"));
+                if (window == IntPtr.Zero) window = ObjcPointer(app, sel_registerName("keyWindow"));
+                var on = window != IntPtr.Zero ? window : ObjcPointer(objc_getClass("NSScreen"), sel_registerName("mainScreen"));
+                return on == IntPtr.Zero ? 0 : (float)ObjcDouble(on, sel_registerName("backingScaleFactor"));
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+        }
+#endif
+
+        float dprCheckedAt;
+
+        /// <summary>Moved to another screen (a Retina laptop's to a plain monitor, say): everything at that screen's scale.</summary>
+        void FollowScreenScale()
+        {
+#if !UNITY_WEBGL && !UNITY_EDITOR
+            if (Time.unscaledTime < dprCheckedAt + 0.5f) return;
+            dprCheckedAt = Time.unscaledTime;
+            float now = DesktopDpr();
+            if (Mathf.Abs(now - dpr) < 0.01f) return;
+            Debug.Log($"porchlight: UI scale {dpr} → {now}");
+            dpr = now;
+            if (panelSettings != null) panelSettings.scale = dpr;
+            if (overlay != null) overlay.Dpr = dpr;
+#endif
         }
 
         void BuildCameras()
@@ -1183,6 +1234,7 @@ namespace Porchlight.App
 
         void Update()
         {
+            FollowScreenScale();
             platform.Pump();
             timers.Tick();
             input.Update();

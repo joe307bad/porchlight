@@ -758,7 +758,7 @@ namespace Porchlight.App
                 ?? throw new Exception("this town's streets don't run from one corner to the other");
             if (races.TryGetValue(role, out var old)) old.scene.Dispose();
             races[role] = new Race { course = course, run = new CourseRun(course), scene = new RaceCourse(course, crowd, view, rng) };
-            // On foot, the ribbon holds you to the course; and on your screen the road's closed to cars.
+            // On foot, the ribbon holds you to the course; and on your screen there are no cars on the move.
             view.Fences = course.Fence(RaceCourse.FENCE);
             view.Closed = course;
             return (int)Math.Round(course.Length * Directions.METRES_PER_TILE);
