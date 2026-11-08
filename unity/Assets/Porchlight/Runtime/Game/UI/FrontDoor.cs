@@ -217,7 +217,7 @@ namespace Porchlight.App
         /// <summary>The account's characters, and making a new one. play: this one, please. move: this one's moving home.</summary>
         public void Characters(Action<Character> play, Action<Character> move, string message = null)
         {
-            var card = Screen("Who’s playing?", "Everyone on this sign-in can have their own character, and play at the same time on another tab or device. Missions and rewards are shared by all of them.");
+            var card = Screen("Who’s playing?", null);
             var thisMenu = menu;
             var earned = El.Text("", "picker-earned");
             card.Add(earned);
