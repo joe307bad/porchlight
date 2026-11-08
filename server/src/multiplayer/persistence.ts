@@ -10,11 +10,11 @@
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { and, asc, count, eq, inArray, isNull, ne, notInArray, sql } from 'drizzle-orm';
+import { and, asc, count, eq, lt, inArray, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
-import { accountUnlocks, characterState, characters, homes, missionCompletions, players, sessions, towns } from './tables.ts';
+import { accountUnlocks, characterState, characters, homes, missionCompletions, missionRecords, players, sessions, towns } from './tables.ts';
 
 export interface Account {
   id: string;
@@ -53,6 +53,27 @@ export interface Progress {
   completions: { missionId: string; times: number; firstAt: string; lastAt: string; firstCharacter: string | null }[];
   unlocks: { what: string; at: string }[];
 }
+
+/** One of a town's best times for a mission: one per account, fastest first. */
+export interface RecordRow {
+  name: string;
+  seconds: number;
+  at: string;
+  /** This account's. */
+  mine: boolean;
+}
+
+/** A mission's board in one town: its fastest times, and this account's own best there. */
+export interface Board {
+  best: RecordRow[];
+  mine: number | null;
+}
+
+/** How many times a board shows. */
+export const BOARD_SIZE = 10;
+/** A time to keep: a real number of seconds, from a few to a few hours. */
+export const cleanSeconds = (raw: unknown): number | null =>
+  typeof raw === 'number' && Number.isFinite(raw) && raw >= 1 && raw <= 6 * 3600 ? Math.round(raw * 100) / 100 : null;
 
 export interface SavedState {
   town: string;
@@ -155,7 +176,14 @@ export interface Persistence {
   /** Count a mission played to its end. */
   completeMission(accountId: string, characterId: string, missionId: string): Promise<void>;
   progress(accountId: string): Promise<Progress>;
+  /** The mission's board in this town (its key). */
+  records(accountId: string, townKey: string, missionId: string): Promise<Board>;
+  /** Keep a time the character ran, if it's the account's best in this town; the board after, and the account's best before. */
+  keepRecord(accountId: string, characterId: string, townKey: string, missionId: string, seconds: number): Promise<Board & { before: number | null }>;
+  /** The towns this account can live in: the ones that come with the game (anyone's), and the ones it made (only its own). */
   listTowns(accountId: string): Promise<TownInfo[]>;
+  /** Whether the account may play in the town with this key: one that comes with the game, one it made, or one no account has made. */
+  mayEnter(accountId: string, townKey: string): Promise<boolean>;
   /** The town's key if this account made it; throws otherwise (or if it's gone). */
   ownTownKey(accountId: string, townId: string): Promise<string>;
   /** A new town: this key (from the town editor), or a fresh seed's. */
@@ -373,14 +401,56 @@ export class PgPersistence implements Persistence {
     };
   }
 
+  async records(accountId: string, townKey: string, missionId: string): Promise<Board> {
+    const where = and(eq(missionRecords.townKey, townKey), eq(missionRecords.missionId, missionId));
+    const rows = await this.db
+      .select({ name: missionRecords.name, seconds: missionRecords.seconds, at: missionRecords.at, playerId: missionRecords.playerId })
+      .from(missionRecords)
+      .where(where)
+      .orderBy(asc(missionRecords.seconds), asc(missionRecords.at))
+      .limit(BOARD_SIZE);
+    const [mine] = await this.db.select({ seconds: missionRecords.seconds }).from(missionRecords).where(and(where, eq(missionRecords.playerId, accountId)));
+    return {
+      best: rows.map((r) => ({ name: r.name, seconds: r.seconds, at: r.at.toISOString(), mine: r.playerId === accountId })),
+      mine: mine?.seconds ?? null,
+    };
+  }
+
+  async keepRecord(accountId: string, characterId: string, townKey: string, missionId: string, seconds: number): Promise<Board & { before: number | null }> {
+    const [who] = await this.db.select({ name: characters.name }).from(characters).where(and(eq(characters.id, characterId), eq(characters.playerId, accountId)));
+    if (!who) throw noSuchCharacter();
+    const before = (await this.records(accountId, townKey, missionId)).mine;
+    await this.db
+      .insert(missionRecords)
+      .values({ townKey, missionId, playerId: accountId, characterId, name: who.name, seconds })
+      .onConflictDoUpdate({
+        target: [missionRecords.townKey, missionRecords.missionId, missionRecords.playerId],
+        set: { seconds, characterId, name: who.name, at: sql`now()` },
+        setWhere: lt(sql`excluded.seconds`, missionRecords.seconds),
+      });
+    return { ...(await this.records(accountId, townKey, missionId)), before };
+  }
+
   async listTowns(accountId: string): Promise<TownInfo[]> {
     // Spelled out: in a one-table select drizzle writes columns without their table, which inside
     // the subquery made "id" the character's own, so every town counted 0 residents.
     const rows = await this.db
       .select({ id: towns.id, name: towns.name, key: towns.key, createdBy: towns.createdBy, residents: sql<number>`(select count(*)::int from "characters" where "characters"."town_id" = "towns"."id")` })
       .from(towns)
+      .where(or(isNull(towns.createdBy), eq(towns.createdBy, accountId)))
       .orderBy(sql`${towns.createdBy} is not null`, towns.createdAt, towns.name);
     return rows.map(({ createdBy, ...t }) => ({ ...t, mine: createdBy === accountId }));
+  }
+
+  async mayEnter(accountId: string, townKey: string): Promise<boolean> {
+    const [town] = await this.db.select({ createdBy: towns.createdBy }).from(towns).where(eq(towns.key, townKey));
+    return !town || town.createdBy === null || town.createdBy === accountId;
+  }
+
+  /** Throws unless the town is there and this account may live in it (it comes with the game, or the account made it). */
+  private async visibleTown(db: Pick<NodePgDatabase, 'select'>, accountId: string, townId: string): Promise<void> {
+    const [town] = await db.select({ createdBy: towns.createdBy }).from(towns).where(eq(towns.id, townId));
+    if (!town || (town.createdBy !== null && town.createdBy !== accountId)) throw noSuchTown();
   }
 
   async ownTownKey(accountId: string, townId: string): Promise<string> {
@@ -415,6 +485,7 @@ export class PgPersistence implements Persistence {
 
   async listHomes(accountId: string, townId: string): Promise<HomeInfo[]> {
     if (!isUuid(townId)) throw noSuchTown();
+    await this.visibleTown(this.db, accountId, townId);
     const rows = await this.db
       .select({ x: homes.x, y: homes.y, playerId: homes.playerId, name: characters.name })
       .from(homes)
@@ -438,8 +509,7 @@ export class PgPersistence implements Persistence {
       const [c] = await tx.select({ townId: characters.townId, homeId: characters.homeId }).from(characters).where(and(eq(characters.id, characterId), eq(characters.playerId, accountId))).for('update');
       if (!c) throw noSuchCharacter();
       if (c.townId === townId) return;
-      const [town] = await tx.select({ id: towns.id }).from(towns).where(eq(towns.id, townId));
-      if (!town) throw noSuchTown();
+      await this.visibleTown(tx, accountId, townId);
       await tx.update(characters).set({ townId, homeId: null }).where(eq(characters.id, characterId));
       await PgPersistence.emptyHouse(tx, c.homeId);
     });
@@ -582,6 +652,8 @@ export class MemoryPersistence implements Persistence {
   readonly towns = new Map<string, { id: string; name: string; key: string; createdBy: string | null }>();
   readonly accountUnlocks = new Map<string, { what: string; at: string }[]>();
   readonly completions = new Map<string, Progress['completions']>();
+  /** Each town and mission's times (`town\nmission`), by account. */
+  readonly boards = new Map<string, Map<string, { name: string; seconds: number; at: string }>>();
   readonly sessions = new Map<string, { characterId: string; reason: EndReason | null }>();
   /** Set to make every call fail, as if the database were down. */
   down = false;
@@ -703,12 +775,47 @@ export class MemoryPersistence implements Persistence {
     return { completions: this.completions.get(accountId) ?? [], unlocks: this.accountUnlocks.get(accountId) ?? [] };
   }
 
+  async records(accountId: string, townKey: string, missionId: string): Promise<Board> {
+    this.check();
+    const board = this.boards.get(`${townKey}\n${missionId}`) ?? new Map();
+    const best = [...board.entries()]
+      .sort((a, b) => a[1].seconds - b[1].seconds || a[1].at.localeCompare(b[1].at))
+      .slice(0, BOARD_SIZE)
+      .map(([id, r]) => ({ ...r, mine: id === accountId }));
+    return { best, mine: board.get(accountId)?.seconds ?? null };
+  }
+
+  async keepRecord(accountId: string, characterId: string, townKey: string, missionId: string, seconds: number): Promise<Board & { before: number | null }> {
+    this.check();
+    const c = this.characters.get(characterId);
+    if (!c || c.accountId !== accountId) throw noSuchCharacter();
+    const key = `${townKey}\n${missionId}`;
+    const board = this.boards.get(key) ?? new Map();
+    this.boards.set(key, board);
+    const had = board.get(accountId);
+    if (!had || seconds < had.seconds) board.set(accountId, { name: c.name, seconds, at: new Date().toISOString() });
+    return { ...(await this.records(accountId, townKey, missionId)), before: had?.seconds ?? null };
+  }
+
   async listTowns(accountId: string): Promise<TownInfo[]> {
     this.check();
     const residents = (id: string) => [...this.characters.values()].filter((c) => c.townId === id).length;
     return [...this.towns.values()]
+      .filter((t) => t.createdBy === null || t.createdBy === accountId)
       .sort((a, b) => Number(a.createdBy !== null) - Number(b.createdBy !== null))
       .map((t) => ({ id: t.id, name: t.name, key: t.key, mine: t.createdBy === accountId, residents: residents(t.id) }));
+  }
+
+  async mayEnter(accountId: string, townKey: string): Promise<boolean> {
+    this.check();
+    const town = [...this.towns.values()].find((t) => t.key === townKey);
+    return !town || town.createdBy === null || town.createdBy === accountId;
+  }
+
+  /** Throws unless the town is there and this account may live in it. */
+  private visibleTown(accountId: string, townId: string): void {
+    const town = this.towns.get(townId);
+    if (!town || (town.createdBy !== null && town.createdBy !== accountId)) throw noSuchTown();
   }
 
   async ownTownKey(accountId: string, townId: string): Promise<string> {
@@ -743,6 +850,7 @@ export class MemoryPersistence implements Persistence {
 
   async listHomes(accountId: string, townId: string): Promise<HomeInfo[]> {
     this.check();
+    this.visibleTown(accountId, townId);
     const byTile = new Map<string, HomeInfo>();
     for (const c of this.characters.values()) {
       if (c.townId !== townId || !c.house) continue;
@@ -759,7 +867,7 @@ export class MemoryPersistence implements Persistence {
     const c = this.characters.get(characterId);
     if (!c || c.accountId !== accountId) throw noSuchCharacter();
     if (c.townId === townId) return;
-    if (!this.towns.has(townId)) throw noSuchTown();
+    this.visibleTown(accountId, townId);
     c.townId = townId;
     c.house = null;
   }

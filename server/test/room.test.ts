@@ -195,13 +195,35 @@ test('what one character earns, all the account\'s characters have, at once and 
   assert.equal((await api('stranger', 'POST', '/mp/characters', { name: 'New', look: 'people/firefighter' })).json.look, null);
 });
 
+test('each town keeps its own best times for a mission, one per account', async () => {
+  const runner = (await api('runner', 'POST', '/mp/characters', { name: 'Runner' })).json;
+  const key = encodeURIComponent('seed=marathon1');
+  const empty = await api('runner', 'GET', `/mp/records?town=${key}&mission=marathon`);
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.json, { best: [], mine: null });
+  const kept = await api('runner', 'POST', '/mp/records', { town: 'seed=marathon1', mission: 'marathon', character: runner.id, seconds: 312.345 });
+  assert.equal(kept.status, 200);
+  assert.equal(kept.json.before, null);
+  assert.equal(kept.json.mine, 312.35);
+  assert.deepEqual(kept.json.best.map((r: { name: string; mine: boolean }) => [r.name, r.mine]), [['Runner', true]]);
+  // Another town's board is its own; nonsense is refused.
+  assert.deepEqual((await api('runner', 'GET', `/mp/records?town=${encodeURIComponent('seed=marathon2')}&mission=marathon`)).json.best, []);
+  assert.equal((await api('runner', 'POST', '/mp/records', { town: 'seed=marathon1', mission: 'no-such', character: runner.id, seconds: 30 })).status, 404);
+  assert.equal((await api('runner', 'POST', '/mp/records', { town: 'seed=marathon1', mission: 'marathon', character: runner.id, seconds: -1 })).status, 400);
+  assert.equal((await api('runner', 'POST', '/mp/records', { town: 'nope', mission: 'marathon', character: runner.id, seconds: 30 })).status, 400);
+  // Someone else sees the time, as not theirs.
+  const seen = await api('stranger', 'GET', `/mp/records?town=${key}&mission=marathon`);
+  assert.deepEqual([seen.json.best[0].name, seen.json.best[0].mine, seen.json.mine], ['Runner', false, null]);
+});
+
 test('missions finished are the account\'s, and can be played again', async () => {
   const one = (await api('finisher', 'POST', '/mp/characters', { name: 'One' })).json;
   const two = (await api('finisher', 'POST', '/mp/characters', { name: 'Two' })).json;
   const before = (await api('finisher', 'GET', '/mp/progress')).json;
   assert.deepEqual(before.missions.find((m: { id: string }) => m.id === 'chase').times, 0);
-  assert.deepEqual(before.unlocks.map((u: { id: string; at: string | null }) => [u.id, u.at]), [['animals', null], ['firefighter', null]]);
+  assert.deepEqual(before.unlocks.map((u: { id: string; at: string | null }) => [u.id, u.at]), [['animals', null], ['firefighter', null], ['sprint', null]]);
   assert.equal(before.unlocks[0].mission, 'Penguin on the run');
+  assert.equal(before.unlocks[2].mission, 'Marathon runner');
   for (const character of [one.id, two.id]) {
     const room = await client('finisher').joinOrCreate('city', { ...town, character });
     await new Promise<SpawnMessage>((r) => room.onMessage(MSG_SPAWN, r));
@@ -242,16 +264,21 @@ test('towns: three each and delete one to make another, and houses for two', asy
   assert.equal((await moveTo('neighbour', a.id, made[0].id)).status, 404); // not theirs
   assert.equal((await moveTo('mayor', a.id, crypto.randomUUID())).status, 404);
   for (const id of [a.id, b.id, c.id]) assert.equal((await moveTo('mayor', id, made[0].id)).status, 200);
-  assert.equal((await moveTo('neighbour', other.id, made[0].id)).status, 200);
+  // A town someone made is theirs alone: no one else sees it, lives there or plays there. Porchlight is everyone's.
+  assert.equal((await moveTo('neighbour', other.id, made[0].id)).status, 404);
+  assert.ok(!(await api('neighbour', 'GET', '/mp/towns')).json.towns.some((t: { id: string }) => made.some((m) => m.id === t.id)));
+  assert.ok((await api('neighbour', 'GET', '/mp/towns')).json.towns.some((t: { name: string }) => t.name === 'Porchlight'));
+  assert.equal((await api('neighbour', 'GET', `/mp/towns/${made[0].id}/homes`)).status, 404);
+  await assert.rejects(client('neighbour').joinOrCreate('city', { town: made[0].key, width: 128, height: 128, character: other.id }), /someone else/);
 
   const moved = await home('mayor', a.id, 5, 6);
   assert.deepEqual(moved.json.home, { townId: made[0].id, townName: 'One', townKey: made[0].key, house: { x: 5, y: 6 } });
   assert.equal((await home('mayor', b.id, 5, 6)).status, 200); // two to a house
   assert.equal((await home('mayor', c.id, 5, 6)).status, 409); // not three
-  assert.equal((await home('neighbour', other.id, 5, 6)).status, 409); // nor someone else's account
+  assert.equal((await home('neighbour', other.id, 5, 6)).status, 409); // not in that town
   assert.equal((await home('mayor', a.id, -1, 6)).status, 400);
-  assert.deepEqual((await api('neighbour', 'GET', `/mp/towns/${made[0].id}/homes`)).json.homes, [{ x: 5, y: 6, mine: false, residents: ['A', 'B'] }]);
-  assert.equal((await api('mayor', 'GET', '/mp/towns')).json.towns.find((t: { id: string }) => t.id === made[0].id).residents, 4);
+  assert.deepEqual((await api('mayor', 'GET', `/mp/towns/${made[0].id}/homes`)).json.homes, [{ x: 5, y: 6, mine: true, residents: ['A', 'B'] }]);
+  assert.equal((await api('mayor', 'GET', '/mp/towns')).json.towns.find((t: { id: string }) => t.id === made[0].id).residents, 3);
   // The character's list says where they live.
   const mine = (await api('mayor', 'GET', '/mp/characters')).json.characters;
   assert.equal(mine.find((x: { name: string }) => x.name === 'A').home.townName, 'One');
@@ -261,14 +288,14 @@ test('towns: three each and delete one to make another, and houses for two', asy
   // Not someone else's town, nor one anyone's playing in; a deleted town's people choose again.
   assert.equal((await api('neighbour', 'DELETE', `/mp/towns/${made[0].id}`)).status, 403);
   assert.equal((await api('mayor', 'DELETE', `/mp/towns/${listed.towns[0].id}`)).status, 403);
-  const room = await client('neighbour').joinOrCreate('city', { town: made[0].key, width: 128, height: 128, character: other.id });
+  const room = await client('mayor').joinOrCreate('city', { town: made[0].key, width: 128, height: 128, character: c.id });
   await new Promise<SpawnMessage>((r) => room.onMessage(MSG_SPAWN, r));
   assert.equal((await api('mayor', 'GET', '/mp/towns')).json.towns.find((t: { id: string }) => t.id === made[0].id).playing, 1);
   assert.equal((await api('mayor', 'DELETE', `/mp/towns/${made[0].id}`)).status, 409);
   await room.leave();
-  await until('them to have left', () => persistence.sessions.size > 0 && ![...persistence.sessions.values()].some((s) => s.characterId === other.id && !s.reason));
+  await until('them to have left', () => persistence.sessions.size > 0 && ![...persistence.sessions.values()].some((s) => s.characterId === c.id && !s.reason));
   assert.equal((await api('mayor', 'DELETE', `/mp/towns/${made[0].id}`)).status, 200);
-  assert.equal((await api('neighbour', 'GET', '/mp/characters')).json.characters[0].home, null);
+  assert.equal((await api('mayor', 'GET', '/mp/characters')).json.characters.find((x: { name: string }) => x.name === 'A').home, null);
   assert.equal((await api('mayor', 'POST', '/mp/towns', { name: 'Four' })).status, 201);
 });
 

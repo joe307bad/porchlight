@@ -25,8 +25,9 @@ const BLOCKS = [
   'objective', 'hint', 'clear_hints', 'setting', 'place', 'spawn', 'walk', 'pause', 'hold',
   'put_in_car', 'take_from_car', 'put_down', 'leave', 'mark_spot', 'clear_spot', 'guide',
   'dot', 'look', 'put_you', 'chase', 'countdown', 'standby', 'unlock', 'your_car', 'fire', 'turret',
+  'course', 'stopwatch', 'stopwatch_time', 'record', 'town_record', 'town_record_holder',
 ];
-const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'doused', 'out', 'countdown', 'wait'];
+const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'doused', 'out', 'countdown', 'finished', 'wait'];
 const SETTINGS = [
   'talk_reach', 'talk_reach_car', 'park_reach', 'park_speed', 'park_angle', 'car_reach', 'walk_speed',
   'your_pace', 'chase_speed', 'chase_speed_car', 'pull_up', 'officer_speed', 'officer_reach', 'ring', 'catch_reach', 'catch_time',
@@ -45,7 +46,9 @@ function standInTown(story: InstanceType<typeof Story>) {
   const standing = new Set<string>();
   // Each burning role's windows still alight; the role the turret's offered for ('' none); the car the story gave you ('' none).
   const burning = new Map<string, number>();
-  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, unlocked: [] as string[], look: '', clock: false, turret: '', car: '' };
+  // Courses (course), the stopwatch's label ('' none) and course, and this town's best times: yours, and its record.
+  const courses = new Set<string>();
+  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, courses, unlocked: [] as string[], look: '', clock: false, turret: '', car: '', stopwatch: '', stopwatchRole: '', mine: 0, best: 0, holder: '', kept: [] as number[] };
   const oneOf = (what: string, value: string, known: string[]) => {
     if (!known.includes(value)) throw new Error(`no such ${what} '${value}' (${known.join(', ')})`);
   };
@@ -62,7 +65,10 @@ function standInTown(story: InstanceType<typeof Story>) {
       return f(...args);
     }, false);
   bind('objective', () => {});
-  bind('hint', (when: string) => oneOf('condition', when, ['always', 'no_car', 'near', 'near_driving']));
+  bind('hint', (when: string, role: string) => {
+    oneOf('condition', when, ['always', 'no_car', 'near', 'near_driving', 'off_course']);
+    if (when === 'off_course') assert.ok(courses.has(role), `off_course ${role} with no such course`);
+  });
   bind('clear_hints', () => {});
   bind('setting', (name: string) => oneOf('setting', name, SETTINGS));
   bind('place', (role: string, kind: string, near: string) => {
@@ -134,9 +140,34 @@ function standInTown(story: InstanceType<typeof Story>) {
     town.look = model;
   });
   bind('put_you', (role: string, at: string) => {
+    if (courses.has(role)) return oneOf('place on a course', at, ['start', 'finish']);
     isPlaced(role);
     oneOf('place', at, ['inside', 'door', 'kerb']);
   });
+  bind('course', (role: string, crowd: number) => {
+    assert.ok(role && !placed.has(role) && !chases.has(role), `a course needs a role of its own`);
+    assert.ok(crowd >= 0 && crowd <= 1, 'a crowd is 0 to 1');
+    courses.add(role);
+    return 4321;
+  });
+  bind('stopwatch', (label: string, role: string) => {
+    if (role !== '') assert.ok(courses.has(role), `a stopwatch on '${role}', which isn't a course`);
+    town.stopwatch = label;
+    town.stopwatchRole = label === '' ? '' : role;
+  });
+  bind('stopwatch_time', () => {
+    assert.ok(town.stopwatch, 'stopwatch_time with no stopwatch');
+    return 754.32;
+  });
+  bind('record', (seconds: number) => {
+    assert.ok(seconds > 0, 'a record needs a time');
+    const before = town.mine;
+    if (!town.mine || seconds < town.mine) town.mine = seconds;
+    town.kept.push(seconds);
+    return before;
+  });
+  bind('town_record', () => town.best);
+  bind('town_record_holder', () => town.holder);
   bind('chase', (role: string, name: string, count: number, car: string, look: string) => {
     assert.ok(role && !placed.has(role), `a chase needs a role that isn't a building's`);
     assert.ok(count >= (standing.has(role) ? 0 : 1) && count <= 8, 'a chase is 1 to 8 cars (0 with a standby)');
@@ -154,7 +185,7 @@ function standInTown(story: InstanceType<typeof Story>) {
     standing.add(role);
   });
   bind('unlock', (what: string) => {
-    oneOf('unlock', what, ['animals', 'firefighter']);
+    oneOf('unlock', what, ['animals', 'firefighter', 'sprint']);
     town.unlocked.push(what);
   });
   bind('your_car', (car: string) => {
@@ -311,6 +342,54 @@ test('the firefighter saves three houses against a stand-in town', async () => {
   assert.equal(town.log.filter((l) => l.startsWith('fire(fire, 3)')).length, 3);
   assert.ok(lines.includes('You saved all three houses! The whole town is cheering.'), lines.join('\n'));
   assert.deepEqual(town.unlocked, ['firefighter']);
+});
+
+/** Plays the marathon through against a stand-in town with these best times, and returns what it said. */
+async function runMarathon(mine: number, best: number, holder: string) {
+  const mission = await new MissionStore(DEFAULT_MISSIONS_DIR).get('marathon');
+  assert.ok(mission?.story);
+  assert.equal(mission.unlocks, 'sprint');
+  const story = new Story(mission.story);
+  story.allowExternalFunctionFallbacks = false;
+  const town = standInTown(story);
+  Object.assign(town, { mine, best, holder });
+  const waits: string[] = [];
+  const lines: string[] = [];
+  for (let guard = 0; guard < 100 && (story.canContinue || story.currentChoices.length > 0); guard++) {
+    while (story.canContinue) lines.push(story.Continue()!.trim());
+    if (story.currentChoices.length === 0) break;
+    const pick = story.currentChoices[0] as { text: string; index: number };
+    const [wait, role] = pick.text.slice(1).split(' ');
+    if (wait === 'finished') {
+      assert.ok(town.courses.has(role), `@finished ${role} with no such course`);
+      assert.equal(town.stopwatchRole, role, `@finished ${role} with no stopwatch on it`);
+    }
+    waits.push(`@${wait}`);
+    story.ChooseChoiceIndex(pick.index);
+  }
+  assert.equal(story.canContinue, false);
+  assert.equal(story.currentChoices.length, 0);
+  assert.deepEqual(waits, ['@finished']);
+  assert.ok(town.log.includes('put_you(race, start)'));
+  assert.deepEqual(town.kept, [754.32]);
+  assert.deepEqual(town.unlocked, ['sprint']);
+  assert.equal(town.stopwatch, '');
+  return lines;
+}
+
+test('the marathon runs the course once, keeps the time, and says how it went', async () => {
+  let lines = await runMarathon(0, 0, '');
+  assert.ok(lines.includes('The course runs 4.3 km along the streets, from one corner of town to the other. Stay between the ribbons all the way.'), lines.join('\n'));
+  assert.ok(lines.includes('No one has run it in this town yet. Be the first!'));
+  assert.ok(lines.includes('Your time: 12:34.32.'), lines.join('\n'));
+  assert.ok(lines.includes("That's the new record for this town!"));
+  // Slower than the record, faster than your last best.
+  lines = await runMarathon(800, 700.5, 'Ada');
+  assert.ok(lines.includes('The record here is 11:40.50, run by Ada.'), lines.join('\n'));
+  assert.ok(lines.includes("That's your best here, 0:45.68 faster than before."), lines.join('\n'));
+  // Slower than both.
+  lines = await runMarathon(700, 650, 'Ada');
+  assert.ok(lines.includes('Your best here is still 11:40.00.'), lines.join('\n'));
 });
 
 test('a broken mission is listed with its errors, and not served', async () => {

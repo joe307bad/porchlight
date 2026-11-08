@@ -7,21 +7,24 @@
 //   DELETE /mp/characters/:id        delete one (not while it's being played)
 //   PUT    /mp/characters/:id/town   { town } move them to a town (out of any house they had)
 //   PUT    /mp/characters/:id/home   { x, y } move them into the house at this tile of their town
-//   GET    /mp/towns                 every town, and how many more this account can make
+//   GET    /mp/towns                 the towns this account can live in (Porchlight, everyone's; and its own), and how many more it can make
 //   POST   /mp/towns                 { name, key? } → a new one, from the town editor's key or a fresh seed (MAX_TOWNS at most: delete one to make another)
 //   DELETE /mp/towns/:id             delete one of this account's (not while anyone's playing there)
 //   GET    /mp/towns/:id/homes       the houses people live in there
 //   GET    /mp/progress              the missions and unlocks, and which this account has earned
+//   GET    /mp/records?town=&mission=          a mission's best times in a town (its key), and this account's
+//   POST   /mp/records               { town, mission, character, seconds } keep a time (if it's the account's best there) → the board
 //
 // One account plays as any of its characters, several at once: a parent and
 // child on one sign-in each play their own. What's earned is the account's, so
-// all of them have it, in every town.
+// all of them have it, in every town. A town an account makes is its own: only
+// the towns that come with the game (Porchlight) are shared between accounts.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { SESSION_COOKIE, type SessionPayload } from '../app.ts';
 import { parseCookies, unseal } from '../cookies.ts';
 import type { Mission } from '../missions.ts';
-import { CharacterError, cleanLook, cleanName, cleanTownKey, MAX_TOWNS, TOWN_NAME_MAX, type Persistence } from './persistence.ts';
+import { CharacterError, cleanLook, cleanName, cleanSeconds, cleanTownKey, MAX_TOWNS, TOWN_NAME_MAX, type Persistence } from './persistence.ts';
 import { lookAllowed, UNLOCK_NAMES, UNLOCKS } from './protocol.ts';
 
 export interface GameDeps {
@@ -56,6 +59,7 @@ export const foreignOrigin = (appUrl: string, origin: string | null | undefined)
 const PREFIX = '/mp/characters';
 const TOWNS = '/mp/towns';
 const PROGRESS = '/mp/progress';
+const RECORDS = '/mp/records';
 
 async function readJson(req: IncomingMessage, limit = 1024): Promise<unknown> {
   let size = 0;
@@ -80,7 +84,7 @@ export function createCharacterRoutes(deps: GameDeps) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const path = (req.url ?? '/').split('?')[0];
     const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
-    if (!under(PREFIX) && !under(TOWNS) && path !== PROGRESS) return false;
+    if (!under(PREFIX) && !under(TOWNS) && path !== PROGRESS && path !== RECORDS) return false;
     const send = (status: number, body: unknown): true => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
@@ -115,6 +119,30 @@ export function createCharacterRoutes(deps: GameDeps) {
             }),
           unlocks: UNLOCKS.map((id) => ({ id, name: UNLOCK_NAMES[id], at: had.get(id) ?? null, mission: missions.find((m) => m.unlocks === id)?.title ?? null })),
         });
+      }
+
+      if (path === RECORDS) {
+        const mission = async (id: unknown) => {
+          // Only real missions: nothing's kept for any other name a client makes up.
+          if (typeof id !== 'string' || !(await deps.missions.get(id))) throw new CharacterError('No such mission.', 404);
+          return id;
+        };
+        if (req.method === 'GET') {
+          const query = new URL(req.url ?? '/', 'http://x').searchParams;
+          const town = cleanTownKey(query.get('town'));
+          if (!town) throw new CharacterError("That isn't a town.");
+          return send(200, await deps.persistence.records(account.id, town, await mission(query.get('mission'))));
+        }
+        if (req.method === 'POST') {
+          const body = await json<{ town?: unknown; mission?: unknown; character?: unknown; seconds?: unknown }>();
+          const town = cleanTownKey(body.town);
+          if (!town) throw new CharacterError("That isn't a town.");
+          const seconds = cleanSeconds(body.seconds);
+          if (seconds === null) throw new CharacterError("That isn't a time.");
+          if (typeof body.character !== 'string') throw new CharacterError('Who ran it?');
+          return send(200, await deps.persistence.keepRecord(account.id, body.character, town, await mission(body.mission), seconds));
+        }
+        return send(405, { error: 'Method not allowed.' });
       }
 
       if (under(TOWNS)) {

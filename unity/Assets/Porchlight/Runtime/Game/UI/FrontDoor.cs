@@ -399,7 +399,7 @@ namespace Porchlight.App
         /// <summary>Every town, to live in; or making one, up to the limit (past it, delete one first).</summary>
         public void Towns(Character c, Action<Character> chosen, Action back, Action editor, string message = null)
         {
-            var card = Screen($"Where does {c.name} live?", "Anyone can live in any town, and visit the others. Each town has room for everyone, and a house has room for two.");
+            var card = Screen($"Where does {c.name} live?", null);
             var thisMenu = menu;
             thisMenu.back = back;
             var list = ListIn(card, thisMenu);
@@ -476,7 +476,7 @@ namespace Porchlight.App
             if (t.mine)
                 row.Add(El.Btn("×", $"Delete {t.name}", () =>
                 {
-                    if (!platform.Confirm($"Delete {t.name}? Everyone who lives there will have to choose a new town. Missions and rewards aren’t lost.")) return;
+                    if (!platform.Confirm($"Delete {t.name}? Your characters who live there will have to choose a new town. Missions and rewards aren’t lost.")) return;
                     Account.DeleteTown(platform, origin, t.id, err =>
                     {
                         if (err != null) Say(error, err);

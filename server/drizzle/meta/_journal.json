@@ -22,6 +22,20 @@
       "when": 1794022849531,
       "tag": "0002_town_layout",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794104432103,
+      "tag": "0003_mission_records",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794104821535,
+      "tag": "0004_private_towns",
+      "breakpoints": true
     }
   ]
 }

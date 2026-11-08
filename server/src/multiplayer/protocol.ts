@@ -81,13 +81,14 @@ export interface SpawnMessage {
   unlocks: string[];
 }
 
-/** What an account can unlock, for all its characters: `animals`, to look like one of the zoo's animals; `firefighter`, to look like the firefighter (and drive the fire engine). */
-export const UNLOCKS = ['animals', 'firefighter'];
+/** What an account can unlock, for all its characters: `animals`, to look like one of the zoo's animals; `firefighter`, to look like the firefighter (and drive the fire engine); `sprint`, to sprint faster on foot. */
+export const UNLOCKS = ['animals', 'firefighter', 'sprint'];
 
 /** What each unlock is, for the Journal. */
 export const UNLOCK_NAMES: Record<string, string> = {
   animals: "Play as the zoo's animals",
   firefighter: 'Play as the firefighter, and drive the fire engine',
+  sprint: 'Sprint faster on foot',
 };
 
 /** The firefighter's look, which needs `firefighter`. */

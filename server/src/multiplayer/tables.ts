@@ -138,3 +138,26 @@ export const missionCompletions = pgTable(
   },
   (t) => [primaryKey({ columns: [t.playerId, t.missionId] })],
 );
+
+/**
+ * A mission's best times in a town (its key: seed and params), one per account: the fastest it has
+ * run, and which of its characters ran it. Marathon Runner keeps these, so every seeded town has
+ * its own board.
+ */
+export const missionRecords = pgTable(
+  'mission_records',
+  {
+    townKey: text('town_key').notNull(),
+    missionId: text('mission_id').notNull(),
+    playerId: uuid('player_id')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    /** Who ran it (gone if they've been deleted; the time stays). */
+    characterId: uuid('character_id').references(() => characters.id, { onDelete: 'set null' }),
+    /** The name they ran under, kept so the board still says it if the character goes. */
+    name: text('name').notNull(),
+    seconds: real('seconds').notNull(),
+    at: at('at').notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.townKey, t.missionId, t.playerId] }), index('mission_records_board').on(t.townKey, t.missionId, t.seconds)],
+);

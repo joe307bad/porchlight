@@ -302,6 +302,8 @@ export class CityRoom extends Room<{ state: CityState }> {
       if (account.banned) throw new ServerError(403, 'This account is banned.');
       const character = await d.persistence.character(account.id, String(options.character ?? ''));
       if (!character) throw new ServerError(404, 'No such character.');
+      // A town someone made is theirs alone: only Porchlight (and the others that come with the game) is everyone's.
+      if (!(await d.persistence.mayEnter(account.id, typeof options.town === 'string' ? options.town : ''))) throw new ServerError(403, "That town is someone else's.");
       return { accountId: account.id, characterId: character.id, name: character.name, look: character.look };
     } catch (err) {
       if (err instanceof ServerError) throw err;

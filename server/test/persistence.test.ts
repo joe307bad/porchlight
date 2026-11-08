@@ -79,29 +79,34 @@ test('towns: three at most, and houses: one account, two people, free again when
   const stranger = await p.createCharacter(them.id, 'Stranger', null);
   await assert.rejects(p.claimHome(me.id, a.id, 5, 6), /Choose a town/);
   for (const ch of [a, b, c]) await p.moveToTown(me.id, ch.id, made[0].id);
-  await p.moveToTown(them.id, stranger.id, made[0].id);
+  // A town someone made is theirs alone: no one else sees it or lives there (Porchlight is everyone's).
+  await assert.rejects(p.moveToTown(them.id, stranger.id, made[0].id), /No such town/);
+  await assert.rejects(p.listHomes(them.id, made[0].id), /No such town/);
+  assert.ok(!(await p.listTowns(them.id)).some((t) => made.some((m) => m.id === t.id)));
+  assert.equal(await p.mayEnter(them.id, made[0].key), false);
+  assert.equal(await p.mayEnter(me.id, made[0].key), true);
+  assert.equal(await p.mayEnter(them.id, 'seed=nobody-made-this'), true);
   await assert.rejects(p.moveToTown(them.id, a.id, made[0].id), /No such character/);
-  // Everyone who's moved there counts, whoever's account they're on (and only there).
-  const counted = await p.listTowns(them.id);
-  assert.equal(counted.find((t) => t.id === made[0].id)?.residents, 4);
+  // Everyone who's moved there counts (and only there).
+  const counted = await p.listTowns(me.id);
+  assert.equal(counted.find((t) => t.id === made[0].id)?.residents, 3);
   assert.equal(counted.find((t) => t.id === made[1].id)?.residents, 0);
 
   await p.claimHome(me.id, a.id, 5, 6);
   await p.claimHome(me.id, b.id, 5, 6);
   await p.claimHome(me.id, a.id, 5, 6); // already there
   await assert.rejects(p.claimHome(me.id, c.id, 5, 6), /already has 2/);
-  await assert.rejects(p.claimHome(them.id, stranger.id, 5, 6), /Someone else/);
   assert.deepEqual((await p.character(me.id, a.id))?.home?.house, { x: 5, y: 6 });
   assert.equal((await p.character(me.id, a.id))?.home?.townName, 'One');
-  const homes = await p.listHomes(them.id, made[0].id);
-  assert.deepEqual(homes.map((h) => [h.x, h.y, h.mine, h.residents.length]), [[5, 6, false, 2]]);
+  const homes = await p.listHomes(me.id, made[0].id);
+  assert.deepEqual(homes.map((h) => [h.x, h.y, h.mine, h.residents.length]), [[5, 6, true, 2]]);
 
   // Everyone out: the house is anyone's. (A moves house, B moves town.)
   await p.claimHome(me.id, a.id, 7, 7);
   await p.moveToTown(me.id, b.id, made[1].id);
   assert.equal((await p.character(me.id, b.id))?.home?.house, null);
-  await p.claimHome(them.id, stranger.id, 5, 6);
-  assert.deepEqual((await p.listHomes(me.id, made[0].id)).map((h) => [h.x, h.mine]).sort(), [[5, false], [7, true]]);
+  await p.claimHome(me.id, c.id, 5, 6);
+  assert.deepEqual((await p.listHomes(me.id, made[0].id)).map((h) => [h.x, h.mine]).sort(), [[5, true], [7, true]]);
 
   // A town from the editor: its own key, and only one town to a key (the limit's full: someone else tries).
   const edited = await p.createTown(them.id, 'Edited', `seed=edited-${made[0].id}&width=96`);
@@ -112,7 +117,7 @@ test('towns: three at most, and houses: one account, two people, free again when
   await assert.rejects(p.ownTownKey(them.id, made[0].id), /Only whoever/);
   await assert.rejects(p.deleteTown(them.id, made[0].id), /No such town/);
   await p.deleteTown(me.id, made[0].id);
-  assert.equal((await p.character(them.id, stranger.id))?.home, null);
+  assert.equal((await p.character(me.id, a.id))?.home, null);
   assert.equal((await p.createTown(me.id, 'Four')).name, 'Four');
 
   // Deleting someone's last resident frees the house.
