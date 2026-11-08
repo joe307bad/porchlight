@@ -1,9 +1,9 @@
 // Rain and snow. What falls follows the camera, and lands where the town's top is (the
 // roofs, trees and streets: TownWorld.surface, how high the town reaches over each tile).
-// Rain wets the ground, runs along the gutters and splashes; snow settles on everything
-// that faces up and deepens on the ground. Whatever moves through either leaves tracks
-// (cars' wheels, people's feet) that fill in again while it keeps coming down.
-// Sunny is neither: what's left dries and melts away.
+// It only builds up on the yards and the roofs: rain leaves a film of water on the yards,
+// runs along the gutters and splashes; snow settles on the roofs and deepens in the yards.
+// Whatever moves through either leaves tracks (wheels, feet) that fill in again while it
+// keeps coming down. Sunny is neither: what's left dries and melts away.
 
 using System;
 using System.Collections.Generic;
@@ -45,7 +45,6 @@ namespace Porchlight.Rendering
         readonly TownWorld world;
         readonly int w, h;
         readonly GameObject root;
-        readonly Material ground;
         readonly System.Random random = new System.Random(7);
         double wet, depth, overcast, time;
         ParticleSystem rain, snow, splash;
@@ -75,7 +74,6 @@ namespace Porchlight.Rendering
             h = world.model.height;
             root = new GameObject("weather");
             root.transform.SetParent(world.root.transform, false);
-            ground = world.GroundMaterial;
         }
 
         /// <summary>Start as it is now, not coming on (a town entered while it's raining or snowing).</summary>
@@ -108,9 +106,7 @@ namespace Porchlight.Rendering
             if (rain != null) Fall(rain, Rain, RAIN_DENSITY, focus, span, 14, 0.2f, new Color(0.78f, 0.84f, 0.95f, 0.45f), rainMaterial, dusk, true, 0.03f);
             if (snow != null) Fall(snow, Snow, SNOW_DENSITY, focus, span, 7, 12f, new Color(1, 1, 1, 0.95f), snowMaterial, dusk, false, snowTop);
 
-            // The ground: darker and glossier wet, under a film of water; under a deepening layer of snow.
-            ground.SetColor(BaseColor, Color.Lerp(Color.white, new Color(0.62f, 0.64f, 0.68f), (float)wet));
-            ground.SetFloat(Smoothness, Mathf.Lerp(0.1f, 0.7f, (float)wet));
+            // The yards: under a film of water, or a deepening layer of snow (the streets stay clear).
             if (wet > 0.001 && film == null) film = new Cover("rain film", world, new Color32(40, 52, 64, 255), new Color(1, 1, 1, 0), 0.95f, root.transform, 0.2f);
             if (depth > 0.001 && sheet == null) sheet = new Cover("snow", world, new Color32(244, 247, 252, 255), new Color(1, 1, 1, 0), 0.25f, root.transform, 0.18f);
             film?.Level((float)(wet * 0.5), 0.031f);
@@ -301,7 +297,7 @@ namespace Porchlight.Rendering
             else cover.Stamp(m.x, m.y, 0.07);
         }
 
-        /// <summary>A layer over the open ground (not water, not under buildings or trees) that tracks are pressed into.</summary>
+        /// <summary>A layer over the yards and gardens (nowhere else: not the streets) that tracks are pressed into.</summary>
         sealed class Cover : IDisposable
         {
             readonly Texture2D texture;
@@ -329,11 +325,14 @@ namespace Porchlight.Rendering
                 px = new Color32[tw * th];
                 full = new byte[tw * th];
                 var terrain = world.model.tiles.terrain;
+                var use = world.layout.use;
                 for (int ty = 0; ty < th; ty++)
                     for (int tx = 0; tx < tw; tx++)
                     {
                         int tile = ty / per * w + tx / per;
-                        bool open = !Porchlight.Model.Terrain.IsWater(terrain[tile]) && world.surface[tile] < 0.6f;
+                        byte u = use[tile];
+                        bool open = (u == Use.YARD || u == Use.GARDEN || u == Use.COMMUNITY_GARDEN)
+                            && !Porchlight.Model.Terrain.IsWater(terrain[tile]) && world.surface[tile] < 0.6f;
                         int i = ty * tw + tx;
                         full[i] = open ? (byte)255 : (byte)0;
                         px[i] = new Color32(rgb.r, rgb.g, rgb.b, full[i]);
@@ -493,8 +492,8 @@ namespace Porchlight.Rendering
         // Settled snow --------------------------------------------------------------------------
 
         /// <summary>
-        /// A white skin over every face that looks up and is out in the open: roofs, ledges,
-        /// treetops. Built an area at a time around the camera (one a frame, so it never stalls,
+        /// A white skin over the roofs: every face that looks up and is out in the open on
+        /// the buildings' and sheds'. Built an area at a time around the camera (one a frame, so it never stalls,
         /// and only what's near: a big town's would be millions of faces), dropped once far off.
         /// Where a model can't be read back, a lid over its top instead.
         /// </summary>
@@ -508,9 +507,9 @@ namespace Porchlight.Rendering
                 chh = (h + AREA - 1) / AREA;
                 areaTops = new List<int>[cw * chh];
                 for (int i = 0; i < areaTops.Length; i++) areaTops[i] = new List<int>();
-                for (int i = 0; i < world.tops.Count; i++)
+                for (int i = 0; i < world.roofs.Count; i++)
                 {
-                    var c = world.tops[i].bounds.center;
+                    var c = world.roofs[i].bounds.center;
                     int ax = Mathf.Clamp(Mathf.FloorToInt(c.x / AREA), 0, cw - 1), ay = Mathf.Clamp(Mathf.FloorToInt(-c.z / AREA), 0, chh - 1);
                     areaTops[ay * cw + ax].Add(i);
                 }
@@ -561,7 +560,7 @@ namespace Porchlight.Rendering
             int faces = 0, lids = 0;
             foreach (int index in areaTops[area])
             {
-                var (mesh, at, bounds) = world.tops[index];
+                var (mesh, at, bounds) = world.roofs[index];
                 if (mesh == null) continue;
                 if (!mesh.isReadable)
                 {
