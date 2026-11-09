@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { MAX_SPEED, RateLimit, Strikes, judgeMove, newTrack, parseMove, seqNewer } from '../src/multiplayer/movement.ts';
+import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, judgeMove, newTrack, parseMove, seqNewer } from '../src/multiplayer/movement.ts';
 import type { MoveMessage } from '../src/multiplayer/protocol.ts';
 
 const bounds = { width: 128, height: 128 };
@@ -28,8 +28,32 @@ test('the first move anchors; then speed is checked against server time', () => 
   assert.equal(judgeMove(t, move({ seq: 2, x: 10.4 }), 1100, bounds), 'ok');
   // Ten tiles in a tenth of a second: no.
   assert.equal(judgeMove(t, move({ seq: 2, x: 20 }), 1100, bounds), 'too-fast');
-  // A long pause doesn't buy a teleport: the gap counts as a second at most.
-  assert.equal(judgeMove(t, move({ seq: 2, x: 10 + MAX_SPEED * 3 }), 61_000, bounds), 'too-fast');
+  // A long pause doesn't buy a teleport: the gap counts as a few seconds at most.
+  assert.equal(judgeMove(t, move({ seq: 2, x: 10 + MAX_SPEED * 5 }), 61_000, bounds), 'too-fast');
+});
+
+test('a boosted car through a two-second network stall is no cheat', () => {
+  const t = { ...newTrack(), anchored: true, x: 10, z: 10, t: 1000, seq: 1 };
+  // A boosted car does 8.9 tiles a second: the first move through after the stall is 18 tiles on.
+  assert.equal(judgeMove(t, move({ seq: 2, x: 10 + 8.9 * 2 }), 3000, bounds), 'ok');
+});
+
+test('driving in from next door: the drive while joining is let off the first move', () => {
+  const t = { ...newTrack(), anchored: true, x: 10, z: 10, t: 1000, seq: null };
+  // A second's drive during the join that the room never timed, and a tenth after.
+  const m = move({ seq: 1, x: 10 + 8.9 * 1.1 });
+  assert.equal(judgeMove(t, m, 1100, bounds), 'too-fast');
+  assert.equal(judgeMove({ ...t, grace: MAX_SPEED * ARRIVE_GRACE_SECONDS }, m, 1100, bounds), 'ok');
+});
+
+test('a passenger goes where the car goes', () => {
+  const t = { ...newTrack(), anchored: true, x: 10, z: 10, t: 1000, seq: 1 };
+  // The car they see caught up a way at once (its driver's moves came in a bunch): held to the driver, not the speed.
+  const m = move({ seq: 2, x: 30, ride: 'driver' });
+  assert.equal(judgeMove(t, m, 1100, bounds), 'too-fast');
+  assert.equal(judgeMove(t, m, 1100, bounds, { riding: true }), 'ok');
+  // Still in town, though.
+  assert.equal(judgeMove(t, move({ seq: 2, x: -5, ride: 'driver' }), 1100, bounds, { riding: true }), 'out-of-bounds');
 });
 
 test('stale moves (old seq, old epoch) and out-of-town ones', () => {

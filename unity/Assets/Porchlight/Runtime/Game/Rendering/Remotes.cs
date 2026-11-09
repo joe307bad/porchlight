@@ -20,6 +20,8 @@ namespace Porchlight.Rendering
     public sealed class RemoteState
     {
         public string key;
+        /// <summary>The character's id: the same in every room, where the key (a session) isn't.</summary>
+        public string id;
         public string name;
         public double x, y, z;
         public double rotY;
@@ -34,6 +36,8 @@ namespace Porchlight.Rendering
     public struct RemoteDriver
     {
         public string key;
+        /// <summary>The driver's character id (see RemoteState.id).</summary>
+        public string id;
         public string name;
         public double x, y, heading;
         public int car;
@@ -337,7 +341,7 @@ namespace Porchlight.Rendering
                 if (r.state.anim != Protocol.ANIM_DRIVE || r.state.car <= 0) continue;
                 int riders = 0;
                 foreach (var x in remotes.Values) if (x.state.anim == Protocol.ANIM_RIDE && x.state.ride == key) riders++;
-                o.Add(new RemoteDriver { key = key, name = r.state.name, x = r.walker.x, y = r.walker.y, heading = r.walker.heading, car = r.state.car, riders = riders });
+                o.Add(new RemoteDriver { key = key, id = r.state.id, name = r.state.name, x = r.walker.x, y = r.walker.y, heading = r.walker.heading, car = r.state.car, riders = riders });
             }
             return o;
         }

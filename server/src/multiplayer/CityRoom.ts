@@ -21,7 +21,7 @@ import { CloseCode, Room, ServerError, type AuthContext, type Client } from '@co
 import { StateView } from '@colyseus/schema';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { Interest } from './interest.ts';
-import { MAX_SPEED, RateLimit, Strikes, clampToBounds, inBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
+import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, clampToBounds, inBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
 import { cleanLook, STARTER_TOWNS, type EndReason, type Snapshot } from './persistence.ts';
 import { County, mineSlot } from '../county.ts';
 import {
@@ -424,7 +424,8 @@ export class CityRoom extends Room<{ state: CityState }> {
       });
       // Driving in from next door: they're where they say (it's this room's ground), and their
       // first move is held to the speed limit from there, like any other.
-      if (arriving) Object.assign(this.runtime.get(client.sessionId)!.track, { anchored: true, x: arrive.x, y: arrive.y, z: arrive.z, t: Date.now() });
+      // They went on driving while joining, though: that much is let off their first move.
+      if (arriving) Object.assign(this.runtime.get(client.sessionId)!.track, { anchored: true, x: arrive.x, y: arrive.y, z: arrive.z, t: Date.now(), grace: MAX_SPEED * ARRIVE_GRACE_SECONDS });
       // Nobody sees them (and they're on no one's minimap) until their first
       // move says where they are: the client checks the spot against the town.
       client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
@@ -574,25 +575,27 @@ export class CityRoom extends Room<{ state: CityState }> {
   }
 
   private applyMove(rt: PlayerRuntime, m: MoveMessage, at: number): void {
-    const verdict = judgeMove(rt.track, m, at, this.bounds);
+    // A passenger who can't ride with who they say is put back below, without a strike (a race, not a cheat).
+    const riding = !!m.ride && this.canRide(rt, m);
+    const verdict = judgeMove(rt.track, m, at, this.bounds, { riding });
     if (verdict === 'stale') return;
     if (verdict !== 'ok') {
       // Back to the last good spot (or, before there is one, the nearest spot in town).
       if (!rt.track.anchored) {
         const c = clampToBounds(this.bounds, m.x, m.z);
-        Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at });
+        Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at, grace: 0 });
         this.place(rt, c.x, 0, c.z);
       }
       this.correct(rt);
       if (rt.strikes.add(at)) this.kick(rt, `too many bad moves (${verdict})`);
       return;
     }
-    if (m.ride && !this.canRide(rt, m)) {
+    if (m.ride && !riding) {
       // The car's full, or its driver got out or left: put them back where they were (no strike: a race, not a cheat).
       this.correct(rt);
       return;
     }
-    Object.assign(rt.track, { anchored: true, x: m.x, y: m.y, z: m.z, t: at, seq: m.seq });
+    Object.assign(rt.track, { anchored: true, x: m.x, y: m.y, z: m.z, t: at, seq: m.seq, grace: 0 });
     rt.lastInputAt = at;
     const p = rt.player;
     const moved = p.x !== m.x || p.z !== m.z;
@@ -614,7 +617,8 @@ export class CityRoom extends Room<{ state: CityState }> {
   private canRide(rt: PlayerRuntime, m: MoveMessage): boolean {
     const driver = this.runtime.get(m.ride);
     if (!driver || driver === rt || driver.finished || driver.player.anim !== ANIM_DRIVE) return false;
-    const reach = rt.player.ride === m.ride ? RIDE_REACH + MAX_SPEED : RIDE_REACH;
+    // Riding in from next door (still on their arrival grace) they were already in the car, in the other room.
+    const reach = rt.player.ride === m.ride || rt.track.grace > 0 ? RIDE_REACH + MAX_SPEED : RIDE_REACH;
     if (Math.hypot(driver.player.x - m.x, driver.player.z - m.z) > reach) return false;
     let riders = 0;
     for (const other of this.runtime.values()) if (other !== rt && other.player.ride === m.ride) riders++;
@@ -625,7 +629,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     if (at - rt.lastTeleportAt < TELEPORT_GAP_MS) return;
     rt.lastTeleportAt = at;
     const c = clampToBounds(this.bounds, x, z);
-    Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at });
+    Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at, grace: 0 });
     rt.player.car = 0;
     rt.player.ride = '';
     rt.player.anim = ANIM_IDLE;

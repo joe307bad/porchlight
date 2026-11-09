@@ -161,9 +161,22 @@ namespace Porchlight.App
         public TownWorld world;
         RemotePlayers remotes;
         string riding;
+        /// <summary>
+        /// The character driving the car we're riding in: driving into the next room of the county they
+        /// get a new key there (a new session), and this is how we find them again.
+        /// </summary>
+        string ridingWith;
         /// <summary>When (ms) the car we're riding in went missing from the town, if it has: a dropped update shouldn't throw us out.</summary>
         double? rideLostAt;
         const double RIDE_LOST_AFTER = 2000;
+        /// <summary>
+        /// Where the car was last seen, when (ms), and how it was going (tiles a second): while it's out of
+        /// sight (its driver's into the next room a moment before we are), we roll on with it.
+        /// </summary>
+        Vec2 rideSeen, rideVelocity;
+        double rideSeenAt;
+        /// <summary>Faster than anything goes (tiles a second): a jump that big is the view shifting, not the car.</summary>
+        const double RIDE_FASTEST = 12;
         public Func<double, double, bool> TeleportHook;
         Player player;
         Avatar playerAvatar;
@@ -1625,7 +1638,11 @@ namespace Porchlight.App
                     OnAutoChange?.Invoke();
                 }
                 riding = pk.driver.Value.key;
+                ridingWith = pk.driver.Value.id;
                 rideLostAt = null;
+                rideSeen = new Vec2(pk.driver.Value.x, pk.driver.Value.y);
+                rideSeenAt = Now;
+                rideVelocity = new Vec2(0, 0);
                 held.Clear();
                 p.Halt();
                 OnCarChange?.Invoke(true);
@@ -1749,14 +1766,45 @@ namespace Porchlight.App
             var p = player;
             if (riding == null || p == null) return;
             RemoteDriver? d = null;
-            if (remotes != null) foreach (var r in remotes.Drivers()) if (r.key == riding) d = r;
+            if (remotes != null)
+            {
+                foreach (var r in remotes.Drivers()) if (r.key == riding) d = r;
+                // Into the next room of the county: the same driver, by a new key.
+                if (d == null && !string.IsNullOrEmpty(ridingWith))
+                    foreach (var r in remotes.Drivers())
+                        if (r.id == ridingWith)
+                        {
+                            d = r;
+                            riding = r.key;
+                        }
+            }
+            double now = Now;
             if (d == null)
             {
-                rideLostAt ??= Now;
-                if (Now - rideLostAt > RIDE_LOST_AFTER) LeaveRide();
+                rideLostAt ??= now;
+                if (now - rideLostAt > RIDE_LOST_AFTER)
+                {
+                    LeaveRide();
+                    return;
+                }
+                // Out of sight for a moment: on along the way it was going (and so over into the room it's in).
+                double lost = (now - rideSeenAt) / 1000;
+                p.x = rideSeen.x + rideVelocity.x * lost;
+                p.y = rideSeen.y + rideVelocity.y * lost;
+                p.Halt();
+                p.speed = 0;
                 return;
             }
             rideLostAt = null;
+            var seen = new Vec2(d.Value.x, d.Value.y);
+            double since = (now - rideSeenAt) / 1000;
+            if (since > 0.02)
+            {
+                var v = new Vec2((seen.x - rideSeen.x) / since, (seen.y - rideSeen.y) / since);
+                rideVelocity = Math.Sqrt(v.x * v.x + v.y * v.y) <= RIDE_FASTEST ? v : new Vec2(0, 0);
+                rideSeen = seen;
+                rideSeenAt = now;
+            }
             p.x = d.Value.x;
             p.y = d.Value.y;
             p.heading = d.Value.heading;

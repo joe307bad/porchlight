@@ -483,19 +483,19 @@ test('the county: towns have places, yours fill slots, and a room takes you out 
   const room = await client('driver').joinOrCreate('city', { town: porchlight.key, width: 256, height: 256, character: me.id, arrive: { x: 300, y: 0, z: 128.5, yaw: Math.PI } });
   const spawn = await new Promise<SpawnMessage>((r) => room.onMessage(MSG_SPAWN, r));
   assert.deepEqual(spawn.at && [spawn.at.x, spawn.at.z], [300, 128.5]);
-  // On along the highway, at speed: fine.
-  move(room, 299.5, 128.5);
-  await until('the move out on the road', () => room.state.players?.get(room.sessionId)?.x === 299.5);
-  // Teleporting a long way up it: too fast, from where they arrived.
+  // On along the highway, at speed, and a good way: they drove on all the while they were joining.
+  move(room, 275, 128.5);
+  await until('the move out on the road', () => room.state.players?.get(room.sessionId)?.x === 275);
+  // That was let off once: teleporting a long way up it is too fast, from where they got to.
   const corrected = new Promise<CorrectMessage>((r) => room.onMessage(MSG_CORRECT, r));
   move(room, 380, 128.5);
-  assert.deepEqual([(await corrected).x], [299.5]);
+  assert.deepEqual([(await corrected).x], [275]);
   await room.leave();
 
   // Arriving somewhere that isn't the room's ground (most of the way to Lanternport) doesn't count.
   const far = await client('driver').joinOrCreate('city', { town: porchlight.key, width: 256, height: 256, character: me.id, arrive: { x: 620, y: 0, z: 128.5, yaw: 0 } });
   const farSpawn = await new Promise<SpawnMessage>((r) => far.onMessage(MSG_SPAWN, r));
-  assert.deepEqual(farSpawn.at && [farSpawn.at.x, farSpawn.at.z], [299.5, 128.5]); // where they were saved, not where they said
+  assert.deepEqual(farSpawn.at && [farSpawn.at.x, farSpawn.at.z], [275, 128.5]); // where they were saved, not where they said
   await far.leave();
 });
 

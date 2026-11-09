@@ -15,9 +15,19 @@ export const MAX_SPEED = 11.1;
 const SPEED_TOLERANCE = 1.25;
 /** Plus a fixed allowance (tiles): stepping out of a car lands you beside it. */
 const SLACK = 0.75;
-/** Time counted between moves (seconds): at least one send interval, at most a second. */
+/**
+ * Time counted between moves (seconds): at least one send interval, at most a few seconds. Moves are
+ * timed by when they arrive, so after the network stalls (Wi-Fi drops out for a moment) the first one
+ * through can be a couple of seconds' drive on: that's fine, it's not a teleport.
+ */
 const MIN_GAP = 0.05;
-const MAX_GAP = 1;
+const MAX_GAP = 3;
+/**
+ * Driving in from the room next door, the client goes on driving all through joining (matchmaking,
+ * connecting, the room loading the character), but the room only starts its clock once it's done:
+ * this much driving (seconds, at the top speed) is let off the first move after.
+ */
+export const ARRIVE_GRACE_SECONDS = 4;
 /** How high off the ground anything gets (tiles): a jump is about 0.2, a plane climbs to 20. */
 const MAX_HEIGHT = 24;
 
@@ -47,9 +57,11 @@ export interface Track {
   seq: number | null;
   /** Bumped by every correction; moves carrying an older one are ignored. */
   epoch: number;
+  /** Extra distance (tiles) allowed on the next accepted move only (driving in from next door). */
+  grace: number;
 }
 
-export const newTrack = (): Track => ({ anchored: false, x: 0, y: 0, z: 0, t: 0, seq: null, epoch: 0 });
+export const newTrack = (): Track => ({ anchored: false, x: 0, y: 0, z: 0, t: 0, seq: null, epoch: 0, grace: 0 });
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isInt = (v: unknown, max: number): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
@@ -91,14 +103,16 @@ export type Verdict = 'ok' | 'stale' | 'out-of-bounds' | 'too-fast';
  * Judge a move against the last accepted one, timed by when the server got it
  * (never the client's clock). Doesn't change `track`; the room does on 'ok'.
  */
-export function judgeMove(track: Track, m: MoveMessage, now: number, bounds: Bounds): Verdict {
+export function judgeMove(track: Track, m: MoveMessage, now: number, bounds: Bounds, opts: { riding?: boolean } = {}): Verdict {
   if (m.epoch !== track.epoch) return 'stale';
   if (track.seq !== null && !seqNewer(m.seq, track.seq)) return 'stale';
   if (!inBounds(bounds, m.x, m.y, m.z)) return 'out-of-bounds';
-  if (!track.anchored) return 'ok';
+  // A passenger goes where the car goes (wherever they see it, which can jump as its driver's moves
+  // come in): they're held to being beside its driver instead (the room's canRide).
+  if (!track.anchored || opts.riding) return 'ok';
   const gap = Math.min(MAX_GAP, Math.max(MIN_GAP, (now - track.t) / 1000));
   const d = Math.hypot(m.x - track.x, m.z - track.z);
-  return d <= MAX_SPEED * SPEED_TOLERANCE * gap + SLACK ? 'ok' : 'too-fast';
+  return d <= MAX_SPEED * SPEED_TOLERANCE * gap + SLACK + track.grace ? 'ok' : 'too-fast';
 }
 
 /**

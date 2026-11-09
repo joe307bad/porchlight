@@ -528,6 +528,7 @@ namespace Porchlight.App
         static RemoteState Pick(SchemaObj p, string key) => new RemoteState
         {
             key = key,
+            id = p.Str("id") ?? "",
             name = p.Str("name") ?? "",
             x = p.Num("x"),
             y = p.Num("y"),
