@@ -279,10 +279,20 @@ namespace Porchlight.Model
 
         /// <summary>
         /// A stretch of highway, the junction or a plot (County/RoadSpaces), not a town: null in a
-        /// town. Tiles marked here are drawn by the stretch next to this one (they overlap a little,
-        /// so a car is on both while it crosses).
+        /// town. Tiles marked here aren't this space's to draw: 1, the stretch next to this one draws
+        /// them (they overlap a little, so a car is on both while it crosses); COUNTRYSIDE, off the
+        /// road's verge, the county's hills are there and no car goes.
         /// </summary>
         public byte[] foreign;
+        public const byte COUNTRYSIDE = 2;
+
+        /// <summary>Off a road space's verge (the countryside's, not this space's): no driving or walking there.</summary>
+        public bool OffVerge(double x, double y)
+        {
+            if (foreign == null) return false;
+            int tx = (int)System.Math.Floor(x), ty = (int)System.Math.Floor(y);
+            return tx >= 0 && ty >= 0 && tx < width && ty < height && foreign[ty * width + tx] == COUNTRYSIDE;
+        }
         /// <summary>A road space's name for signs ("North road"), or null.</summary>
         public string roadName;
         public bool IsRoad => roadName != null;

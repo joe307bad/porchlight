@@ -48,6 +48,33 @@ static class CountyCheck
         return list;
     }
 
+    /// <summary>
+    /// Directions to a house in each of these towns (keys, your own towns in your three slots), from
+    /// Porchlight and from Lanternport, driven along the real streets: `trips key1 [key2 [key3]]`.
+    /// </summary>
+    public static int Trips(string[] keys)
+    {
+        var towns = PublicTowns();
+        for (int i = 0; i < keys.Length && i < 3; i++)
+        {
+            var (_, p) = Program.ParseKey(keys[i]);
+            towns.Add(Mine(i, keys[i], (int)p.width, (int)p.height));
+        }
+        var map = CountyMap.Build(towns, "acct");
+        int failed = 0;
+        for (int i = 0; i < keys.Length && i < 3; i++)
+        {
+            var dest = map.towns[CountyMap.MineSlot(i)];
+            foreach (var start in new[] { map.towns[Place.Porchlight], map.towns[Place.East] })
+            {
+                var (error, km, spaces) = Trip(map, start, dest);
+                if (error != null) { Console.WriteLine($"FAIL {start.name} to {dest.name} ({keys[i]}): {error}"); failed++; }
+                else Console.WriteLine($"ok {start.name} to a house in {dest.name} ({keys[i]}): {Numbers.ToFixed(km, 1)} km through {spaces} spaces");
+            }
+        }
+        return failed == 0 ? 0 : 1;
+    }
+
     public static int Run(string vectorsFile)
     {
         int failed = 0;
@@ -358,9 +385,12 @@ static class CountyCheck
             if (way == null) return ($"no streets in {Describe(here)} from {N(pos.x)},{N(pos.y)} to {name}", 0, count);
             Directions.ForDrive(names, way.stretches, name);
             if (here.id == dest.id) return (null, (travelled + Length(way.points)) * Directions.METRES_PER_TILE / 1000, count);
-            // Along the way, till another space takes you over.
+            // Along the way, till another space takes you over: on the map and where a car can go all
+            // the way (once it's on the street: it may start in a yard).
             Space next = null;
             var pts = Geo.SamplePolyline(way.points, 0.25);
+            var drive = Vehicle.Drivable(model, layout);
+            bool onStreet = false;
             for (int i = 0; i < pts.Count; i++)
             {
                 var w = here.ToWorld(pts[i]);
@@ -372,6 +402,11 @@ static class CountyCheck
                     pos = w;
                     break;
                 }
+                var l = pts[i];
+                bool inside = l.x > 0.05 && l.y > 0.05 && l.x < model.width - 0.05 && l.y < model.height - 0.05;
+                bool ok = inside && drive(l.x, l.y) && !model.OffVerge(l.x, l.y);
+                if (ok) onStreet = true;
+                else if (onStreet) return ($"the way to {name} leaves {(inside ? "the road" : "the map")} in {Describe(here)} at {N(l.x)},{N(l.y)} (world {N(w.x)},{N(w.y)})", 0, count);
             }
             if (next == null) return ($"stuck in {Describe(here)} at {name}", 0, count);
             if (Environment.GetEnvironmentVariable("TRIP_DEBUG") != null) Console.WriteLine($"  {Describe(here)} -> {Describe(next)} at {N(pos.x)},{N(pos.y)} aiming {name} {N(target.x)},{N(target.y)}");

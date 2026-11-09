@@ -96,9 +96,14 @@ namespace Porchlight.County
                     for (int x = 0; x < s.width; x++)
                     {
                         var w = s.ToWorld(new Vec2(x + 0.5, y + 0.5));
-                        // Off the verge, the countryside's: its hills rise there (CountyTerrain).
-                        bool theirs = Geo.DistToPolyline(w, verge) > DRAWN;
+                        bool theirs = false;
                         foreach (var e in ends) if (e.Contains(w.x, w.y)) theirs = true;
+                        // Off the verge, the countryside's: its hills rise there (CountyTerrain), and no car goes.
+                        if (!theirs && Geo.DistToPolyline(w, verge) > DRAWN)
+                        {
+                            m.foreign[y * s.width + x] = TownModel.COUNTRYSIDE;
+                            continue;
+                        }
                         if (!theirs && near.Count > 1)
                         {
                             Space best = s;

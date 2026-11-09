@@ -113,6 +113,13 @@ namespace Porchlight.App
                 return Terrain.Height(w.x, w.y);
             };
             view.Neighbours = () => built.Values.Where(b => b.world != null).Select(b => b.world);
+            view.Built = (x, y) =>
+            {
+                var w = active.ToWorld(new Vec2(x, y));
+                foreach (var b in built.Values)
+                    if (b.ready && b.world != null && b.space.Contains(w.x, w.y)) return true;
+                return false;
+            };
         }
 
         /// <summary>The hills between the towns.</summary>
@@ -130,6 +137,7 @@ namespace Porchlight.App
             view.Countryside = null;
             view.Rise = null;
             view.Neighbours = null;
+            view.Built = null;
             if (Frame != null) Frame.county = null;
         }
 

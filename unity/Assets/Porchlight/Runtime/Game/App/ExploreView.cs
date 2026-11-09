@@ -316,6 +316,8 @@ namespace Porchlight.App
         IEnumerator<string> settling;
         public ModelLibrary Library => library;
         Func<double, double, bool> canDrive = (x, y) => false;
+        /// <summary>Where a plane may roll on the ground: where a car may, and (in the county) the open country off the map.</summary>
+        Func<double, double, bool> canTaxi = (x, y) => false;
         Func<double, double, bool> canSail = (x, y) => false;
         /// <summary>What's drawn as sidewalk or road, short of sheds and hangars: walkable where it overhangs a closed tile (the water's edge).</summary>
         Func<double, double, bool> walkPaved;
@@ -438,8 +440,11 @@ namespace Porchlight.App
             };
             var drivable = Vehicle.Drivable(model, world.layout);
             int w = model.width, h = model.height;
-            // Off the map, in the county, is open country: a plane comes down in a field, and a car can follow it.
-            canDrive = (x, y) => x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 ? drivable(x, y) && !Hilly(x, y) : Countryside != null && Countryside(x, y) && !Hilly(x, y);
+            // A car keeps to the map (in the county it goes on to the next space by road, handed over
+            // before the edge), and on a highway's stretch to its verge. Off the map, in the county, is
+            // open country only for a plane: it comes down in a field and taxis there.
+            canDrive = (x, y) => x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 && drivable(x, y) && !Hilly(x, y) && !model.OffVerge(x, y);
+            canTaxi = (x, y) => x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 ? drivable(x, y) && !Hilly(x, y) : Countryside != null && Countryside(x, y) && !Hilly(x, y);
             canSail = Vehicle.Sailable(model, world.layout);
             skyFloor = SkyFloor();
             overlay.SetTown(model);
@@ -1197,6 +1202,41 @@ namespace Porchlight.App
             findPath = null;
         }
 
+        /// <summary>
+        /// The way, as far as it stays on this space's map (for the minimap and the big map, which show
+        /// only this town): a trip's way runs on out of the gate and along the highways, off their edge.
+        /// </summary>
+        List<Vec2> OnTheMap(List<Vec2> way)
+        {
+            if (world == null || way.Count == 0) return way;
+            double w = world.model.width, h = world.model.height;
+            var o = new List<Vec2>();
+            foreach (var q in way)
+            {
+                bool inside = q.x >= 0 && q.y >= 0 && q.x <= w && q.y <= h;
+                if (!inside)
+                {
+                    // To the edge, then no further.
+                    if (o.Count > 0)
+                    {
+                        var a = o[o.Count - 1];
+                        double t = 1;
+                        if (q.x < 0) t = Math.Min(t, a.x / (a.x - q.x));
+                        if (q.y < 0) t = Math.Min(t, a.y / (a.y - q.y));
+                        if (q.x > w) t = Math.Min(t, (w - a.x) / (q.x - a.x));
+                        if (q.y > h) t = Math.Min(t, (h - a.y) / (q.y - a.y));
+                        o.Add(new Vec2(a.x + (q.x - a.x) * t, a.y + (q.y - a.y) * t));
+                    }
+                    break;
+                }
+                o.Add(q);
+            }
+            return o;
+        }
+
+        /// <summary>In the county, whether the ground at (x, y) in this space's terms is built yet (a town, a stretch of road): the way's dots are drawn only there.</summary>
+        public Func<double, double, bool> Built;
+
         static Material findMaterial;
         /// <summary>The way's dots are drawn this far round you (tiles, either way).</summary>
         const double FIND_DRAWN = 260;
@@ -1218,7 +1258,7 @@ namespace Porchlight.App
             // Only the dots near enough to be seen (a trip's way runs on for kilometres).
             var near = findRoute[0];
             foreach (var p in Geo.SamplePolyline(back, 0.32))
-                if (Math.Abs(p.x - near.x) < FIND_DRAWN && Math.Abs(p.y - near.y) < FIND_DRAWN) b.Disc(p, 0.065, 0.036, color, 8);
+                if (Math.Abs(p.x - near.x) < FIND_DRAWN && Math.Abs(p.y - near.y) < FIND_DRAWN && (Built == null || Built(p.x, p.y))) b.Disc(p, 0.065, 0.036, color, 8);
             if (target != null) b.Disc(target.Value, 0.3, 0.035, color);
             findMaterial ??= Materials.Unlit(Coords.Hex(color));
             findPath = new GameObject("finding");
@@ -1757,7 +1797,7 @@ namespace Porchlight.App
             {
                 byte use = world.layout.use[i];
                 bool wet = Terrain.IsWater(tiles.terrain[i]) && tiles.overlay[i] == Overlay.NONE && use != Use.DOCK;
-                o[i] = use == Use.SHED || use == Use.HANGAR || wet || Hilly(i % world.model.width + 0.5, i / world.model.width + 0.5) ? (byte)0 : (byte)1;
+                o[i] = use == Use.SHED || use == Use.HANGAR || wet || Hilly(i % world.model.width + 0.5, i / world.model.width + 0.5) || (world.model.foreign != null && world.model.foreign[i] == TownModel.COUNTRYSIDE) ? (byte)0 : (byte)1;
             }
             return o;
         }
@@ -1783,7 +1823,7 @@ namespace Porchlight.App
             return Math.Max(hill, skyFloor[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), w)]);
         }
 
-        Func<double, double, bool> OpenFor(Vehicle car) => car.kind == VehicleKind.Boat ? canSail : canDrive;
+        Func<double, double, bool> OpenFor(Vehicle car) => car.kind == VehicleKind.Boat ? canSail : car.kind == VehicleKind.Plane ? canTaxi : canDrive;
 
         public bool IsStreetsOnly => streetsOnly;
 
@@ -2401,7 +2441,7 @@ namespace Porchlight.App
                 routeTimer = 0.2;
             }
             bool auto = IsAuto;
-            overlay.DrawMinimap(p != null ? new Vec2(p.x, p.y) : (Vec2?)null, ViewQuad(), auto || FindTarget == null ? Goal : FindTarget, auto || FindTarget == null ? Route : findRoute);
+            overlay.DrawMinimap(p != null ? new Vec2(p.x, p.y) : (Vec2?)null, ViewQuad(), auto || FindTarget == null ? Goal : FindTarget, auto || FindTarget == null ? Route : OnTheMap(findRoute));
             hudTimer -= dt;
             if (hudTimer <= 0)
             {
