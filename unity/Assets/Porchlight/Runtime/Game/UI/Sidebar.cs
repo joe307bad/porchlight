@@ -1,8 +1,9 @@
 // The right-hand sidebar, the app's one menu in both modes. At the top, who
 // you're playing as, the seed, and Regenerate and Explore / Back to map. Below,
-// four sections, one open at a time: Controls (every controller button and
-// key), Players (who else is in the town: tick one to be shown the way to
-// them), Missions (from the server; Refresh fetches them again) and Map
+// sections, one open at a time: Directions (the account's houses: tick one to
+// be shown the way there, across the county if need be), Controls (every
+// controller button and key), Players (who else is in the town: tick one to be
+// shown the way to them), Missions (from the server; Refresh fetches them again) and Map
 // settings (a slider for every generator setting, the handful most people want
 // first). The open section's heading stays pinned at the top as you scroll
 // through it, so it can always be closed.
@@ -266,6 +267,8 @@ namespace Porchlight.UI
             body = El.Box("sb-body");
             scroll.Add(body);
             body.Add(top);
+            directionsList = new VisualElement();
+            body.Add(Section("Directions", directionsList));
             body.Add(Section("Controls", controls));
             body.Add(Section("Players", playersList));
             body.Add(Section("Missions", missions));
@@ -295,6 +298,7 @@ namespace Porchlight.UI
             root.Add(collapse);
             SetParams(initial);
             SetPlayers(new List<(string, string)>(), null, null);
+            SetDirections(null);
             ShowDetail("");
             SyncPlaying();
             SetExploring(false);
@@ -635,22 +639,44 @@ namespace Porchlight.UI
             top.Insert(top.IndexOf(links) + 1, joinRows);
         }
 
-        VisualElement directionRows;
-        string directionsShown = "";
+        VisualElement directionsList;
+        string directionsShown;
 
-        /// <summary>Directions to the account's houses (in this town or out along the highways), under the name; null or empty: none.</summary>
-        public void SetDirections(List<(string text, Action go)> rows)
+        /// <summary>
+        /// The Directions section: the account's houses (in this town or out along the highways), a box
+        /// each like the Players list. Ticked is the one you're being shown the way to; tick another to go
+        /// there instead, untick to stop. Null: not playing (so none).
+        /// </summary>
+        public void SetDirections(List<(string name, string where, bool on, Action go)> rows)
         {
-            string shown = rows == null ? "" : string.Join("|", rows.Select(r => r.text));
-            if (shown == directionsShown && (directionRows != null) == (shown != "")) return;
+            string shown = rows == null ? "-" : string.Join("|", rows.Select(r => $"{r.name}:{r.where}:{r.on}"));
+            if (shown == directionsShown) return;
             directionsShown = shown;
-            directionRows?.RemoveFromHierarchy();
-            directionRows = null;
-            if (rows == null || rows.Count == 0) return;
-            directionRows = El.Box("sb-joins");
-            foreach (var (text, go) in rows)
-                directionRows.Add(El.Btn(text, "The way there, shown as you go: out along the highways, if it's in another town", go, "press"));
-            top.Insert(top.IndexOf(links) + 1, directionRows);
+            directionsList.Clear();
+            if (rows == null || rows.Count == 0)
+            {
+                var none = El.Text(rows == null
+                    ? "Play as one of your characters for directions to your houses."
+                    : "No houses to go to yet. Move into one and it'll be here.", "help-text");
+                none.style.whiteSpace = WhiteSpace.Normal;
+                directionsList.Add(none);
+                return;
+            }
+            foreach (var (name, where, on, go) in rows)
+            {
+                var row = new Button(go)
+                {
+                    focusable = false,
+                    tooltip = on ? "Stop showing the way" : $"Show the way to {name}{(where != null ? " in " + where : "")}, as you go: out along the highways, if it's in another town",
+                };
+                row.AddToClassList("player-row");
+                var tick = El.Box("player-tick");
+                tick.EnableInClassList("on", on);
+                row.Add(tick);
+                row.Add(El.Text(name, "player-name"));
+                if (where != null) row.Add(El.Text(where, "direction-where"));
+                directionsList.Add(row);
+            }
         }
 
         public void SetAccount(string name, string email, Action onSignOut)

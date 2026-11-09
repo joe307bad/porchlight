@@ -1746,8 +1746,8 @@ namespace Porchlight.App
         const double TRIP_AHEAD = double.PositiveInfinity;
 
         /// <summary>
-        /// Buttons under the name for directions to the account's houses: in this town, or in any
-        /// town of the county (your own towns too, out along the highways); one to stop, on the way.
+        /// The sidebar's Directions: the account's houses, in this town or in any town of the county
+        /// (your own towns too, out along the highways); the one on the way there ticked.
         /// </summary>
         void OfferDirections()
         {
@@ -1758,16 +1758,16 @@ namespace Porchlight.App
                 sidebar.SetDirections(null);
                 return;
             }
-            var rows = new List<(string text, Action go)>();
+            var rows = new List<(string name, string where, bool on, Action go)>();
             foreach (var c in accountCharacters)
             {
                 var h = c.home;
                 if (h == null || !h.hasHouse || string.IsNullOrEmpty(h.townKey) || TownSpace(h.townKey) == null && h.townKey != TownKey) continue;
                 string label = c.id == playing.id ? "your house" : $"{c.name}'s house";
-                string text = tripTo == c.id ? $"Stop directions to {label}" : h.townKey == TownKey ? $"Directions to {label}" : $"Directions to {label} in {h.townName}";
+                string name = c.id == playing.id ? "Your house" : $"{c.name}'s house";
                 string id = c.id, townKey = h.townKey, townName = h.townName;
                 int x = h.x, y = h.y;
-                rows.Add((text, () => DirectionsTo(id, townKey, townName, x, y, label)));
+                rows.Add((name, h.townKey == TownKey ? null : h.townName, tripTo == c.id, () => DirectionsTo(id, townKey, townName, x, y, label)));
             }
             sidebar.SetDirections(rows);
         }

@@ -330,6 +330,12 @@ Label {
     color: #efe6cf;
 }
 
+/* The town a house in the Directions section is in, when it isn't this one. */
+.direction-where {
+    margin-left: 6px;
+    font-size: 12px;
+    color: #a99f88;
+}
 .player-row:hover > .player-name {
     color: #ffffff;
 }
