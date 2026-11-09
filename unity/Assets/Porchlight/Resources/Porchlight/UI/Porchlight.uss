@@ -611,8 +611,19 @@ Label {
     color: #8a816d;
 }
 
-.signin-version {
-    margin-top: 18px;
+/* Inside the sign-in button: what it does, and under it which release this is. */
+.signin-button {
+    flex-direction: column;
+    align-items: center;
+}
+.signin-button-label {
+    -unity-text-align: middle-center;
+}
+.signin-button-version {
+    margin-top: 2px;
+    font-size: 11px;
+    -unity-font-style: normal;
+    color: rgba(255, 255, 255, 0.7);
     -unity-text-align: middle-center;
 }
 

@@ -31,11 +31,15 @@ namespace Porchlight.App
                 button.SetEnabled(false);
                 signIn();
             }, "signin-button", "semibold", "press");
+            // Which release this is, small, under what the button says (App/BuildInfo.cs).
+            button.text = "";
+            button.Add(El.Text(label ?? (provider == "google" ? "Sign in with Google" : "Sign in"), "signin-button-label"));
+            button.Add(El.Text(BuildInfo.Label, "signin-button-version"));
+            foreach (var inner in button.Children()) inner.pickingMode = PickingMode.Ignore;
             card.Add(button);
             var err = El.Text(error ?? "", "signin-error");
             if (string.IsNullOrEmpty(error)) err.AddToClassList("hidden");
             card.Add(err);
-            card.Add(El.Text(BuildInfo.Label, "app-version", "signin-version"));
             gate.Add(card);
             root.Add(gate);
             root.AddToClassList("signed-out");
