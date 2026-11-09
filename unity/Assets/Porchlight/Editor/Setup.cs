@@ -384,10 +384,35 @@ namespace Porchlight.EditorTools
             else Debug.LogWarning("Porchlight: no app icon at " + AppIconPath);
         }
 
+        const string StampPath = "Assets/Porchlight/Resources/Porchlight/BuildInfo.txt";
+
+        /// <summary>
+        /// Which release this is, for the game to show (App/BuildInfo.cs): CI passes `-porchlightVersion 0.0.N`
+        /// (the desktop app, shown as v0.0.N) or `-porchlightRelease web.N` (the site), and
+        /// `-porchlightCommit` with the commit. Built by hand it's "dev". The file isn't checked in.
+        /// </summary>
+        static void Stamp()
+        {
+            var args = Environment.GetCommandLineArgs();
+            string Arg(string name)
+            {
+                int at = Array.IndexOf(args, name);
+                return at >= 0 && at + 1 < args.Length ? args[at + 1].Trim() : null;
+            }
+            string version = Arg("-porchlightVersion");
+            string release = Arg("-porchlightRelease") ?? (string.IsNullOrEmpty(version) ? "dev" : "v" + version);
+            string commit = Arg("-porchlightCommit") ?? "";
+            if (commit.Length > 7) commit = commit.Substring(0, 7);
+            File.WriteAllText(StampPath, release + "\n" + commit + "\n");
+            AssetDatabase.ImportAsset(StampPath, ImportAssetOptions.ForceUpdate);
+            Debug.Log($"Porchlight: stamped {release} {commit}");
+        }
+
         static void Build(BuildTarget target, string path, bool desktop = false)
         {
             Run();
             if (desktop) Desktop();
+            Stamp();
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
                 scenes = new[] { ScenePath },

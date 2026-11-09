@@ -35,6 +35,7 @@ namespace Porchlight.App
             var err = El.Text(error ?? "", "signin-error");
             if (string.IsNullOrEmpty(error)) err.AddToClassList("hidden");
             card.Add(err);
+            card.Add(El.Text(BuildInfo.Label, "app-version", "signin-version"));
             gate.Add(card);
             root.Add(gate);
             root.AddToClassList("signed-out");

@@ -68,7 +68,7 @@ jobs:
           projectPath: unity
           targetPlatform: ${{ matrix.target }}
           buildMethod: ${{ matrix.method }}
-          customParameters: -porchlightVersion ${{ env.VERSION }}
+          customParameters: -porchlightVersion ${{ env.VERSION }} -porchlightCommit ${{ github.sha }}
 
       # A tarball, as artifacts don't keep the executable bit.
       - name: Bundle the build

@@ -48,3 +48,7 @@ Tools~/**/obj/
 
 # Burst switched off for a cross-built desktop player (Editor/Setup.cs NoBurst): that machine only.
 ProjectSettings/BurstAotSettings_*.json
+
+# Stamped by Editor/Setup.cs at build time (App/BuildInfo.cs)
+/Assets/Porchlight/Resources/Porchlight/BuildInfo.txt
+/Assets/Porchlight/Resources/Porchlight/BuildInfo.txt.meta

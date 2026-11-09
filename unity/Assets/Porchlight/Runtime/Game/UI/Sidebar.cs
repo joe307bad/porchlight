@@ -186,6 +186,7 @@ namespace Porchlight.UI
             top.Add(playingDetail);
             links = El.Box("sb-links");
             top.Add(links);
+            top.Add(El.Text(Porchlight.App.BuildInfo.Label, "app-version", "sb-version"));
             // Signed in, you live in a town: the seed, Regenerate and the map's settings are dev mode's.
             seedRow = El.Box("sb-seed");
             seedRow.Add(El.Text("Seed", "sb-seed-label"));

@@ -72,6 +72,8 @@ jobs:
           projectPath: unity
           targetPlatform: WebGL
           buildMethod: Porchlight.EditorTools.Setup.BuildWebGL
+          # Shown on the sign-in card and in the sidebar (App/BuildInfo.cs).
+          customParameters: -porchlightRelease web.${{ github.run_number }} -porchlightCommit ${{ github.sha }}
 
       - uses: actions/upload-artifact@v4
         with:

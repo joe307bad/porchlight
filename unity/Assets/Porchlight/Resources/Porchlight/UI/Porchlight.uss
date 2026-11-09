@@ -599,6 +599,21 @@ Label {
     background-color: #3b7fe6;
 }
 
+/* Which release this is (App/BuildInfo.cs): on the sign-in card and in the sidebar. */
+.app-version {
+    font-size: 11px;
+    color: #8a816d;
+}
+
+.signin-version {
+    margin-top: 18px;
+    -unity-text-align: middle-center;
+}
+
+.sb-version {
+    margin-top: 6px;
+}
+
 .signin-error, .picker-error {
     margin-top: 16px;
     color: #ff8a73;
