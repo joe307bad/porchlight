@@ -25,17 +25,23 @@ namespace Porchlight.App
             brand.Add(logo);
             brand.Add(El.Text("Porchlight", "signin-title"));
             card.Add(brand);
+            // Which release this is, in a badge under the name (App/BuildInfo.cs), its shadow a block behind it like the name's.
+            var badge = new VisualElement();
+            badge.AddToClassList("signin-badge");
+            var shadow = new VisualElement();
+            shadow.AddToClassList("signin-badge-shadow");
+            badge.Add(shadow);
+            var face = new VisualElement();
+            face.AddToClassList("signin-badge-face");
+            face.Add(El.Text(BuildInfo.Short, "signin-badge-text"));
+            badge.Add(face);
+            card.Add(badge);
             UnityEngine.UIElements.Button button = null;
             button = El.Btn(label ?? (provider == "google" ? "Sign in with Google" : "Sign in"), null, () =>
             {
                 button.SetEnabled(false);
                 signIn();
             }, "signin-button", "semibold", "press");
-            // Which release this is, small, under what the button says (App/BuildInfo.cs).
-            button.text = "";
-            button.Add(El.Text(label ?? (provider == "google" ? "Sign in with Google" : "Sign in"), "signin-button-label"));
-            button.Add(El.Text(BuildInfo.Label, "signin-button-version"));
-            foreach (var inner in button.Children()) inner.pickingMode = PickingMode.Ignore;
             card.Add(button);
             var err = El.Text(error ?? "", "signin-error");
             if (string.IsNullOrEmpty(error)) err.AddToClassList("hidden");

@@ -35,6 +35,9 @@ namespace Porchlight.App
             }
         }
 
+        /// <summary>Just the release and commit: "v0.0.42 · a1b2c3d" (the release alone if the commit isn't known).</summary>
+        public static string Short => string.IsNullOrEmpty(Commit) ? Release : $"{Release} · {Commit}";
+
         /// <summary>For showing: "Porchlight v0.0.42 (a1b2c3d)".</summary>
         public static string Label => string.IsNullOrEmpty(Commit) ? $"Porchlight {Release}" : $"Porchlight {Release} ({Commit})";
 

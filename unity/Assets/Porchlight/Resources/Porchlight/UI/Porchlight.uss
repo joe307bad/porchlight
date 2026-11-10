@@ -611,19 +611,31 @@ Label {
     color: #8a816d;
 }
 
-/* Inside the sign-in button: what it does, and under it which release this is. */
-.signin-button {
-    flex-direction: column;
-    align-items: center;
+/* Under the name on the sign-in card: which release this is, in a badge with a hard shadow like the name's. */
+.signin-brand {
+    margin-bottom: 12px;
 }
-.signin-button-label {
-    -unity-text-align: middle-center;
+.signin-badge {
+    align-self: center;
+    margin-bottom: 28px;
 }
-.signin-button-version {
-    margin-top: 7px;
-    font-size: 11px;
-    -unity-font-style: normal;
-    color: rgba(255, 255, 255, 0.7);
+.signin-badge-face {
+    padding: 3px 9px;
+    background-color: #fff8e8;
+}
+.signin-badge-shadow {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    right: -3px;
+    bottom: -3px;
+    background-color: #000000;
+}
+/* The shadow comes first among the badge's children, so the face is drawn over it. */
+.signin-badge-text {
+    font-size: 12px;
+    color: #1f1e1b;
+    -unity-font-style: bold;
     -unity-text-align: middle-center;
 }
 
