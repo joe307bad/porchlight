@@ -47,10 +47,10 @@ export interface Highway {
 }
 
 export const SLOT = 256;
-export const GAP = 400;
+export const GAP = 120;
 const JUNCTION = 48;
 const VACANT = 64;
-const STRETCH = 180;
+const STRETCH = 600;
 const VERGE = 14;
 const CORRIDOR = 24;
 /** How far a highway's end stretches reach into the spaces at its ends (CountyMap.INSET). */

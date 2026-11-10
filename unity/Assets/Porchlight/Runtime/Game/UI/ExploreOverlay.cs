@@ -668,9 +668,10 @@ namespace Porchlight.UI
             NeighbourHouses(painter, P);
             HomeHouse(painter, P);
             if (home != null) HomeMark(painter, P(home.Value), 4);
-            if (goal != null)
+            // Only a goal on this map: on a trip it's often over the edge (in the next space), where the way runs off it.
+            if (goal is Vec2 g && g.x >= 0 && g.y >= 0 && g.x <= model.width && g.y <= model.height)
             {
-                var gp = P(goal.Value);
+                var gp = P(g);
                 painter.strokeColor = Coords.Hex(0xfff8e8);
                 painter.lineWidth = 1.5f * dev;
                 painter.BeginPath();

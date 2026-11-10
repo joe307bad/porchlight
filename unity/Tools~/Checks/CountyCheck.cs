@@ -98,6 +98,40 @@ static class CountyCheck
                     else Console.WriteLine($"ok directions ({name}): {start.name} to a house in {dest.name}, {Numbers.ToFixed(km, 1)} km through {spaces} spaces");
                 }
             }
+            // With all your towns: from a house in every town to a house in every other.
+            if (mine.Length == 3)
+                foreach (var a in map.towns.Values)
+                    foreach (var b in map.towns.Values)
+                    {
+                        if (a.id == b.id) continue;
+                        var (error, km, spaces) = Trip(map, a, b, fromHouse: true);
+                        if (error != null) errors.Add($"directions from a house in {a.name} to one in {b.name}: {error}");
+                        else Console.WriteLine($"ok house to house: {a.name} to {b.name}, {Numbers.ToFixed(km, 1)} km through {spaces} spaces");
+                    }
+            // Into each town by each of its highways, then to every house there: on the map all the way.
+            if (mine.Length == 3)
+                foreach (var hw in map.highways)
+                    foreach (var port in new[] { hw.a, hw.b })
+                    {
+                        var town = map.spaces[port.space];
+                        if (town.kind != SpaceKind.Town) continue;
+                        var (model, layout, _) = Streets(map, town);
+                        var gate = CountyMap.PortPoint(town, port.side);
+                        var o = Compass.Outward(port.side);
+                        var from = town.ToLocal(new Vec2(gate.x - o.x * CountyMap.ENTER, gate.y - o.y * CountyMap.ENTER));
+                        int bad = 0;
+                        foreach (var h in Homes.All(model))
+                        {
+                            var to = new Vec2(h.tiles[0].x + 0.5, h.tiles[0].y + 0.5);
+                            var way = StreetRoute.Between(layout.roads, from, to);
+                            string why = way == null ? "no way" : null;
+                            if (way != null)
+                                foreach (var q in way.points)
+                                    if (q.x < 0 || q.y < 0 || q.x > model.width || q.y > model.height) { why = $"off the map at {N(q.x)},{N(q.y)}"; break; }
+                            if (why != null && bad++ < 3) errors.Add($"in {town.name} from its {Compass.Name(port.side)} gate to the house at {h.tiles[0].x},{h.tiles[0].y}: {why}");
+                        }
+                        if (bad > 0) errors.Add($"in {town.name} from its {Compass.Name(port.side)} gate: {bad} of {Homes.All(model).Count} houses");
+                    }
             foreach (var e in errors) Console.WriteLine($"FAIL county ({name}): {e}");
             if (errors.Count == 0)
                 Console.WriteLine($"ok county ({name}): {map.spaces.Count} spaces, {map.highways.Count} highways, {Numbers.ToFixed(map.highways.Sum(h => h.length) * Directions.METRES_PER_TILE / 1000, 1)} km of road");
@@ -176,7 +210,20 @@ static class CountyCheck
                 // Two highways out of one small town can pass close by its corner: they share the ground (each draws the tiles nearer its own road).
                 bool sameTown = a.kind == SpaceKind.Highway && b.kind == SpaceKind.Highway && a.highway != b.highway
                     && new[] { map.highways[a.highway].a.space, map.highways[a.highway].b.space }.Intersect(new[] { map.highways[b.highway].a.space, map.highways[b.highway].b.space }).Any();
-                if (!neighbours && !end && !sameTown) errors.Add($"{Describe(a)} overlaps {Describe(b)}");
+                // A highway that curves round a town's corner: its rectangle reaches over the corner, but its
+                // road and verges (all it draws) keep well clear, and the town's own ground is the town's.
+                if (neighbours || end || sameTown) continue;
+                bool clear = false;
+                foreach (var (hwSpace, other) in new[] { (a, b), (b, a) })
+                {
+                    if (hwSpace.kind != SpaceKind.Highway || other.kind == SpaceKind.Highway) continue;
+                    var hw = map.highways[hwSpace.highway];
+                    double nearest = double.PositiveInfinity;
+                    foreach (var q in CountyMap.Stretch(hw, hwSpace.s0, hwSpace.s1)) nearest = Math.Min(nearest, CountyMap.DistanceTo(other, q));
+                    clear = nearest > CountyTerrain.FLAT + CountyMap.VERGE;
+                    if (!clear) errors.Add($"{hw.name} runs within {Numbers.ToFixed(nearest, 1)} tiles of {Describe(other)}");
+                }
+                if (!clear) errors.Add($"{Describe(a)} overlaps {Describe(b)}");
             }
         }
         foreach (var hw in map.highways)
@@ -355,10 +402,17 @@ static class CountyCheck
     /// shows them: along each space's streets to where they say, into whichever space takes you over,
     /// and once in the town, along its streets to the house. Null if you get there.
     /// </summary>
-    static (string error, double km, int spaces) Trip(CountyMap map, Space start, Space dest)
+    static (string error, double km, int spaces) Trip(CountyMap map, Space start, Space dest, bool fromHouse = false)
     {
         var here = start;
         var pos = new Vec2(start.x0 + start.width / 2.0, start.y0 + start.height / 2.0);
+        if (fromHouse)
+        {
+            var homes = Homes.All(Streets(map, start).model);
+            if (homes.Count == 0) return ($"{start.name} has no houses", 0, 1);
+            var h = homes[homes.Count / 3];
+            pos = start.ToWorld(new Vec2(h.tiles[0].x + 0.5, h.tiles[0].y + 0.5));
+        }
         double travelled = 0;
         int count = 1;
         for (int leg = 0; leg < 200; leg++)
@@ -384,7 +438,29 @@ static class CountyCheck
             var way = StreetRoute.Between(layout.roads, here.ToLocal(pos), here.ToLocal(target));
             if (way == null) return ($"no streets in {Describe(here)} from {N(pos.x)},{N(pos.y)} to {name}", 0, count);
             Directions.ForDrive(names, way.stretches, name);
-            if (here.id == dest.id) return (null, (travelled + Length(way.points)) * Directions.METRES_PER_TILE / 1000, count);
+            if (here.id == dest.id)
+            {
+                // In the town: on its map all the way, and on its streets till the last bit off them to the door.
+                var fin = Geo.SamplePolyline(way.points, 0.25);
+                var townDrive = Vehicle.Drivable(model, layout);
+                int lastOn = -1;
+                for (int i = 0; i < fin.Count; i++)
+                {
+                    var l = fin[i];
+                    if (l.x < 0 || l.y < 0 || l.x > model.width || l.y > model.height)
+                        return ($"the way to the house leaves the map of {Describe(here)} at {N(l.x)},{N(l.y)} (from {N(here.ToLocal(pos).x)},{N(here.ToLocal(pos).y)})", 0, count);
+                    if (townDrive(l.x, l.y)) lastOn = i;
+                }
+                bool on = false;
+                for (int i = 0; i <= lastOn; i++)
+                {
+                    var l = fin[i];
+                    bool ok = townDrive(l.x, l.y) && !model.OffVerge(l.x, l.y);
+                    if (ok) on = true;
+                    else if (on) return ($"the way to the house leaves the road in {Describe(here)} at {N(l.x)},{N(l.y)}", 0, count);
+                }
+                return (null, (travelled + Length(way.points)) * Directions.METRES_PER_TILE / 1000, count);
+            }
             // Along the way, till another space takes you over: on the map and where a car can go all
             // the way (once it's on the street: it may start in a yard).
             Space next = null;

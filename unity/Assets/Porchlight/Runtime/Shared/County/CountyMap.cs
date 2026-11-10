@@ -94,14 +94,18 @@ namespace Porchlight.County
     {
         /// <summary>Every town sits in the middle of a slot this big (the biggest map there is).</summary>
         public const int SLOT = 256;
-        /// <summary>The countryside between slots, east-west and north-south (tiles).</summary>
-        public const int GAP = 400;
+        /// <summary>The countryside between slots, east-west and north-south (tiles): short, so towns are a short drive apart.</summary>
+        public const int GAP = 120;
         /// <summary>The junction north of Porchlight: a crossroads this big.</summary>
         public const int JUNCTION = 48;
         /// <summary>An empty slot of yours: a plot this big in its middle, with the road through it.</summary>
         public const int VACANT = 64;
-        /// <summary>A highway is cut into stretches at most this long (tiles), each a space of its own.</summary>
-        public const double STRETCH = 180;
+        /// <summary>
+        /// A highway is cut into stretches at most this long (tiles), each a space of its own. Longer than
+        /// any highway there is: each is one space, gate to gate, so a trip between towns is one road to
+        /// the next town (or to the junction, and one on from there).
+        /// </summary>
+        public const double STRETCH = 600;
         /// <summary>Countryside either side of a highway's stretch, in its space (tiles).</summary>
         public const int VERGE = 14;
         /// <summary>
