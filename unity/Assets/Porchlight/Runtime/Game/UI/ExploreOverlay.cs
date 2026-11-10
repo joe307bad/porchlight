@@ -600,7 +600,7 @@ namespace Porchlight.UI
             }
             var (name, progress) = waiting.Value;
             int pct = (int)Math.Round(Math.Max(0, Math.Min(1, progress)) * 100);
-            string text = $"Getting {name} ready… {pct}%";
+            string text = $"Loading {name}… {pct}%";
             if (text == loadingShown) return;
             loadingShown = text;
             loadingText.text = text;

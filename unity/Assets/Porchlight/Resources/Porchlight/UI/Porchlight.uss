@@ -483,15 +483,15 @@ Label {
 /* Waiting at a town's edge while it's built (CountyDrive.Waiting): what for, and a bar that fills. */
 .county-loading {
     position: absolute;
-    top: 52px;
-    width: 280px;
-    padding: 10px 14px 12px 14px;
+    top: 45%;
+    width: 320px;
+    padding: 14px 18px 16px 18px;
     border-radius: 8px;
     background-color: rgba(28, 27, 24, 0.92);
 }
 .county-loading-text {
     color: #f4f1ea;
-    font-size: 13px;
+    font-size: 16px;
     -unity-text-align: middle-center;
     margin-bottom: 8px;
 }
@@ -549,6 +549,13 @@ Label {
     align-items: center;
     justify-content: center;
     background-color: #2b2a27;
+}
+
+.loader-text {
+    color: #f4f1ea;
+    font-size: 16px;
+    -unity-text-align: middle-center;
+    margin-bottom: 12px;
 }
 
 .loader-bar {

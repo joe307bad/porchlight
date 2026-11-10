@@ -409,8 +409,12 @@ namespace Porchlight.App
         void Switch(Built next)
         {
             double dx = next.space.x0 - active.x0, dy = next.space.y0 - active.y0;
-            view.SwitchSpace(next.world, dx, dy);
+            // The new space is the one you're in before the view takes it on: its walk mask and sky floor
+            // ask the county's hills (view.Rise) in its terms. Set after, they were asked where the space
+            // you'd left lies, so a town driven into was mostly "hillside": lots and building floors closed,
+            // only the paved streets walkable, and no way into any building on foot.
             active = next.space;
+            view.SwitchSpace(next.world, dx, dy);
             foreach (var b in built.Values)
                 if (b.world != null) Place(b.world.root.transform, b.space.x0, b.space.y0);
             Place(countryside.transform, 0, 0);

@@ -259,7 +259,7 @@ namespace Porchlight.App
         bool Loading => loader.Visible;
 
         /// <summary>The loader up for a load (`flow` names it, for its timings), or carrying on with the one showing.</summary>
-        void ShowLoader(string flow) => loader.Begin(flow);
+        void ShowLoader(string flow, string what = null) => loader.Begin(flow, 0, what);
 
         /// <summary>`keep`: it got where it was going, so its timings are worth remembering.</summary>
         void HideLoader(bool keep = true)
@@ -1075,7 +1075,7 @@ namespace Porchlight.App
         /// <summary>Their town's map, to choose a house on.</summary>
         void ChooseHouse(Character c, string note = null)
         {
-            ShowLoader("house");
+            ShowLoader("house", c.home?.townName);
             AfterPaint(() => OpenHousePicker(c, note));
         }
 
@@ -1137,7 +1137,7 @@ namespace Porchlight.App
         /// <summary>Into this character's town, as them: at their front door, or (a reload) where they were.</summary>
         void PlayAs(Character c, bool atDoor)
         {
-            ShowLoader("town");
+            ShowLoader("town", c.home?.townName);
             AfterPaint(() => EnterAs(c, atDoor));
         }
 
@@ -1149,6 +1149,8 @@ namespace Porchlight.App
             if (county != null) county.Net = null;
             if (iso != null) iso.TeleportHook = null;
             await Run(ShowTownSteps(c.home.townKey), "town/");
+            // The county's space on screen isn't their town (left out on a highway): their town afresh, as going home does.
+            if (county != null && county.Active?.townKey != c.home.townKey) isoTown = null;
             // Generated afresh, a town can have changed since they moved in.
             if (Homes.At(Homes.All(model), c.home.x, c.home.y) == null)
             {
@@ -1167,7 +1169,7 @@ namespace Porchlight.App
         /// <summary>Into someone else's town as this character, who needn't live anywhere yet.</summary>
         void Visit(Character c, Character them)
         {
-            ShowLoader("town");
+            ShowLoader("town", TownSpace(them.town)?.name);
             AfterPaint(() => VisitNow(c, them));
         }
 
@@ -1264,7 +1266,7 @@ namespace Porchlight.App
                 return;
             }
             // Anywhere else (another town, out on the highways, the junction): your town afresh, at your door.
-            ShowLoader("town");
+            ShowLoader("town", home.townName);
             AfterPaint(async () =>
             {
                 preferHome = true;
@@ -1948,7 +1950,7 @@ namespace Porchlight.App
         /// <summary>Into their town (if we're not there), arriving beside them once they're seen.</summary>
         void Join(Character them)
         {
-            ShowLoader("town");
+            ShowLoader("town", TownSpace(them.town)?.name);
             AfterPaint(() => GoTo(them));
         }
 

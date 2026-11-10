@@ -19,6 +19,7 @@ namespace Porchlight.UI
 
         public readonly VisualElement root;
         readonly VisualElement fill;
+        readonly Label title;
         readonly Func<double> now;
         readonly Func<string, string> load;
         readonly Action<string, string> save;
@@ -34,6 +35,9 @@ namespace Porchlight.UI
             this.load = load;
             this.save = save;
             root = El.Box("loader");
+            title = El.Text("", "loader-text");
+            title.style.display = DisplayStyle.None;
+            root.Add(title);
             var bar = El.Box("loader-bar");
             fill = El.Box("loader-fill");
             bar.Add(fill);
@@ -49,10 +53,12 @@ namespace Porchlight.UI
             return page + first > 0 ? page / (page + first) : 0.5;
         }
 
-        /// <summary>Show the bar for a load (already showing: carry on with the one under way).</summary>
-        public void Begin(string flow, double from = 0)
+        /// <summary>Show the bar for a load (already showing: carry on with the one under way). `what`: "Loading {what}" over it.</summary>
+        public void Begin(string flow, double from = 0, string what = null)
         {
+            if (what != null) Title(what);
             if (Visible && this.flow != null) return;
+            if (what == null) Title(null);
             this.flow = flow;
             this.from = from;
             shown = from;
@@ -70,6 +76,13 @@ namespace Porchlight.UI
             double t = now();
             done.Add(new KeyValuePair<string, double>(name, t - stepAt));
             stepAt = t;
+        }
+
+        /// <summary>"Loading {what}" over the bar (null: just the bar).</summary>
+        public void Title(string what)
+        {
+            title.text = string.IsNullOrEmpty(what) ? "" : $"Loading {what}…";
+            title.style.display = string.IsNullOrEmpty(what) ? DisplayStyle.None : DisplayStyle.Flex;
         }
 
         /// <summary>Hide it; `keep`: remember how long the steps took, for the next time.</summary>

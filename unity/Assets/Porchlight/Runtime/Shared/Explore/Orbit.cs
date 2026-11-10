@@ -116,7 +116,13 @@ namespace Porchlight.Explore
         readonly double rate;
         readonly double maxSpeed;
 
-        public Follow(double rate, double maxSpeed = 15)
+        /// <summary>
+        /// Anything faster than `maxSpeed` (tiles a second) in a frame is taken for a jump and eased over.
+        /// It sits well above the fastest thing you can drive (a boosted car, 17.7): a threshold just under a
+        /// car's top speed had frames flicking between "jumped" and "moving" as their length wobbled, and the
+        /// close camera's look point lurched back and forth (the view nodding up and down) at full boost.
+        /// </summary>
+        public Follow(double rate, double maxSpeed = 40)
         {
             this.rate = rate;
             this.maxSpeed = maxSpeed;

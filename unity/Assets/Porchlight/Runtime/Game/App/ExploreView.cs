@@ -203,6 +203,8 @@ namespace Porchlight.App
         double chaseSwing;
         double chaseDistance = CHASE_DISTANCE;
         double shownChaseDistance = CHASE_DISTANCE;
+        /// <summary>The chase camera's distance after walls pull it in, eased (PlaceChase).</summary>
+        double chaseReach = CHASE_DISTANCE;
         Vector3 chasePos;
         Vector3 chaseLook;
         int? room;
@@ -2649,7 +2651,17 @@ namespace Porchlight.App
             var at = new Vec2(p.x, p.y);
             // Up with a plane in flight.
             double look = CHASE_LOOK_HEIGHT + (InCar ? p.lift : 0);
-            foreach (var b in world.boxes) dist = Math.Min(dist, Math.Max(0.5, Orbit.RayBoxDistance(at, look, o, b) - 0.2));
+            // Walls between you and the camera pull it in (and so down). In a car past its everyday top speed
+            // the buildings flash by too fast for that to be anything but a lurch, so it stays out where it is
+            // (the car shows through them); otherwise a car's camera comes in quickly and drifts back out,
+            // rather than snapping in and out at every box it passes. On foot it's as close as the wall says.
+            var drivenCar = driving != null ? cars[driving.Value].car : null;
+            bool flatOut = drivenCar != null && drivenCar.kind == VehicleKind.Car && Math.Abs(drivenCar.speed) > Vehicle.TOP_SPEED * 1.02;
+            if (!flatOut)
+                foreach (var b in world.boxes) dist = Math.Min(dist, Math.Max(0.5, Orbit.RayBoxDistance(at, look, o, b) - 0.2));
+            if (snap || !InCar || chaseReach > shownChaseDistance) chaseReach = dist;
+            else chaseReach += (dist - chaseReach) * Orbit.EaseBy(dist < chaseReach ? 10 : 2.5, dt);
+            dist = Math.Min(chaseReach, shownChaseDistance);
             double flat = Numbers.Hypot(o.x, o.y);
             var ahead = new Vec2(-o.x / flat, -o.y / flat);
             lookFollow.Update(p.x + ahead.x * CHASE_LOOK_AHEAD, look, p.y + ahead.y * CHASE_LOOK_AHEAD, dt, snap);
