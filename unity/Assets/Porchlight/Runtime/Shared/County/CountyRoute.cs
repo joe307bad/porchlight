@@ -105,6 +105,49 @@ namespace Porchlight.County
             return o;
         }
 
+        /// <summary>
+        /// The next town on the way to `to` from `here` (at `from`, world tiles): the one a car gets to
+        /// first, `to` itself or one the way runs through; null if there's no way, or you're in `to`.
+        /// For building that town before any other.
+        /// </summary>
+        public static Space NextTown(CountyMap map, Space here, Vec2 from, Space to)
+        {
+            if (here == null || to == null || here.id == to.id) return null;
+            var dist = DistancesTo(map, to);
+            int at = here.id;
+            if (here.kind == SpaceKind.Highway)
+            {
+                var hw = map.highways[here.highway];
+                var (s, _) = CountyMap.Nearest(hw, from);
+                double viaA = s + dist[hw.a.space], viaB = hw.length - s + dist[hw.b.space];
+                if (double.IsInfinity(viaA) && double.IsInfinity(viaB)) return null;
+                at = (Math.Abs(viaB - viaA) < 1e-6 ? s < hw.length / 2 : viaB < viaA) ? hw.b.space : hw.a.space;
+            }
+            for (int guard = 0; guard <= map.spaces.Count; guard++)
+            {
+                var stop = map.spaces[at];
+                if (stop.id != here.id && stop.kind == SpaceKind.Town) return stop;
+                Highway best = null;
+                double bestD = double.PositiveInfinity;
+                int next = -1;
+                foreach (var hw in map.highways)
+                {
+                    int other = hw.a.space == at ? hw.b.space : hw.b.space == at ? hw.a.space : -1;
+                    if (other < 0) continue;
+                    double d = hw.length + dist[other];
+                    if (d < bestD)
+                    {
+                        bestD = d;
+                        best = hw;
+                        next = other;
+                    }
+                }
+                if (best == null || double.IsInfinity(bestD)) return null;
+                at = next;
+            }
+            return null;
+        }
+
         static void Append(List<Vec2> o, List<Vec2> pts)
         {
             foreach (var p in pts)

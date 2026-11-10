@@ -46,6 +46,10 @@ namespace Porchlight.App
         const int MAX_TOWNS = 2;
         /// <summary>Building, each frame, while you play (ms).</summary>
         const double BUDGET_MS = 5;
+        /// <summary>...and while you wait at the edge of a space that isn't ready: more, still a frame at a time (the loading bar moves).</summary>
+        const double WAIT_BUDGET_MS = 28;
+        /// <summary>A space that failed to build is tried again after this long (ms).</summary>
+        const double RETRY_MS = 5000;
         /// <summary>Over the line into another room's ground this long (ms) before this tab moves rooms.</summary>
         const double ROOM_SETTLE_MS = 400;
         /// <summary>The countryside's ground, just under the towns'.</summary>
@@ -59,10 +63,27 @@ namespace Porchlight.App
             public TownWorld world;
             public IEnumerator<string> steps;
             public IEnumerator<string> growing;
-            public Task<TownModel> thread;
+            public Task<(TownModel model, TownWorld.Prepared prepared)> thread;
+            public TownWorld.Prepared prepared;
+            /// <summary>The part of its world last built (TownWorld.Build), for how far along it is.</summary>
+            public string part;
             public bool ready;
             public bool failed;
+            public double failedAt;
         }
+
+        /// <summary>
+        /// Every town of the county grown (and its layout, names and signposts worked out) on a worker
+        /// thread, the nearest first, from the moment the county starts: getting to one, only its world
+        /// is left to build. Off the web only (no threads there).
+        /// </summary>
+        readonly Dictionary<string, Lazy<(TownModel, TownWorld.Prepared)>> grown = new Dictionary<string, Lazy<(TownModel, TownWorld.Prepared)>>();
+
+        /// <summary>The town you're heading for next (a trip's next town on the way), built before any other; null: the nearest.</summary>
+        public Func<Space> Heading;
+
+        /// <summary>Waiting at the edge of a space still being built: its name and how far along it is (0-1); null if not.</summary>
+        public (string name, double progress)? Waiting { get; private set; }
 
         readonly ExploreView view;
         public readonly CountyMap map;
@@ -102,6 +123,29 @@ namespace Porchlight.App
             this.parseKey = parseKey;
             active = start;
             built[start.id] = new Built { space = start, model = view.world.model, world = view.world, ready = true };
+#if !(UNITY_WEBGL && !UNITY_EDITOR)
+            foreach (var s in map.spaces)
+            {
+                if (s.kind != SpaceKind.Town || s == start || grown.ContainsKey(s.townKey)) continue;
+                var (seed, p) = parseKey(s.townKey);
+                grown[s.townKey] = new Lazy<(TownModel, TownWorld.Prepared)>(() =>
+                {
+                    var m = Generator.Generate(seed, p);
+                    return (m, TownWorld.Prepared.Of(m));
+                }, System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+            }
+            var order = map.spaces.Where(s => s.kind == SpaceKind.Town && grown.ContainsKey(s.townKey))
+                .OrderBy(s => CountyMap.DistanceTo(s, new Vec2(start.x0 + start.width / 2.0, start.y0 + start.height / 2.0)))
+                .Select(s => grown[s.townKey]).ToList();
+            Task.Run(() =>
+            {
+                foreach (var g in order)
+                {
+                    try { _ = g.Value; }
+                    catch (Exception e) { Debug.LogWarning("county: a town didn't grow: " + e.Message); }
+                }
+            });
+#endif
             Terrain = CountyTerrain.Build(map);
             countryside = Countryside();
             Hills(countryside.transform);
@@ -160,12 +204,14 @@ namespace Porchlight.App
             if (local == null || view.world == null) return;
             var at = active.ToWorld(local.Value);
             Plan(at);
-            Step();
-            if (!Paused)
-            {
-                var next = map.SpaceAt(at, active);
-                if (next != null && next != active && built.TryGetValue(next.id, out var b) && b.ready && b.world != null) Switch(b);
-            }
+            // Over the line into a space that isn't ready: you wait at its edge, and it's built faster meanwhile.
+            var ahead = Paused ? null : map.SpaceAt(at, active);
+            Built wanted = null;
+            if (ahead != null && ahead != active) built.TryGetValue(ahead.id, out wanted);
+            bool waiting = ahead != null && ahead != active && (wanted == null || !wanted.ready || wanted.world == null);
+            Waiting = waiting ? (ahead.name, wanted == null ? 0 : Progress(wanted)) : ((string, double)?)null;
+            Step(waiting ? WAIT_BUDGET_MS : BUDGET_MS);
+            if (!waiting && wanted != null) Switch(wanted);
             Rooms(active.ToWorld(view.PlayerPosition ?? local.Value));
         }
 
@@ -176,15 +222,20 @@ namespace Porchlight.App
         {
             var towns = new List<(Space s, double d)>();
             var want = new HashSet<int> { active.id };
+            var head = Heading?.Invoke();
             foreach (var s in map.spaces)
             {
                 double d = CountyMap.DistanceTo(s, at);
                 if (s.kind == SpaceKind.Town)
                 {
-                    if (s != active && d < TOWN_REACH) towns.Add((s, d));
+                    // The town you're heading for comes first, however far.
+                    if (s == head && s != active) towns.Add((s, -1));
+                    else if (s != active && d < TOWN_REACH) towns.Add((s, d));
                 }
                 else if (d < ROAD_REACH) want.Add(s.id);
             }
+            // One that failed is tried again a while later.
+            foreach (var id in built.Where(kv => kv.Value.failed && Now - kv.Value.failedAt > RETRY_MS).Select(kv => kv.Key).ToList()) built.Remove(id);
             towns.Sort((a, b) => a.d.CompareTo(b.d));
             int room = MAX_TOWNS - (active.kind == SpaceKind.Town ? 1 : 0);
             for (int i = 0; i < towns.Count && i < room; i++) want.Add(towns[i].s.id);
@@ -225,7 +276,7 @@ namespace Porchlight.App
             {
                 if (built.ContainsKey(id)) continue;
                 var s = map.spaces[id];
-                double d = CountyMap.DistanceTo(s, at);
+                double d = s == head ? -1 : CountyMap.DistanceTo(s, at);
                 if (d < bestD)
                 {
                     bestD = d;
@@ -238,8 +289,8 @@ namespace Porchlight.App
             {
                 Built farthest = null;
                 foreach (var b in built.Values)
-                    if (b.space.kind == SpaceKind.Town && b.space != active && (farthest == null || CountyMap.DistanceTo(b.space, at) > CountyMap.DistanceTo(farthest.space, at))) farthest = b;
-                if (farthest == null || CountyMap.DistanceTo(farthest.space, at) < CountyMap.DistanceTo(best, at)) return;
+                    if (b.space.kind == SpaceKind.Town && b.space != active && b.space != head && (farthest == null || CountyMap.DistanceTo(b.space, at) > CountyMap.DistanceTo(farthest.space, at))) farthest = b;
+                if (farthest == null || best != head && CountyMap.DistanceTo(farthest.space, at) < CountyMap.DistanceTo(best, at)) return;
                 farthest.world?.Dispose();
                 built.Remove(farthest.space.id);
             }
@@ -255,14 +306,59 @@ namespace Porchlight.App
 #if UNITY_WEBGL && !UNITY_EDITOR
             b.growing = Generator.GenerateSteps(seed, p, m => b.model = m).GetEnumerator();
 #else
-            b.thread = Task.Run(() => Generator.Generate(seed, p));
+            // Grown already (or growing) since the county started: waits for that rather than growing it twice.
+            if (!grown.TryGetValue(b.space.townKey, out var g))
+                grown[b.space.townKey] = g = new Lazy<(TownModel, TownWorld.Prepared)>(() =>
+                {
+                    var m = Generator.Generate(seed, p);
+                    return (m, TownWorld.Prepared.Of(m));
+                }, System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+            b.thread = g.IsValueCreated ? Task.FromResult(g.Value) : Task.Run(() => g.Value);
 #endif
         }
 
-        /// <summary>The job in hand, a few milliseconds' worth.</summary>
-        void Step()
+        /// <summary>How far along a space's building is (0-1): growing, then its world's parts in turn.</summary>
+        static double Progress(Built b)
         {
-            double until = Now + BUDGET_MS;
+            if (b.ready) return 1;
+            if (b.world == null) return b.model == null ? 0.05 : 0.15;
+            string part = b.part ?? "";
+            int rooms = Math.Max(1, b.world.rooms.Count);
+            double Through(string prefix, double from, double to, double count)
+            {
+                int.TryParse(part.Substring(prefix.Length), out int k);
+                return from + (to - from) * Math.Min(1, (k + 1) / Math.Max(1, count));
+            }
+            if (part.StartsWith("furnishing")) return Through("furnishing", 0.35, 0.45, rooms / 48.0);
+            if (part.StartsWith("doors")) return Through("doors", 0.45, 0.5, rooms / 64.0);
+            if (part.StartsWith("interiors") && part != "interiors") return Through("interiors", 0.5, 0.7, rooms / 64.0);
+            if (part.StartsWith("signs")) return Through("signs", 0.82, 0.9, Math.Max(1, b.world.signs.Count / 12.0));
+            if (part.StartsWith("batching") && part != "batching") return Through("batching", 0.93, 0.99, 8);
+            switch (part)
+            {
+                case "ground": return 0.2;
+                case "water": return 0.22;
+                case "roads": return 0.27;
+                case "houses": return 0.35;
+                case "screens": return 0.45;
+                case "rooms": return 0.5;
+                case "interiors": return 0.7;
+                case "yards": return 0.73;
+                case "trees": return 0.75;
+                case "plazas": return 0.77;
+                case "parked": return 0.78;
+                case "places": return 0.8;
+                case "signposts": return 0.82;
+                case "signs": return 0.9;
+                case "survey": return 0.93;
+                default: return 0.18;
+            }
+        }
+
+        /// <summary>The job in hand, a few milliseconds' worth.</summary>
+        void Step(double budget)
+        {
+            double until = Now + budget;
             while (job != null && Now < until)
             {
                 var b = job;
@@ -273,7 +369,7 @@ namespace Porchlight.App
                         if (b.thread != null)
                         {
                             if (!b.thread.IsCompleted) return;
-                            b.model = b.thread.Result;
+                            (b.model, b.prepared) = b.thread.Result;
                         }
                         else if (b.growing != null)
                         {
@@ -285,7 +381,7 @@ namespace Porchlight.App
                     }
                     if (b.world == null)
                     {
-                        b.world = new TownWorld(b.model, view.Library, stepwise: true, inCounty: true);
+                        b.world = new TownWorld(b.model, view.Library, stepwise: true, inCounty: true, prepared: b.prepared);
                         Place(b.world.root.transform, b.space.x0, b.space.y0);
                         b.steps = b.world.Build().GetEnumerator();
                         continue;
@@ -295,6 +391,7 @@ namespace Porchlight.App
                         b.ready = true;
                         job = null;
                     }
+                    else b.part = b.steps.Current;
                 }
                 catch (Exception err)
                 {
@@ -302,6 +399,7 @@ namespace Porchlight.App
                     b.world?.Dispose();
                     b.world = null;
                     b.failed = true;
+                    b.failedAt = Now;
                     job = null;
                 }
             }

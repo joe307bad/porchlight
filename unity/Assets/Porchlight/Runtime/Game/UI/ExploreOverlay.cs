@@ -435,6 +435,22 @@ namespace Porchlight.UI
             notice.pickingMode = PickingMode.Ignore;
             notice.style.display = DisplayStyle.None;
             host.Add(notice);
+            // Waiting at the edge of a town still being built: what for, and a bar that fills.
+            loading = new VisualElement();
+            loading.AddToClassList("county-loading");
+            loading.pickingMode = PickingMode.Ignore;
+            loadingText = new Label();
+            loadingText.AddToClassList("county-loading-text");
+            loading.Add(loadingText);
+            var track = new VisualElement();
+            track.AddToClassList("county-loading-track");
+            loadingFill = new VisualElement();
+            loadingFill.AddToClassList("county-loading-fill");
+            track.Add(loadingFill);
+            loading.Add(track);
+            loading.style.display = DisplayStyle.None;
+            host.Add(loading);
+            loading.RegisterCallback<GeometryChangedEvent>(_ => Center());
             host.RegisterCallback<GeometryChangedEvent>(_ => Center());
             prompt.RegisterCallback<GeometryChangedEvent>(_ => Center());
             notice.RegisterCallback<GeometryChangedEvent>(_ => Center());
@@ -565,6 +581,31 @@ namespace Porchlight.UI
             prompt.style.left = (w - prompt.layout.width) / 2;
             notice.style.maxWidth = Math.Max(0, w - 32);
             notice.style.left = (w - notice.layout.width) / 2;
+            loading.style.left = (w - loading.layout.width) / 2;
+        }
+
+        VisualElement loading, loadingFill;
+        Label loadingText;
+        string loadingShown;
+
+        /// <summary>Waiting for a town (or a stretch of road) to be ready: its name and how far along (0-1); null hides the bar.</summary>
+        public void SetLoading((string name, double progress)? waiting)
+        {
+            if (waiting == null)
+            {
+                if (loadingShown == null) return;
+                loadingShown = null;
+                loading.style.display = DisplayStyle.None;
+                return;
+            }
+            var (name, progress) = waiting.Value;
+            int pct = (int)Math.Round(Math.Max(0, Math.Min(1, progress)) * 100);
+            string text = $"Getting {name} ready… {pct}%";
+            if (text == loadingShown) return;
+            loadingShown = text;
+            loadingText.text = text;
+            loadingFill.style.width = Length.Percent(pct);
+            loading.style.display = DisplayStyle.Flex;
         }
 
         public void SetTown(TownModel m)
@@ -656,13 +697,31 @@ namespace Porchlight.UI
             }
             if (route != null && route.Count > 1)
             {
-                painter.BeginPath();
-                painter.MoveTo(P(route[0]));
-                for (int i = 1; i < route.Count; i++) painter.LineTo(P(route[i]));
+                // A point a pixel or more on from the last (a trip's way has thousands), in strokes of at
+                // most a few hundred: one stroke past 65535 vertices isn't drawn at all.
                 painter.strokeColor = Coords.Hex(0xff6a00);
                 painter.lineWidth = 1.5f * dev;
                 painter.lineJoin = LineJoin.Miter;
                 painter.lineCap = LineCap.Butt;
+                const int STROKE = 400;
+                var last = P(route[0]);
+                painter.BeginPath();
+                painter.MoveTo(last);
+                int n = 0;
+                for (int i = 1; i < route.Count; i++)
+                {
+                    var q = P(route[i]);
+                    if (i < route.Count - 1 && (q - last).sqrMagnitude < 1) continue;
+                    painter.LineTo(q);
+                    last = q;
+                    if (++n >= STROKE && i < route.Count - 1)
+                    {
+                        painter.Stroke();
+                        painter.BeginPath();
+                        painter.MoveTo(last);
+                        n = 0;
+                    }
+                }
                 painter.Stroke();
             }
             NeighbourHouses(painter, P);

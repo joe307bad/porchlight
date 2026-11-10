@@ -513,11 +513,71 @@ namespace Porchlight.App
             Application.Quit(0);
         }
 
+        /// <summary>
+        /// How long the county's towns take to build, a part at a time as CountyDrive builds them on the
+        /// way (PORCHLIGHT_SMOKE_BUILD=1): each part's milliseconds (a long one is a dropped frame), and
+        /// the frame rate as the town on screen is walked, dry and in the rain.
+        /// </summary>
+        async Task SmokeBuild()
+        {
+            var keys = new List<string> { TownKey };
+            keys.AddRange(Porchlight.County.CountyMap.Cities.Select(c => c.key));
+            foreach (var key in keys)
+            {
+                var st = ParseUrlState(key);
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var town = Porchlight.Gen.Generator.Generate(st.seed, st.@params);
+                var prepared = Porchlight.Rendering.TownWorld.Prepared.Of(town);
+                double grow = clock.Elapsed.TotalMilliseconds;
+                clock.Restart();
+                var world = new Porchlight.Rendering.TownWorld(town, iso.Library, stepwise: true, inCounty: true, prepared: prepared);
+                var parts = new List<string> { $"begin {clock.Elapsed.TotalMilliseconds:0}" };
+                double total = clock.Elapsed.TotalMilliseconds, worst = total;
+                foreach (var part in world.Build())
+                {
+                    double ms = clock.Elapsed.TotalMilliseconds - total;
+                    total += ms;
+                    worst = Math.Max(worst, ms);
+                    parts.Add($"{part} {ms:0}");
+                    await Task.Yield();
+                    clock.Restart();
+                    total = 0;
+                }
+                Debug.Log($"smoke build: {st.seed} {town.width}x{town.height}: grown and prepared in {grow:0} ms (worker thread); built in {parts.Count} parts, the longest {worst:0} ms: {string.Join(", ", parts)}");
+                world.Dispose();
+            }
+            iso?.SetAuto(true);
+            foreach (var rain in new[] { false, true })
+            {
+                iso?.SetWeather(rain, false);
+                for (int i = 0; i < 60; i++) await Task.Yield();
+                double start = platform.Now(), longest = 0, last = start;
+                int frames = 0;
+                while (platform.Now() < start + 5000)
+                {
+                    await Task.Yield();
+                    double now = platform.Now();
+                    longest = Math.Max(longest, now - last);
+                    last = now;
+                    frames++;
+                }
+                Debug.Log($"smoke build: walking {(rain ? "in the rain" : "dry")}: {frames / ((platform.Now() - start) / 1000):0} fps, the longest frame {longest:0} ms");
+            }
+            iso?.SetWeather(false, false);
+            iso?.SetAuto(false);
+        }
+
         /// <summary>A headless run through the app (PORCHLIGHT_SMOKE=1): explore, walk a while, back to the map, quit.</summary>
         async Task Smoke()
         {
             Debug.Log($"smoke: town {seed}: {statusLabel.text}");
             await Explore();
+            if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_BUILD") == "1")
+            {
+                await SmokeBuild();
+                Application.Quit(0);
+                return;
+            }
             Debug.Log($"smoke: exploring={exploring} player={iso?.PlayerPosition}");
             iso?.SetAuto(true);
             double start = platform.Now(), until = start + 8000;
@@ -1285,6 +1345,7 @@ namespace Porchlight.App
                 {
                     county.Paused = mission != null || missionStarting != null;
                     county.Update();
+                    overlay?.SetLoading(county.Waiting);
                 }
                 UpdateMission();
                 UpdateGarage();
@@ -1600,6 +1661,7 @@ namespace Porchlight.App
             county = null;
             if (netFrame != null) netFrame.county = null;
             overlay?.SetCounty(null, null, null, null, null);
+            overlay?.SetLoading(null);
         }
 
         /// <summary>Where you are in the county (world tiles), for its map.</summary>
@@ -1608,6 +1670,15 @@ namespace Porchlight.App
             var at = iso?.PlayerPosition;
             var here = county?.Active;
             return at != null && here != null ? here.ToWorld(at.Value) : (Vec2?)null;
+        }
+
+        /// <summary>On a trip to another town, the next town on the way there (built before any other); null: none.</summary>
+        Space TripNextTown()
+        {
+            if (tripTo == null || iso == null || !iso.OnTrip || county == null) return null;
+            var dest = tripTown != null ? TownSpace(tripTown) : null;
+            var from = WhereInCounty();
+            return dest != null && from != null ? CountyRoute.NextTown(county.map, county.Active, from.Value, dest) : null;
         }
 
         /// <summary>On a trip to another town, the way there from where you are (world tiles), for the county's map; null: none.</summary>
@@ -1663,7 +1734,7 @@ namespace Porchlight.App
                     var st = ParseUrlState(k);
                     return (st.seed, st.@params);
                 })
-                { Net = net, Frame = netFrame, OnSpace = DroveInto };
+                { Net = net, Frame = netFrame, OnSpace = DroveInto, Heading = TripNextTown };
                 county.EnterRoom();
                 // Now the houses in the county's other towns have roads to them.
                 OfferDirections();
@@ -1831,7 +1902,12 @@ namespace Porchlight.App
                     var house = Homes.At(iso.world.model.buildings, x, y);
                     var door = house != null ? Homes.Door(iso.world.rooms, house.id) : null;
                     if (door == null) return null;
-                    return (door.Value.at, label, true, (List<Vec2>)null);
+                    // A door by the edge of town: the way ends a little way in from it (where the town still has you),
+                    // never out over the edge, where the road would take you back out of town and in again.
+                    var m = iso.world.model;
+                    const double IN = 2;
+                    var at = new Vec2(Math.Max(IN, Math.Min(m.width - IN, door.Value.at.x)), Math.Max(IN, Math.Min(m.height - IN, door.Value.at.y)));
+                    return (at, label, true, (List<Vec2>)null);
                 }
                 var dest = TownSpace(townKey);
                 if (here == null || dest == null) return null;

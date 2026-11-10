@@ -75,6 +75,33 @@ static class CountyCheck
         return failed == 0 ? 0 : 1;
     }
 
+    /// <summary>About where a house's front door is: the middle of its footprint's front, a little out (Homes.Door is the real one, off the model).</summary>
+    public static Vec2 FrontDoor(House h)
+    {
+        int x0 = h.tiles.Min(t => t.x), y0 = h.tiles.Min(t => t.y), x1 = h.tiles.Max(t => t.x) + 1, y1 = h.tiles.Max(t => t.y) + 1;
+        var o = Interiors.Outward(h.facing);
+        double cx = (x0 + x1) / 2.0, cy = (y0 + y1) / 2.0;
+        return new Vec2(cx + o.x * ((x1 - x0) / 2.0 + 0.35), cy + o.y * ((y1 - y0) / 2.0 + 0.35));
+    }
+
+    /// <summary>Houses whose front door is near the edge of their town: `doors`.</summary>
+    public static int Doors()
+    {
+        foreach (var t in PublicTowns())
+        {
+            var (seed, p) = Program.ParseKey(t.key);
+            var model = Generator.Generate(seed, p);
+            var layout = Layout.Build(model);
+            foreach (var h in layout.houses)
+            {
+                var d = FrontDoor(h);
+                double edge = Math.Min(Math.Min(d.x, d.y), Math.Min(model.width - d.x, model.height - d.y));
+                if (edge < 3) Console.WriteLine($"{t.name}: house at {h.tiles[0].x},{h.tiles[0].y} facing {h.facing}: door about {N(d.x)},{N(d.y)}, {N(edge)} from the edge");
+            }
+        }
+        return 0;
+    }
+
     public static int Run(string vectorsFile)
     {
         int failed = 0;
@@ -490,6 +517,112 @@ static class CountyCheck
             count++;
         }
         return ("still going after 200 spaces", 0, count);
+    }
+
+    /// <summary>Where the game ends a trip at a door (PorchlightApp.DirectionsTo): the door, but 2 tiles or more inside its town.</summary>
+    static Vec2 InFromEdge(Space town, Vec2 door)
+    {
+        const double IN = 2;
+        var l = town.ToLocal(door);
+        return town.ToWorld(new Vec2(Math.Max(IN, Math.Min(town.width - IN, l.x)), Math.Max(IN, Math.Min(town.height - IN, l.y))));
+    }
+
+    static readonly Dictionary<TownModel, Func<double, double, bool>> drivable = new Dictionary<TownModel, Func<double, double, bool>>();
+
+    /// <summary>The game's trip ends this close to the door (ExploreView.TRIP_REACHED).</summary>
+    const double TRIP_REACHED = 3.0;
+
+    /// <summary>
+    /// A trip as the game drives it (PorchlightApp.DirectionsTo, ExploreView.UpdateFind, CountyDrive): every
+    /// so often where to head is asked afresh (in the house's town, its door; anywhere else CountyRoute.Next),
+    /// the way there along the streets (StreetRoute) is driven a little, a car only where a car can go, and
+    /// whichever space the county says you're in (SpaceAt) takes over at once. Null if you get to the door;
+    /// else what went wrong: no way, stuck, or going back and forth between spaces.
+    /// </summary>
+    public static (string error, int spaces, double km) Drive(CountyMap map, Space start, Vec2 at, Space dest, Vec2 door, Func<Space, Vec2, Vec2> finalTarget = null)
+    {
+        var here = start;
+        var pos = at;
+        int switches = 0;
+        double travelled = 0;
+        var visits = new Dictionary<int, int>();
+        const double REPLAN = 30; // tiles between asking afresh: a second or two at a car's speed
+        for (int tick = 0; tick < 4000; tick++)
+        {
+            var (model, layout, _) = Streets(map, here);
+            Vec2 target;
+            bool final = here.id == dest.id;
+            if (final) target = finalTarget != null ? finalTarget(here, door) : InFromEdge(here, door);
+            else
+            {
+                var stop = CountyRoute.Next(map, here, pos, dest);
+                if (stop == null) return ($"no way on from {Describe(here)}", switches, 0);
+                target = stop.Value.at;
+            }
+            if (final && Geo.Dist(pos, target) < TRIP_REACHED) return (null, switches + 1, travelled * Directions.METRES_PER_TILE / 1000);
+            var way = StreetRoute.Between(layout.roads, here.ToLocal(pos), here.ToLocal(target));
+            if (way == null) return ($"no streets in {Describe(here)} to {(final ? "the door" : "where to head")}", switches, 0);
+            if (!drivable.TryGetValue(model, out var drive)) drivable[model] = drive = Vehicle.Drivable(model, layout);
+            var pts = Geo.SamplePolyline(way.points, 0.25);
+            double moved = 0;
+            Space next = null;
+            for (int i = 1; i < pts.Count && moved < REPLAN; i++)
+            {
+                var l = pts[i];
+                bool inside = l.x > 0.05 && l.y > 0.05 && l.x < model.width - 0.05 && l.y < model.height - 0.05;
+                // A car keeps to where it can drive (the last bit to a door is on foot, or not at all).
+                if (!inside || !drive(l.x, l.y) || model.OffVerge(l.x, l.y)) break;
+                moved += Geo.Dist(pts[i - 1], l);
+                pos = here.ToWorld(l);
+                if (final && Geo.Dist(pos, target) < TRIP_REACHED) break;
+                var s = map.SpaceAt(pos, here);
+                if (s != null && s.id != here.id) { next = s; break; }
+            }
+            travelled += moved;
+            if (next != null)
+            {
+                switches++;
+                visits[next.id] = visits.TryGetValue(next.id, out int v) ? v + 1 : 1;
+                if (visits[next.id] > 2) return ($"back and forth: into {Describe(next)} a {visits[next.id]}rd time, at {N(pos.x)},{N(pos.y)}", switches, 0);
+                here = next;
+                continue;
+            }
+            if (moved < 0.2 && !(final && Geo.Dist(pos, target) < TRIP_REACHED))
+                return ($"stuck in {Describe(here)} at {N(here.ToLocal(pos).x)},{N(here.ToLocal(pos).y)}, {N(Geo.Dist(pos, target))} from {(final ? "the door" : "where to head")}", switches, 0);
+        }
+        return ("still driving after 4000 goes", switches, 0);
+    }
+
+    /// <summary>Into each town by each of its highways (from a way out along it), to every house: `arrivals [town]`.</summary>
+    public static List<string> Arrivals(CountyMap map, string only = null, Func<Space, Vec2, Vec2> finalTarget = null, bool quiet = false)
+    {
+        var errors = new List<string>();
+        foreach (var hw in map.highways)
+            foreach (var (port, sAt) in new[] { (hw.a, Math.Min(30, hw.length / 2)), (hw.b, Math.Max(hw.length - 30, hw.length / 2)) })
+            {
+                var town = map.spaces[port.space];
+                if (town.kind != SpaceKind.Town || only != null && town.name != only) continue;
+                var seg = map.spaces[port.space == hw.a.space ? hw.segments[0] : hw.segments[hw.segments.Count - 1]];
+                var from = CountyMap.PointAt(hw, sAt);
+                var (model, layout, _) = Streets(map, town);
+                int bad = 0, n = 0;
+                int k = 0;
+                foreach (var h in layout.houses)
+                {
+                    if (h.kind != BuildingKind.House) continue;
+                    // The houses by the edge (where a door can lead you out of town), and a few of the rest.
+                    var d = FrontDoor(h);
+                    bool byEdge = Math.Min(Math.Min(d.x, d.y), Math.Min(model.width - d.x, model.height - d.y)) < 6;
+                    if (!byEdge && k++ % 15 != 0) continue;
+                    n++;
+                    var door = town.ToWorld(d);
+                    var (error, _, _) = Drive(map, seg, from, town, door, finalTarget);
+                    if (error != null && bad++ < 4) errors.Add($"into {town.name} by {hw.name}, to the house at {h.tiles[0].x},{h.tiles[0].y}: {error}");
+                }
+                if (bad > 0) errors.Add($"into {town.name} by {hw.name}: {bad} of {n} houses not got to");
+                else if (!quiet) Console.WriteLine($"ok into {town.name} by {hw.name}: all {n} houses");
+            }
+        return errors;
     }
 
     static double Length(List<Vec2> pts)

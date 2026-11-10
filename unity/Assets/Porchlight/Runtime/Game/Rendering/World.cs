@@ -124,15 +124,37 @@ namespace Porchlight.Rendering
         /// </summary>
         readonly bool inCounty;
 
-        /// <summary>`stepwise`: only begun; <see cref="Build"/> does the rest, a part at a time. `inCounty`: no slab round it.</summary>
-        public TownWorld(TownModel model, ModelLibrary library, bool stepwise = false, bool inCounty = false)
+        /// <summary>
+        /// What a town's world is built from that needs no engine (its layout, street names and signposts):
+        /// worked out on a worker thread where there are threads, so the main one only builds.
+        /// </summary>
+        public sealed class Prepared
+        {
+            public IsoLayout layout;
+            public StreetNames names;
+            public List<Signpost> signs;
+
+            public static Prepared Of(TownModel model)
+            {
+                var layout = Layout.Build(model);
+                var names = StreetNaming.Name(model, layout.roads);
+                return new Prepared { layout = layout, names = names, signs = Signs.Plan(model, layout, names) };
+            }
+        }
+
+        /// <summary>
+        /// `stepwise`: only begun; <see cref="Build"/> does the rest, a part at a time. `inCounty`: no slab round it.
+        /// `prepared`: its layout, names and signposts already worked out (Prepared.Of), else they're worked out here.
+        /// </summary>
+        public TownWorld(TownModel model, ModelLibrary library, bool stepwise = false, bool inCounty = false, Prepared prepared = null)
         {
             this.model = model;
             this.library = library;
             this.inCounty = inCounty;
             palette = new Palette();
-            layout = Layout.Build(model);
-            names = StreetNaming.Name(model, layout.roads);
+            layout = prepared?.layout ?? Layout.Build(model);
+            names = prepared?.names ?? StreetNaming.Name(model, layout.roads);
+            plannedSigns = prepared?.signs;
             root = new GameObject("town");
             still = new GameObject("still").transform;
             still.SetParent(root.transform, false);
@@ -141,6 +163,11 @@ namespace Porchlight.Rendering
             if (!stepwise) foreach (var _ in Build()) { }
         }
 
+        readonly List<Signpost> plannedSigns;
+
+        /// <summary>Rooms furnished, doors hung and signposts put up between one part and the next: each part a few milliseconds.</summary>
+        const int ROOMS_A_PART = 48, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 250;
+
         /// <summary>The town's parts, built in turn: each one's name once it's done.</summary>
         public IEnumerable<string> Build()
         {
@@ -148,15 +175,17 @@ namespace Porchlight.Rendering
             BuildGround(rng).Build("ground", still);
             yield return "ground";
             AddWater();
+            yield return "water";
             BuildRoads().Build("roads", still);
             yield return "roads";
             var sheds = new MeshBuilder(palette);
             AddHouses(rng);
             yield return "houses";
             // Rooms are furnished from a stream of their own, so the rest of the town doesn't move when they change.
-            Furnish(new Rng($"{model.seed}::rooms"));
+            foreach (var part in Furnish(new Rng($"{model.seed}::rooms"), ROOMS_A_PART)) yield return "furnishing" + part;
             AddScreens();
-            AddDoors();
+            yield return "screens";
+            foreach (var part in AddDoors(DOORS_A_PART)) yield return "doors" + part;
             yield return "rooms";
             const int ROOMS_A_STEP = 64;
             for (int i = 0; i < rooms.Count; i++)
@@ -166,23 +195,34 @@ namespace Porchlight.Rendering
             }
             yield return "interiors";
             AddYards(sheds, rng);
-            AddTrees(rng);
             yield return "yards";
+            AddTrees(rng);
+            yield return "trees";
             AddPlazaDecor(rng);
+            yield return "plazas";
             AddParkedCars();
+            yield return "parked";
             AddAirport();
             AddZoo();
             AddDocks();
             if (!sheds.Empty) sheds.Build("sheds", still);
             AddLamps(rng);
             yield return "places";
-            signs = Signs.Plan(model, layout, names);
-            AddStreetSigns();
+            signs = plannedSigns ?? Signs.Plan(model, layout, names);
+            yield return "signposts";
+            foreach (var part in AddStreetSigns(SIGNS_A_PART)) yield return "signs" + part;
             AddFountain();
             _ = palette.Material;
             yield return "signs";
             Survey();
-            StaticBatchingUtility.Combine(still.gameObject);
+            yield return "survey";
+            // Combined a share at a time (each share its own batches), not the whole town in one frame.
+            var parts = still.GetComponentsInChildren<MeshRenderer>(true).Select(r => r.gameObject).ToArray();
+            for (int i = 0; i < parts.Length; i += BATCH_A_PART)
+            {
+                StaticBatchingUtility.Combine(parts.Skip(i).Take(BATCH_A_PART).ToArray(), still.gameObject);
+                if (i + BATCH_A_PART < parts.Length) yield return "batching" + i / BATCH_A_PART;
+            }
             yield return "batching";
         }
 

@@ -155,10 +155,7 @@ namespace Porchlight.UI
                 {
                     painter.strokeColor = mineToo ? Edge : mine ? MineRoad : Road;
                     painter.lineWidth = width;
-                    painter.BeginPath();
-                    painter.MoveTo(P(line[0]));
-                    for (int i = 1; i < line.Count; i++) painter.LineTo(P(line[i]));
-                    painter.Stroke();
+                    Line(painter, line, P);
                 }
             // The towns, the junction and the empty plots.
             foreach (var s in map.spaces)
@@ -202,6 +199,34 @@ namespace Porchlight.UI
                 painter.strokeColor = Coords.Hex(0xfff8e8);
                 painter.Stroke();
             }
+        }
+
+        /// <summary>
+        /// A line through these points, a point a pixel or more on from the last, in strokes of a few hundred
+        /// (a highway has hundreds of points, and one stroke past 65535 vertices isn't drawn at all).
+        /// </summary>
+        static void Line(Painter2D painter, List<Vec2> pts, Func<Vec2, Vector2> P)
+        {
+            const int STROKE = 300;
+            var last = P(pts[0]);
+            painter.BeginPath();
+            painter.MoveTo(last);
+            int n = 0;
+            for (int i = 1; i < pts.Count; i++)
+            {
+                var q = P(pts[i]);
+                if (i < pts.Count - 1 && (q - last).sqrMagnitude < 1) continue;
+                painter.LineTo(q);
+                last = q;
+                if (++n >= STROKE && i < pts.Count - 1)
+                {
+                    painter.Stroke();
+                    painter.BeginPath();
+                    painter.MoveTo(last);
+                    n = 0;
+                }
+            }
+            painter.Stroke();
         }
 
         public void Dispose()

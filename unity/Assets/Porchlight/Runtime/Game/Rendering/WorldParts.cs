@@ -302,23 +302,47 @@ namespace Porchlight.Rendering
             return Math.Min(most, Math.Max(0.75, wanted / natural));
         }
 
-        void Furnish(Rng rng)
+        IEnumerable<int> Furnish(Rng rng, int perPart)
         {
             FurnitureSize Size(string name)
             {
                 var m = library.Get("furniture/" + name);
                 return new FurnitureSize { w = m.size.x * Interiors.FURNITURE_SCALE, d = m.size.z * Interiors.FURNITURE_SCALE, h = m.size.y * Interiors.FURNITURE_SCALE };
             }
-            // The buildings' own walls, but never across a way in.
+            // The buildings' own walls, but never across a way in: each wall against the ways in near it
+            // (found by the 4-tile cells they cover), in the order they'd be met over the whole list.
             var passages = rooms.SelectMany(r => Interiors.Doors(r).Select(Interiors.Passage)).ToList();
-            var solid = new List<Rect>();
-            foreach (var w in groundWalls) solid.AddRange(Interiors.Without(w, passages.Where(p => p.x0 < w.x1 && w.x0 < p.x1 && p.y0 < w.y1 && w.y0 < p.y1)));
-            foreach (var room in rooms)
+            const int CELL = 4;
+            var byCell = new Dictionary<long, List<int>>();
+            IEnumerable<long> Cells(Rect r)
             {
+                for (int cy = (int)Math.Floor(r.y0 / CELL); cy <= (int)Math.Floor(r.y1 / CELL); cy++)
+                    for (int cx = (int)Math.Floor(r.x0 / CELL); cx <= (int)Math.Floor(r.x1 / CELL); cx++)
+                        yield return ((long)cy << 32) ^ (uint)cx;
+            }
+            for (int i = 0; i < passages.Count; i++)
+                foreach (var c in Cells(passages[i]))
+                {
+                    if (!byCell.TryGetValue(c, out var list)) byCell[c] = list = new List<int>();
+                    list.Add(i);
+                }
+            var solid = new List<Rect>();
+            var near = new SortedSet<int>();
+            foreach (var w in groundWalls)
+            {
+                near.Clear();
+                foreach (var c in Cells(w))
+                    if (byCell.TryGetValue(c, out var list)) foreach (int i in list) near.Add(i);
+                solid.AddRange(Interiors.Without(w, near.Select(i => passages[i]).Where(p => p.x0 < w.x1 && w.x0 < p.x1 && p.y0 < w.y1 && w.y0 < p.y1)));
+            }
+            for (int k = 0; k < rooms.Count; k++)
+            {
+                var room = rooms[k];
                 var plan = Interiors.FurnishRoom(room, Size, rng);
                 plans.Add(plan);
                 solid.AddRange(Interiors.RoomWalls(room));
                 foreach (var f in plan.furniture) if (!f.flat && f.lift == 0) solid.Add(f.box);
+                if (k % perPart == perPart - 1) yield return k / perPart;
             }
             solids = new Solids(solid, model.width);
         }
@@ -431,7 +455,7 @@ namespace Porchlight.Rendering
         /// Every room's doors: each building's own, lifted out of it onto a pivot of its
         /// own (on its hinge, or a garage door's top edge), set to swing into the room.
         /// </summary>
-        void AddDoors()
+        IEnumerable<int> AddDoors(int perPart)
         {
             var doorsRoot = new GameObject("doors").transform;
             doorsRoot.SetParent(root.transform, false);
@@ -467,6 +491,7 @@ namespace Porchlight.Rendering
                     doors.Add(d);
                     SwingDoor(doors.Count - 1);
                 }
+                if (i % perPart == perPart - 1) yield return i / perPart;
             }
         }
 
@@ -789,9 +814,9 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>A signpost at each named corner, with a blade per street, its name on both faces.</summary>
-        void AddStreetSigns()
+        IEnumerable<int> AddStreetSigns(int perPart)
         {
-            if (signs.Count == 0) return;
+            if (signs.Count == 0) yield break;
             int tallest = signs.Max(s => s.blades.Count);
             float postHeight = (float)(Signs.BLADE_Y + (tallest - 1) * Signs.BLADE_STEP + Signs.BLADE_HEIGHT / 2 + 0.03);
             var postMaterial = Materials.Lit(0x5b6067);
@@ -799,8 +824,11 @@ namespace Porchlight.Rendering
             var signsRoot = new GameObject("signs").transform;
             signsRoot.SetParent(root.transform, false);
             float r = (float)Signs.POST_RADIUS;
+            int n = 0;
             foreach (var s in signs)
             {
+                if (n > 0 && n % perPart == 0) yield return n / perPart;
+                n++;
                 var at = Coords.Map(s.at.x, s.at.y);
                 Shape(PrimitiveType.Cylinder, props, at + new Vector3(0, postHeight / 2, 0), new Vector3(r * 2.2f, postHeight / 2, r * 2.2f), postMaterial, true, "sign post");
                 for (int k = 0; k < s.blades.Count; k++)

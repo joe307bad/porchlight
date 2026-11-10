@@ -480,6 +480,34 @@ Label {
     bottom: 52px;
 }
 
+/* Waiting at a town's edge while it's built (CountyDrive.Waiting): what for, and a bar that fills. */
+.county-loading {
+    position: absolute;
+    top: 52px;
+    width: 280px;
+    padding: 10px 14px 12px 14px;
+    border-radius: 8px;
+    background-color: rgba(28, 27, 24, 0.92);
+}
+.county-loading-text {
+    color: #f4f1ea;
+    font-size: 13px;
+    -unity-text-align: middle-center;
+    margin-bottom: 8px;
+}
+.county-loading-track {
+    height: 6px;
+    border-radius: 3px;
+    background-color: rgba(255, 255, 255, 0.15);
+    overflow: hidden;
+}
+.county-loading-fill {
+    height: 100%;
+    width: 0;
+    border-radius: 3px;
+    background-color: #ff9f43;
+}
+
 .net-notice {
     top: 12px;
     white-space: normal;
