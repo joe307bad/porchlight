@@ -16,11 +16,13 @@ const SPEED_TOLERANCE = 1.25;
 /** Plus a fixed allowance (tiles): stepping out of a car lands you beside it. */
 const SLACK = 0.75;
 /**
- * Time counted between moves (seconds): at least one send interval, at most a few seconds. Moves are
- * timed by when they arrive, so after the network stalls (Wi-Fi drops out for a moment) the first one
- * through can be a couple of seconds' drive on: that's fine, it's not a teleport.
+ * Distance is budgeted, not judged move by move: the budget fills at MAX_SPEED (with its tolerance) by
+ * the server's clock, up to this many seconds' worth, and each move spends what it covers. Moves that
+ * arrive in a bunch (a frame that stalled on the client, Wi-Fi catching up) spend what built up while
+ * they were held back, so a fast car isn't put back for them; after a stall, the first move through can
+ * be a couple of seconds' drive on, and that's fine, it's not a teleport. Over any stretch of time,
+ * nobody gets further than MAX_SPEED allows (and a few seconds' head start).
  */
-const MIN_GAP = 0.05;
 const MAX_GAP = 3;
 /**
  * Driving in from the room next door, the client goes on driving all through joining (matchmaking,
@@ -59,9 +61,11 @@ export interface Track {
   epoch: number;
   /** Extra distance (tiles) allowed on the next accepted move only (driving in from next door). */
   grace: number;
+  /** Distance (tiles) still to spend as of `t`: see MAX_GAP. Down to -SLACK after a move that used its slack. */
+  credit: number;
 }
 
-export const newTrack = (): Track => ({ anchored: false, x: 0, y: 0, z: 0, t: 0, seq: null, epoch: 0, grace: 0 });
+export const newTrack = (): Track => ({ anchored: false, x: 0, y: 0, z: 0, t: 0, seq: null, epoch: 0, grace: 0, credit: 0 });
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isInt = (v: unknown, max: number): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
@@ -110,9 +114,21 @@ export function judgeMove(track: Track, m: MoveMessage, now: number, bounds: Bou
   // A passenger goes where the car goes (wherever they see it, which can jump as its driver's moves
   // come in): they're held to being beside its driver instead (the room's canRide).
   if (!track.anchored || opts.riding) return 'ok';
-  const gap = Math.min(MAX_GAP, Math.max(MIN_GAP, (now - track.t) / 1000));
   const d = Math.hypot(m.x - track.x, m.z - track.z);
-  return d <= MAX_SPEED * SPEED_TOLERANCE * gap + SLACK + track.grace ? 'ok' : 'too-fast';
+  return d <= creditAt(track, now) + SLACK + track.grace ? 'ok' : 'too-fast';
+}
+
+/** The distance budget (tiles) at `now`: what was left at the last accepted move, filled since, up to MAX_GAP's worth. */
+export function creditAt(track: Track, now: number): number {
+  const rate = MAX_SPEED * SPEED_TOLERANCE;
+  return Math.min(rate * MAX_GAP, (track.credit ?? 0) + (rate * Math.max(0, now - track.t)) / 1000);
+}
+
+/** What's left of the budget once move `m` is accepted at `now` (its slack and any grace are spent first, never saved). */
+export function creditAfter(track: Track, m: MoveMessage, now: number): number {
+  const d = Math.hypot(m.x - track.x, m.z - track.z);
+  const left = creditAt(track, now) + track.grace - d;
+  return Math.max(-SLACK, Math.min(creditAt(track, now), left));
 }
 
 /**

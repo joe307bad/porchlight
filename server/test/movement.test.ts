@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, judgeMove, newTrack, parseMove, seqNewer } from '../src/multiplayer/movement.ts';
+import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, creditAfter, judgeMove, newTrack, parseMove, seqNewer } from '../src/multiplayer/movement.ts';
 import type { MoveMessage } from '../src/multiplayer/protocol.ts';
 
 const bounds = { width: 128, height: 128 };
@@ -36,6 +36,40 @@ test('a boosted car through a two-second network stall is no cheat', () => {
   const t = { ...newTrack(), anchored: true, x: 10, z: 10, t: 1000, seq: 1 };
   // A boosted car does 8.9 tiles a second: the first move through after the stall is 18 tiles on.
   assert.equal(judgeMove(t, move({ seq: 2, x: 10 + 8.9 * 2 }), 3000, bounds), 'ok');
+});
+
+/** Moves sent every `sendMs` at `speed` tiles a second, arriving at `arrive(i)`: how many the server refuses. */
+function refused(speed: number, sendMs: number, count: number, arrive: (i: number, sent: number) => number): number {
+  const t = { ...newTrack(), anchored: true, x: 10, z: 10, t: 0, seq: 0 };
+  let bad = 0;
+  for (let i = 1; i <= count; i++) {
+    const m = move({ seq: i, x: 10 + (speed * i * sendMs) / 1000 });
+    const at = arrive(i, i * sendMs);
+    if (judgeMove(t, m, at, { width: 100000, height: 128 }) !== 'ok') {
+      bad++;
+      continue;
+    }
+    Object.assign(t, { x: m.x, z: m.z, t: at, seq: m.seq, credit: creditAfter(t, m, at) });
+  }
+  return bad;
+}
+
+test('a boosted car whose moves come in bunches is never put back', () => {
+  const BOOSTED = 17.7;
+  // Steady: 30 a second.
+  assert.equal(refused(BOOSTED, 33, 300, (_, sent) => sent), 0);
+  // The client stalls a fifth of a second now and then, and sends what it held back all at once.
+  assert.equal(refused(BOOSTED, 33, 300, (i, sent) => (i % 12 < 6 ? Math.ceil(sent / 200) * 200 : sent)), 0);
+  // Wi-Fi jitter: each one anywhere up to 150 ms late (in order).
+  let last = 0;
+  assert.equal(refused(BOOSTED, 33, 300, (i, sent) => (last = Math.max(last, sent + ((i * 7919) % 150)))), 0);
+});
+
+test('going too fast for long is caught, however it is spread out', () => {
+  // Half as fast again as anything can go, steadily: refused well before long.
+  assert.ok(refused(MAX_SPEED * 1.5, 33, 300, (_, sent) => sent) > 50);
+  // Little jumps on every move, each within one move's slack: caught all the same.
+  assert.ok(refused(MAX_SPEED * 2, 33, 300, (_, sent) => sent) > 100);
 });
 
 test('driving in from next door: the drive while joining is let off the first move', () => {

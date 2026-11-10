@@ -113,14 +113,21 @@ namespace Porchlight.Rendering
             public ModelLibrary.Ground ground;
         }
 
-        /// <summary>A point in a placed model's own space, on the map.</summary>
-        static Vec2 MapPoint(Transform model, float x, float y, float z)
+        /// <summary>
+        /// A point in a placed model's own space, in the town's (on the map). Never the world's: a town of the
+        /// county is built off to one side of the one you're in and moved to the origin when you get there,
+        /// and its rooms, doors and walls have to be where its buildings are once it's there.
+        /// </summary>
+        Vec2 MapPoint(Transform model, float x, float y, float z)
         {
-            var w = model.TransformPoint(new Vector3(x, y, z));
+            var w = InTown(model, new Vector3(x, y, z));
             return new Vec2(w.x, -w.z);
         }
 
-        static double HeightOf(Transform model, float y) => model.TransformPoint(new Vector3(0, y, 0)).y;
+        double HeightOf(Transform model, float y) => InTown(model, new Vector3(0, y, 0)).y;
+
+        /// <summary>A point in a transform's own space, in the town's.</summary>
+        Vector3 InTown(Transform t, Vector3 local) => root.transform.InverseTransformPoint(t.TransformPoint(local));
 
         /// <summary>Which way a placed model's side (numbered as Ground's: 0 -z, 1 +z, 2 -x, 3 +x) faces on the map.</summary>
         static Facing SideFacing(Transform model, int side)
@@ -132,7 +139,7 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>The room on a piece's ground floor, with its doors and windows, on the map.</summary>
-        static Room RoomOf(Piece piece, int id, House house)
+        Room RoomOf(Piece piece, int id, House house)
         {
             var g = piece.ground;
             var c0 = MapPoint(piece.model, g.room.x, 0, g.room.y);
@@ -251,7 +258,7 @@ namespace Porchlight.Rendering
             if (room < 0 || room >= shells.Count) return 0;
             double top = 0;
             foreach (var r in shells[room].GetComponentsInChildren<Renderer>(true)) top = Math.Max(top, r.bounds.max.y);
-            return top;
+            return top - root.transform.position.y;
         }
 
         static string[] ModelsFor(House house) =>
@@ -484,9 +491,9 @@ namespace Porchlight.Rendering
                     };
                     // Whichever way takes the door's middle into the room.
                     var centre = part.GetComponent<MeshFilter>().sharedMesh.bounds.center;
-                    var before = part.TransformPoint(centre);
+                    var before = InTown(part, centre);
                     pivot.localRotation = d.shut * Quaternion.AngleAxis(d.turn * 0.25f, d.axis);
-                    var after = part.TransformPoint(centre);
+                    var after = InTown(part, centre);
                     if (Vector3.Distance(after, middle) > Vector3.Distance(before, middle)) d.turn = -d.turn;
                     doors.Add(d);
                     SwingDoor(doors.Count - 1);

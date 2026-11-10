@@ -21,7 +21,7 @@ import { CloseCode, Room, ServerError, type AuthContext, type Client } from '@co
 import { StateView } from '@colyseus/schema';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { Interest } from './interest.ts';
-import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, clampToBounds, inBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
+import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, clampToBounds, creditAfter, creditAt, inBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
 import { cleanLook, STARTER_TOWNS, type EndReason, type Snapshot } from './persistence.ts';
 import { County, mineSlot } from '../county.ts';
 import {
@@ -430,7 +430,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       // Driving in from next door: they're where they say (it's this room's ground), and their
       // first move is held to the speed limit from there, like any other.
       // They went on driving while joining, though: that much is let off their first move.
-      if (arriving) Object.assign(this.runtime.get(client.sessionId)!.track, { anchored: true, x: arrive.x, y: arrive.y, z: arrive.z, t: Date.now(), grace: MAX_SPEED * ARRIVE_GRACE_SECONDS });
+      if (arriving) Object.assign(this.runtime.get(client.sessionId)!.track, { anchored: true, x: arrive.x, y: arrive.y, z: arrive.z, t: Date.now(), grace: MAX_SPEED * ARRIVE_GRACE_SECONDS, credit: 0 });
       // Nobody sees them (and they're on no one's minimap) until their first
       // move says where they are: the client checks the spot against the town.
       client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
@@ -588,7 +588,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       // Back to the last good spot (or, before there is one, the nearest spot in town).
       if (!rt.track.anchored) {
         const c = clampToBounds(this.bounds, m.x, m.z);
-        Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at, grace: 0 });
+        Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at, grace: 0, credit: 0 });
         this.place(rt, c.x, 0, c.z);
       }
       this.correct(rt);
@@ -604,7 +604,9 @@ export class CityRoom extends Room<{ state: CityState }> {
       }
       return;
     }
-    Object.assign(rt.track, { anchored: true, x: m.x, y: m.y, z: m.z, t: at, seq: m.seq, grace: 0 });
+    // A passenger's budget isn't spent on the car's jumps (they're held to its driver instead).
+    const credit = !rt.track.anchored ? 0 : riding ? creditAt(rt.track, at) : creditAfter(rt.track, m, at);
+    Object.assign(rt.track, { anchored: true, x: m.x, y: m.y, z: m.z, t: at, seq: m.seq, grace: 0, credit });
     rt.lastInputAt = at;
     const p = rt.player;
     const moved = p.x !== m.x || p.z !== m.z;
@@ -638,7 +640,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     if (at - rt.lastTeleportAt < TELEPORT_GAP_MS) return;
     rt.lastTeleportAt = at;
     const c = clampToBounds(this.bounds, x, z);
-    Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at, grace: 0 });
+    Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at, grace: 0, credit: 0 });
     rt.player.car = 0;
     rt.player.ride = '';
     rt.player.anim = ANIM_IDLE;

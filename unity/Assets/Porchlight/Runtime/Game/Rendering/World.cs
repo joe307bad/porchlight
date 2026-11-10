@@ -217,7 +217,7 @@ namespace Porchlight.Rendering
             Survey();
             yield return "survey";
             // Combined a share at a time (each share its own batches), not the whole town in one frame.
-            var parts = still.GetComponentsInChildren<MeshRenderer>(true).Select(r => r.gameObject).ToArray();
+            var parts = still.GetComponentsInChildren<MeshRenderer>().Select(r => r.gameObject).ToArray();
             for (int i = 0; i < parts.Length; i += BATCH_A_PART)
             {
                 StaticBatchingUtility.Combine(parts.Skip(i).Take(BATCH_A_PART).ToArray(), still.gameObject);
