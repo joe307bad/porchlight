@@ -2196,6 +2196,8 @@ namespace Porchlight.App
                 {
                     double triggers = pad.rt - pad.lt;
                     double throttle = Clamp1(-Numbers.Sign(ky) + (triggers != 0 ? triggers : -pad.move.y));
+                    // Boost on its own (shift, or A held) puts your foot down: a car speeds up with it.
+                    if (turbo && throttle == 0 && car.kind == VehicleKind.Car) throttle = 1;
                     car.Drive(throttle, Clamp1(inputV.x), dt, OpenFor(car), turbo, FloorAt);
                 }
                 SyncDriver();

@@ -6,11 +6,11 @@
 import { ANIM_MAX, type MoveMessage } from './protocol.ts';
 
 /**
- * Fastest anything goes, tiles per second: a boosted plane (PLANE_TOP 7.4 ×
- * PLANE_BOOST 1.5 in the game's Driving.cs). A boosted car does 8.9, sprinting
- * on foot is 6.1 and a boat goes no faster than a car.
+ * Fastest anything goes, tiles per second: a boosted car (TOP_SPEED 5.2 ×
+ * CAR_BOOST 3.4 = 17.7 in the game's Driving.cs). A boosted plane does 11.1,
+ * sprinting on foot is 6.1 and a boat goes no faster than a car.
  */
-export const MAX_SPEED = 11.1;
+export const MAX_SPEED = 18;
 /** Allowance over MAX_SPEED for jitter in when moves arrive. */
 const SPEED_TOLERANCE = 1.25;
 /** Plus a fixed allowance (tiles): stepping out of a car lands you beside it. */

@@ -22,6 +22,12 @@ namespace Porchlight.Explore
         const double REVERSE_SPEED = 1.6;
         public const double BOOST_SPEED = 1.7;
         const double BOOST_ACCEL = 1.6;
+        /// <summary>
+        /// A car on boost (shift, RT, A held): twice the old boost's top speed (17.7 tiles a second, under the
+        /// server's MAX_SPEED, movement.ts), and a harder push to get there. Boats and chasers keep BOOST_SPEED.
+        /// </summary>
+        public const double CAR_BOOST = 3.4;
+        const double CAR_BOOST_ACCEL = 3.0;
         const double ACCEL = 3.2;
         public const double BRAKE = 7;
         const double DRAG = 1.4;
@@ -127,8 +133,8 @@ namespace Porchlight.Explore
                 return;
             }
             bool boat = kind == VehicleKind.Boat, plane = kind == VehicleKind.Plane;
-            double top = boat ? BOAT_TOP * (boost ? BOOST_SPEED : 1) : plane ? PLANE_TOP * (boost ? PLANE_BOOST : 1) : TOP_SPEED * (boost ? BOOST_SPEED : 1);
-            double accel = (boat ? BOAT_ACCEL : plane ? PLANE_ACCEL : ACCEL) * (boost ? BOOST_ACCEL : 1);
+            double top = boat ? BOAT_TOP * (boost ? BOOST_SPEED : 1) : plane ? PLANE_TOP * (boost ? PLANE_BOOST : 1) : TOP_SPEED * (boost ? CAR_BOOST : 1);
+            double accel = (boat ? BOAT_ACCEL : plane ? PLANE_ACCEL : ACCEL) * (boost ? (boat || plane ? BOOST_ACCEL : CAR_BOOST_ACCEL) : 1);
             double brake = boat ? BOAT_BRAKE : BRAKE;
             double drag = boat ? BOAT_DRAG : DRAG;
             if (throttle > 0 && speed <= top * throttle)
