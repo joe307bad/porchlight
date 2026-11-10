@@ -1680,8 +1680,11 @@ namespace Porchlight.App
                 // On the road: no house of yours or neighbours' here.
                 overlay?.SetHome(null, null);
                 overlay?.SetNeighbours(null);
+                if (leftTownKey != TownKey) leftTownKey = TownKey;
+                leftTownAt = platform.Now();
                 return;
             }
+            bool back = space.townKey == leftTownKey && platform.Now() - leftTownAt < WELCOME_AGAIN_MS;
             var state = ParseUrlState(space.townKey);
             seed = state.seed;
             @params = state.@params;
@@ -1695,9 +1698,14 @@ namespace Porchlight.App
             overlay?.SetHome(DoorOfHome()?.at, HouseOfHome()?.footprint);
             overlay?.SetNeighbours(null);
             RefreshNeighbours();
-            overlay?.Flash($"Welcome to {space.name}");
+            if (!back) overlay?.Flash($"Welcome to {space.name}");
             if (playing != null) OfferJoins();
         }
+
+        /// <summary>The town you last went out of onto the road, and when (ms): back in it soon after, no welcome.</summary>
+        string leftTownKey;
+        double leftTownAt;
+        const double WELCOME_AGAIN_MS = 20000;
 
         void Connect()
         {

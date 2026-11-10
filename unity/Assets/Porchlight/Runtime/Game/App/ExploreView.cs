@@ -588,6 +588,16 @@ namespace Porchlight.App
             world = next;
             remotes = new RemotePlayers(world.root.transform, library);
             Ways();
+            // On foot somewhere this space won't have you (a stretch of highway overlaps a town's edge, but
+            // each space knows only its own trees, walls and water): out to the nearest spot it will, or
+            // every step from there is refused and you can't move.
+            if (player != null && keep == null && riding == null && !player.IsAuto && open.Length > 0 && !Player.Standable(player.x, player.y, open, world.model, world.solids, walkPaved))
+            {
+                var to = StandableNear(new Vec2(player.x, player.y));
+                player.x = to.x;
+                player.y = to.y;
+                player.Halt();
+            }
             Populate();
             // The weather goes on as it was: the rain in the air, how wet and grey, carried over.
             weather = new Weather(world) { Rain = wantRain, Snow = wantSnow };

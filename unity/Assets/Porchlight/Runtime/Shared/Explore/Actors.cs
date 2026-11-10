@@ -184,12 +184,15 @@ namespace Porchlight.Explore
                 double sx = vx * dt;
                 double sy = vy * dt;
                 bool moved = false;
+                // Somewhere you couldn't have walked to (put there: a space changed under you, a teleport):
+                // every step's allowed until you're back on ground you can stand on, rather than none.
+                bool trapped = !CanStand(x, y, open, model, paved) || (solids != null && solids.Hits(x, y, PLAYER_RADIUS));
                 foreach (var (mx, my) in new[] { (sx, sy), (sx, 0.0), (0.0, sy) })
                 {
                     if (mx == 0 && my == 0) continue;
                     double nx = ClampX(x + mx);
                     double ny = ClampY(y + my);
-                    if (CanStand(nx, ny, open, model, paved) && (solids == null || !solids.Hits(nx, ny, PLAYER_RADIUS)) && (barrier == null || !barrier.Blocks(x, y, nx, ny, PLAYER_RADIUS)))
+                    if (trapped || CanStand(nx, ny, open, model, paved) && (solids == null || !solids.Hits(nx, ny, PLAYER_RADIUS)) && (barrier == null || !barrier.Blocks(x, y, nx, ny, PLAYER_RADIUS)))
                     {
                         dx = nx - x;
                         dy = ny - y;
