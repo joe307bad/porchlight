@@ -27,6 +27,9 @@ chmod +x "$APP/Contents/MacOS/PorchlightLauncher" "$APP/Contents/MacOS/Porchligh
 /usr/libexec/PlistBuddy -c 'Set :CFBundleExecutable PorchlightLauncher' "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
+# No App Nap: hidden behind another window, the game still keeps the room's town running and its connection up.
+/usr/libexec/PlistBuddy -c 'Delete :NSAppSleepDisabled' "$APP/Contents/Info.plist" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c 'Add :NSAppSleepDisabled bool true' "$APP/Contents/Info.plist"
 
 vpk pack --packId Porchlight --packVersion "$VERSION" --packTitle Porchlight --packAuthors Porchlight \
   --packDir "$APP" --mainExe PorchlightLauncher --bundleId com.joebad.porchlight \

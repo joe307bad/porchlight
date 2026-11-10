@@ -374,10 +374,16 @@ test('passengers ride with a driver, up to three to a car', async () => {
   move(riders[3], 50, 50, 0, { anim: 5, ride: driver.sessionId });
   await until('the fourth to be refused', () => corrected[4]() === 1);
   assert.equal(driver.state.players.get(riders[3].sessionId)?.ride ?? '', '');
-  // Nobody rides with someone on foot.
+  // Nobody rides with someone on foot. (Refusals are half a second apart at least.)
   move(driver, 50.1, 50, 0, { anim: 1 });
+  await new Promise((r) => setTimeout(r, 600));
   move(riders[3], 50.1, 50, 1, { anim: 5, ride: driver.sessionId });
   await until('a refusal for riding with a walker', () => corrected[4]() === 2);
+  // Asking over and over (each answered straight back, in the new epoch) isn't a flood of refusals, or a kick.
+  for (let i = 0; i < 40; i++) move(riders[3], 50.1, 50, 2, { anim: 5, ride: driver.sessionId });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(corrected[4]() <= 3, `${corrected[4]()} refusals`);
+  assert.ok(riders[3].connection.isOpen, 'still connected');
   await Promise.all(rooms.map((r) => r.leave()));
 });
 

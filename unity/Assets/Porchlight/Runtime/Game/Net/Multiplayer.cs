@@ -375,7 +375,9 @@ namespace Porchlight.App
                 bool teleported = platform.Now() - teleportAt < TELEPORT_ANSWER_MS;
                 if (teleported) teleportAt = double.NegativeInfinity;
                 host.PlacePlayer(MsgPack.Num(c["x"]), MsgPack.Num(c["z"]), teleported);
-                Send(true);
+                // Said at once (in the new epoch), but no faster than moves go: a correction answered by a
+                // move the server corrects again (a ride it won't allow) mustn't become a flood it kicks for.
+                Send(platform.Now() - sentAt >= Protocol.SEND_MS);
             });
             r.OnMessage(Protocol.MSG_DOTS, m =>
             {

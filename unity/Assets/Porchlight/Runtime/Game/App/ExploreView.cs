@@ -813,7 +813,10 @@ namespace Porchlight.App
             var p = player;
             if (p == null) return null;
             int car = driving != null ? cars[driving.Value].car.model + 1 : 0;
-            return new LocalState { x = p.x, y = p.lift, z = p.y, yaw = p.heading, speed = p.speed, car = car, ride = riding ?? "", at = simAt };
+            // Riding with a car that's out of sight (its driver's in the next room a moment before us), we
+            // say we're on foot where we roll on to: the room would only turn the ride down.
+            string ride = riding != null && rideLostAt == null ? riding : "";
+            return new LocalState { x = p.x, y = p.lift, z = p.y, yaw = p.heading, speed = p.speed, car = car, ride = ride, at = simAt };
         }
 
         public void ApplySpawn(double[] at, string look)

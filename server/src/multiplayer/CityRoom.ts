@@ -68,6 +68,8 @@ const DOTS_MS = 1_000;
 const RECONNECT_SECONDS = 20;
 /** How close (tiles) to a car you have to be to get in with its driver. */
 const RIDE_REACH = 3;
+/** Least time between telling someone their ride's refused (ms). */
+const RIDE_REFUSAL_GAP_MS = 500;
 /** No moves for this long: show them standing. */
 const IDLE_AFTER_MS = 2_000;
 /** A new look is saved this long after the last change. */
@@ -112,6 +114,8 @@ interface PlayerRuntime {
   joinedAt: number;
   track: Track;
   lastInputAt: number;
+  /** When a ride they asked for was last refused (ms). */
+  rideRefusedAt: number;
   lastTeleportAt: number;
   rate: RateLimit;
   /** World messages this second (while they're the host). */
@@ -410,6 +414,7 @@ export class CityRoom extends Room<{ state: CityState }> {
         joinedAt: Date.now(),
         track: newTrack(),
         lastInputAt: Date.now(),
+        rideRefusedAt: 0,
         lastTeleportAt: 0,
         // Moves come about 30 a second, and the host's world 10: room for those and the odd teleport, look or car.
         rate: new RateLimit(60),
@@ -592,7 +597,11 @@ export class CityRoom extends Room<{ state: CityState }> {
     }
     if (m.ride && !riding) {
       // The car's full, or its driver got out or left: put them back where they were (no strike: a race, not a cheat).
-      this.correct(rt);
+      // Not more than twice a second, though: an older client answers each correction straight back.
+      if (at - rt.rideRefusedAt >= RIDE_REFUSAL_GAP_MS) {
+        rt.rideRefusedAt = at;
+        this.correct(rt);
+      }
       return;
     }
     Object.assign(rt.track, { anchored: true, x: m.x, y: m.y, z: m.z, t: at, seq: m.seq, grace: 0 });

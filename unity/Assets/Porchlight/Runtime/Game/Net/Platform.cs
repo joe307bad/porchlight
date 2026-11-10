@@ -384,6 +384,14 @@ namespace Porchlight.App
             }
         }
 #else
+        /// <summary>
+        /// The desktop app's socket. Its reading and sending run on the thread pool (ConfigureAwait(false)),
+        /// never waiting on the game's frames: awaited on the main thread, the read loop took one message a
+        /// frame, so whenever the frame rate fell below the rate messages came in (a slow frame, the app
+        /// hidden and throttled) they backed up, the server's ping sat behind them unanswered, and the
+        /// server dropped the connection as unresponsive (silently, every ten seconds or so). Only Pump,
+        /// on the main thread, hands what came in to the game.
+        /// </summary>
         sealed class DotNetSocket : IWebSocket, IPumped
         {
             readonly System.Net.WebSockets.ClientWebSocket ws = new System.Net.WebSockets.ClientWebSocket();
@@ -401,13 +409,13 @@ namespace Porchlight.App
                 try
                 {
                     if (!string.IsNullOrEmpty(Cookie)) ws.Options.SetRequestHeader("Cookie", Cookie);
-                    await ws.ConnectAsync(new Uri(url), System.Threading.CancellationToken.None);
+                    await ws.ConnectAsync(new Uri(url), System.Threading.CancellationToken.None).ConfigureAwait(false);
                     opened = true;
                     var buf = new byte[1 << 16];
                     var msg = new System.IO.MemoryStream();
                     while (ws.State == System.Net.WebSockets.WebSocketState.Open)
                     {
-                        var r = await ws.ReceiveAsync(new ArraySegment<byte>(buf), System.Threading.CancellationToken.None);
+                        var r = await ws.ReceiveAsync(new ArraySegment<byte>(buf), System.Threading.CancellationToken.None).ConfigureAwait(false);
                         if (r.MessageType == System.Net.WebSockets.WebSocketMessageType.Close)
                         {
                             code = (int?)r.CloseStatus ?? 1005;
@@ -432,15 +440,15 @@ namespace Porchlight.App
             public async void Send(byte[] data)
             {
                 if (!opened || ended) return;
-                await sending.WaitAsync();
-                try { await ws.SendAsync(new ArraySegment<byte>(data), System.Net.WebSockets.WebSocketMessageType.Binary, true, System.Threading.CancellationToken.None); }
+                await sending.WaitAsync().ConfigureAwait(false);
+                try { await ws.SendAsync(new ArraySegment<byte>(data), System.Net.WebSockets.WebSocketMessageType.Binary, true, System.Threading.CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception) { }
                 finally { sending.Release(); }
             }
 
             public async void Close(int c)
             {
-                try { await ws.CloseOutputAsync((System.Net.WebSockets.WebSocketCloseStatus)c, "", System.Threading.CancellationToken.None); }
+                try { await ws.CloseOutputAsync((System.Net.WebSockets.WebSocketCloseStatus)c, "", System.Threading.CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception) { }
             }
 
