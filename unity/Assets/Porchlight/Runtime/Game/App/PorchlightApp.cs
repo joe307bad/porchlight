@@ -1196,19 +1196,38 @@ namespace Porchlight.App
         void GoHome()
         {
             var home = playing?.home;
-            if (home == null || iso == null) return;
-            if (home.townKey != TownKey)
+            if (home == null || !home.hasHouse || iso == null || buildingTown || Loading) return;
+            // In your own town (the space you're in, not just the last town you drove through): straight to the door.
+            if (InHomeTown(home) && DoorOfHome() is (Vec2 at, double heading))
             {
-                ShowLoader("town");
-                AfterPaint(async () =>
-                {
-                    preferHome = true;
-                    await Run(ShowTownSteps(home.townKey), "town/");
-                    enteringTown = true;
-                });
+                iso.PutPlayer(at, heading);
                 return;
             }
-            if (DoorOfHome() is (Vec2 at, double heading)) iso.PutPlayer(at, heading);
+            // Anywhere else (another town, out on the highways, the junction): your town afresh, at your door.
+            ShowLoader("town");
+            AfterPaint(async () =>
+            {
+                preferHome = true;
+                await Run(ShowTownSteps(home.townKey), "town/");
+                // Rebuilt even when it's still the town on file (driven out of it onto the road): the county starts from it again.
+                isoTown = null;
+                enteringTown = true;
+                await Explore();
+                if (DoorOfHome() is (Vec2 door, double facing)) iso?.PutPlayer(door, facing);
+                // Still joining the town's room, its spawn puts you at the door too; already in it, nothing will.
+                if (net == null || net.Spawned) preferHome = false;
+            });
+        }
+
+        /// <summary>Are you in your home's town right now: on the county, the space you're in; alone, the town on screen.</summary>
+        bool InHomeTown(Home home)
+        {
+            if (county != null)
+            {
+                var here = county.Active;
+                return here != null && here.kind == SpaceKind.Town && here.townKey == home.townKey && TownKey == home.townKey;
+            }
+            return home.townKey == TownKey;
         }
 
         void ToggleJournal()
