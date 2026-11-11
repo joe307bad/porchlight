@@ -234,6 +234,8 @@ namespace Porchlight.EditorTools
             PlayerSettings.productName = "Porchlight";
             PlayerSettings.colorSpace = ColorSpace.Linear;
             PlayerSettings.runInBackground = true;
+            // Desktop: a window you can resize and zoom (macOS's green button) once out of fullscreen.
+            PlayerSettings.resizableWindow = true;
             // Straight into the game: no "Made with Unity" splash.
             PlayerSettings.SplashScreen.show = false;
             PlayerSettings.SplashScreen.showUnityLogo = false;

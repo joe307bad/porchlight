@@ -69,12 +69,17 @@ namespace Porchlight.UI
             Draw();
         }
 
-        /// <summary>A step of it is done (names are unique within a load).</summary>
+        /// <summary>
+        /// A step of it is done. A name seen before in this load (a part waiting on a thread
+        /// reports itself every frame) adds its time to that step, rather than a new one.
+        /// </summary>
         public void Step(string name)
         {
             if (flow == null) return;
             double t = now();
-            done.Add(new KeyValuePair<string, double>(name, t - stepAt));
+            int at = done.FindIndex(d => d.Key == name);
+            if (at >= 0) done[at] = new KeyValuePair<string, double>(name, done[at].Value + t - stepAt);
+            else done.Add(new KeyValuePair<string, double>(name, t - stepAt));
             stepAt = t;
         }
 
