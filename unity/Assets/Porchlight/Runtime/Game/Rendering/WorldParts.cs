@@ -319,6 +319,7 @@ namespace Porchlight.Rendering
             // The buildings' own walls, but never across a way in: each wall against the ways in near it
             // (found by the 4-tile cells they cover), in the order they'd be met over the whole list.
             var passages = rooms.SelectMany(r => Interiors.Doors(r).Select(Interiors.Passage)).ToList();
+            yield return -1;
             const int CELL = 4;
             var byCell = new Dictionary<long, List<int>>();
             IEnumerable<long> Cells(Rect r)
@@ -335,8 +336,12 @@ namespace Porchlight.Rendering
                 }
             var solid = new List<Rect>();
             var near = new SortedSet<int>();
+            int walls = 0;
+            yield return -1;
             foreach (var w in groundWalls)
             {
+                // The walls are most of the work before the first room: a share of them a part.
+                if (++walls % WALLS_A_PART == 0) yield return -1;
                 near.Clear();
                 foreach (var c in Cells(w))
                     if (byCell.TryGetValue(c, out var list)) foreach (int i in list) near.Add(i);
@@ -586,7 +591,8 @@ namespace Porchlight.Rendering
             else b.Quad(v(cx - 0.1, 0, cy + hd + 0.005), v(cx + 0.1, 0, cy + hd + 0.005), v(cx + 0.1, 0.32, cy + hd + 0.005), v(cx - 0.1, 0.32, cy + hd + 0.005), door, new V3(0, 0, 1));
         }
 
-        void AddTrees(Rng rng)
+        /// <summary>The trees, bushes, rocks and flowers, a few rows of tiles a part (in the same order, so the same town).</summary>
+        IEnumerable<int> AddTrees(Rng rng)
         {
             var tiles = model.tiles;
             int w = model.width, h = model.height;
@@ -623,6 +629,7 @@ namespace Porchlight.Rendering
             }
             for (int y = 0; y < h; y++)
             {
+                if (y > 0 && y % TREE_ROWS_A_PART == 0) yield return y / TREE_ROWS_A_PART - 1;
                 for (int x = 0; x < w; x++)
                 {
                     int i = Grid.Index(x, y, w);
@@ -770,7 +777,8 @@ namespace Porchlight.Rendering
             }
         }
 
-        void AddLamps(Rng rng)
+        /// <summary>The street lamps, along a share of the sidewalks a part.</summary>
+        IEnumerable<int> AddLamps(Rng rng)
         {
             var placed = new List<Vec2>();
             var post = Materials.Lit(C.lampPost);
@@ -780,6 +788,7 @@ namespace Porchlight.Rendering
             lampsRoot.SetParent(root.transform, false);
             for (int n = 0; n < layout.sidewalks.paths.Count; n++)
             {
+                if (n > 0 && n % LAMP_PATHS_A_PART == 0) yield return n / LAMP_PATHS_A_PART - 1;
                 var path = layout.sidewalks.paths[n];
                 double total = path.Length;
                 for (double s = (n % 2) * (LAMP_SPACING / 2) + 1.5; s < total - 1; s += LAMP_SPACING)

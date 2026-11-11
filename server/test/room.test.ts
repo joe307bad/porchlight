@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence, STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -520,4 +520,45 @@ test('night falls all over the county at once', async () => {
   await until('and day again', () => there.state.night === was);
   await here.leave();
   await there.leave();
+});
+
+test('following someone from town to town: the roll call names their character, and where they are now is a request away', async () => {
+  const leader = (await api('leader', 'POST', '/mp/characters', { name: 'Leader' })).json;
+  const tag = (await api('tagalong', 'POST', '/mp/characters', { name: 'Tag' })).json;
+  const first = { town: 'seed=follow-a', width: 128, height: 128 };
+  const a = await client('leader').joinOrCreate('city', { ...first, character: leader.id });
+  a.onMessage(MSG_SPAWN, () => {});
+  const b = await client('tagalong').joinOrCreate('city', { ...first, character: tag.id });
+  b.onMessage(MSG_SPAWN, () => {});
+  let dots: unknown[][] = [];
+  b.onMessage(MSG_DOTS, (d: unknown[][]) => (dots = d));
+  move(a, 20, 30);
+  await until('the roll call to name the leader', () => dots.some((d) => d[0] === a.sessionId && d[4] === leader.id), 4000);
+
+  const here = await api('tagalong', 'GET', `/mp/players/${leader.id}`);
+  assert.equal(here.status, 200);
+  assert.equal(here.json.town, 'seed=follow-a');
+  assert.equal(here.json.session, a.sessionId);
+  assert.equal(here.json.name, 'Leader');
+  assert.equal(typeof here.json.x, 'number');
+
+  // Off to another town: a new session there, and the same request finds them.
+  await a.leave();
+  await until('the leader to be gone', () => !dots.some((d) => d[0] === a.sessionId), 4000);
+  assert.equal((await api('tagalong', 'GET', `/mp/players/${leader.id}`)).status, 404);
+  const a2 = await client('leader').joinOrCreate('city', { town: 'seed=follow-b', width: 128, height: 128, character: leader.id });
+  a2.onMessage(MSG_SPAWN, () => {});
+  move(a2, 40, 50);
+  let there = await api('tagalong', 'GET', `/mp/players/${leader.id}`);
+  const end = Date.now() + 3000;
+  while (there.status !== 200 && Date.now() < end) {
+    await new Promise((r) => setTimeout(r, 50));
+    there = await api('tagalong', 'GET', `/mp/players/${leader.id}`);
+  }
+  assert.equal(there.json.town, 'seed=follow-b');
+  assert.equal(there.json.session, a2.sessionId);
+  assert.equal((await api('tagalong', 'GET', '/mp/players/nobody')).status, 404);
+  assert.equal((await fetch(`${base}/mp/players/${leader.id}`)).status, 401);
+  await a2.leave();
+  await b.leave();
 });

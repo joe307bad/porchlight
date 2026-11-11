@@ -567,6 +567,99 @@ namespace Porchlight.App
             iso?.SetAuto(false);
         }
 
+        /// <summary>
+        /// Across the county as fast as you like (PORCHLIGHT_SMOKE_DRIVE=1; PORCHLIGHT_SMOKE_SPEED tiles a second,
+        /// 35 by default, twice a car's boost) at 60 frames a second, town to town by the highways and held at an
+        /// edge while the space ahead isn't ready, as the game holds you: how long it waited and its longest frames,
+        /// each leg. Then the county map's directions and Travel now, and the way to someone in another room.
+        /// </summary>
+        async Task SmokeDrive()
+        {
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = 60;
+            var placed = new List<PlacedTown> { new PlacedTown { place = Place.Porchlight, name = "Porchlight", key = TownKey, width = model.width, height = model.height } };
+            placed.AddRange(CountyMap.Cities);
+            var plan = CountyMap.Build(placed, "smoke");
+            var start = plan.spaces.Find(sp => sp.kind == SpaceKind.Town && sp.townKey == TownKey);
+            county = new CountyDrive(iso, plan, start, k =>
+            {
+                var st = ParseUrlState(k);
+                return (st.seed, st.@params);
+            })
+            { OnSpace = DroveInto, Heading = TripNextTown };
+            overlay?.SetCounty(plan, county.Terrain, WhereInCounty, TripWay, null);
+            double t0 = platform.Now();
+            while (platform.Now() < t0 + 4000) await Task.Yield();
+            double speed = double.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_SPEED"), out var sp0) ? sp0 : 35;
+            foreach (var to in new[] { Place.East, Place.South, Place.West, Place.Porchlight, Place.South })
+            {
+                var dest = plan.towns[to];
+                var from = county.Active.ToWorld(iso.PlayerPosition.Value);
+                var way = new List<Vec2> { from };
+                var stop = CountyRoute.Next(plan, county.Active, from, dest);
+                if (stop != null) way.Add(stop.Value.at);
+                way.AddRange(CountyRoute.Ahead(plan, county.Active, from, dest, double.PositiveInfinity));
+                way.Add(new Vec2(dest.x0 + dest.width / 2.0, dest.y0 + dest.height / 2.0));
+                Debug.Log($"smoke drive: from {county.Active.name} to {dest.name} at {speed} tiles/s, {way.Count} points");
+                double waited = 0, longest = 0, legStart = platform.Now(), last = legStart;
+                int frames = 0, slow = 0;
+                for (int i = 1; i < way.Count; i++)
+                {
+                    var a = way[i - 1];
+                    var b = way[i];
+                    double len = Geo.Dist(a, b), s = 0;
+                    while (s < len)
+                    {
+                        await Task.Yield();
+                        double now = platform.Now(), dt = Math.Min(0.1, (now - last) / 1000);
+                        longest = Math.Max(longest, now - last);
+                        if (now - last > 50) slow++;
+                        last = now;
+                        frames++;
+                        if (county.Waiting != null)
+                        {
+                            waited += dt;
+                            continue;
+                        }
+                        s = Math.Min(len, s + speed * dt);
+                        var w = new Vec2(a.x + (b.x - a.x) * s / len, a.y + (b.y - a.y) * s / len);
+                        iso.PutPlayer(county.Active.ToLocal(w), 0);
+                    }
+                }
+                Debug.Log($"smoke drive: in {county.Active.name} after {(platform.Now() - legStart) / 1000:0.0} s, waited {waited:0.0} s at edges, {frames} frames, {slow} over 50 ms, longest {longest:0} ms");
+            }
+            // The county map: a town picked, its line, directions there.
+            var west = plan.towns[Place.West];
+            Debug.Log($"smoke county: describe {DescribeTown(west)} / {DescribeTown(county.Active)}");
+            DirectionsToTown(west);
+            for (int i = 0; i < 90; i++) await Task.Yield();
+            Debug.Log($"smoke county: directions to {west.name}: on trip {iso.OnTrip}, tripTo {tripTo}, next town {TripNextTown()?.name}, way {TripWay()?.Count}");
+            // Following someone gone on to another room: as if the server had them in the middle of Lanternport.
+            var east = plan.towns[Place.East];
+            followId = "smoke";
+            followName = "Smokey";
+            followAt = new PlayerWhere { room = east.townKey, x = east.width / 2.0, z = east.height / 2.0, name = "Smokey" };
+            var fs = FollowStop(iso.PlayerPosition.Value);
+            Debug.Log($"smoke follow: {(fs == null ? "none" : fs.Value.name + " final " + fs.Value.final + " ahead " + fs.Value.ahead?.Count)}; {Describe(east.townKey, 10, 10)}; on the road {Describe(east.townKey, -60, 90)}; north {Describe(plan.northRoom, plan.junction.x0 + 20, plan.junction.y0 + 20)}");
+            followAt = new PlayerWhere { room = county.Active.townKey, x = 20, z = 20 };
+            fs = FollowStop(iso.PlayerPosition.Value);
+            Debug.Log($"smoke follow: same town: {(fs == null ? "none" : fs.Value.name + " final " + fs.Value.final + " at " + fs.Value.at)}");
+            followId = null;
+            followAt = null;
+            // The pad's stick on the county map.
+            overlay.OpenMap();
+            overlay.SwitchMapTab(1);
+            overlay.StepCountyPick(new Vec2(1, 0));
+            overlay.StepCountyPick(new Vec2(0, 1));
+            overlay.CloseMap();
+            // Travel now: there, loaded afresh.
+            TravelTo(east);
+            double until = platform.Now() + 30000;
+            while ((Loading || buildingTown || TownKey != east.townKey) && platform.Now() < until) await Task.Yield();
+            for (int i = 0; i < 30; i++) await Task.Yield();
+            Debug.Log($"smoke county: travelled to {east.name}: town {(TownKey == east.townKey ? "is" : "ISN'T")} {east.name}, exploring {exploring}, player {iso.PlayerPosition}, trip {iso.OnTrip}");
+        }
+
         /// <summary>A headless run through the app (PORCHLIGHT_SMOKE=1): explore, walk a while, back to the map, quit.</summary>
         async Task Smoke()
         {
@@ -579,6 +672,12 @@ namespace Porchlight.App
                 bool passed = await SmokeTrash(System.IO.File.ReadAllText(trash));
                 Debug.Log("smoke: done");
                 Application.Quit(passed ? 0 : 1);
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_DRIVE") == "1")
+            {
+                await SmokeDrive();
+                Application.Quit(0);
                 return;
             }
             if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_BUILD") == "1")
@@ -1546,6 +1645,7 @@ namespace Porchlight.App
             map.route = new List<Vec2>();
             map.goal = null;
             map.SetModel(model);
+            blueprintStale = false;
             if (autoFit || sizeChanged) map.Fit();
             map.Redraw();
             if (exploring && iso != null)
@@ -1611,6 +1711,17 @@ namespace Porchlight.App
                 tripTo = null;
                 OfferDirections();
             };
+            // Someone you're following has gone out of this room: where are they now?
+            iso.OnFindLost = _ =>
+            {
+                if (followId == null) return;
+                followAskAt = 0;
+                UpdateFollow(platform.Now());
+            };
+            // The county map: directions to a town, or straight there.
+            overlay.OnCountyDirections = DirectionsToTown;
+            overlay.OnCountyTravel = TravelTo;
+            overlay.DescribeTown = DescribeTown;
             portraits ??= new Portraits(ModelLibrary.Instance);
             overlay.SignedIn = online;
             iso.HomeDoor = saved =>
@@ -1731,6 +1842,11 @@ namespace Porchlight.App
             footer.style.display = online ? DisplayStyle.None : DisplayStyle.Flex;
             panel.root.style.visibility = online ? Visibility.Hidden : Visibility.Visible;
             iso?.SetBackground(true); // keep the town (and an auto-walking character) going behind the map
+            if (blueprintStale)
+            {
+                blueprintStale = false;
+                map.SetModel(model);
+            }
             // Mark where the character is on the blueprint and bring it into view.
             var at = iso?.PlayerPosition;
             map.marker = at;
@@ -1813,6 +1929,7 @@ namespace Porchlight.App
                 var placed = new List<PlacedTown>();
                 foreach (var t in list.towns)
                 {
+                    townNames[t.key] = t.name;
                     Place? where = null;
                     if (!t.mine && t.place != null && Enum.TryParse(t.place, true, out Place p)) where = p;
                     else if (t.mine && t.slot >= 0 && t.slot < 3) where = CountyMap.MineSlot(t.slot);
@@ -1867,14 +1984,23 @@ namespace Porchlight.App
             sidebar.SetSeed(seed);
             sidebar.SetParams(@params);
             map.marker = null;
-            map.SetModel(model);
-            map.Redraw();
+            // The blueprint's hidden while you explore, and drawing it is a good part of a frame (more, for a big
+            // town): it's drawn when it's next shown (LeaveExplore), not each time you drive into a town.
+            if (exploring) blueprintStale = true;
+            else
+            {
+                map.SetModel(model);
+                map.Redraw();
+            }
             overlay?.SetHome(DoorOfHome()?.at, HouseOfHome()?.footprint);
             overlay?.SetNeighbours(null);
             RefreshNeighbours();
             if (!back) overlay?.Flash($"Welcome to {space.name}");
             if (playing != null) OfferJoins();
         }
+
+        /// <summary>The town on screen has changed (driven into) since the blueprint last drew it.</summary>
+        bool blueprintStale;
 
         /// <summary>The town you last went out of onto the road, and when (ms): back in it soon after, no welcome.</summary>
         string leftTownKey;
@@ -1930,11 +2056,80 @@ namespace Porchlight.App
                 accountCharacters = list;
                 OfferDirections();
                 var others = list.Where(c => c.inUse && !string.IsNullOrEmpty(c.town) && c.id != mine && c.town != TownKey).ToList();
-                string shown = string.Join(",", others.Select(c => c.id));
-                if (shown == joinsShown) return;
-                joinsShown = shown;
-                sidebar.SetJoins(others.Select(c => (c.name, (Action)(() => JoinWhereverNow(c.id)))).ToList());
+                if (others.Count == 0)
+                {
+                    ShowJoins(others, new string[0]);
+                    return;
+                }
+                // Where each is, so where you'd arrive (asked of the server: the town alone, if it doesn't say).
+                var where = new string[others.Count];
+                int left = others.Count;
+                for (int i = 0; i < others.Count; i++)
+                {
+                    int k = i;
+                    var c = others[k];
+                    Account.Where(platform, origin, c.id, (w, _) =>
+                    {
+                        where[k] = w != null ? Describe(w.Value.room, w.Value.x, w.Value.z) : TownLabel(c.town);
+                        if (--left == 0 && playing?.id == mine) ShowJoins(others, where);
+                    });
+                }
             });
+        }
+
+        void ShowJoins(List<Character> others, string[] where)
+        {
+            string shown = string.Join(",", others.Select((c, i) => c.id + ":" + where[i]));
+            if (shown == joinsShown) return;
+            joinsShown = shown;
+            sidebar.SetJoins(others.Select((c, i) => (c.name, where[i], (Action)(() => JoinWhereverNow(c.id)))).ToList());
+        }
+
+        /// <summary>The towns' names by key (the county's, as the server listed them).</summary>
+        readonly Dictionary<string, string> townNames = new Dictionary<string, string>();
+
+        /// <summary>"in <town>" for a room's key; null if it isn't known.</summary>
+        string TownLabel(string room)
+        {
+            if (string.IsNullOrEmpty(room)) return null;
+            if (county != null && room == county.map.northRoom) return "at the North junction";
+            var name = TownSpace(room)?.name ?? (townNames.TryGetValue(room, out var n) ? n : null);
+            return name != null ? "in " + name : null;
+        }
+
+        /// <summary>A room of this county (a town's, or the north room)?</summary>
+        bool RoomInCounty(string room) =>
+            county != null && room != null && (room == county.map.northRoom || TownSpace(room) != null);
+
+        /// <summary>Someone's spot (their room, and where in its terms) in the county's world tiles; null if their room isn't this county's.</summary>
+        Vec2? CountyWorld(string room, double x, double z)
+        {
+            if (!RoomInCounty(room)) return null;
+            var o = county.map.RoomOrigin(room);
+            return new Vec2(o.x + x, o.y + z);
+        }
+
+        /// <summary>Where someone is, in words: "in Ember Crossing", "on the Porchlight – South road", "at the North junction".</summary>
+        string Describe(string room, double x, double z)
+        {
+            var at = CountyWorld(room, x, z);
+            if (at == null) return TownLabel(room);
+            var s = county.map.SpaceAt(at.Value);
+            if (s == null)
+            {
+                // Out over the fields (in a plane): by the nearest town.
+                Space near = null;
+                foreach (var t in county.map.spaces)
+                    if (t.kind == SpaceKind.Town && (near == null || CountyMap.DistanceTo(t, at.Value) < CountyMap.DistanceTo(near, at.Value))) near = t;
+                return near != null ? $"out in the country near {near.name}" : TownLabel(room);
+            }
+            switch (s.kind)
+            {
+                case SpaceKind.Town: return "in " + s.name;
+                case SpaceKind.Highway: return $"on the {county.map.highways[s.highway].name} road";
+                case SpaceKind.Junction: return "at the North junction";
+                default: return "on an empty plot up north";
+            }
         }
 
         /// <summary>The account's characters, as last asked (OfferJoins): whose houses there are directions to.</summary>
@@ -1988,6 +2183,7 @@ namespace Porchlight.App
                 iso.Trip(null);
                 return;
             }
+            StopFollowing();
             if (TownSpace(townKey) == null && townKey != TownKey)
             {
                 overlay?.Flash($"There's no road to {townName} from here");
@@ -2023,6 +2219,223 @@ namespace Porchlight.App
             });
             overlay?.Flash(townKey == TownKey ? $"Directions to {label}" : $"Directions to {label} in {townName}: {Directions.FormatDistance(TripLength(townKey))} by road");
             OfferDirections();
+        }
+
+        /// <summary>
+        /// The county map's Directions: the way to a town, shown as you go (out by the right gate and along the
+        /// highways), till you're in it. Already on the way there: stop.
+        /// </summary>
+        void DirectionsToTown(Space town)
+        {
+            if (iso == null || county == null || town?.townKey == null) return;
+            if (InTown(town.townKey))
+            {
+                overlay?.Flash($"You're in {town.name}");
+                return;
+            }
+            string id = "town:" + town.townKey;
+            if (tripTo == id)
+            {
+                iso.Trip(null);
+                return;
+            }
+            StopFollowing();
+            tripTo = id;
+            tripTown = town.townKey;
+            string key = town.townKey, name = town.name;
+            iso.Trip(from =>
+            {
+                var here = county?.Active;
+                var dest = TownSpace(key);
+                if (iso?.world == null || here == null || dest == null) return null;
+                // There: the way ends where you are, so you've arrived.
+                if (here.kind == SpaceKind.Town && here.townKey == key) return (from, name, true, (List<Vec2>)null);
+                var w = here.ToWorld(from);
+                var stop = CountyRoute.Next(county.map, here, w, dest);
+                if (stop == null) return null;
+                var ahead = CountyRoute.Ahead(county.map, here, w, dest, TRIP_AHEAD).Select(here.ToLocal).ToList();
+                return (here.ToLocal(stop.Value.at), stop.Value.name, false, ahead);
+            });
+            overlay?.Flash($"Directions to {name}: {Directions.FormatDistance(TripLength(key))} by road");
+            OfferDirections();
+        }
+
+        /// <summary>
+        /// The county map's Travel now: straight to a town (fast travel), loaded afresh with the county round it, as
+        /// going home does; you're put where the town's room has you (where you last were there, or its middle).
+        /// </summary>
+        void TravelTo(Space town)
+        {
+            if (iso == null || town?.townKey == null || buildingTown || Loading) return;
+            if (InTown(town.townKey))
+            {
+                overlay?.Flash($"You're in {town.name}");
+                return;
+            }
+            iso.CloseMap();
+            StopFollowing();
+            string key = town.townKey;
+            ShowLoader("town", town.name);
+            AfterPaint(async () =>
+            {
+                await Run(ShowTownSteps(key), "town/");
+                // Rebuilt even when it's the last town driven through (you're out on its highway): the county starts from it.
+                isoTown = null;
+                enteringTown = true;
+                await Explore();
+            });
+        }
+
+        /// <summary>The space you're in is this town.</summary>
+        bool InTown(string townKey)
+        {
+            var here = county?.Active;
+            return here != null ? here.kind == SpaceKind.Town && here.townKey == townKey : townKey == TownKey;
+        }
+
+        /// <summary>The county map's line about a town picked: how far by road, or that you're in it.</summary>
+        string DescribeTown(Space town)
+        {
+            if (InTown(town.townKey)) return $"You're in {town.name}";
+            string mine = town.townKey == playing?.home?.townKey ? " · your town" : "";
+            return $"{town.name}{mine} · {Directions.FormatDistance(TripLength(town.townKey))} by road";
+        }
+
+        // Following someone from town to town ---------------------------------------------------------
+
+        /// <summary>
+        /// Who you're following (the Players list's tick): their character's id and name, which stay the same as
+        /// they go from room to room. In this room, the way to them as they move (iso.Find); gone on to another,
+        /// where the server has them, and the way there across the county (a trip), till they're in your room again.
+        /// </summary>
+        string followId, followName;
+        PlayerWhere? followAt;
+        double followAskAt;
+        bool followAsking, followNoRoad;
+        int followMisses;
+        /// <summary>How often to ask where they are while they're in another room (ms), and how many "not playing"s in a row before you stop (a move between rooms is a moment of not playing).</summary>
+        const double FOLLOW_ASK_MS = 1500;
+        const int FOLLOW_MISSES = 4;
+        /// <summary>The Players list's row for someone you're following who's gone on to another room.</summary>
+        const string FOLLOW_ROW = "following";
+        string FollowTrip => followId != null ? "player:" + followId : null;
+
+        /// <summary>The Players list ticked (their session key) or unticked (null).</summary>
+        void Follow(string key)
+        {
+            if (iso == null) return;
+            if (key == null || key == FOLLOW_ROW)
+            {
+                StopFollowing();
+                return;
+            }
+            var them = iso.Others.FirstOrDefault(o => o.key == key);
+            if (them.key == null) return;
+            StopFollowing();
+            if (tripTo != null) iso.Trip(null);
+            followId = them.id;
+            followName = string.IsNullOrEmpty(them.name) ? "them" : them.name;
+            iso.Find(key);
+        }
+
+        void StopFollowing()
+        {
+            bool tripping = tripTo != null && tripTo == FollowTrip;
+            followId = null;
+            followAt = null;
+            followMisses = 0;
+            followNoRoad = false;
+            if (iso == null) return;
+            if (iso.Finding != null) iso.Find(null);
+            if (tripping) iso.Trip(null);
+        }
+
+        /// <summary>Twice a second: in this room, the way to them; gone on, ask where (every so often) and show the way there.</summary>
+        void UpdateFollow(double now)
+        {
+            if (followId == null || iso == null) return;
+            var them = iso.Others.FirstOrDefault(o => o.id == followId);
+            if (them.key != null)
+            {
+                // Here (back, or a new session in the room you've just come into): the way to them as they move.
+                followAt = null;
+                followMisses = 0;
+                if (tripTo != null && tripTo == FollowTrip) iso.Trip(null);
+                if (iso.Finding != them.key) iso.Find(them.key);
+                return;
+            }
+            if (followAsking || now < followAskAt) return;
+            followAsking = true;
+            followAskAt = now + FOLLOW_ASK_MS;
+            string id = followId;
+            Account.Where(platform, origin, id, (w, _) =>
+            {
+                followAsking = false;
+                if (followId != id || iso == null) return;
+                if (w == null)
+                {
+                    if (++followMisses < FOLLOW_MISSES) return;
+                    overlay?.Flash($"{followName} has stopped playing");
+                    StopFollowing();
+                    return;
+                }
+                followMisses = 0;
+                followAt = w;
+                // Seen in this room by now: the roll call has them (next time round).
+                if (iso.Others.Any(o => o.id == id)) return;
+                if (!RoomInCounty(w.Value.room))
+                {
+                    if (!followNoRoad) overlay?.Flash($"There's no road to where {followName} is");
+                    followNoRoad = true;
+                    return;
+                }
+                followNoRoad = false;
+                if (tripTo == FollowTrip) return; // on the way already: the trip asks where they are each second
+                tripTo = FollowTrip;
+                tripTown = null;
+                iso.Trip(FollowStop);
+                overlay?.Flash($"Following {followName}: {Describe(w.Value.room, w.Value.x, w.Value.z)}");
+                OfferDirections();
+            });
+        }
+
+        /// <summary>
+        /// Where to head in the space you're in for someone in another room (never "arrived": they move, and once
+        /// they're in your room the way to them takes over): straight to them if they're in this
+        /// space (or on this stretch of highway); else along the highways to the town they're in, or, out on a
+        /// highway, to the town at the end of it nearer them (whose room has that half of it, so they'll be in it).
+        /// </summary>
+        (Vec2 at, string name, bool final, List<Vec2> ahead)? FollowStop(Vec2 from)
+        {
+            if (followAt == null || county == null || iso?.world == null) return null;
+            var w = followAt.Value;
+            var at = CountyWorld(w.room, w.x, w.z);
+            var here = county.Active;
+            if (at == null || here == null) return null;
+            var map = county.map;
+            var theirs = map.SpaceAt(at.Value);
+            if (theirs == here || theirs != null && theirs.kind == SpaceKind.Highway && here.kind == SpaceKind.Highway && theirs.highway == here.highway)
+                return (here.ToLocal(at.Value), followName, false, null);
+            Space dest = theirs;
+            if (theirs == null || theirs.kind == SpaceKind.Highway)
+            {
+                if (theirs != null)
+                {
+                    var hw = map.highways[theirs.highway];
+                    var (s, _) = CountyMap.Nearest(hw, at.Value);
+                    dest = map.spaces[s < hw.length / 2 ? hw.a.space : hw.b.space];
+                }
+                else
+                    foreach (var t in map.spaces)
+                        if (t.kind != SpaceKind.Highway && (dest == null || CountyMap.DistanceTo(t, at.Value) < CountyMap.DistanceTo(dest, at.Value))) dest = t;
+            }
+            if (dest == null || dest == here) return (here.ToLocal(at.Value), followName, false, null);
+            tripTown = dest.kind == SpaceKind.Town ? dest.townKey : null;
+            var fromW = here.ToWorld(from);
+            var stop = CountyRoute.Next(map, here, fromW, dest);
+            if (stop == null) return (here.ToLocal(at.Value), followName, false, null);
+            var ahead = CountyRoute.Ahead(map, here, fromW, dest, TRIP_AHEAD).Select(here.ToLocal).ToList();
+            return (here.ToLocal(stop.Value.at), $"{stop.Value.name} ({followName})", false, ahead);
         }
 
         /// <summary>From where you are to the town, along the highways (tiles, roughly).</summary>
@@ -2080,6 +2493,7 @@ namespace Porchlight.App
             joinsShown = "";
             sidebar.SetJoins(null);
             accountCharacters = null;
+            StopFollowing();
             tripTo = null;
             iso?.Trip(null);
             sidebar.SetDirections(null);
@@ -2194,7 +2608,15 @@ namespace Porchlight.App
             double now = platform.Now();
             if (now < playersAt) return;
             playersAt = now + 500;
-            var list = iso.Others.Select(o => (o.key, o.name)).OrderBy(o => o.name, StringComparer.OrdinalIgnoreCase).ToList();
+            UpdateFollow(now);
+            var list = iso.Others.Select(o => (o.key, o.name, (string)null)).OrderBy(o => o.name, StringComparer.OrdinalIgnoreCase).ToList();
+            // Someone you're following who's gone on to another town: still listed (ticked), and where.
+            string findingKey = iso.Finding;
+            if (followId != null && !iso.Others.Any(o => o.id == followId))
+            {
+                list.Add((FOLLOW_ROW, followName, followAt is PlayerWhere fw ? Describe(fw.room, fw.x, fw.z) : "on their way to another town"));
+                findingKey = FOLLOW_ROW;
+            }
             if (joining != null)
             {
                 // Joined someone: beside them as soon as they're on the map (or not, after a while).
@@ -2213,7 +2635,7 @@ namespace Porchlight.App
                 joinsAt = now + JOINS_MS;
                 OfferJoins();
             }
-            sidebar.SetPlayers(list, iso.Finding, key => iso.Find(key));
+            sidebar.SetPlayers(list, findingKey, Follow);
         }
 
         void ToggleAutoWalk()

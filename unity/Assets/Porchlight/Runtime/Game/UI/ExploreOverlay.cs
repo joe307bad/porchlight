@@ -68,6 +68,38 @@ namespace Porchlight.UI
         UnityEngine.UIElements.Button townTab, countyTab;
         readonly CountyMapView county = new CountyMapView();
         bool countyShown;
+        /// <summary>Under the county map: the town picked, and what you can do about it.</summary>
+        VisualElement countyBar;
+        Label countyBarText;
+        /// <summary>The town picked on the county map: directions there, or there now (fast travel).</summary>
+        public Action<Porchlight.County.Space> OnCountyDirections, OnCountyTravel;
+        /// <summary>What to say about a town picked on the county map (how far by road, or that you're in it).</summary>
+        public Func<Porchlight.County.Space, string> DescribeTown;
+
+        /// <summary>The bar under the county map: shown with a town picked.</summary>
+        void ShowPick()
+        {
+            if (countyBar == null) return;
+            var s = county.Picked;
+            bool on = CountyShown && s != null;
+            countyBar.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
+            if (on) countyBarText.text = DescribeTown?.Invoke(s) ?? s.name;
+        }
+
+        public void StepCountyPick(Vec2 dir)
+        {
+            if (CountyShown) county.Step(dir);
+        }
+
+        public void CountyDirections()
+        {
+            if (CountyShown && county.Picked != null) OnCountyDirections?.Invoke(county.Picked);
+        }
+
+        public void CountyTravel()
+        {
+            if (CountyShown && county.Picked != null) OnCountyTravel?.Invoke(county.Picked);
+        }
 
         /// <summary>
         /// The county round the town (null: none, and no County tab): its towns and highways, the hills
@@ -103,8 +135,9 @@ namespace Porchlight.UI
             county.Show(c && MapOpen);
             bool pad = Gamepad.current != null;
             string tabs = county.HasCounty ? pad ? " · LB/RB the town or the county" : " · Tab: the town or the county" : "";
+            ShowPick();
             bigMapHint.text = c
-                ? (pad ? "B or Start closes" : "M or Esc closes") + tabs
+                ? (pad ? "Left stick picks a town · A for directions there · Y to go there now · B or Start closes" : "Click a town for directions there, or to go there now · M or Esc closes") + tabs
                 : (pad
                     ? $"Left stick moves the cross · A sets a waypoint · Y clears it · X {(SignedIn ? "opens the Journal" : "back to the town map")} · B or Start closes"
                     : "Click to set a waypoint · M or Esc closes") + tabs;
@@ -271,6 +304,17 @@ namespace Porchlight.UI
             frame.Add(bigMapPicture);
             county.Show(false);
             frame.Add(county.root);
+            countyBar = new VisualElement();
+            countyBar.AddToClassList("county-bar");
+            countyBarText = new Label();
+            countyBarText.AddToClassList("county-bar-text");
+            countyBar.Add(countyBarText);
+            countyBar.Add(El.Btn("Directions", "The way there, shown as you go", CountyDirections, "btn", "btn-primary"));
+            countyBar.Add(El.Btn("Travel now", "Straight there (the town's loaded, and you're in it)", CountyTravel, "btn"));
+            countyBar.RegisterCallback<PointerDownEvent>(e => e.StopPropagation());
+            countyBar.style.display = DisplayStyle.None;
+            frame.Add(countyBar);
+            county.OnPick = _ => ShowPick();
             bigMapHint = new Label();
             bigMapHint.AddToClassList("bigmap-hint");
             frame.Add(bigMapHint);

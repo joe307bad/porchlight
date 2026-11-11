@@ -106,8 +106,8 @@ export interface CorrectMessage {
   epoch: number;
 }
 
-/** [sessionId, x, z, name] per player, positions rounded to a tenth of a tile. */
-export type DotsMessage = [string, number, number, string][];
+/** [sessionId, x, z, name, characterId] per player, positions rounded to a tenth of a tile (the character's id, as in the room's state, is what stays the same from room to room). */
+export type DotsMessage = [string, number, number, string, string][];
 
 /** Their own car, left parked: the model + 1 (0: no car, or they're driving it), where, and its heading in radians. */
 export interface ParkedCarMessage {

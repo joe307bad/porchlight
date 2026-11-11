@@ -12,6 +12,7 @@
 //   DELETE /mp/towns/:id             delete one of this account's (not while anyone's playing there)
 //   GET    /mp/towns/:id/homes       the houses people live in there
 //   GET    /mp/progress              the missions and unlocks, and which this account has earned
+//   GET    /mp/players/:id           where a character (anyone's, by the id the room shows) is playing right now: { town, session, x, z, name }, or 404
 //   GET    /mp/records?town=&mission=          a mission's best times in a town (its key), and this account's
 //   POST   /mp/records               { town, mission, character, seconds } keep a time (if it's the account's best there) → the board
 //
@@ -39,6 +40,8 @@ export interface GameDeps {
   countyChanged?(account: string): void;
   /** How many characters are playing in this town (its key) right now. */
   playingIn(townKey: string): number;
+  /** Where a character is playing right now (their room's key, session, and spot in its terms), or null. */
+  whereIs?(characterId: string): { town: string; session: string; x: number; z: number; name: string } | null;
   /** The missions on offer. */
   missions: { list(): Promise<Mission[]>; get(id: string): Promise<Mission | null> };
 }
@@ -62,6 +65,7 @@ const PREFIX = '/mp/characters';
 const TOWNS = '/mp/towns';
 const PROGRESS = '/mp/progress';
 const RECORDS = '/mp/records';
+const PLAYERS = '/mp/players';
 
 async function readJson(req: IncomingMessage, limit = 1024): Promise<unknown> {
   let size = 0;
@@ -86,7 +90,7 @@ export function createCharacterRoutes(deps: GameDeps) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const path = (req.url ?? '/').split('?')[0];
     const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
-    if (!under(PREFIX) && !under(TOWNS) && path !== PROGRESS && path !== RECORDS) return false;
+    if (!under(PREFIX) && !under(TOWNS) && !under(PLAYERS) && path !== PROGRESS && path !== RECORDS) return false;
     const send = (status: number, body: unknown): true => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
@@ -106,6 +110,13 @@ export function createCharacterRoutes(deps: GameDeps) {
         return (await readJson(req)) as T;
       };
       const parts = path.split('/').slice(1).map(decodeURIComponent); // ['mp', 'towns', id, 'homes']
+
+      if (parts[1] === 'players') {
+        if (req.method !== 'GET') return send(405, { error: 'Method not allowed.' });
+        if (parts.length !== 3 || !parts[2] || parts[2].length > 64) return send(404, { error: 'Not found.' });
+        const where = deps.whereIs?.(parts[2]) ?? null;
+        return where ? send(200, where) : send(404, { error: 'Not playing right now.' });
+      }
 
       if (path === PROGRESS) {
         if (req.method !== 'GET') return send(405, { error: 'Method not allowed.' });

@@ -146,6 +146,16 @@ export const presence = (characterId: string, tab: string): { town: string | nul
   return { town: o?.room.town ?? null, session: o?.sessionId ?? null, inUse: inUse(o, tab) };
 };
 
+/**
+ * Where this character is right now, if they're playing: their room (a town's key, or the north room's), their
+ * session there, and where in its terms. For following someone from town to town (their session changes as they go).
+ */
+export const whereIs = (characterId: string): { town: string; session: string; x: number; z: number; name: string } | null => {
+  const o = online.get(characterId);
+  const at = o?.room.positionOf(o.sessionId);
+  return o && at ? { town: o.room.town, session: o.sessionId, ...at } : null;
+};
+
 /** How many characters are playing in this town (its room's key) right now. */
 export const playingIn = (town: string): number => [...online.values()].filter((o) => o.room.town === town).length;
 
@@ -505,6 +515,13 @@ export class CityRoom extends Room<{ state: CityState }> {
     return !rt || rt.client !== null;
   }
 
+  /** Where this session's player is (the room's terms, to a tenth of a tile), once they're placed; null if not. */
+  positionOf(sessionId: string): { x: number; z: number; name: string } | null {
+    const rt = this.runtime.get(sessionId);
+    if (!rt || rt.finished || !rt.track.anchored) return null;
+    return { x: Math.round(rt.player.x * 10) / 10, z: Math.round(rt.player.z * 10) / 10, name: rt.player.name };
+  }
+
   /** Someone else has taken this character: save, sign off and close this session. */
   async evict(sessionId: string): Promise<void> {
     const rt = this.runtime.get(sessionId);
@@ -669,7 +686,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     const dots: DotsMessage = [];
     for (const rt of this.runtime.values()) {
       if (!rt.track.anchored || rt.finished) continue;
-      dots.push([rt.sessionId, Math.round(rt.player.x * 10) / 10, Math.round(rt.player.z * 10) / 10, rt.player.name]);
+      dots.push([rt.sessionId, Math.round(rt.player.x * 10) / 10, Math.round(rt.player.z * 10) / 10, rt.player.name, rt.characterId]);
     }
     this.broadcast(MSG_DOTS, dots);
   }

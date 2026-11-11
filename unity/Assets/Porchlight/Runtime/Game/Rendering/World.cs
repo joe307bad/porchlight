@@ -12,6 +12,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using Porchlight.Core;
 using Porchlight.Explore;
 using Porchlight.Model;
@@ -166,17 +167,41 @@ namespace Porchlight.Rendering
         readonly List<Signpost> plannedSigns;
 
         /// <summary>Rooms furnished, doors hung and signposts put up between one part and the next: each part a few milliseconds.</summary>
-        const int ROOMS_A_PART = 48, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 250;
+        const int ROOMS_A_PART = 16, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 250;
+        /// <summary>Rows of tiles planted, sidewalks lit, meshes surveyed for the weather and walls kept clear of doorways, between one part and the next.</summary>
+        const int TREE_ROWS_A_PART = 24, LAMP_PATHS_A_PART = 40, SURVEY_A_PART = 400, WALLS_A_PART = 300;
+
+        /// <summary>
+        /// A part's name ends in this while it waits on a worker thread: nothing to do this frame but
+        /// ask again next (CountyDrive stops building for the frame, rather than spinning on it).
+        /// </summary>
+        public const string WAITING = "…";
 
         /// <summary>The town's parts, built in turn: each one's name once it's done.</summary>
         public IEnumerable<string> Build()
         {
             var rng = new Rng($"{model.seed}::iso");
-            BuildGround(rng).Build("ground", still);
+            // The ground's tiles worked out off the main thread too, where there are threads (waited for, so
+            // the town's random numbers come out in the same order).
+            MeshBuilder ground = null;
+#if !(UNITY_WEBGL && !UNITY_EDITOR)
+            var laying = Task.Run(() => BuildGround(rng));
+            while (!laying.IsCompleted) yield return "ground" + WAITING;
+            ground = laying.Result;
+#endif
+            (ground ?? BuildGround(rng)).Build("ground", still);
             yield return "ground";
             AddWater();
             yield return "water";
-            BuildRoads().Build("roads", still);
+            // The town's longest part: its streets' shapes worked out off the main thread where there are
+            // threads, and only the mesh made here.
+            MeshBuilder roads = null;
+#if !(UNITY_WEBGL && !UNITY_EDITOR)
+            var drawing = Task.Run(BuildRoads);
+            while (!drawing.IsCompleted) yield return "roads" + WAITING;
+            roads = drawing.Result;
+#endif
+            (roads ?? BuildRoads()).Build("roads", still);
             yield return "roads";
             var sheds = new MeshBuilder(palette);
             AddHouses(rng);
@@ -196,7 +221,7 @@ namespace Porchlight.Rendering
             yield return "interiors";
             AddYards(sheds, rng);
             yield return "yards";
-            AddTrees(rng);
+            foreach (var part in AddTrees(rng)) yield return "trees" + part;
             yield return "trees";
             AddPlazaDecor(rng);
             yield return "plazas";
@@ -206,7 +231,8 @@ namespace Porchlight.Rendering
             AddZoo();
             AddDocks();
             if (!sheds.Empty) sheds.Build("sheds", still);
-            AddLamps(rng);
+            yield return "ports";
+            foreach (var part in AddLamps(rng)) yield return "lamps" + part;
             yield return "places";
             signs = plannedSigns ?? Signs.Plan(model, layout, names);
             yield return "signposts";
@@ -214,7 +240,7 @@ namespace Porchlight.Rendering
             AddFountain();
             _ = palette.Material;
             yield return "signs";
-            Survey();
+            foreach (var part in Survey()) yield return "survey" + part;
             yield return "survey";
             // Combined a share at a time (each share its own batches), not the whole town in one frame.
             var parts = still.GetComponentsInChildren<MeshRenderer>().Select(r => r.gameObject).ToArray();
@@ -244,8 +270,8 @@ namespace Porchlight.Rendering
         /// <summary>A building's shell (what's hidden while you're in its room).</summary>
         public Transform ShellOf(int building) => shells[building].transform;
 
-        /// <summary>For the weather: the town's height over each tile, and what stands in it (before batching merges it).</summary>
-        void Survey()
+        /// <summary>For the weather: the town's height over each tile, and what stands in it (before batching merges it), a share of its meshes a part.</summary>
+        IEnumerable<int> Survey()
         {
             int w = model.width, h = model.height;
             surface = new float[w * h];
@@ -255,10 +281,14 @@ namespace Porchlight.Rendering
             for (int i = 0; i < shells.Count; i++) buildings[shells[i].transform] = i;
             // In the town's own terms (where its corner is the origin): a space of the county is built off to
             // one side of the one you're in, and is at the origin by the time its weather starts.
-            var origin = root.transform.position;
-            var toTown = Matrix4x4.Translate(-origin);
+            // Asked afresh for each mesh: a space being built moves (with every other) when you drive into the next.
+            int seen = 0;
             foreach (var f in root.GetComponentsInChildren<MeshFilter>(true))
             {
+                if (++seen % SURVEY_A_PART == 0) yield return seen / SURVEY_A_PART - 1;
+                if (f == null) continue;
+                var origin = root.transform.position;
+                var toTown = Matrix4x4.Translate(-origin);
                 var r = f.GetComponent<MeshRenderer>();
                 if (r == null || f.sharedMesh == null) continue;
                 bool isParked = false;
@@ -304,6 +334,27 @@ namespace Porchlight.Rendering
         public void Dispose()
         {
             foreach (var i in interiors.Values) i.Dispose();
+            UnityEngine.Object.Destroy(root);
+        }
+
+        /// <summary>
+        /// Dispose a share at a time, for a town let go while you play (far off, or the farthest of those built):
+        /// taken apart a few hundred pieces a part. A whole town destroyed in one frame stalls it, and so does
+        /// switching it off whole.
+        /// </summary>
+        public IEnumerable<int> DisposeSteps(int perPart = 400)
+        {
+            foreach (var i in interiors.Values) i.Dispose();
+            interiors.Clear();
+            yield return 0;
+            // Deepest first, so each piece goes before what it hangs from.
+            var all = root.GetComponentsInChildren<Transform>(true);
+            int done = 0;
+            for (int k = all.Length - 1; k > 0; k--)
+            {
+                if (all[k] != null) UnityEngine.Object.Destroy(all[k].gameObject);
+                if (++done % perPart == 0) yield return done / perPart;
+            }
             UnityEngine.Object.Destroy(root);
         }
 

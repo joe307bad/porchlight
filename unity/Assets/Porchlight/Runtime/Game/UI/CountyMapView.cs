@@ -2,6 +2,8 @@
 // middle, the public cities round it and your own towns up north, each named;
 // the highways that join them (yours in purple), the hills between drawn as a
 // shaded picture, where you are, and on a trip the way there dotted in blue.
+// A town can be picked (clicked, or stepped to with the stick), for directions
+// there or to go there now.
 
 using System;
 using System.Collections.Generic;
@@ -10,6 +12,7 @@ using Porchlight.County;
 using Porchlight.Rendering;
 using UnityEngine;
 using UnityEngine.UIElements;
+using Space = Porchlight.County.Space;
 
 namespace Porchlight.UI
 {
@@ -32,6 +35,11 @@ namespace Porchlight.UI
         public Func<List<Vec2>> Way;
         /// <summary>The town you live in (its key), named a little larger.</summary>
         public string HomeKey;
+        /// <summary>The town picked (outlined), or null; and the moment it changes.</summary>
+        public Space Picked { get; private set; }
+        public Action<Space> OnPick;
+        /// <summary>How far from a town a click still picks it (tiles).</summary>
+        const double PICK_SLACK = 60;
 
         public CountyMapView()
         {
@@ -44,6 +52,74 @@ namespace Porchlight.UI
             labels = new VisualElement { pickingMode = PickingMode.Ignore };
             Fill(labels);
             root.Add(labels);
+            root.RegisterCallback<PointerDownEvent>(e =>
+            {
+                var r = root.contentRect;
+                if (map == null || r.width <= 0 || r.height <= 0) return;
+                var at = new Vec2(vx0 + e.localPosition.x / r.width * vw, vy0 + e.localPosition.y / r.height * vh);
+                Space best = null;
+                double bestD = PICK_SLACK;
+                foreach (var s in map.spaces)
+                {
+                    if (s.kind != SpaceKind.Town) continue;
+                    double d = CountyMap.DistanceTo(s, at);
+                    if (d <= bestD)
+                    {
+                        bestD = d;
+                        best = s;
+                    }
+                }
+                Pick(best);
+            });
+        }
+
+        /// <summary>Pick this town (null: none).</summary>
+        public void Pick(Space s)
+        {
+            if (s != null && s.kind != SpaceKind.Town) s = null;
+            Picked = s;
+            marks.MarkDirtyRepaint();
+            OnPick?.Invoke(s);
+        }
+
+        static Vec2 Middle(Space s) => new Vec2(s.x0 + s.width / 2.0, s.y0 + s.height / 2.0);
+
+        /// <summary>
+        /// The next town that way (map terms: +y is south) from the one picked, or from where you are: the
+        /// nearest whose middle is roughly that way.
+        /// </summary>
+        public void Step(Vec2 dir)
+        {
+            if (map == null) return;
+            double len = Math.Sqrt(dir.x * dir.x + dir.y * dir.y);
+            if (len < 1e-6) return;
+            var from = Picked != null ? Middle(Picked) : You?.Invoke() ?? Middle(map.towns[Place.Porchlight]);
+            Space best = null;
+            double bestScore = double.PositiveInfinity;
+            foreach (var s in map.spaces)
+            {
+                if (s.kind != SpaceKind.Town || s == Picked) continue;
+                var m = Middle(s);
+                double dx = m.x - from.x, dy = m.y - from.y, d = Math.Sqrt(dx * dx + dy * dy);
+                if (d < 1e-6) continue;
+                double along = (dx * dir.x + dy * dir.y) / (d * len);
+                if (along < 0.4) continue;
+                // Nearer, and straighter that way, first.
+                double score = d * (2 - along);
+                if (score < bestScore)
+                {
+                    bestScore = score;
+                    best = s;
+                }
+            }
+            if (best != null) Pick(best);
+            else if (Picked == null)
+            {
+                // Nothing that way: the nearest town at all.
+                foreach (var s in map.spaces)
+                    if (s.kind == SpaceKind.Town && (best == null || Geo.Dist(Middle(s), from) < Geo.Dist(Middle(best), from))) best = s;
+                Pick(best);
+            }
         }
 
         static void Fill(VisualElement e)
@@ -58,6 +134,7 @@ namespace Porchlight.UI
         public void Set(CountyMap county, CountyTerrain terrain)
         {
             map = county;
+            Picked = null;
             labels.Clear();
             roads.Clear();
             if (picture != null) UnityEngine.Object.Destroy(picture);
@@ -174,6 +251,19 @@ namespace Porchlight.UI
                 painter.ClosePath();
                 painter.Fill();
                 painter.Stroke();
+                // The town picked, ringed in gold.
+                if (s == Picked)
+                {
+                    painter.strokeColor = Coords.Hex(0xffc83d);
+                    painter.lineWidth = 4;
+                    painter.BeginPath();
+                    painter.MoveTo(a + new Vector2(-3, -3));
+                    painter.LineTo(new Vector2(b.x + 3, a.y - 3));
+                    painter.LineTo(b + new Vector2(3, 3));
+                    painter.LineTo(new Vector2(a.x - 3, b.y + 3));
+                    painter.ClosePath();
+                    painter.Stroke();
+                }
             }
             // The way there, dotted in blue.
             var way = Way?.Invoke();

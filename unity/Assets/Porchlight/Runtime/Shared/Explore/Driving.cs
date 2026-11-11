@@ -244,7 +244,7 @@ namespace Porchlight.Explore
         /// water and airport tiles the raster leaves as they were, which stopped cars dead on
         /// open road.
         /// </summary>
-        public static Func<double, double, bool> Drivable(TownModel model, IsoLayout layout)
+        public static Func<double, double, bool> Drivable(TownModel model, IsoLayout layout, Func<double, double, bool> paved = null)
         {
             int w = model.width, h = model.height;
             var tiles = model.tiles;
@@ -260,7 +260,7 @@ namespace Porchlight.Explore
                 hard[i] = use == Use.HOUSE || use == Use.SHED ? (byte)1 : (byte)0;
             }
             var tile = Lookup(ok, w, h);
-            var paved = Paved(model, layout);
+            paved ??= Paved(model, layout);
             // The hangars and tower themselves, as drawn: a road beside them may reach onto their tiles.
             var halls = new List<(double x0, double y0, double x1, double y1)>();
             if (model.airport != null)
@@ -278,7 +278,7 @@ namespace Porchlight.Explore
         }
 
         /// <summary>Where a boat may go: open water, not under a bridge or a road's edge, or into a dock.</summary>
-        public static Func<double, double, bool> Sailable(TownModel model, IsoLayout layout)
+        public static Func<double, double, bool> Sailable(TownModel model, IsoLayout layout, Func<double, double, bool> paved = null)
         {
             int w = model.width, h = model.height;
             var tiles = model.tiles;
@@ -286,7 +286,7 @@ namespace Porchlight.Explore
             for (int i = 0; i < ok.Length; i++)
                 ok[i] = Terrain.IsWater(tiles.terrain[i]) && tiles.overlay[i] == Overlay.NONE && layout.use[i] != Use.DOCK ? (byte)1 : (byte)0;
             var tile = Lookup(ok, w, h);
-            var paved = Paved(model, layout);
+            paved ??= Paved(model, layout);
             return (x, y) => tile(x, y) && !paved(x, y);
         }
 

@@ -67,6 +67,10 @@ namespace Porchlight.App
             public TownWorld.Prepared prepared;
             /// <summary>The part of its world last built (TownWorld.Build), for how far along it is.</summary>
             public string part;
+            /// <summary>Where you can walk, drive and fly in it, worked out once it's built (so driving in costs nothing).</summary>
+            public ExploreView.PreparedWays ways;
+            public Task preparingThread;
+            public IEnumerator<string> preparing;
             public bool ready;
             public bool failed;
             public double failedAt;
@@ -90,6 +94,8 @@ namespace Porchlight.App
         readonly Func<string, (string seed, GenParams p)> parseKey;
         readonly Dictionary<int, Built> built = new Dictionary<int, Built>();
         Built job;
+        /// <summary>Spaces let go, being taken apart a share a frame (TownWorld.DisposeSteps).</summary>
+        readonly List<IEnumerator<int>> retiring = new List<IEnumerator<int>>();
         Space active;
         readonly GameObject countryside;
         string wantRoom;
@@ -122,7 +128,7 @@ namespace Porchlight.App
             this.map = map;
             this.parseKey = parseKey;
             active = start;
-            built[start.id] = new Built { space = start, model = view.world.model, world = view.world, ready = true };
+            var here = built[start.id] = new Built { space = start, model = view.world.model, world = view.world, ready = true };
 #if !(UNITY_WEBGL && !UNITY_EDITOR)
             foreach (var s in map.spaces)
             {
@@ -147,6 +153,11 @@ namespace Porchlight.App
             });
 #endif
             Terrain = CountyTerrain.Build(map);
+#if !(UNITY_WEBGL && !UNITY_EDITOR)
+            // The town you start in is built already, but not its ways in the county's terms (its hills): worked
+            // out meanwhile, for when you drive back into it.
+            BeginWays(here);
+#endif
             countryside = Countryside();
             Hills(countryside.transform);
             Place(countryside.transform, 0, 0);
@@ -175,6 +186,8 @@ namespace Porchlight.App
             foreach (var b in built.Values)
                 if (b.world != null && b.world != view.world) b.world.Dispose();
             built.Clear();
+            foreach (var r in retiring) while (r.MoveNext()) { }
+            retiring.Clear();
             job = null;
             foreach (var f in countryside.GetComponentsInChildren<MeshFilter>()) UnityEngine.Object.Destroy(f.sharedMesh);
             UnityEngine.Object.Destroy(countryside);
@@ -211,6 +224,7 @@ namespace Porchlight.App
             bool waiting = ahead != null && ahead != active && (wanted == null || !wanted.ready || wanted.world == null);
             Waiting = waiting ? (ahead.name, wanted == null ? 0 : Progress(wanted)) : ((string, double)?)null;
             Step(waiting ? WAIT_BUDGET_MS : BUDGET_MS);
+            Retire();
             if (!waiting && wanted != null) Switch(wanted);
             Rooms(active.ToWorld(view.PlayerPosition ?? local.Value));
         }
@@ -258,13 +272,13 @@ namespace Porchlight.App
             }
             foreach (int id in drop)
             {
-                built[id].world?.Dispose();
+                LetGo(built[id]);
                 built.Remove(id);
             }
             // A job no longer wanted (you turned round) stops, so the one you want starts.
             if (job != null && !want.Contains(job.space.id))
             {
-                job.world?.Dispose();
+                LetGo(job);
                 built.Remove(job.space.id);
                 job = null;
             }
@@ -291,13 +305,57 @@ namespace Porchlight.App
                 foreach (var b in built.Values)
                     if (b.space.kind == SpaceKind.Town && b.space != active && b.space != head && (farthest == null || CountyMap.DistanceTo(b.space, at) > CountyMap.DistanceTo(farthest.space, at))) farthest = b;
                 if (farthest == null || best != head && CountyMap.DistanceTo(farthest.space, at) < CountyMap.DistanceTo(best, at)) return;
-                farthest.world?.Dispose();
+                LetGo(farthest);
                 built.Remove(farthest.space.id);
             }
             job = new Built { space = best };
             built[best.id] = job;
             if (best.kind == SpaceKind.Town) Grow(job);
+#if !(UNITY_WEBGL && !UNITY_EDITOR)
+            // A stretch of highway is a long thin town of its own (half a second's work for the longest): on a worker thread too.
+            else
+            {
+                var road = best;
+                job.thread = Task.Run(() =>
+                {
+                    var m = RoadSpaces.Build(map, road);
+                    return (m, TownWorld.Prepared.Of(m));
+                });
+            }
+#endif
         }
+
+        /// <summary>A space you've no more use for: taken apart over the next frames (all at once stalls the game).</summary>
+        void LetGo(Built b)
+        {
+            if (b.world == null || b.world == view.world) return;
+            retiring.Add(b.world.DisposeSteps().GetEnumerator());
+            b.world = null;
+        }
+
+        /// <summary>A share of what's being let go: a part of each a frame.</summary>
+        void Retire()
+        {
+            for (int i = retiring.Count - 1; i >= 0; i--)
+                if (!retiring[i].MoveNext()) retiring.RemoveAt(i);
+        }
+
+        /// <summary>Where you can walk, drive and fly in a built space, in its terms (its hills too): off the main thread where there are threads.</summary>
+        void BeginWays(Built b)
+        {
+            b.ways = new ExploreView.PreparedWays();
+            var space = b.space;
+            var prepare = ExploreView.PreparedWays.Prepare(b.world, (x, y) => Terrain.Height(space.x0 + x, space.y0 + y), b.ways);
+#if UNITY_WEBGL && !UNITY_EDITOR
+            b.preparing = prepare.GetEnumerator();
+#else
+            b.preparingThread = Task.Run(() => { foreach (var _ in prepare) { } });
+#endif
+        }
+
+        /// <summary>A space's ways, if they're worked out (else the view works them out as you go in).</summary>
+        static ExploreView.PreparedWays WaysOf(Built b) =>
+            b.ways != null && (b.preparingThread != null ? b.preparingThread.Status == TaskStatus.RanToCompletion : b.preparing == null) ? b.ways : null;
 
         /// <summary>A town grows from its key: on a worker thread where there are threads, else a stage a step.</summary>
         void Grow(Built b)
@@ -322,7 +380,8 @@ namespace Porchlight.App
         {
             if (b.ready) return 1;
             if (b.world == null) return b.model == null ? 0.05 : 0.15;
-            string part = b.part ?? "";
+            string part = (b.part ?? "").Replace(TownWorld.WAITING, "");
+            if (part == "ways") return 0.995;
             int rooms = Math.Max(1, b.world.rooms.Count);
             double Through(string prefix, double from, double to, double count)
             {
@@ -334,7 +393,8 @@ namespace Porchlight.App
             if (part.StartsWith("interiors") && part != "interiors") return Through("interiors", 0.5, 0.7, rooms / 64.0);
             if (part.StartsWith("signs")) return Through("signs", 0.82, 0.9, Math.Max(1, b.world.signs.Count / 12.0));
             if (part.StartsWith("batching") && part != "batching") return Through("batching", 0.93, 0.99, 8);
-            switch (part)
+            // Trees, lamps and the survey in several parts each: as far as the part they're in.
+            switch (part.TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9'))
             {
                 case "ground": return 0.2;
                 case "water": return 0.22;
@@ -347,6 +407,8 @@ namespace Porchlight.App
                 case "trees": return 0.75;
                 case "plazas": return 0.77;
                 case "parked": return 0.78;
+                case "ports": return 0.785;
+                case "lamps": return 0.79;
                 case "places": return 0.8;
                 case "signposts": return 0.82;
                 case "signs": return 0.9;
@@ -386,12 +448,33 @@ namespace Porchlight.App
                         b.steps = b.world.Build().GetEnumerator();
                         continue;
                     }
-                    if (!b.steps.MoveNext())
+                    if (b.steps != null)
                     {
-                        b.ready = true;
-                        job = null;
+                        if (b.steps.MoveNext())
+                        {
+                            b.part = b.steps.Current;
+                            // Waiting on a worker thread: nothing more to do this frame.
+                            if (b.part.EndsWith(TownWorld.WAITING)) return;
+                            continue;
+                        }
+                        // Built: now where you can walk, drive and fly in it, in its terms (its hills too).
+                        b.steps = null;
+                        b.part = "ways";
+                        BeginWays(b);
+                        continue;
                     }
-                    else b.part = b.steps.Current;
+                    if (b.preparingThread != null)
+                    {
+                        if (!b.preparingThread.IsCompleted) return;
+                        if (b.preparingThread.IsFaulted) throw b.preparingThread.Exception;
+                    }
+                    else if (b.preparing != null)
+                    {
+                        if (b.preparing.MoveNext()) continue;
+                        b.preparing = null;
+                    }
+                    b.ready = true;
+                    job = null;
                 }
                 catch (Exception err)
                 {
@@ -414,7 +497,7 @@ namespace Porchlight.App
             // you'd left lies, so a town driven into was mostly "hillside": lots and building floors closed,
             // only the paved streets walkable, and no way into any building on foot.
             active = next.space;
-            view.SwitchSpace(next.world, dx, dy);
+            view.SwitchSpace(next.world, dx, dy, WaysOf(next));
             foreach (var b in built.Values)
                 if (b.world != null) Place(b.world.root.transform, b.space.x0, b.space.y0);
             Place(countryside.transform, 0, 0);

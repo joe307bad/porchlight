@@ -387,7 +387,7 @@ namespace Porchlight.App
                 var list = new List<OtherPlayer>();
                 foreach (var e in dots)
                     if (e is List<object> dot && dot.Count >= 3 && dot[0] is string key && key != r.sessionId)
-                        list.Add(new OtherPlayer { key = key, name = dot.Count > 3 ? dot[3] as string ?? "" : "", x = MsgPack.Num(dot[1]), y = MsgPack.Num(dot[2]) });
+                        list.Add(new OtherPlayer { key = key, name = dot.Count > 3 ? dot[3] as string ?? "" : "", id = dot.Count > 4 ? dot[4] as string : null, x = MsgPack.Num(dot[1]), y = MsgPack.Num(dot[2]) });
                 host.SetOthers(list);
             });
             r.OnMessage(Protocol.MSG_WORLD, m =>

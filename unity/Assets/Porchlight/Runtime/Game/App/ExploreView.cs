@@ -49,6 +49,8 @@ namespace Porchlight.App
     {
         public string key;
         public string name;
+        /// <summary>Their character's id: the same from room to room (the session key isn't).</summary>
+        public string id;
         public double x, y;
     }
 
@@ -81,6 +83,11 @@ namespace Porchlight.App
         void SwitchMapTab(int by);
         /// <summary>The big map shows the county (not the town): no reticle to move.</summary>
         bool CountyShown { get; }
+        /// <summary>On the county: pick the next town that way (the stick, a push at a time).</summary>
+        void StepCountyPick(Vec2 dir);
+        /// <summary>On the county: directions to the town picked (A), or there now (Y).</summary>
+        void CountyDirections();
+        void CountyTravel();
     }
 
     public sealed class ExploreView : INetHost
@@ -287,13 +294,15 @@ namespace Porchlight.App
         double findTimer;
         /// <summary>A spot picked on the big map to be shown the way to (instead of a player), until you get there.</summary>
         Vec2? waypoint;
+        /// <summary>The stick's been pushed to pick a town on the county map, and not let go yet.</summary>
+        bool countyStick;
         /// <summary>How close counts as there (tiles), and how fast the big map's reticle moves at full stick (tiles a second, per 100 tiles of town).</summary>
         const double WAYPOINT_REACHED = 1.0;
         const double RETICLE_RATE = 45;
         GameObject findPath;
         Palette findPalette;
-        /// <summary>The finder's target left the town.</summary>
-        public Action OnFindLost;
+        /// <summary>The finder's target left the room (their session key, as it was).</summary>
+        public Action<string> OnFindLost;
         /// <summary>Where a mission is showing the way to (Guide), and what to call it.</summary>
         Func<Vec2?> guideTo;
         string guideName;
@@ -386,7 +395,8 @@ namespace Porchlight.App
             remotes?.Clear();
             world?.Dispose();
             fleet?.Dispose();
-            foreach (var a in avatars) a.Dispose();
+            foreach (var a in avatars) a?.Dispose();
+            unmade.Clear();
             playerAvatar?.Dispose();
             foreach (var k in keepers.Values) k.avatar.Dispose();
             keepers.Clear();
@@ -439,12 +449,41 @@ namespace Porchlight.App
             foreach (var step in weather.Settle()) yield return step;
         }
 
-        /// <summary>Where you can walk, drive, sail and fly in the town on screen.</summary>
-        void Ways()
+        /// <summary>
+        /// Where you can walk, drive, sail and fly in a space, worked out before you get there (CountyDrive does
+        /// it once the space is built): what Ways would, so driving into the space doesn't stop the game for it.
+        /// </summary>
+        public sealed class PreparedWays
+        {
+            public byte[] open;
+            public Func<double, double, bool> paved, drivable, sailable;
+            public float[] skyFloor;
+
+            /// <summary>
+            /// A part at a time; it touches nothing of Unity's, so it can go off the main thread. `rise`: how high
+            /// the county's hills are at (x, y) in the space's terms.
+            /// </summary>
+            public static IEnumerable<string> Prepare(TownWorld world, Func<double, double, double> rise, PreparedWays into)
+            {
+                var model = world.model;
+                into.paved = Vehicle.Paved(model, world.layout);
+                yield return "paved";
+                into.drivable = Vehicle.Drivable(model, world.layout, into.paved);
+                into.sailable = Vehicle.Sailable(model, world.layout, into.paved);
+                yield return "drivable";
+                into.open = WalkMaskOf(world, (x, y) => rise != null && rise(x, y) >= Porchlight.County.CountyTerrain.LEVEL);
+                yield return "walkable";
+                into.skyFloor = SkyFloorOf(world);
+                yield return "sky";
+            }
+        }
+
+        /// <summary>Where you can walk, drive, sail and fly in the town on screen (`pre`: worked out already).</summary>
+        void Ways(PreparedWays pre = null)
         {
             var model = world.model;
-            open = WalkMask();
-            var paved = Vehicle.Paved(model, world.layout);
+            open = streetsOnly || pre?.open == null ? WalkMask() : pre.open;
+            var paved = pre?.paved ?? Vehicle.Paved(model, world.layout);
             var use = world.layout.use;
             int width = model.width;
             walkPaved = (x, y) =>
@@ -453,15 +492,15 @@ namespace Porchlight.App
                 byte u = use[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), width)];
                 return u != Use.SHED && u != Use.HANGAR;
             };
-            var drivable = Vehicle.Drivable(model, world.layout);
+            var drivable = pre?.drivable ?? Vehicle.Drivable(model, world.layout, paved);
             int w = model.width, h = model.height;
             // A car keeps to the map (in the county it goes on to the next space by road, handed over
             // before the edge), and on a highway's stretch to its verge. Off the map, in the county, is
             // open country only for a plane: it comes down in a field and taxis there.
             canDrive = (x, y) => x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 && drivable(x, y) && !Hilly(x, y) && !model.OffVerge(x, y);
             canTaxi = (x, y) => x > 0.05 && y > 0.05 && x < w - 0.05 && y < h - 0.05 ? drivable(x, y) && !Hilly(x, y) : Countryside != null && Countryside(x, y) && !Hilly(x, y);
-            canSail = Vehicle.Sailable(model, world.layout);
-            skyFloor = SkyFloor();
+            canSail = pre?.sailable ?? Vehicle.Sailable(model, world.layout, paved);
+            skyFloor = pre?.skyFloor ?? SkyFloor();
             overlay.SetTown(model);
         }
 
@@ -481,14 +520,30 @@ namespace Porchlight.App
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
             int count = paths.Count > 0 ? Math.Min(MAX_PEDESTRIANS, (int)Math.Floor(walkable / 12)) : 0;
+            // Everyone's there at once, but drawn a few a frame (MakeAvatars): all of them at once, driving
+            // into a town, stalls a frame. Their random numbers are drawn now, in the same order as ever.
             for (int k = 0; k < count; k++)
             {
                 var p = Pedestrian.Create(Catalog.RandomLook(rng), world.sidewalks, rng);
-                var a = Avatar.Of(p.look, rng.Next(), world.root.transform);
+                unmade.Add((people.Count, rng.Next()));
                 people.Add(p);
-                avatars.Add(a);
+                avatars.Add(null);
             }
             basePeople = people.Count;
+        }
+
+        /// <summary>Townsfolk not drawn yet (their place in `people`, and their avatar's seed), and how many are drawn a frame.</summary>
+        readonly List<(int index, double seed)> unmade = new List<(int, double)>();
+        const int AVATARS_A_FRAME = 6;
+
+        void MakeAvatars(int n)
+        {
+            while (n-- > 0 && unmade.Count > 0 && world != null)
+            {
+                var (i, seed) = unmade[0];
+                unmade.RemoveAt(0);
+                if (i < people.Count && avatars[i] == null) avatars[i] = Avatar.Of(people[i].look, seed, world.root.transform);
+            }
         }
 
         /// <summary>
@@ -498,7 +553,7 @@ namespace Porchlight.App
         /// cars, any route). The camera moves with everything (CountyDrive moves the spaces' roots), so
         /// nothing on screen jumps.
         /// </summary>
-        public void SwitchSpace(TownWorld next, double dx, double dy)
+        public void SwitchSpace(TownWorld next, double dx, double dy, PreparedWays ways = null)
         {
             // The scene moves by this (the space ahead comes to the origin).
             var scene = new Vector3((float)-dx, 0, (float)dy);
@@ -509,7 +564,8 @@ namespace Porchlight.App
             fleet?.Dispose();
             fleet = null;
             traffic = null;
-            foreach (var a in avatars) a.Dispose();
+            foreach (var a in avatars) a?.Dispose();
+            unmade.Clear();
             avatars.Clear();
             people.Clear();
             followers.Clear();
@@ -540,7 +596,14 @@ namespace Porchlight.App
             foreach (var v in othersParked.Values) v.Dispose();
             othersParked.Clear();
             othersParkedAt.Clear();
-            finding = null;
+            // Someone you're being shown the way to stays so (they're in the same room, or the next one takes
+            // over): where they were, in the new space's terms, till the roll call says again.
+            others = others.Select(o =>
+            {
+                o.x -= dx;
+                o.y -= dy;
+                return o;
+            }).ToList();
             waypoint = null;
             overlay.SetWaypoint(null);
             guideTo = null;
@@ -549,7 +612,7 @@ namespace Porchlight.App
             // and is drawn again over it in a frame, so the dots never stop and start.
             tripStop = null;
             findTimer = 0;
-            if (trip != null)
+            if (trip != null || finding != null)
             {
                 findRoute = findRoute.Select(q => new Vec2(q.x - dx, q.y - dy)).ToList();
             }
@@ -589,7 +652,7 @@ namespace Porchlight.App
 
             world = next;
             remotes = new RemotePlayers(world.root.transform, library);
-            Ways();
+            Ways(ways);
             // On foot somewhere this space won't have you (a stretch of highway overlaps a town's edge, but
             // each space knows only its own trees, walls and water): out to the nearest spot it will, or
             // every step from there is refused and you can't move.
@@ -891,8 +954,9 @@ namespace Porchlight.App
             overlay.SetOthers(others.Select(o => new Vec2(o.x, o.y)).ToList());
             if (finding != null && !others.Any(o => o.key == finding))
             {
+                var lost = finding;
                 Find(null);
-                OnFindLost?.Invoke();
+                OnFindLost?.Invoke(lost);
             }
         }
 
@@ -935,7 +999,7 @@ namespace Porchlight.App
             }
             while (people.Count > want)
             {
-                avatars[avatars.Count - 1].Dispose();
+                avatars[avatars.Count - 1]?.Dispose();
                 avatars.RemoveAt(avatars.Count - 1);
                 people.RemoveAt(people.Count - 1);
             }
@@ -1853,19 +1917,26 @@ namespace Porchlight.App
         {
             if (world == null) return new byte[0];
             if (streetsOnly) return Streets.Mask(world.model.tiles);
-            // Not into sheds or hangars, or the water but over a bridge or a dock.
+            return WalkMaskOf(world, Hilly);
+        }
+
+        /// <summary>Not into sheds or hangars, up the county's hills (`hilly`), or into the water but over a bridge or a dock.</summary>
+        static byte[] WalkMaskOf(TownWorld world, Func<double, double, bool> hilly)
+        {
             var o = new byte[world.layout.use.Length];
             var tiles = world.model.tiles;
             for (int i = 0; i < o.Length; i++)
             {
                 byte use = world.layout.use[i];
                 bool wet = Terrain.IsWater(tiles.terrain[i]) && tiles.overlay[i] == Overlay.NONE && use != Use.DOCK;
-                o[i] = use == Use.SHED || use == Use.HANGAR || wet || Hilly(i % world.model.width + 0.5, i / world.model.width + 0.5) || (world.model.foreign != null && world.model.foreign[i] == TownModel.COUNTRYSIDE) ? (byte)0 : (byte)1;
+                o[i] = use == Use.SHED || use == Use.HANGAR || wet || hilly(i % world.model.width + 0.5, i / world.model.width + 0.5) || (world.model.foreign != null && world.model.foreign[i] == TownModel.COUNTRYSIDE) ? (byte)0 : (byte)1;
             }
             return o;
         }
 
-        float[] SkyFloor()
+        float[] SkyFloor() => SkyFloorOf(world);
+
+        static float[] SkyFloorOf(TownWorld world)
         {
             int w = world.model.width, h = world.model.height;
             var o = new float[w * h];
@@ -2081,6 +2152,19 @@ namespace Porchlight.App
                     if (s.move.x != 0 || s.move.y != 0) overlay.MoveReticle(new Vec2(s.move.x * rate * dt, s.move.y * rate * dt));
                     if (s.Pressed(Button.A)) SetWaypoint(overlay.Reticle);
                     if (s.Pressed(Button.Y)) ClearWaypoint();
+                }
+                else
+                {
+                    // The county: the stick picks a town, a push at a time; A for directions there, Y to go there now.
+                    double push = Math.Max(Math.Abs(s.move.x), Math.Abs(s.move.y));
+                    if (push > 0.6 && !countyStick)
+                    {
+                        countyStick = true;
+                        overlay.StepCountyPick(new Vec2(s.move.x, s.move.y));
+                    }
+                    else if (push < 0.3) countyStick = false;
+                    if (s.Pressed(Button.A)) overlay.CountyDirections();
+                    if (s.Pressed(Button.Y)) overlay.CountyTravel();
                 }
                 if (s.Pressed(Button.B) || s.Pressed(Button.Menu)) overlay.CloseMap();
                 if (s.Pressed(Button.X))
@@ -2460,9 +2544,11 @@ namespace Porchlight.App
                 c.view.Place(c.car.x, c.car.y, DetMath.Atan2(f.x, f.y), c.car.altitude, c.car.pitch, c.car.bank);
                 c.view.Lights(dusk);
             }
+            MakeAvatars(AVATARS_A_FRAME);
             for (int k = 0; k < people.Count; k++)
             {
                 var q = people[k];
+                if (avatars[k] == null) continue;
                 avatars[k].Visible = !(followersAboard && q.following);
                 if (!avatars[k].Visible) continue;
                 avatars[k].Update(q, dt);

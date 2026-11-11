@@ -1506,6 +1506,32 @@ Label {
     font-size: 14px;
 }
 
+/* Under the county map: the town picked, with Directions and Travel now. */
+.county-bar {
+    flex-direction: row;
+    align-items: center;
+    margin-top: 10px;
+    padding: 6px 8px 6px 12px;
+    background-color: rgba(28, 27, 24, 0.92);
+}
+
+.county-bar-text {
+    margin-right: 10px;
+    color: #f4f1ea;
+    font-size: 13px;
+}
+
+.county-bar > .btn {
+    margin-left: 6px;
+}
+
+/* A Join button's second line: where they are, so where you'd arrive. */
+.join-where {
+    font-size: 11px;
+    -unity-font-style: normal;
+    white-space: normal;
+}
+
 /* Missions: the sidebar's list, the objective atop the street panel, and the conversation. */
 .missions-refresh {
     margin-bottom: 12px;

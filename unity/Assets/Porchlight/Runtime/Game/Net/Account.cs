@@ -18,6 +18,17 @@ namespace Porchlight.App
         public int x, y;
     }
 
+    /// <summary>Where someone is playing right now (Account.Where).</summary>
+    public struct PlayerWhere
+    {
+        /// <summary>Their room: a town's key, or the north room's.</summary>
+        public string room;
+        public string session;
+        public string name;
+        /// <summary>Where in the room's terms (tiles).</summary>
+        public double x, z;
+    }
+
     public sealed class Character
     {
         public string id;
@@ -168,6 +179,21 @@ namespace Porchlight.App
                     foreach (var c in arr)
                         if (Character.From(c) is Character ch) list.Add(ch);
                 done(list, null);
+            });
+
+        /// <summary>
+        /// Where a character is playing right now (anyone's, by the id their room shows): their room's key, their
+        /// session there, and their spot in its terms; null (and an error) if they aren't playing.
+        /// </summary>
+        public static void Where(INetPlatform net, string origin, string character, Action<PlayerWhere?, string> done) =>
+            Call(net, origin, "GET", "/players/" + Id(character), null, (json, err) =>
+            {
+                if (err != null || !(json is Dictionary<string, object> d))
+                {
+                    done(null, err ?? "no answer");
+                    return;
+                }
+                done(new PlayerWhere { room = Json.Str(d, "town"), session = Json.Str(d, "session"), name = Json.Str(d, "name"), x = Json.Num(d, "x", 0), z = Json.Num(d, "z", 0) }, null);
             });
 
         public static void CreateCharacter(INetPlatform net, string origin, string name, string look, Action<Character, string> done) =>

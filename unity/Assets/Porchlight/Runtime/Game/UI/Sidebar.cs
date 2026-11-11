@@ -297,7 +297,7 @@ namespace Porchlight.UI
             scroll.RegisterCallback<GeometryChangedEvent>(_ => Pin());
             root.Add(collapse);
             SetParams(initial);
-            SetPlayers(new List<(string, string)>(), null, null);
+            SetPlayers(new List<(string, string, string)>(), null, null);
             SetDirections(null);
             ShowDetail("");
             SyncPlaying();
@@ -485,12 +485,13 @@ namespace Porchlight.UI
 
         /// <summary>
         /// Everyone else in the town, a box each: tick one to be shown the way to
-        /// them (one at a time; untick to stop). Says so when there's no one.
+        /// them (one at a time; untick to stop). Says so when there's no one. `where`:
+        /// someone you're following who's gone on to another town, and where.
         /// </summary>
-        public void SetPlayers(List<(string key, string name)> players, string finding, Action<string> find)
+        public void SetPlayers(List<(string key, string name, string where)> players, string finding, Action<string> find)
         {
             onFind = find;
-            string shown = (exploring ? "e" : "m") + string.Join("|", players.Select(p => p.key + ":" + p.name)) + "#" + finding;
+            string shown = (exploring ? "e" : "m") + string.Join("|", players.Select(p => p.key + ":" + p.name + ":" + p.where)) + "#" + finding;
             if (shown == playersShown) return;
             playersShown = shown;
             playersList.Clear();
@@ -501,7 +502,7 @@ namespace Porchlight.UI
                     : "Explore the town to see who else is in it.", "help-text");
                 playersList.Add(none);
             }
-            foreach (var (key, name) in players)
+            foreach (var (key, name, where) in players)
             {
                 // A row of plain elements (a box and a name) rather than a Toggle, so it
                 // draws the same everywhere; the click ticks this one and unticks the rest.
@@ -518,6 +519,7 @@ namespace Porchlight.UI
                 tick.style.borderTopWidth = tick.style.borderRightWidth = tick.style.borderBottomWidth = tick.style.borderLeftWidth = 2;
                 row.Add(tick);
                 row.Add(El.Text(label, "player-name"));
+                if (where != null) row.Add(El.Text(where, "direction-where"));
                 playersList.Add(row);
             }
             if (players.Count > 0 || finding != null) Debug.Log($"Porchlight: {players.Count} other player(s) here{(finding != null ? ", finding " + finding : "")}");
@@ -627,15 +629,29 @@ namespace Porchlight.UI
 
         VisualElement joinRows;
 
-        /// <summary>Under your name: "Join <name>" for each of your characters playing somewhere right now (null: none).</summary>
-        public void SetJoins(List<(string name, Action join)> playing)
+        /// <summary>
+        /// Under your name: "Join <name>" for each of your characters playing somewhere right now (null: none),
+        /// with where they are under it, so where you'd arrive (null: not known yet).
+        /// </summary>
+        public void SetJoins(List<(string name, string where, Action join)> playing)
         {
             joinRows?.RemoveFromHierarchy();
             joinRows = null;
             if (playing == null || playing.Count == 0) return;
             joinRows = El.Box("sb-joins");
-            foreach (var (name, join) in playing)
-                joinRows.Add(El.Btn($"Join {name}", $"Go to {name}, wherever they are", join, "btn-primary", "press"));
+            foreach (var (name, where, join) in playing)
+            {
+                var b = El.Btn("", where != null ? $"Go to {name}: you'll arrive beside them, {where}" : $"Go to {name}, wherever they are", join, "btn-primary", "press");
+                b.style.flexDirection = FlexDirection.Column;
+                b.Add(new Label($"Join {name}") { pickingMode = PickingMode.Ignore });
+                if (where != null)
+                {
+                    var w = new Label(where) { pickingMode = PickingMode.Ignore };
+                    w.AddToClassList("join-where");
+                    b.Add(w);
+                }
+                joinRows.Add(b);
+            }
             top.Insert(top.IndexOf(links) + 1, joinRows);
         }
 
@@ -790,7 +806,7 @@ namespace Porchlight.UI
         public void SetExploring(bool on)
         {
             exploring = on;
-            if (!on) SetPlayers(new List<(string, string)>(), null, onFind);
+            if (!on) SetPlayers(new List<(string, string, string)>(), null, onFind);
             SyncExploreButton(false);
         }
 
