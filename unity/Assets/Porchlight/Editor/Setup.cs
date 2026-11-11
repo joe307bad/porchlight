@@ -69,7 +69,7 @@ namespace Porchlight.EditorTools
             throw new Exception("no free layer for " + name);
         }
 
-        static int playerLayer, labelsLayer;
+        static int playerLayer, labelsLayer, companionLayer;
 
         /// <summary>You (drawn through walls) and the name tags (drawn over everything) each have a layer.</summary>
         static void Layers()
@@ -79,6 +79,7 @@ namespace Porchlight.EditorTools
             playerLayer = Layer(layers, Porchlight.Rendering.Avatar.PLAYER_LAYER, 8);
             labelsLayer = Layer(layers, NameTag.LABELS_LAYER, 9);
             Layer(layers, Portraits.PORTRAIT_LAYER, 10);
+            companionLayer = Layer(layers, Porchlight.Rendering.Avatar.COMPANION_LAYER, 11);
             tags.ApplyModifiedPropertiesWithoutUndo();
         }
 
@@ -149,6 +150,7 @@ namespace Porchlight.EditorTools
         }
 
         const string StencilFeature = "Player visible";
+        const string CompanionFeature = "Companions visible";
 
         /// <summary>
         /// The renderer's extra passes. You (and the car you drive) are drawn in flat
@@ -156,7 +158,8 @@ namespace Porchlight.EditorTools
         /// you're in sight, marking the stencil, then the orange copy goes only where
         /// you're behind something and not marked, so your own nearer parts (your head
         /// in front of your glasses, a car's body in front of its far wheels) never
-        /// x-ray each other. Then the name tags, their plates and text, over everything
+        /// x-ray each other; those working alongside you (Avatar.COMPANION_LAYER) mark the stencil
+        /// the same way, so the orange isn't drawn over them either. Then the name tags, their plates and text, over everything
         /// (their layer is left out of the ordinary passes).
         /// </summary>
         static void Features(UniversalRendererData renderer)
@@ -207,6 +210,8 @@ namespace Porchlight.EditorTools
             var features = new[]
             {
                 Feature(StencilFeature, RenderPassEvent.AfterRenderingOpaques, RenderQueueType.Opaque, 1 << playerLayer, null, CompareFunction.LessEqual, CompareFunction.Always, StencilOp.Replace),
+                // Those alongside you mark where they're seen too, so your x-ray isn't drawn over them.
+                Feature(CompanionFeature, RenderPassEvent.AfterRenderingOpaques, RenderQueueType.Opaque, 1 << companionLayer, null, CompareFunction.LessEqual, CompareFunction.Always, StencilOp.Replace),
                 Feature("Player x-ray", RenderPassEvent.AfterRenderingOpaques, RenderQueueType.Opaque, 1 << playerLayer, xray, CompareFunction.Greater, CompareFunction.NotEqual),
                 Feature("Name tag plates", RenderPassEvent.AfterRenderingTransparents, RenderQueueType.Opaque, 1 << labelsLayer, null, CompareFunction.Always),
                 Feature("Name tag text", RenderPassEvent.AfterRenderingTransparents, RenderQueueType.Transparent, 1 << labelsLayer, null, CompareFunction.Always),
@@ -302,7 +307,7 @@ namespace Porchlight.EditorTools
                 if (!Library.UpToDate()) Library.Build();
                 // A renderer from before a change to its passes: bring them up to date.
                 var renderer = AssetDatabase.LoadAssetAtPath<UniversalRendererData>(SettingsDir + "/Renderer.asset");
-                if (renderer != null && !renderer.rendererFeatures.Any(f => f != null && f.name == StencilFeature))
+                if (renderer != null && !new[] { StencilFeature, CompanionFeature }.All(n => renderer.rendererFeatures.Any(f => f != null && f.name == n)))
                 {
                     Layers();
                     Features(renderer);

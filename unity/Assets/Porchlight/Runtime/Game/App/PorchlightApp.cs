@@ -930,14 +930,16 @@ namespace Porchlight.App
             }
             bool truck = iso.CarModel >= 0 && Catalog.CARS[iso.CarModel] == "cars/garbage-truck";
             Debug.Log($"smoke: trash: the garbage truck={truck}, at the wheel={iso.DrivingMyCar}, error={m.script.Error}");
-            int stops = 0;
+            int stops = 0, onRoad = 0;
             bool inOrder = true;
             for (int stop = 1; stop <= STOPS; stop++)
             {
                 bool ok = await Until(() => Objective().StartsWith("Pull up"), 8);
                 var spot = m.SpotOf("stop");
                 var car = iso.OwnVehicle;
-                Debug.Log($"smoke: trash: stop {stop}: '{Objective()}' ok={ok}, bin: {m.BinReport("stop")}, error={m.script.Error}");
+                bool binOnRoad = m.BinOnRoad("stop");
+                if (binOnRoad) onRoad++;
+                Debug.Log($"smoke: trash: stop {stop}: '{Objective()}' ok={ok}, bin: {m.BinReport("stop")}, {(binOnRoad ? "IN THE STREET" : "off the street")}, error={m.script.Error}");
                 if (!ok || spot == null || car == null) break;
                 car.x = spot.Value.x;
                 car.y = spot.Value.y;
@@ -965,7 +967,8 @@ namespace Porchlight.App
             double tailgate = truckModel.size.y * CarView.ScaleOf(truckModel) * 0.5;
             bool tipped = m.PeakMouth > tailgate && m.PeakLid > 60;
             Debug.Log($"smoke: trash: bins tipped: mouth up to {m.PeakMouth:0.00} tiles (tailgate about {tailgate:0.00}), lid open up to {m.PeakLid:0}°: {(tipped ? "over the tailgate" : "NOT over the tailgate")}");
-            bool passed = stops == STOPS && inOrder && tipped && truck && m.script.Done && m.script.Error == null && completed == 1
+            Debug.Log($"smoke: trash: bins in the street: {onRoad} of {stops}");
+            bool passed = stops == STOPS && inOrder && tipped && onRoad == 0 && truck && m.script.Done && m.script.Error == null && completed == 1
                 && m.HoppedOut == STOPS && m.BinsEmptied == STOPS && m.BinsReturned == STOPS && m.HoppedIn == STOPS;
             Debug.Log($"smoke: trash: {(passed ? "PASS" : "FAIL")}: {stops} of {STOPS} stops, crew in order={inOrder}, mission complete={completed == 1} (error={m.script.Error ?? "none"}), out {m.HoppedOut}, emptied {m.BinsEmptied}, put back {m.BinsReturned}, back in {m.HoppedIn}, hands short of a grip by up to {m.WorstGripMiss:0.000} tiles, your car now {(iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none")}");
             if (mission != null) EndMission(null);

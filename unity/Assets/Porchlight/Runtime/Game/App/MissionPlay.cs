@@ -320,6 +320,23 @@ namespace Porchlight.App
         public double PeakMouth { get; private set; }
         public float PeakLid { get; private set; }
 
+        /// <summary>Whether the role's bin stands in a street or its parking lane (its middle, or its front or back edge): it should be on the pavement.</summary>
+        public bool BinOnRoad(string role) => roles.TryGetValue(role ?? "", out var r) && r.bin != null && OnRoad(r.bin.home, r.bin.heading, r.bin.depth);
+
+        /// <summary>Whether something `depth` long, facing `heading`, at `at` is in a street or its parking lane (its middle, or its front or back edge).</summary>
+        bool OnRoad(Vec2 at, double heading, double depth)
+        {
+            var f = new Vec2(Math.Sin(heading), Math.Cos(heading));
+            foreach (var road in view.world.layout.roads)
+            {
+                if (road.kind == Porchlight.Model.RoadKind.Path) continue;
+                double reach = road.width / 2 + Layout.PARKING;
+                foreach (double k in new[] { 0.0, 0.5, -0.5 })
+                    if (Geo.DistToPolyline(new Vec2(at.x + f.x * depth * k, at.y + f.y * depth * k), road.points) < reach) return true;
+            }
+            return false;
+        }
+
         /// <summary>Where the role's bin is: how high its axle is off the ground and how far it is from home (tiles), whether it's held, and how far its lid is open.</summary>
         public string BinReport(string role)
         {
@@ -597,6 +614,7 @@ namespace Porchlight.App
             walker.heading = DetMath.Atan2(r.kerb.x - r.door.x, r.kerb.y - r.door.y);
             var avatar = Avatar.Of(look, rng.Next(), view.world.root.transform);
             avatar.SnapYaw(walker.heading);
+            avatar.Companion();
             var p = new Person { name = string.IsNullOrEmpty(name) ? "Someone" : name, role = r, walker = walker, avatar = avatar };
             people.Add(p);
             r.person = p;
@@ -644,12 +662,26 @@ namespace Porchlight.App
                 UnityEngine.Object.Destroy(r.bin.holder);
             }
             var b = MakeBin(m, model, size);
-            // On the pavement by the kerb, a little along from the way to the door, its front to the
-            // house and its handle to the street, for whoever comes from the street to take it.
+            // On the pavement's yard side (r.kerb is the pavement's middle), a little along from the way to
+            // the door, its front to the house and its handle to the street, for whoever comes from the
+            // street to take it.
             var toStreet = r.spot != null ? Unit(new Vec2(r.spot.Value.x - r.kerb.x, r.spot.Value.y - r.kerb.y)) : Unit(r.outward);
             var along = new Vec2(-toStreet.y, toStreet.x);
-            b.home = new Vec2(r.kerb.x + toStreet.x * 0.12 + along.x * 0.45, r.kerb.y + toStreet.y * 0.12 + along.y * 0.45);
+            // Clear of every street and parking lane: at a corner the first place tried can be in the
+            // cross street, so the next ones along either way, and a little further into the yard.
+            double back = Math.Max(0, Layout.SIDEWALK / 2 - b.depth / 2);
             b.heading = DetMath.Atan2(-toStreet.x, -toStreet.y);
+            Vec2 At(double side, double into) =>
+                new Vec2(r.kerb.x - toStreet.x * (back + into) + along.x * side, r.kerb.y - toStreet.y * (back + into) + along.y * side);
+            b.home = At(0.45, 0);
+            foreach (double into in new[] { 0.0, 0.1, 0.2 })
+            {
+                var found = new[] { 0.45, -0.45, 0.3, -0.3, 0.65, -0.65, 0.15, -0.15 }.Select(side => (Vec2?)At(side, into))
+                    .FirstOrDefault(at => !OnRoad(at.Value, b.heading, b.depth));
+                if (found == null) continue;
+                b.home = found.Value;
+                break;
+            }
             // Close enough that the handle's in their hands (it hangs just off the bin's back).
             double reach = b.depth / 2 + 0.07;
             b.stand = new Vec2(b.home.x + toStreet.x * reach, b.home.y + toStreet.y * reach);
@@ -720,6 +752,8 @@ namespace Porchlight.App
             b.gripR = new GameObject("grip R").transform;
             b.gripR.SetParent(h, false);
             b.gripR.localPosition = b.handleR;
+            // Never under your car's orange x-ray, as the mission's people aren't.
+            Avatar.SetLayer(b.holder, Avatar.COMPANION_LAYER);
             b.lid = Part("lid");
             if (b.lid != null)
             {
@@ -784,6 +818,7 @@ namespace Porchlight.App
             walker.heading = DetMath.Atan2(door.x - car.x, door.y - car.y);
             var avatar = Avatar.Of(look, rng.Next(), view.world.root.transform);
             avatar.SnapYaw(walker.heading);
+            avatar.Companion();
             var p = new Person { name = string.IsNullOrEmpty(name) ? "Someone" : name, role = r, walker = walker, avatar = avatar, at = Where.Car };
             p.steps.Enqueue(new Step { act = Act.HopOut });
             people.Add(p);

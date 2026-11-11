@@ -155,7 +155,7 @@ These queue up: the role's person does them one after another, while the story g
 
 | Function | What it does |
 | --- | --- |
-| `bin(role, model, size)` | A wheelie bin out on the pavement by the kerb outside the role's building, a little along from the way to its door, front to the house and handle to the street: `"props/wheelie-bin-trash"` (green) or `"props/wheelie-bin-recycle"` (blue), `size` tiles across (0.18 is about 70 cm). It stays out when `place` moves the role on. Its lid opens on a hinge when it's tipped. |
+| `bin(role, model, size)` | A wheelie bin out on the pavement (its yard side) outside the role's building, a little along from the way to its door, front to the house and handle to the street: `"props/wheelie-bin-trash"` (green) or `"props/wheelie-bin-recycle"` (blue), `size` tiles across (0.2 is about 80 cm). It stays out when `place` moves the role on. Its lid opens on a hinge when it's tipped. |
 | `get_out(role, name, look)` | Someone called `name`, looking like `look` (`""` for any), hops down out of your car's door on the kerb side, as the role's person: their errands are then the role's (`walk`, `take_bin`, `dump` and so on), and `role:` lines are theirs. Call it once your car's stopped by the role (`@parked`). Returns their name. If they `get_in` again, they ride with you, out of sight, till the role moves on. |
 
 For example, someone fetching a box from indoors and putting it on your car:

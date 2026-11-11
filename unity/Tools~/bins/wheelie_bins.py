@@ -70,7 +70,7 @@ def bevel(ob, width, segments=2):
 
 
 def body(mat):
-    """A tapered tub: open-topped box, wider at the rim, with a lip round it."""
+    """A tapered tub: an open-topped box with walls, wider at the rim."""
     bm = bmesh.new()
     zb, zt = 0.04, HEIGHT
     # The back stays upright (the wheels and handle hang on it); the front leans out.
@@ -83,19 +83,23 @@ def body(mat):
     for i in range(4):
         j = (i + 1) % 4
         bm.faces.new((vb[i], vb[j], vt[j], vt[i]))
-    # A lip round the rim: the top ring pushed out a little and down.
-    ring = bmesh.ops.extrude_edge_only(bm, edges=[e for e in bm.edges if all(v in vt for v in e.verts)])
-    lip = [v for v in ring["geom"] if isinstance(v, bmesh.types.BMVert)]
-    for v in lip:
-        v.co.x *= 1.06
-        v.co.y = v.co.y * 1.05
-    ring2 = bmesh.ops.extrude_edge_only(bm, edges=[e for e in ring["geom"] if isinstance(e, bmesh.types.BMEdge)])
-    for v in ring2["geom"]:
-        if isinstance(v, bmesh.types.BMVert):
-            v.co.z -= 0.05
-    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    # An open tub has no inside and outside to work normals out from, so face each one away
+    # from the tub's middle (the game draws only the side a face points to).
+    centre = mathutils.Vector((0, 0, HEIGHT / 2))
+    for f in bm.faces:
+        if f.normal.dot(f.calc_center_median() - centre) < 0:
+            f.normal_flip()
     ob = mesh_object("body", bm, mat)
-    bevel(ob, 0.015)
+    # Walls with some thickness (the rim shows as a band round the top), so the tub's inside
+    # shows when the lid's open; then its edges softened.
+    mod = ob.modifiers.new("walls", "SOLIDIFY")
+    mod.thickness = 0.03
+    mod.offset = -1
+    bpy.context.view_layer.objects.active = ob
+    ob.select_set(True)
+    bpy.ops.object.modifier_apply(modifier=mod.name)
+    ob.select_set(False)
+    bevel(ob, 0.01)
     return ob
 
 

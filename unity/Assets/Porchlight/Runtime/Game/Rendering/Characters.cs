@@ -21,6 +21,12 @@ namespace Porchlight.Rendering
         public const double PERSON_HEIGHT = 0.36;
         /// <summary>The layer the renderer draws through walls (Editor/Setup.cs adds it).</summary>
         public const string PLAYER_LAYER = "Player";
+        /// <summary>
+        /// The layer for those working alongside you (a mission's people, and what they carry): drawn as
+        /// anyone is, but marking where they're seen as you do, so your x-ray (the orange of you or your
+        /// car behind something) is never drawn over them standing in front of you.
+        /// </summary>
+        public const string COMPANION_LAYER = "Companion";
         const double NATURAL_WALK = 0.53;
         const double NATURAL_RUN = 1.1;
         const double WALK_TOP = 1.7;
@@ -95,6 +101,17 @@ namespace Porchlight.Rendering
             animator = model.GetComponent<Animator>();
             animator.Update((float)(phase * 2));
         }
+
+        /// <summary>Everything in `go` on the named layer (if the project has it).</summary>
+        public static void SetLayer(GameObject go, string name)
+        {
+            int layer = LayerMask.NameToLayer(name);
+            if (layer < 0) return;
+            foreach (var t in go.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
+        }
+
+        /// <summary>Working alongside you: never covered by your x-ray (COMPANION_LAYER).</summary>
+        public void Companion() => SetLayer(root, COMPANION_LAYER);
 
         /// <summary>Draw this one through walls (you).</summary>
         public void SeeThrough()

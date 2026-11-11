@@ -21,10 +21,10 @@ EXTERNAL dump(role)
 EXTERNAL return_bin(role)
 EXTERNAL get_in(role)
 
-// The truck, the crew's look, and the bins (tiles across: about 70 cm deep).
+// The truck, the crew's look, and the bins (tiles across: about 80 cm deep).
 CONST TRUCK = "cars/garbage-truck"
 CONST CREW_LOOK = "people/character-4-1-1"
-CONST BIN_SIZE = 0.18
+CONST BIN_SIZE = 0.2
 // How many bins make a round.
 CONST STOPS = 5
 
