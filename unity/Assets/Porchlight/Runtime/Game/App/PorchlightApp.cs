@@ -165,7 +165,16 @@ namespace Porchlight.App
         [System.Runtime.InteropServices.DllImport(OBJC, EntryPoint = "objc_msgSend")] static extern IntPtr ObjcPointer(IntPtr self, IntPtr selector);
         [System.Runtime.InteropServices.DllImport(OBJC, EntryPoint = "objc_msgSend")] static extern double ObjcDouble(IntPtr self, IntPtr selector);
 
-        /// <summary>The game window's pixels to a point (2 on a Retina screen, 1 on most others); 0 if there's no window to ask.</summary>
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct NSRect { public double x, y, width, height; }
+        [System.Runtime.InteropServices.DllImport(OBJC, EntryPoint = "objc_msgSend")] static extern NSRect ObjcRect(IntPtr self, IntPtr selector);
+        [System.Runtime.InteropServices.DllImport(OBJC, EntryPoint = "objc_msgSend_stret")] static extern void ObjcRectStret(out NSRect into, IntPtr self, IntPtr selector);
+
+        /// <summary>
+        /// The game's drawn pixels to a point of its window: 2 on a Retina screen drawn at its full
+        /// resolution, but 1 when the game draws at a lower one and the Mac enlarges it (fullscreen
+        /// at a remembered window's size, say). 0 if there's no window to ask.
+        /// </summary>
         static float MacBackingScale()
         {
             try
@@ -174,6 +183,24 @@ namespace Porchlight.App
                 if (app == IntPtr.Zero) return 0;
                 var window = ObjcPointer(app, sel_registerName("mainWindow"));
                 if (window == IntPtr.Zero) window = ObjcPointer(app, sel_registerName("keyWindow"));
+                if (window != IntPtr.Zero)
+                {
+                    // The window's size in points, against what the game draws into it.
+                    var view = ObjcPointer(window, sel_registerName("contentView"));
+                    if (view != IntPtr.Zero && Screen.width > 0)
+                    {
+                        NSRect bounds;
+                        if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
+                            ObjcRectStret(out bounds, view, sel_registerName("bounds"));
+                        else bounds = ObjcRect(view, sel_registerName("bounds"));
+                        if (bounds.width >= 100)
+                        {
+                            float drawn = Screen.width / (float)bounds.width;
+                            // To the nearest quarter, and never under 1 (a big window drawn small would make tiny UI).
+                            return Mathf.Max(1, Mathf.Round(drawn * 4) / 4);
+                        }
+                    }
+                }
                 var on = window != IntPtr.Zero ? window : ObjcPointer(objc_getClass("NSScreen"), sel_registerName("mainScreen"));
                 return on == IntPtr.Zero ? 0 : (float)ObjcDouble(on, sel_registerName("backingScaleFactor"));
             }
