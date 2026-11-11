@@ -22,7 +22,8 @@ static class MissionCheck
         static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint" };
         static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church", "zoo" };
         static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
-        static readonly string[] PLACES = { "inside", "door", "kerb", "car" };
+        static readonly string[] PLACES = { "inside", "door", "kerb", "car", "bin", "back" };
+        static readonly string[] BINS = { "props/wheelie-bin-trash", "props/wheelie-bin-recycle" };
         static readonly string[] GUIDES = { "spot", "person", "house", "door" };
 
         public readonly List<string> log = new List<string>();
@@ -48,6 +49,10 @@ static class MissionCheck
         /// <summary>Courses, and the stopwatch ("" none) and which course it's on.</summary>
         readonly HashSet<string> courses = new HashSet<string>();
         string stopwatch = "", stopwatchOn = "";
+        /// <summary>Each role's bin (true: someone's wheeling it), who's back in your car, and how many bins have been tipped into it.</summary>
+        readonly Dictionary<string, bool> bins = new Dictionary<string, bool>();
+        readonly HashSet<string> aboard = new HashSet<string>();
+        public int emptied;
 
         static void OneOf(string what, string value, string[] known)
         {
@@ -86,6 +91,8 @@ static class MissionCheck
             placed.Add(role);
             present.Remove(role);
             marked.Remove(role);
+            bins.Remove(role);
+            aboard.Remove(role);
             log.Add($"place {role} {kind} {(near == "" ? "you" : near)} {min}..{max}{(parking ? " parking" : "")}");
             return kind == "zoo" ? "the zoo" : role == "drop" ? "Elm Street" : "Mill Road";
         }
@@ -102,7 +109,57 @@ static class MissionCheck
         {
             Present(role);
             OneOf("place", to, PLACES);
+            if (to == "bin" && !bins.ContainsKey(role)) throw new Exception($"there's no bin at '{role}' (call bin first)");
+            if (to == "back" && car == "") throw new Exception("round the back of what? (your_car first)");
             log.Add($"  {role} walks to {to}");
+        }
+        public void Bin(string role, string model, double size)
+        {
+            Placed(role);
+            OneOf("bin", model, BINS);
+            if (size <= 0) throw new Exception("a bin needs a size (tiles across)");
+            bins[role] = false;
+            log.Add($"bin {role} {model}");
+        }
+        public string GetOut(string role, string name, string look)
+        {
+            Placed(role);
+            if (car == "") throw new Exception("you've no car for anyone to get out of");
+            present.Add(role);
+            aboard.Remove(role);
+            holding.Remove(role);
+            names[role] = name;
+            log.Add($"get out {role} = {name}");
+            return name;
+        }
+        public void TakeBin(string role)
+        {
+            Present(role);
+            if (!bins.TryGetValue(role, out bool held) || held) throw new Exception($"there's no bin at '{role}' to take");
+            bins[role] = true;
+            log.Add($"  {role} takes the bin");
+        }
+        public void Dump(string role)
+        {
+            Present(role);
+            if (!bins.TryGetValue(role, out bool held) || !held) throw new Exception($"{role} has no bin to tip out");
+            emptied++;
+            log.Add($"  {role} tips it into the car ({emptied} emptied)");
+        }
+        public void ReturnBin(string role)
+        {
+            Present(role);
+            if (!bins.TryGetValue(role, out bool held) || !held) throw new Exception($"{role} has no bin to put back");
+            bins[role] = false;
+            log.Add($"  {role} puts the bin back");
+        }
+        public void GetIn(string role)
+        {
+            Present(role);
+            if (car == "") throw new Exception("get in what? (your_car first)");
+            if (bins.TryGetValue(role, out bool held) && held) throw new Exception($"{role} gets in still holding the bin");
+            aboard.Add(role);
+            log.Add($"  {role} gets in");
         }
         public void Pause(string role, double seconds)
         {

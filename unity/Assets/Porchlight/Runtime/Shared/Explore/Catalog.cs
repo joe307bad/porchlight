@@ -225,11 +225,13 @@ namespace Porchlight.Explore
 
         public static readonly string[] FURNISHINGS = FURNITURE.Select(n => $"furniture/{n}").ToArray();
         public static readonly string[] PROPS = { "suburban/planter", "suburban/fence", "commercial/detail-awning" };
+        /// <summary>Wheelie bins (Tools~/bins: body, lid on its hinge, wheels, handle, emblem): missions put them out by the kerb.</summary>
+        public static readonly string[] BINS = { "props/wheelie-bin-trash", "props/wheelie-bin-recycle" };
 
         /// <summary>Every static model the town loads.</summary>
         public static IEnumerable<string> Statics =>
             new[] { HOUSES, SHOPS, TOWERS, INDUSTRIAL, CARS, TREES, FALL_TREES, PINES, PALMS, BUSHES, FLOWERS, CROPS, ROCKS, BOULDERS,
-                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, FURNISHINGS }.SelectMany(x => x).Distinct();
+                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, FURNISHINGS }.SelectMany(x => x).Distinct();
 
         /// <summary>Which model families suit each kind of building ("office" is a style, not a blueprint kind).</summary>
         public static string[] KindModels(HouseStyle style) => style switch

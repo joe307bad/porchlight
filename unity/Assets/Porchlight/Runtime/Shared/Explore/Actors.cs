@@ -57,7 +57,7 @@ namespace Porchlight.Explore
         const double AIR_ACCEL = 4;
         const double JUMP_SPEED = 1.5;
         const double RUN_JUMP = 0.06;
-        const double GRAVITY = 5.5;
+        public const double GRAVITY = 5.5;
         const double FALL_GRAVITY = 8.5;
         const double RELEASE_GRAVITY = 14;
         const double JUMP_BUFFER = 0.15;

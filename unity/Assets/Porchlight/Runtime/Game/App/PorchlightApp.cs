@@ -572,6 +572,15 @@ namespace Porchlight.App
         {
             Debug.Log($"smoke: town {seed}: {statusLabel.text}");
             await Explore();
+            // Trash day on its own (PORCHLIGHT_SMOKE_TRASH: its story as the server compiles it): quits 0 if it passed.
+            var trash = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_TRASH");
+            if (!string.IsNullOrEmpty(trash))
+            {
+                bool passed = await SmokeTrash(System.IO.File.ReadAllText(trash));
+                Debug.Log("smoke: done");
+                Application.Quit(passed ? 0 : 1);
+                return;
+            }
             if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_BUILD") == "1")
             {
                 await SmokeBuild();
@@ -872,6 +881,95 @@ namespace Porchlight.App
             iso.ChangeLook(Catalog.FIREFIGHTER);
             for (int i = 0; i < 10; i++) await Task.Yield();
             Debug.Log($"smoke: fire: now {iso.LookModel}");
+        }
+
+        /// <summary>
+        /// Trash day, played through (PORCHLIGHT_SMOKE_TRASH: the story as the server compiles it): the garbage truck
+        /// put straight into each bin's spot, as a player pulling up would leave it, and the crew followed from
+        /// hopping out to hopping back in: to the bin, wheeling it round the back, tipping it in, wheeling it back
+        /// and in again, five times, till the mission's complete. True if it all happened, in that order.
+        /// </summary>
+        async Task<bool> SmokeTrash(string story)
+        {
+            const int STOPS = 5;
+            // What the crew should do at every stop, in order.
+            string[] round = { "hopout", "walk bin", "takebin", "walk back", "dump", "walk bin", "returnbin", "hopin" };
+            float worst = 0;
+            int frames = 0, long_ = 0;
+            string doing = null;
+            var seen = new List<string>();
+            // How far the hands fell short of the bin in each thing the crew does (worst over the round).
+            var miss = new Dictionary<string, float>();
+            double phaseStart = 0;
+            var m = mission = new MissionPlay("trash-day", "Trash day", story, iso, ModelLibrary.Instance, input);
+            string Objective() => mission?.CurrentObjective ?? "(no mission)";
+            // Reading on at once, as a player pressing Enter would; and the crew watched, a line each time they start something new.
+            async Task<bool> Until(Func<bool> met, double seconds)
+            {
+                double end = platform.Now() + seconds * 1000;
+                while (platform.Now() < end && mission != null)
+                {
+                    frames++;
+                    worst = Math.Max(worst, Time.unscaledDeltaTime);
+                    if (Time.unscaledDeltaTime > 0.05f) long_++;
+                    if (mission.script.Line != null) mission.script.Advance();
+                    string now = m.Doing("stop");
+                    if (doing != null) miss[doing] = Math.Max(miss.TryGetValue(doing, out float was) ? was : 0, m.GripMiss("stop"));
+                    if (now != doing)
+                    {
+                        double t = platform.Now();
+                        if (doing != null && doing != "none") Debug.Log($"smoke: trash:   {doing} took {(t - phaseStart) / 1000:0.0} s; bin: {m.BinReport("stop")}");
+                        doing = now;
+                        phaseStart = t;
+                        if (now != "none" && now != "idle" && now != "aboard") seen.Add(now);
+                    }
+                    if (met()) return true;
+                    await Task.Yield();
+                }
+                return met();
+            }
+            bool truck = iso.CarModel >= 0 && Catalog.CARS[iso.CarModel] == "cars/garbage-truck";
+            Debug.Log($"smoke: trash: the garbage truck={truck}, at the wheel={iso.DrivingMyCar}, error={m.script.Error}");
+            int stops = 0;
+            bool inOrder = true;
+            for (int stop = 1; stop <= STOPS; stop++)
+            {
+                bool ok = await Until(() => Objective().StartsWith("Pull up"), 8);
+                var spot = m.SpotOf("stop");
+                var car = iso.OwnVehicle;
+                Debug.Log($"smoke: trash: stop {stop}: '{Objective()}' ok={ok}, bin: {m.BinReport("stop")}, error={m.script.Error}");
+                if (!ok || spot == null || car == null) break;
+                car.x = spot.Value.x;
+                car.y = spot.Value.y;
+                car.heading = spot.Value.heading;
+                car.speed = 0;
+                seen.Clear();
+                ok = await Until(() => Objective().StartsWith("Wait while"), 5);
+                Debug.Log($"smoke: trash: stop {stop}: parked={ok}, '{Objective()}'");
+                if (!ok) break;
+                double start = platform.Now();
+                frames = long_ = 0;
+                worst = 0;
+                ok = await Until(() => m.script.Done || (Objective().StartsWith("Pull up") && m.Doing("stop") == "none"), 60);
+                bool order = string.Join(",", seen) == string.Join(",", round);
+                inOrder &= order;
+                Debug.Log($"smoke: trash: stop {stop}: crew done={ok} in {(platform.Now() - start) / 1000:0.0} s, did {string.Join(" > ", seen)} (in order={order}); out {m.HoppedOut}, emptied {m.BinsEmptied}, put back {m.BinsReturned}, back in {m.HoppedIn}; frames {frames}, the longest {worst * 1000:0} ms, {long_} over 50 ms");
+                if (!ok) break;
+                stops++;
+            }
+            await Until(() => mission == null, 3);
+            finished.TryGetValue("trash-day", out int completed);
+            Debug.Log($"smoke: trash: hands short of the bin by up to: {string.Join(", ", miss.Where(kv => kv.Value > 0).Select(kv => $"{kv.Key} {kv.Value:0.000}"))} tiles");
+            // Lifted to the tailgate and over (its mouth above the truck's back wall), lid flapping open.
+            var truckModel = ModelLibrary.Instance.Get("cars/garbage-truck");
+            double tailgate = truckModel.size.y * CarView.ScaleOf(truckModel) * 0.5;
+            bool tipped = m.PeakMouth > tailgate && m.PeakLid > 60;
+            Debug.Log($"smoke: trash: bins tipped: mouth up to {m.PeakMouth:0.00} tiles (tailgate about {tailgate:0.00}), lid open up to {m.PeakLid:0}°: {(tipped ? "over the tailgate" : "NOT over the tailgate")}");
+            bool passed = stops == STOPS && inOrder && tipped && truck && m.script.Done && m.script.Error == null && completed == 1
+                && m.HoppedOut == STOPS && m.BinsEmptied == STOPS && m.BinsReturned == STOPS && m.HoppedIn == STOPS;
+            Debug.Log($"smoke: trash: {(passed ? "PASS" : "FAIL")}: {stops} of {STOPS} stops, crew in order={inOrder}, mission complete={completed == 1} (error={m.script.Error ?? "none"}), out {m.HoppedOut}, emptied {m.BinsEmptied}, put back {m.BinsReturned}, back in {m.HoppedIn}, hands short of a grip by up to {m.WorstGripMiss:0.000} tiles, your car now {(iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none")}");
+            if (mission != null) EndMission(null);
+            return passed;
         }
 
         void BuildApp()

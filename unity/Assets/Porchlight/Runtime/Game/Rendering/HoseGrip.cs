@@ -58,7 +58,7 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>The arm bent so its hand comes to `to`, the elbow down and out (towards `outward`).</summary>
-        static void Bend(Transform arm, Transform fore, Transform hand, Vector3 to, Vector3 outward)
+        internal static void Bend(Transform arm, Transform fore, Transform hand, Vector3 to, Vector3 outward)
         {
             float a = Vector3.Distance(arm.position, fore.position), b = Vector3.Distance(fore.position, hand.position);
             var line = to - arm.position;

@@ -30,7 +30,8 @@ namespace Porchlight.Rendering
         const double ACCEL_LEAN = 0.012;
         const double BANK = 0.05;
         const double MAX_TILT = 0.3;
-        const double FEET = 0.035;
+        /// <summary>How far above the ground a person's root stands (their feet's soles).</summary>
+        public const double FEET = 0.035;
         /// <summary>Where the head starts, as a share of a person's height.</summary>
         const double HEAD_SHARE = 0.71;
 
@@ -198,6 +199,20 @@ namespace Porchlight.Rendering
             if (creature != null) return null;
             var grip = root.AddComponent<HoseGrip>();
             return grip.Bind(root.transform) ? grip : null;
+        }
+
+        BinGrip binGrip;
+
+        /// <summary>Hands on a bin's handle (its two grips) while `on`; null if this one has no arms to (an animal).</summary>
+        public BinGrip GripBin()
+        {
+            if (creature != null) return null;
+            if (binGrip == null)
+            {
+                binGrip = root.AddComponent<BinGrip>();
+                if (!binGrip.Bind(root.transform)) return binGrip = null;
+            }
+            return binGrip;
         }
 
         public void SnapYaw(double yaw)

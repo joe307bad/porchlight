@@ -26,6 +26,7 @@ const BLOCKS = [
   'put_in_car', 'take_from_car', 'put_down', 'leave', 'mark_spot', 'clear_spot', 'guide',
   'dot', 'look', 'put_you', 'chase', 'countdown', 'standby', 'unlock', 'your_car', 'fire', 'turret',
   'course', 'stopwatch', 'stopwatch_time', 'record', 'town_record', 'town_record_holder',
+  'bin', 'get_out', 'take_bin', 'dump', 'return_bin', 'get_in',
 ];
 const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'doused', 'out', 'countdown', 'finished', 'wait'];
 const SETTINGS = [
@@ -48,7 +49,10 @@ function standInTown(story: InstanceType<typeof Story>) {
   const burning = new Map<string, number>();
   // Courses (course), the stopwatch's label ('' none) and course, and this town's best times: yours, and its record.
   const courses = new Set<string>();
-  const town = { cargo: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, courses, unlocked: [] as string[], look: '', clock: false, turret: '', car: '', stopwatch: '', stopwatchRole: '', mine: 0, best: 0, holder: '', kept: [] as number[] };
+  // Each role's bin: 'home' by the kerb, 'held' by its person, and how many have been tipped into the car.
+  const bins = new Map<string, 'home' | 'held'>();
+  const aboard = new Set<string>();
+  const town = { cargo: 0, bins, aboard, emptied: 0, out: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, courses, unlocked: [] as string[], look: '', clock: false, turret: '', car: '', stopwatch: '', stopwatchRole: '', mine: 0, best: 0, holder: '', kept: [] as number[] };
   const oneOf = (what: string, value: string, known: string[]) => {
     if (!known.includes(value)) throw new Error(`no such ${what} '${value}' (${known.join(', ')})`);
   };
@@ -78,6 +82,8 @@ function standInTown(story: InstanceType<typeof Story>) {
     placed.add(role);
     present.delete(role);
     marked.delete(role);
+    bins.delete(role);
+    aboard.delete(role);
     return `${role} street`;
   });
   bind('spawn', (role: string, name: string, look: string) => {
@@ -90,7 +96,45 @@ function standInTown(story: InstanceType<typeof Story>) {
   });
   bind('walk', (role: string, to: string) => {
     isPresent(role);
-    oneOf('place', to, ['inside', 'door', 'kerb', 'car']);
+    oneOf('place', to, ['inside', 'door', 'kerb', 'car', 'bin', 'back']);
+    if (to === 'bin') assert.ok(bins.has(role), `${role} walks to a bin that isn't there`);
+    if (to === 'back') assert.ok(town.car !== '', `${role} walks round the back of a car you haven't got`);
+  });
+  bind('bin', (role: string, model: string, size: number) => {
+    isPlaced(role);
+    assert.match(model, /^props\/wheelie-bin-(trash|recycle)$/, `no such bin '${model}'`);
+    assert.ok(size > 0, 'a bin needs a size');
+    bins.set(role, 'home');
+  });
+  bind('get_out', (role: string, name: string, look: string) => {
+    isPlaced(role);
+    assert.ok(town.car !== '', 'get_out with no car to get out of');
+    assert.ok(look === '' || LOOKS.test(look), `no such look '${look}'`);
+    present.add(role);
+    town.names.set(role, name);
+    town.out++;
+    return name;
+  });
+  bind('take_bin', (role: string) => {
+    isPresent(role);
+    assert.equal(bins.get(role), 'home', `${role} takes a bin that isn't out`);
+    bins.set(role, 'held');
+  });
+  bind('dump', (role: string) => {
+    isPresent(role);
+    assert.equal(bins.get(role), 'held', `${role} tips out a bin they haven't got`);
+    town.emptied++;
+  });
+  bind('return_bin', (role: string) => {
+    isPresent(role);
+    assert.equal(bins.get(role), 'held', `${role} puts back a bin they haven't got`);
+    bins.set(role, 'home');
+  });
+  bind('get_in', (role: string) => {
+    isPresent(role);
+    assert.ok(town.car !== '', 'get_in with no car to get into');
+    assert.notEqual(bins.get(role), 'held', `${role} gets in still holding the bin`);
+    aboard.add(role);
   });
   bind('pause', (role: string) => isPresent(role));
   bind('hold', (role: string, model: string, size: number) => {
@@ -342,6 +386,44 @@ test('the firefighter saves three houses against a stand-in town', async () => {
   assert.equal(town.log.filter((l) => l.startsWith('fire(fire, 3)')).length, 3);
   assert.ok(lines.includes('You saved all three houses! The whole town is cheering.'), lines.join('\n'));
   assert.deepEqual(town.unlocked, ['firefighter']);
+});
+
+test('trash day empties five bins into the truck against a stand-in town', async () => {
+  const mission = await new MissionStore(DEFAULT_MISSIONS_DIR).get('trash-day');
+  assert.ok(mission?.story);
+  const story = new Story(mission.story);
+  story.allowExternalFunctionFallbacks = false;
+  const town = standInTown(story);
+  const waits: string[] = [];
+  const lines: string[] = [];
+  for (let guard = 0; guard < 500 && (story.canContinue || story.currentChoices.length > 0); guard++) {
+    while (story.canContinue) lines.push(story.Continue()!.trim());
+    if (story.currentChoices.length === 0) break;
+    const pick = story.currentChoices[0] as { text: string; index: number };
+    const [wait, role] = pick.text.slice(1).split(' ');
+    if (wait === 'parked') {
+      assert.ok(town.marked.has(role), `@parked ${role} with no spot marked`);
+      assert.equal(town.bins.get(role), 'home', `@parked ${role} with no bin out`);
+    }
+    if (wait === 'idle') assert.ok(town.aboard.has(role), `@idle ${role} before the crew's back in the truck`);
+    waits.push(`@${wait}`);
+    story.ChooseChoiceIndex(pick.index);
+  }
+  assert.equal(story.canContinue, false);
+  assert.equal(story.currentChoices.length, 0);
+  assert.deepEqual(waits, Array(5).fill(['@parked', '@idle']).flat());
+  // The garbage truck the whole way (your own car back at the end); out of it, round the back with the bin, and back in, five times.
+  assert.ok(town.log.includes('your_car(cars/garbage-truck)'));
+  assert.equal(town.car, '');
+  assert.equal(town.out, 5);
+  assert.equal(town.emptied, 5);
+  // What the crew did, in order: walks by where to, the rest by name.
+  const crew = town.log
+    .filter((l) => /^(get_out|walk|take_bin|dump|return_bin|get_in)\(/.test(l))
+    .map((l) => (l.startsWith('walk(') ? `walk ${l.slice(5, -1).split(', ')[1]}` : l.slice(0, l.indexOf('('))));
+  assert.deepEqual(crew, Array(5).fill(['get_out', 'walk bin', 'take_bin', 'walk back', 'dump', 'walk bin', 'return_bin', 'get_in']).flat());
+  assert.equal(town.marked.size, 0);
+  assert.ok(lines.includes('All 5 bins emptied. The street\'s clean for another week.'), lines.join('\n'));
 });
 
 /** Plays the marathon through against a stand-in town with these best times, and returns what it said. */

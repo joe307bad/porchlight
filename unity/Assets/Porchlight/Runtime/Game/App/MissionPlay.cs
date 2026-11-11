@@ -43,10 +43,21 @@ namespace Porchlight.App
         const double KERB_CAR_EXTRA = 1.5;
         const int SPOT_COLOR = 0xff6a00;
 
-        /// <summary>Where a person can walk to, in the order they pass them.</summary>
-        enum Where { Inside, Door, Kerb, Car }
+        /// <summary>Where a person can walk to, in the order they pass them (Car, Bin and Back are all reached from the kerb).</summary>
+        enum Where { Inside, Door, Kerb, Car, Bin, Back }
 
-        enum Act { Walk, Pause, Hold, PutInCar, TakeFromCar, PutDown, Vanish }
+        enum Act { Walk, Pause, Hold, PutInCar, TakeFromCar, PutDown, Vanish, HopOut, HopIn, TakeBin, Dump, ReturnBin }
+
+        /// <summary>How high your car's door step is, that someone hops down from and up to (tiles).</summary>
+        const double STEP_HEIGHT = 0.1;
+        /// <summary>A bin: how long it takes to grab it, or stand it back (seconds), and how far it's tipped back on its wheels to wheel it (degrees).</summary>
+        const double BIN_GRAB = 0.45;
+        const float BIN_TILT = -35;
+        /// <summary>A bin tipped into your car: lifted, tipped, shaken, back down; how far it's tipped over (degrees).</summary>
+        const double DUMP_LIFT = 0.6, DUMP_TIP = 0.5, DUMP_SHAKE = 0.7, DUMP_TIME = DUMP_LIFT + DUMP_TIP + DUMP_SHAKE + DUMP_TIP + DUMP_LIFT;
+        const float DUMP_ANGLE = 125;
+        /// <summary>The bin's lid falls open past this tip (degrees), as far as this.</summary>
+        const float LID_FALLS = 60, LID_OPEN = 110;
 
         sealed class Step
         {
@@ -60,6 +71,42 @@ namespace Porchlight.App
             /// <summary>Hold: what, and how big.</summary>
             public string model;
             public double size;
+            /// <summary>Under way (the bin's errands and hops, which take a while), and where from.</summary>
+            public bool started, spilled;
+            public Vec2 from, dir;
+            /// <summary>A bin's pose (in its wheeler's space) as it was taken or set down.</summary>
+            public Vector3 pos;
+            public Quaternion rot;
+        }
+
+        /// <summary>
+        /// A wheelie bin out by a role's kerb: its holder pivots on the axle (+z the bin's front, away
+        /// from its wheels and handle; +y up), standing at home or carried by someone (parented to them).
+        /// </summary>
+        sealed class WheelieBin
+        {
+            public string model;
+            public GameObject holder;
+            public Transform lid, gripL, gripR;
+            public Quaternion lidRest;
+            /// <summary>Which way turns the lid open (about its own x).</summary>
+            public float lidSign = 1;
+            /// <summary>Holder-local: the grips on the handle and at the tub's sides, the tub's middle, and its mouth.</summary>
+            public Vector3 handleL, handleR, sideL, sideR, middle, mouth;
+            /// <summary>The axle's height off the ground, and the bin's height and depth (tiles).</summary>
+            public double axle, height, depth;
+            /// <summary>Where it stands, which way its front faces, and where someone stands to take its handle.</summary>
+            public Vec2 home, stand;
+            public double heading;
+            public Person carrier;
+        }
+
+        /// <summary>Rubbish falling out of a bin into your car.</summary>
+        sealed class Bit
+        {
+            public GameObject go;
+            public Vector3 v;
+            public double life;
         }
 
         /// <summary>A thing someone carries, or that rides on your car.</summary>
@@ -84,6 +131,11 @@ namespace Porchlight.App
             public double timer;
             /// <summary>Gone in for good (left): removed once indoors.</summary>
             public bool leaving;
+            /// <summary>Riding in your car (got in), out of sight.</summary>
+            public bool aboard;
+            /// <summary>The bin they're wheeling, and their hands on it.</summary>
+            public WheelieBin bin;
+            public BinGrip grip;
         }
 
         sealed class Role
@@ -100,6 +152,8 @@ namespace Porchlight.App
             public string name;
             public Vehicle.Spot? spot;
             public GameObject mark;
+            /// <summary>Its wheelie bin out by the kerb (bin).</summary>
+            public WheelieBin bin;
             /// <summary>Spoken to (since the story last asked).</summary>
             public bool talked;
             public Vec2 Outside => new Vec2(door.x + outward.x * 0.35, door.y + outward.y * 0.35);
@@ -237,7 +291,50 @@ namespace Porchlight.App
         GameObject cargoRoot;
         readonly List<Item> cargo = new List<Item>();
         GameObject beacon;
-        /// <summary>The story's blue dot on the ground (dot), and where it is.</summary>
+        /// <summary>Every bin the story put out (they stay out as it moves on), and rubbish falling from one.</summary>
+        readonly List<WheelieBin> bins = new List<WheelieBin>();
+        readonly List<Bit> bits = new List<Bit>();
+        static Material[] bitMaterials;
+        /// <summary>How many bins have been tipped into your car, and stood back by the kerb (the smoke run checks).</summary>
+        public int BinsEmptied { get; private set; }
+        public int BinsReturned { get; private set; }
+        /// <summary>How many people have hopped out of your car, and back in.</summary>
+        public int HoppedOut { get; private set; }
+        public int HoppedIn { get; private set; }
+        /// <summary>What the role's person is doing now (the smoke run follows the crew through it): their errand, aboard, idle, or none.</summary>
+        public string Doing(string role)
+        {
+            if (!roles.TryGetValue(role ?? "", out var r) || r.person == null) return "none";
+            var p = r.person;
+            if (p.aboard) return "aboard";
+            if (p.steps.Count == 0) return "idle";
+            var step = p.steps.Peek();
+            return step.act == Act.Walk ? $"walk {step.to.ToString().ToLowerInvariant()}" : step.act.ToString().ToLowerInvariant();
+        }
+
+        /// <summary>How far the role's person's hands are short of their grips on a bin right now (tiles; 0 if not holding one).</summary>
+        public float GripMiss(string role) =>
+            roles.TryGetValue(role ?? "", out var r) && r.person?.grip != null && r.person.grip.on ? r.person.grip.Miss : 0;
+
+        /// <summary>The highest a bin's mouth has been lifted off the ground (tiles), and the widest its lid has fallen open (degrees), as it's been tipped out.</summary>
+        public double PeakMouth { get; private set; }
+        public float PeakLid { get; private set; }
+
+        /// <summary>Where the role's bin is: how high its axle is off the ground and how far it is from home (tiles), whether it's held, and how far its lid is open.</summary>
+        public string BinReport(string role)
+        {
+            if (!roles.TryGetValue(role ?? "", out var r) || r.bin == null) return "no bin";
+            var b = r.bin;
+            var town = view.world.root.transform;
+            var at = town.InverseTransformPoint(b.holder.transform.position);
+            double away = Numbers.Hypot(at.x - b.home.x, -at.z - b.home.y);
+            float lid = b.lid != null ? Quaternion.Angle(b.lidRest, b.lid.localRotation) : 0;
+            return $"{b.model} axle {at.y:0.00} up, {away:0.00} from home, {(b.carrier != null ? "held" : "standing")}, lid {lid:0}°";
+        }
+
+        /// <summary>The furthest a hand fell short of its grip on a bin (tiles; the smoke run checks the arms reach).</summary>
+        public float WorstGripMiss { get; private set; }
+        /// <summary>The blue dot on the ground (dot), and where it is.</summary>
         GameObject dot;
         Func<Vec2?> dotAt;
         int highlighted;
@@ -339,6 +436,10 @@ namespace Porchlight.App
             cargo.Clear();
             if (beacon != null) UnityEngine.Object.Destroy(beacon);
             if (dot != null) UnityEngine.Object.Destroy(dot);
+            foreach (var b in bins) if (b.holder != null) UnityEngine.Object.Destroy(b.holder);
+            bins.Clear();
+            foreach (var bit in bits) UnityEngine.Object.Destroy(bit.go);
+            bits.Clear();
             view.Guide(null, null);
             view.DoorOpeners.Clear();
             view.InDialogue = false;
@@ -504,7 +605,13 @@ namespace Porchlight.App
             return p.name;
         }
 
-        public void Walk(string role, string to) => PersonOf(role).steps.Enqueue(new Step { act = Act.Walk, to = WhereOf(to) });
+        public void Walk(string role, string to)
+        {
+            var p = PersonOf(role);
+            var where = WhereOf(to);
+            if (where == Where.Bin && p.role.bin == null) throw new Exception($"there's no bin at '{role}' (call bin first)");
+            p.steps.Enqueue(new Step { act = Act.Walk, to = where });
+        }
 
         public void Pause(string role, double seconds) => PersonOf(role).steps.Enqueue(new Step { act = Act.Pause, seconds = Math.Max(0, seconds) });
 
@@ -522,6 +629,487 @@ namespace Porchlight.App
         public void TakeFromCar(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.TakeFromCar });
 
         public void PutDown(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.PutDown });
+
+        // Bins: one out by a role's kerb, and someone from your car to empty it into the back.
+
+        public void Bin(string role, string model, double size)
+        {
+            var r = RoleOf(role);
+            if (string.IsNullOrEmpty(model)) throw new Exception("bin what? (a model's name)");
+            var m = library.Get(model);
+            if (size <= 0) throw new Exception("a bin needs a size (tiles across)");
+            if (r.bin != null && r.bin.carrier == null)
+            {
+                bins.Remove(r.bin);
+                UnityEngine.Object.Destroy(r.bin.holder);
+            }
+            var b = MakeBin(m, model, size);
+            // On the pavement by the kerb, a little along from the way to the door, its front to the
+            // house and its handle to the street, for whoever comes from the street to take it.
+            var toStreet = r.spot != null ? Unit(new Vec2(r.spot.Value.x - r.kerb.x, r.spot.Value.y - r.kerb.y)) : Unit(r.outward);
+            var along = new Vec2(-toStreet.y, toStreet.x);
+            b.home = new Vec2(r.kerb.x + toStreet.x * 0.12 + along.x * 0.45, r.kerb.y + toStreet.y * 0.12 + along.y * 0.45);
+            b.heading = DetMath.Atan2(-toStreet.x, -toStreet.y);
+            // Close enough that the handle's in their hands (it hangs just off the bin's back).
+            double reach = b.depth / 2 + 0.07;
+            b.stand = new Vec2(b.home.x + toStreet.x * reach, b.home.y + toStreet.y * reach);
+            StandHome(b);
+            bins.Add(b);
+            r.bin = b;
+        }
+
+        static Vec2 Unit(Vec2 v)
+        {
+            double d = Numbers.Hypot(v.x, v.y);
+            return d > 1e-9 ? new Vec2(v.x / d, v.y / d) : new Vec2(0, 1);
+        }
+
+        /// <summary>A bin from its model's parts: the holder on its axle, the lid's hinge, the grips on its handle and sides.</summary>
+        WheelieBin MakeBin(ModelLibrary.Model m, string model, double size)
+        {
+            var b = new WheelieBin { model = model };
+            b.holder = new GameObject("bin " + model);
+            var h = b.holder.transform;
+            h.SetParent(view.world.root.transform, false);
+            var inner = UnityEngine.Object.Instantiate(m.prefab, h, false).transform;
+            inner.localScale = Vector3.one * (float)(size / Math.Max(m.size.x, m.size.z));
+            Transform Part(string name) => inner.GetComponentsInChildren<Transform>(true).FirstOrDefault(t => t.name == name);
+            // A part's box, in the holder's own space.
+            Bounds? Box(Transform part)
+            {
+                if (part == null) return null;
+                Bounds? all = null;
+                foreach (var rr in part.GetComponentsInChildren<Renderer>(true))
+                {
+                    var c = h.InverseTransformPoint(rr.bounds.center);
+                    var e = h.InverseTransformVector(rr.bounds.extents);
+                    var bb = new Bounds(c, new Vector3(Mathf.Abs(e.x), Mathf.Abs(e.y), Mathf.Abs(e.z)) * 2);
+                    if (all == null) all = bb;
+                    else
+                    {
+                        var u = all.Value;
+                        u.Encapsulate(bb);
+                        all = u;
+                    }
+                }
+                return all;
+            }
+            var wheels = Part("wheels");
+            var handle = Part("handle");
+            var body = Part("body") ?? inner;
+            if (wheels == null || handle == null) throw new Exception($"'{model}' isn't a wheelie bin (it needs wheels and a handle)");
+            // Its front away from the wheels: turned round if the file has it the other way.
+            if (Box(body).Value.center.z < Box(wheels).Value.center.z) inner.localRotation = Quaternion.Euler(0, 180, 0);
+            var axle = Box(wheels).Value.center;
+            var whole = Box(inner).Value;
+            inner.localPosition = -axle;
+            b.axle = axle.y - whole.min.y;
+            b.height = whole.size.y;
+            b.depth = whole.size.z;
+            var hb = Box(handle).Value;
+            var bb2 = Box(body).Value;
+            b.handleL = hb.center - new Vector3(hb.extents.x * 0.55f, 0, 0);
+            b.handleR = hb.center + new Vector3(hb.extents.x * 0.55f, 0, 0);
+            b.middle = bb2.center;
+            b.sideL = bb2.center - new Vector3(bb2.extents.x + 0.01f, 0, 0);
+            b.sideR = bb2.center + new Vector3(bb2.extents.x + 0.01f, 0, 0);
+            b.mouth = new Vector3(bb2.center.x, bb2.max.y, bb2.center.z);
+            b.gripL = new GameObject("grip L").transform;
+            b.gripL.SetParent(h, false);
+            b.gripL.localPosition = b.handleL;
+            b.gripR = new GameObject("grip R").transform;
+            b.gripR.SetParent(h, false);
+            b.gripR.localPosition = b.handleR;
+            b.lid = Part("lid");
+            if (b.lid != null)
+            {
+                b.lidRest = b.lid.localRotation;
+                // Open is whichever way lifts its front edge.
+                var lr = b.lid.GetComponentInChildren<Renderer>();
+                if (lr != null)
+                {
+                    var c = b.lid.InverseTransformPoint(lr.bounds.center);
+                    b.lidSign = (b.lidRest * Quaternion.Euler(30, 0, 0) * c).y > (b.lidRest * c).y ? 1 : -1;
+                }
+            }
+            return b;
+        }
+
+        /// <summary>The bin standing at home, lid shut.</summary>
+        void StandHome(WheelieBin b)
+        {
+            var h = b.holder.transform;
+            h.SetParent(view.world.root.transform, false);
+            h.localPosition = Coords.Map(b.home.x, b.home.y, b.axle);
+            h.localRotation = Coords.Yaw(b.heading);
+            SetLid(b, 0);
+            b.gripL.localPosition = b.handleL;
+            b.gripR.localPosition = b.handleR;
+        }
+
+        static void SetLid(WheelieBin b, float open)
+        {
+            if (b.lid != null) b.lid.localRotation = b.lidRest * Quaternion.Euler(b.lidSign * open, 0, 0);
+        }
+
+        /// <summary>Where a wheeled bin rides, in its wheeler's own space: tipped back on its wheels just ahead of them.</summary>
+        static Vector3 CarryAt(WheelieBin b) => new Vector3(0, (float)(b.axle - Avatar.FEET), (float)(0.1 + b.depth * 0.4));
+
+        static readonly Quaternion CarryTilt = Quaternion.Euler(BIN_TILT, 0, 0);
+
+        /// <summary>Whoever was wheeling a bin lets it go: it's stood back at home.</summary>
+        void SetDown(Person p)
+        {
+            if (p.bin == null) return;
+            p.bin.carrier = null;
+            StandHome(p.bin);
+            p.bin = null;
+            if (p.grip != null) p.grip.on = false;
+        }
+
+        public string GetOut(string role, string name, string look)
+        {
+            var r = RoleOf(role);
+            var car = view.OwnVehicle ?? throw new Exception("you've no car for anyone to get out of");
+            if (car.kind != VehicleKind.Car) throw new Exception("only out of a car");
+            if (r.person != null) GoIndoors(r.person);
+            if (string.IsNullOrEmpty(look))
+            {
+                do look = Catalog.RandomLook(rng); while (look == view.LookModel && Catalog.CHARACTERS.Length > 1);
+            }
+            else if (!Catalog.IsLook(look)) throw new Exception($"no such look '{look}'");
+            // At the door on the kerb side, up on the step, facing out.
+            var door = CarDoor(r.kerb);
+            var walker = new Walker(look, door.x, door.y) { lift = STEP_HEIGHT };
+            walker.heading = DetMath.Atan2(door.x - car.x, door.y - car.y);
+            var avatar = Avatar.Of(look, rng.Next(), view.world.root.transform);
+            avatar.SnapYaw(walker.heading);
+            var p = new Person { name = string.IsNullOrEmpty(name) ? "Someone" : name, role = r, walker = walker, avatar = avatar, at = Where.Car };
+            p.steps.Enqueue(new Step { act = Act.HopOut });
+            people.Add(p);
+            r.person = p;
+            r.name = p.name;
+            r.talked = false;
+            HoppedOut++;
+            return p.name;
+        }
+
+        public void TakeBin(string role)
+        {
+            var p = PersonOf(role);
+            if (p.role.bin == null) throw new Exception($"there's no bin at '{role}' (call bin first)");
+            p.steps.Enqueue(new Step { act = Act.TakeBin });
+        }
+
+        public void Dump(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.Dump });
+
+        public void ReturnBin(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.ReturnBin });
+
+        public void GetIn(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.HopIn });
+
+        /// <summary>Your car's door on the side towards `from`: by the cab, at the front.</summary>
+        Vec2 CarDoor(Vec2 from)
+        {
+            var car = view.OwnVehicle;
+            var f = car.Forward;
+            var side = new Vec2(-f.y, f.x);
+            if (Geo.Dot(side, new Vec2(from.x - car.x, from.y - car.y)) < 0) side = new Vec2(-side.x, -side.y);
+            double ahead = TownWorld.CAR_LENGTH * 0.27;
+            return new Vec2(car.x + side.x * 0.4 + f.x * ahead, car.y + side.y * 0.4 + f.y * ahead);
+        }
+
+        /// <summary>Behind your car, far enough back for a wheeled bin to clear it.</summary>
+        Vec2? BackOf(Person p)
+        {
+            var car = view.OwnVehicle;
+            if (car == null) return null;
+            var f = car.Forward;
+            double depth = p.bin?.depth ?? p.role.bin?.depth ?? 0.18;
+            double back = TownWorld.CAR_LENGTH / 2 + depth + 0.2;
+            return new Vec2(car.x - f.x * back, car.y - f.y * back);
+        }
+
+        /// <summary>Down off your car's step, a little out from it: done once they've landed.</summary>
+        bool HopOut(Person p, Step step, double dt)
+        {
+            var w = p.walker;
+            if (!step.started)
+            {
+                step.started = true;
+                var car = view.OwnVehicle;
+                step.dir = car != null ? Unit(new Vec2(w.x - car.x, w.y - car.y)) : new Vec2(0, 0);
+                w.rise = 0.7;
+            }
+            w.rise -= Player.GRAVITY * dt;
+            w.lift = Math.Max(0, w.lift + w.rise * dt);
+            w.x += step.dir.x * 0.5 * dt;
+            w.y += step.dir.y * 0.5 * dt;
+            w.speed = 0;
+            if (w.lift > 0 || w.rise > 0) return false;
+            w.rise = 0;
+            p.at = Where.Car;
+            return true;
+        }
+
+        /// <summary>To your car's door (waiting at the kerb while it's away), then up the step and in: done once they're aboard.</summary>
+        bool HopIn(Person p, Step step, double dt)
+        {
+            var w = p.walker;
+            var r = p.role;
+            if (!step.started)
+            {
+                if (step.path == null) step.path = PathTo(p, Where.Kerb);
+                if (step.path.Count > 0 && !WalkAlong(p, step.path, dt)) return false;
+                if (!CarThere(r))
+                {
+                    WalkAlong(p, new List<Vec2> { r.kerb }, dt);
+                    return false;
+                }
+                var door = CarDoor(new Vec2(w.x, w.y));
+                if (!WalkAlong(p, new List<Vec2> { door }, dt)) return false;
+                var car = view.OwnVehicle;
+                step.started = true;
+                step.dir = Unit(new Vec2(car.x - w.x, car.y - w.y));
+                w.heading = DetMath.Atan2(step.dir.x, step.dir.y);
+                w.rise = 1.1;
+            }
+            w.rise -= Player.GRAVITY * dt;
+            w.lift = Math.Max(0, w.lift + w.rise * dt);
+            w.x += step.dir.x * 0.6 * dt;
+            w.y += step.dir.y * 0.6 * dt;
+            w.speed = 0;
+            // In at the top of the hop.
+            if (w.rise > 0) return false;
+            w.lift = 0;
+            w.rise = 0;
+            p.avatar.Visible = false;
+            p.aboard = true;
+            p.at = Where.Car;
+            HoppedIn++;
+            return true;
+        }
+
+        static double Smooth(double t)
+        {
+            t = Math.Min(1, Math.Max(0, t));
+            return t * t * (3 - 2 * t);
+        }
+
+        /// <summary>Hands on the role's bin's handle, and it tipped back onto its wheels: done once it's tipped.</summary>
+        bool TakeBinStep(Person p, Step step, double dt)
+        {
+            var b = p.role.bin;
+            var h = b?.holder.transform;
+            if (b == null || (b.carrier != null && b.carrier != p)) return true;
+            if (!step.started)
+            {
+                step.started = true;
+                p.timer = 0;
+                p.walker.heading = DetMath.Atan2(b.home.x - p.walker.x, b.home.y - p.walker.y);
+                p.avatar.SnapYaw(p.walker.heading);
+                h.SetParent(p.avatar.root.transform, true);
+                b.carrier = p;
+                p.bin = b;
+                p.grip ??= p.avatar.GripBin();
+                if (p.grip != null)
+                {
+                    p.grip.left = b.gripL;
+                    p.grip.right = b.gripR;
+                    p.grip.on = true;
+                }
+                step.pos = h.localPosition;
+                step.rot = h.localRotation;
+            }
+            p.walker.Moved(0, 0, dt);
+            p.timer += dt;
+            double k = Smooth(p.timer / BIN_GRAB);
+            h.localPosition = Vector3.Lerp(step.pos, CarryAt(b), (float)k);
+            h.localRotation = Quaternion.Slerp(step.rot, CarryTilt, (float)k);
+            if (p.timer < BIN_GRAB) return false;
+            p.timer = 0;
+            return true;
+        }
+
+        /// <summary>
+        /// The bin they're wheeling tipped into the back of your car (waiting while it's away): they step in
+        /// and lift it by its sides to head height, tip it over the tailgate so the lid falls open and the
+        /// rubbish drops in, shake it, and bring it back down onto its wheels, stepping back. Done once it's down.
+        /// </summary>
+        bool DumpStep(Person p, Step step, double dt)
+        {
+            var b = p.bin;
+            var w = p.walker;
+            if (b == null) return true;
+            var car = view.OwnVehicle;
+            if (!step.started)
+            {
+                w.Moved(0, 0, dt);
+                if (!CarThere(p.role) || car == null) return false;
+                step.started = true;
+                p.timer = 0;
+                var f = car.Forward;
+                step.dir = new Vec2(f.x, f.y);
+                step.from = new Vec2(w.x, w.y);
+                w.heading = DetMath.Atan2(f.x, f.y);
+                p.avatar.SnapYaw(w.heading);
+            }
+            p.timer += dt;
+            double t = p.timer;
+            // Stepping in up to the tailgate as it's lifted, and back as it comes down.
+            double into = 0.18 * (Smooth(t / DUMP_LIFT) - Smooth((t - (DUMP_TIME - DUMP_LIFT)) / DUMP_LIFT));
+            w.x = step.from.x + step.dir.x * into;
+            w.y = step.from.y + step.dir.y * into;
+            w.Moved(0, 0, dt);
+            DumpPose(b, t);
+            if (!step.spilled && t >= DUMP_LIFT + DUMP_TIP)
+            {
+                step.spilled = true;
+                Spill(b);
+                BinsEmptied++;
+            }
+            if (t < DUMP_TIME) return false;
+            var hh = b.holder.transform;
+            hh.localPosition = CarryAt(b);
+            hh.localRotation = CarryTilt;
+            SetLid(b, 0);
+            b.gripL.localPosition = b.handleL;
+            b.gripR.localPosition = b.handleR;
+            p.timer = 0;
+            return true;
+        }
+
+        /// <summary>The bin, in its wheeler's space, `t` seconds into tipping it out (see DumpStep).</summary>
+        static void DumpPose(WheelieBin b, double t)
+        {
+            // Three poses: wheeled (tipped back on its wheels), lifted upright to the chest, and tipped
+            // over at head height; between them it's eased, by its middle, held by its sides.
+            float feet = (float)Avatar.FEET;
+            var carryMid = CarryAt(b) + CarryTilt * b.middle;
+            var lifted = new Vector3(0, (float)(Avatar.PERSON_HEIGHT * 0.62) - feet, (float)(b.depth * 0.5 + 0.03));
+            var over = new Vector3(0, (float)(Avatar.PERSON_HEIGHT * 0.92) - feet, lifted.z);
+            Vector3 mid;
+            float angle, grips;
+            double t1 = DUMP_LIFT, t2 = t1 + DUMP_TIP, t3 = t2 + DUMP_SHAKE, t4 = t3 + DUMP_TIP;
+            if (t < t1)
+            {
+                float k = (float)Smooth(t / t1);
+                mid = Vector3.Lerp(carryMid, lifted, k);
+                angle = Mathf.Lerp(BIN_TILT, 0, k);
+                grips = k;
+            }
+            else if (t < t2)
+            {
+                float k = (float)Smooth((t - t1) / DUMP_TIP);
+                mid = Vector3.Lerp(lifted, over, k);
+                angle = Mathf.Lerp(0, DUMP_ANGLE, k);
+                grips = 1;
+            }
+            else if (t < t3)
+            {
+                // A shake or two, to get the last of it out.
+                float s = Mathf.Sin((float)(t - t2) * Mathf.PI * 2 * 4.5f) * (float)Math.Sin(Math.PI * (t - t2) / DUMP_SHAKE);
+                mid = over + new Vector3(0, s * 0.01f, 0);
+                angle = DUMP_ANGLE + s * 9;
+                grips = 1;
+            }
+            else if (t < t4)
+            {
+                float k = (float)Smooth((t - t3) / DUMP_TIP);
+                mid = Vector3.Lerp(over, lifted, k);
+                angle = Mathf.Lerp(DUMP_ANGLE, 0, k);
+                grips = 1;
+            }
+            else
+            {
+                float k = (float)Smooth((t - t4) / DUMP_LIFT);
+                mid = Vector3.Lerp(lifted, carryMid, k);
+                angle = Mathf.Lerp(0, BIN_TILT, k);
+                grips = 1 - k;
+            }
+            var rot = Quaternion.Euler(angle, 0, 0);
+            var h = b.holder.transform;
+            h.localRotation = rot;
+            h.localPosition = mid - rot * b.middle;
+            b.gripL.localPosition = Vector3.Lerp(b.handleL, b.sideL, grips);
+            b.gripR.localPosition = Vector3.Lerp(b.handleR, b.sideR, grips);
+            // The lid falls open as it's tipped over, and shut as it comes back.
+            SetLid(b, Mathf.Clamp01((angle - LID_FALLS) / (DUMP_ANGLE - LID_FALLS)) * LID_OPEN);
+        }
+
+        /// <summary>The bin they're wheeling stood back where it was: done once it's down and let go.</summary>
+        bool ReturnBinStep(Person p, Step step, double dt)
+        {
+            var b = p.bin;
+            if (b == null) return true;
+            var h = b.holder.transform;
+            var root = p.avatar.root.transform;
+            if (!step.started)
+            {
+                step.started = true;
+                p.timer = 0;
+                p.walker.heading = DetMath.Atan2(b.home.x - p.walker.x, b.home.y - p.walker.y);
+                step.pos = h.localPosition;
+                step.rot = h.localRotation;
+            }
+            p.walker.Moved(0, 0, dt);
+            p.timer += dt;
+            // Home, in their space, as they turn.
+            var town = view.world.root.transform;
+            var homeAt = root.InverseTransformPoint(town.TransformPoint(Coords.Map(b.home.x, b.home.y, b.axle)));
+            var homeRot = Quaternion.Inverse(root.rotation) * town.rotation * Coords.Yaw(b.heading);
+            double k = Smooth(p.timer / BIN_GRAB);
+            h.localPosition = Vector3.Lerp(step.pos, homeAt, (float)k);
+            h.localRotation = Quaternion.Slerp(step.rot, homeRot, (float)k);
+            if (p.timer < BIN_GRAB) return false;
+            p.timer = 0;
+            SetDown(p);
+            BinsReturned++;
+            return true;
+        }
+
+        /// <summary>A handful of rubbish out of the bin's mouth, falling into your car.</summary>
+        void Spill(WheelieBin b)
+        {
+            bitMaterials ??= new[] { 0x8d6e4f, 0xe8e2d0, 0x5f7f3a, 0x3a3a3a, 0xc9a227 }.Select(c => Materials.Lit(c)).ToArray();
+            var town = view.world.root.transform;
+            var h = b.holder.transform;
+            var mouth = town.InverseTransformPoint(h.TransformPoint(b.mouth));
+            var outward = town.InverseTransformDirection(h.TransformDirection(Vector3.up)).normalized;
+            for (int i = 0; i < 8; i++)
+            {
+                var go = GameObject.CreatePrimitive(i % 3 == 0 ? PrimitiveType.Sphere : PrimitiveType.Cube);
+                UnityEngine.Object.Destroy(go.GetComponent<Collider>());
+                go.name = "rubbish";
+                go.transform.SetParent(town, false);
+                var jitter = new Vector3((float)rng.Range(-1, 1), (float)rng.Range(-1, 1), (float)rng.Range(-1, 1));
+                go.transform.localPosition = mouth + jitter * (float)(b.depth * 0.15);
+                go.transform.localRotation = Quaternion.Euler((float)rng.Range(0, 360), (float)rng.Range(0, 360), 0);
+                go.transform.localScale = Vector3.one * (float)(b.depth * rng.Range(0.12, 0.22));
+                var mr = go.GetComponent<Renderer>();
+                mr.sharedMaterial = bitMaterials[i % bitMaterials.Length];
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                bits.Add(new Bit { go = go, v = outward * (float)rng.Range(0.3, 0.7) + jitter * 0.15f, life = rng.Range(0.6, 0.9) });
+            }
+        }
+
+        void UpdateBits(double dt)
+        {
+            for (int i = bits.Count - 1; i >= 0; i--)
+            {
+                var bit = bits[i];
+                bit.life -= dt;
+                if (bit.life <= 0)
+                {
+                    UnityEngine.Object.Destroy(bit.go);
+                    bits.RemoveAt(i);
+                    continue;
+                }
+                bit.v.y -= (float)(Player.GRAVITY * dt);
+                var t = bit.go.transform;
+                t.localPosition += bit.v * (float)dt;
+                t.localRotation *= Quaternion.Euler((float)(dt * 400), (float)(dt * 250), 0);
+            }
+        }
 
         public void Leave(string role)
         {
@@ -624,7 +1212,7 @@ namespace Porchlight.App
             }
             var r = RoleOf(role);
             var to = WhereOf(at);
-            if (to == Where.Car) throw new Exception("put you where? 'car' (inside, door or kerb)");
+            if (to >= Where.Car) throw new Exception($"put you where? '{at}' (inside, door or kerb)");
             // Facing out, the way you'd go.
             view.PutPlayer(PointOf(r, to), DetMath.Atan2(r.outward.x, r.outward.y));
         }
@@ -938,7 +1526,9 @@ namespace Porchlight.App
                 case "door": return Where.Door;
                 case "kerb": return Where.Kerb;
                 case "car": return Where.Car;
-                default: throw new Exception($"walk where? '{to}' (inside, door, kerb or car)");
+                case "bin": return Where.Bin;
+                case "back": return Where.Back;
+                default: throw new Exception($"walk where? '{to}' (inside, door, kerb, car, bin or back)");
             }
         }
 
@@ -970,6 +1560,9 @@ namespace Porchlight.App
             p.steps.Clear();
             p.leaving = true;
             DropItem(p);
+            SetDown(p);
+            // Riding with you: they're gone with nowhere to walk.
+            if (p.aboard) return;
             if (p.at != Where.Inside || p.avatar.Visible) p.steps.Enqueue(new Step { act = Act.Walk, to = Where.Inside });
             p.steps.Enqueue(new Step { act = Act.Vanish });
         }
@@ -980,7 +1573,7 @@ namespace Porchlight.App
         static List<Vec2> PathTo(Person p, Where to)
         {
             var path = new List<Vec2>();
-            int a = (int)p.at, b = (int)(to == Where.Car ? Where.Kerb : to);
+            int a = (int)(p.at >= Where.Car ? Where.Kerb : p.at), b = (int)(to >= Where.Car ? Where.Kerb : to);
             int dir = Math.Sign(b - a);
             if (dir == 0) return path;
             for (int i = a + dir; i != b + dir; i += dir) path.Add(PointOf(p.role, (Where)i));
@@ -1023,7 +1616,7 @@ namespace Porchlight.App
                     if (step.path.Count > 0)
                     {
                         WalkAlong(p, step.path, dt);
-                        if (step.path.Count > 0 || step.to == Where.Car) return;
+                        if (step.path.Count > 0 || step.to >= Where.Car) return;
                     }
                     if (step.to == Where.Car)
                     {
@@ -1037,6 +1630,25 @@ namespace Porchlight.App
                         if (!WalkAlong(p, new List<Vec2> { side.Value }, dt)) return;
                         var car = view.OwnVehicle;
                         w.heading = DetMath.Atan2(car.x - w.x, car.y - w.y);
+                    }
+                    else if (step.to == Where.Bin && r.bin != null)
+                    {
+                        // To the bin's handle, then facing it.
+                        if (!WalkAlong(p, new List<Vec2> { r.bin.stand }, dt)) return;
+                        w.heading = DetMath.Atan2(r.bin.home.x - w.x, r.bin.home.y - w.y);
+                    }
+                    else if (step.to == Where.Back)
+                    {
+                        // Behind your car, facing it: only while it's there (otherwise they wait at the kerb).
+                        var back = CarThere(r) ? BackOf(p) : null;
+                        if (back == null)
+                        {
+                            WalkAlong(p, new List<Vec2> { r.kerb }, dt);
+                            return;
+                        }
+                        if (!WalkAlong(p, new List<Vec2> { back.Value }, dt)) return;
+                        var f = view.OwnVehicle.Forward;
+                        w.heading = DetMath.Atan2(f.x, f.y);
                     }
                     p.at = step.to;
                     if (p.at == Where.Inside) p.avatar.Visible = false;
@@ -1082,6 +1694,21 @@ namespace Porchlight.App
                 case Act.Vanish:
                     p.avatar.Visible = false;
                     p.steps.Dequeue();
+                    return;
+                case Act.HopOut:
+                    if (HopOut(p, step, dt)) p.steps.Dequeue();
+                    return;
+                case Act.HopIn:
+                    if (HopIn(p, step, dt)) p.steps.Dequeue();
+                    return;
+                case Act.TakeBin:
+                    if (TakeBinStep(p, step, dt)) p.steps.Dequeue();
+                    return;
+                case Act.Dump:
+                    if (DumpStep(p, step, dt)) p.steps.Dequeue();
+                    return;
+                case Act.ReturnBin:
+                    if (ReturnBinStep(p, step, dt)) p.steps.Dequeue();
                     return;
             }
         }
@@ -1202,6 +1829,7 @@ namespace Porchlight.App
         void DisposePerson(Person p)
         {
             DropItem(p);
+            SetDown(p);
             p.avatar.Dispose();
         }
 
@@ -1366,6 +1994,15 @@ namespace Porchlight.App
                 view.DoorOpeners.Add(new Vec2(p.walker.x, p.walker.y));
             }
             PlaceCargo();
+            UpdateBits(dt);
+            foreach (var p in people)
+            {
+                if (p.grip != null && p.grip.on) WorstGripMiss = Math.Max(WorstGripMiss, p.grip.Miss);
+                if (p.bin == null) continue;
+                var town = view.world.root.transform;
+                PeakMouth = Math.Max(PeakMouth, town.InverseTransformPoint(p.bin.holder.transform.TransformPoint(p.bin.mouth)).y);
+                if (p.bin.lid != null) PeakLid = Math.Max(PeakLid, Quaternion.Angle(p.bin.lidRest, p.bin.lid.localRotation));
+            }
             UpdateBeacon(WaitingToTalk(), dt);
             UpdateDot();
             UpdateChases(dt);

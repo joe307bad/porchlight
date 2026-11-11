@@ -60,6 +60,18 @@ namespace Porchlight.Missions
         void PutDown(string role);
         /// <summary>The role's person drops what they're doing, goes indoors and is gone.</summary>
         void Leave(string role);
+        /// <summary>A wheelie bin (a model, size tiles across) out on the pavement by the kerb outside the role's building, handle to the street.</summary>
+        void Bin(string role, string model, double size);
+        /// <summary>Someone called name, looking like look ("" any), hops out of your car's kerb-side door as the role's person (your car must be stopped by the role). Returns their name.</summary>
+        string GetOut(string role, string name, string look);
+        /// <summary>Queue: the role's person takes hold of the role's bin by its handle and tips it back onto its wheels to wheel it.</summary>
+        void TakeBin(string role);
+        /// <summary>Queue: the role's person lifts the bin they're wheeling and tips it into the back of your car, lid flapping open, and brings it back down.</summary>
+        void Dump(string role);
+        /// <summary>Queue: the role's person stands the bin they're wheeling back where it was.</summary>
+        void ReturnBin(string role);
+        /// <summary>Queue: the role's person walks to your car's door and hops back in (out of sight, riding with you).</summary>
+        void GetIn(string role);
         /// <summary>Mark the spot to park in outside the role's building.</summary>
         void MarkSpot(string role);
         /// <summary>The role's marked spot goes.</summary>
@@ -192,6 +204,12 @@ namespace Porchlight.Missions
             Bind("take_from_car", a => { world.TakeFromCar(Str(a, 0)); return null; });
             Bind("put_down", a => { world.PutDown(Str(a, 0)); return null; });
             Bind("leave", a => { world.Leave(Str(a, 0)); return null; });
+            Bind("bin", a => { world.Bin(Str(a, 0), Str(a, 1), Num(a, 2)); return null; });
+            Bind("get_out", a => world.GetOut(Str(a, 0), Str(a, 1), Str(a, 2)) ?? "");
+            Bind("take_bin", a => { world.TakeBin(Str(a, 0)); return null; });
+            Bind("dump", a => { world.Dump(Str(a, 0)); return null; });
+            Bind("return_bin", a => { world.ReturnBin(Str(a, 0)); return null; });
+            Bind("get_in", a => { world.GetIn(Str(a, 0)); return null; });
             Bind("mark_spot", a => { world.MarkSpot(Str(a, 0)); return null; });
             Bind("clear_spot", a => { world.ClearSpot(Str(a, 0)); return null; });
             Bind("guide", a => { world.Guide(Str(a, 0), Str(a, 1), Str(a, 2)); return null; });
