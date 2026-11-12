@@ -2240,7 +2240,10 @@ namespace Porchlight.App
                 left -= dt;
             }
             simAt = now;
-            Frame(Math.Min(0.1, (now - lastFrame) / 1000));
+            // The same span the town was just stepped by (at most half a second): a shorter one here made a long
+            // frame's drive (a car going 10 tiles in it) look like a jump to the cameras' followers, which held the
+            // look point back and tipped the close camera down at the road.
+            Frame(Math.Min(0.5, Math.Max(0, (now - lastFrame) / 1000)));
             lastFrame = now;
         }
 

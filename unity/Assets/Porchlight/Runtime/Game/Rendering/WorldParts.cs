@@ -573,13 +573,16 @@ namespace Porchlight.Rendering
             d.pivot.localRotation = d.shut * Quaternion.AngleAxis(d.turn * eased, d.axis);
         }
 
-        void AddYards(MeshBuilder sheds, Rng rng)
+        /// <summary>Gardens, sheds and fences, a share of the rows (then of the fences) at a time.</summary>
+        IEnumerable<int> AddYards(MeshBuilder sheds, Rng rng)
         {
+            const int ROWS_A_PART = 16, FENCES_A_PART = 300;
             int w = model.width, h = model.height;
             var crops = Catalog.CROPS.Select(c => library.Get(c)).ToArray();
             var extras = Catalog.GARDEN_EXTRAS.Select(c => library.Get(c)).ToArray();
             for (int y = 0; y < h; y++)
             {
+                if (y % ROWS_A_PART == ROWS_A_PART - 1) yield return y / ROWS_A_PART;
                 for (int x = 0; x < w; x++)
                 {
                     byte use = layout.use[Grid.Index(x, y, w)];
@@ -607,8 +610,10 @@ namespace Porchlight.Rendering
             }
             var fence = library.Get("suburban/fence");
             double fsx = 1 / fence.size.x;
+            int fenced = 0;
             foreach (var f in layout.fences)
             {
+                if (++fenced % FENCES_A_PART == 0) yield return -1;
                 const double inset = 0.05;
                 var at = f.side switch
                 {

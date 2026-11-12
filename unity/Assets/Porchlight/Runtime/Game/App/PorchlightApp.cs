@@ -742,8 +742,10 @@ namespace Porchlight.App
         {
             int rounds = int.TryParse(Env("PORCHLIGHT_SMOKE_ROUNDS"), out var r0) ? Math.Max(1, r0) : 1;
             int carModel = Enumerable.Range(0, Porchlight.Explore.Catalog.CARS.Length).First(Porchlight.Explore.Catalog.IsCar);
-            iso.SetCameraMode(CameraMode.Close);
-            double worstDown = 0;
+            // PORCHLIGHT_SMOKE_CAMERA=iso: in the usual camera (the one a game starts in), else the close one.
+            bool isoCamera = Env("PORCHLIGHT_SMOKE_CAMERA") == "iso";
+            iso.SetCameraMode(isoCamera ? CameraMode.Iso : CameraMode.Close);
+            double worstDown = 0, worstUp = -1;
             for (int round = 0; round < rounds; round++)
                 foreach (var to in county.Active.place == Place.Mine2 ? new[] { Place.Porchlight, Place.Mine2 } : new[] { Place.Mine2, Place.Porchlight })
                 {
@@ -803,7 +805,7 @@ namespace Porchlight.App
                         bool sharp = Math.Abs(diff) > 0.6;
                         return (sharp ? 0.4 : 1, diff * 3, !sharp);
                     };
-                    double legStart = platform.Now(), last0 = legStart, longest = 0, waited = 0, minDown = 0, fastest = 0;
+                    double legStart = platform.Now(), last0 = legStart, longest = 0, waited = 0, minDown = 0, maxDown = -1, fastest = 0;
                     int frames = 0, slow = 0, staring = 0;
                     string worstAt = null;
                     while (Geo.Dist(Pos(), way[way.Count - 1]) > 4 && platform.Now() - legStart < 120000)
@@ -812,11 +814,13 @@ namespace Porchlight.App
                         double now = platform.Now();
                         longest = Math.Max(longest, now - last0);
                         if (now - last0 > 50) slow++;
+                        if (now - last0 > 100) Debug.Log($"smoke car: long frame {now - last0:0} ms, {(now - legStart) / 1000:0.0} s in, in {county.Active.name}, building {county.Building ?? "nothing"}{(county.Waiting != null ? ", held at an edge" : "")}");
                         if (county.Waiting != null) waited += (now - last0) / 1000;
                         last0 = now;
                         frames++;
                         fastest = Math.Max(fastest, Math.Abs(car.speed));
                         var f = iso.CameraForward;
+                        maxDown = Math.Max(maxDown, f.y);
                         if (f.y < minDown)
                         {
                             minDown = f.y;
@@ -828,9 +832,10 @@ namespace Porchlight.App
                     iso.Autopilot = null;
                     bool there = county.Active == dest;
                     worstDown = Math.Min(worstDown, minDown);
-                    Debug.Log($"smoke car: {(there ? "" : "FAIL ")}from {here.name} to {dest.name}: {(there ? "in it" : "NOT in it, in " + county.Active.name)} after {(platform.Now() - legStart) / 1000:0.0} s, fastest {fastest:0.0} tiles/s, waited {waited:0.0} s at edges, stuck {stuck} times, {frames} frames, {slow} over 50 ms, longest {longest:0} ms; the camera looked down at most {Math.Asin(-minDown) * 180 / Math.PI:0}° ({worstAt}), {staring} frames staring at the ground; {SmokeMemory()}");
+                    worstUp = Math.Max(worstUp, maxDown);
+                    Debug.Log($"smoke car: {(there ? "" : "FAIL ")}from {here.name} to {dest.name}: {(there ? "in it" : "NOT in it, in " + county.Active.name)} after {(platform.Now() - legStart) / 1000:0.0} s, fastest {fastest:0.0} tiles/s, waited {waited:0.0} s at edges, stuck {stuck} times, {frames} frames, {slow} over 50 ms, longest {longest:0} ms; the camera ({(isoCamera ? "iso" : "close")}) looked down {Math.Asin(-maxDown) * 180 / Math.PI:0}° to {Math.Asin(-minDown) * 180 / Math.PI:0}° ({worstAt}), {staring} frames staring at the ground; {SmokeMemory()}");
                 }
-            Debug.Log($"smoke car: done, the camera's steepest {Math.Asin(-worstDown) * 180 / Math.PI:0}° down");
+            Debug.Log($"smoke car: done, the camera ({(isoCamera ? "iso" : "close")}) between {Math.Asin(-worstUp) * 180 / Math.PI:0}° and {Math.Asin(-worstDown) * 180 / Math.PI:0}° down");
         }
 
         /// <summary>How much memory the game holds (the web build has at most 4 GB, and the tab dies past it), and how many spaces are built.</summary>

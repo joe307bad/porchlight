@@ -183,7 +183,7 @@ namespace Porchlight.Rendering
         readonly List<Signpost> plannedSigns;
 
         /// <summary>Rooms furnished, doors hung and signposts put up between one part and the next: each part a few milliseconds.</summary>
-        const int HOUSES_A_PART = 250, ROOMS_A_PART = 16, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 250;
+        const int HOUSES_A_PART = 250, ROOMS_A_PART = 16, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 120;
         /// <summary>Rows of tiles planted, sidewalks lit, meshes surveyed for the weather and walls kept clear of doorways, between one part and the next.</summary>
         const int TREE_ROWS_A_PART = 24, LAMP_PATHS_A_PART = 40, SURVEY_A_PART = 400, WALLS_A_PART = 300;
 
@@ -238,14 +238,14 @@ namespace Porchlight.Rendering
             yield return "screens";
             foreach (var part in AddDoors(DOORS_A_PART)) yield return "doors" + part;
             yield return "rooms";
-            const int ROOMS_A_STEP = 64;
+            const int ROOMS_A_STEP = 32;
             for (int i = 0; i < rooms.Count; i++)
             {
                 InteriorOf(i);
                 if (i % ROOMS_A_STEP == ROOMS_A_STEP - 1) yield return "interiors" + i / ROOMS_A_STEP;
             }
             yield return "interiors";
-            AddYards(sheds, rng);
+            foreach (var part in AddYards(sheds, rng)) yield return "yards" + (part < 0 ? "" : part.ToString());
             yield return "yards";
             foreach (var part in AddTrees(rng)) yield return "trees" + part;
             yield return "trees";
@@ -254,10 +254,13 @@ namespace Porchlight.Rendering
             AddParkedCars();
             yield return "parked";
             AddAirport();
+            yield return "airport";
             AddZoo();
+            yield return "zoo";
             AddDocks();
-            if (!sheds.Empty) sheds.Build("sheds", still);
             yield return "ports";
+            if (!sheds.Empty) sheds.Build("sheds", still);
+            yield return "sheds";
             foreach (var part in AddLamps(rng)) yield return "lamps" + part;
             yield return "places";
             signs = plannedSigns ?? Signs.Plan(model, layout, names);
@@ -404,45 +407,62 @@ namespace Porchlight.Rendering
         /// taken apart a few hundred pieces a part. A whole town destroyed in one frame stalls it, and so does
         /// switching it off whole.
         /// </summary>
-        public IEnumerable<int> DisposeSteps(int perPart = 400)
+        public IEnumerable<string> DisposeSteps(int perPart = 200)
         {
-            // Its own meshes noted while there's still something drawing them (rooms furnished since it was built too).
-            Own();
-            yield return 0;
+            if (root == null) yield break;
+            // Everything under it, walked a share at a time (Porchlight's whole tree in one go, twice over, was over
+            // half a second on the web), noting its own meshes as it goes, while there's still something drawing
+            // them (rooms furnished since it was built too). Nothing changes under it while it's walked: it's no
+            // longer the town on show.
+            var all = new List<Transform>();
+            var open = new Stack<Transform>();
+            open.Push(root.transform);
+            int walked = 0;
+            while (open.Count > 0)
+            {
+                var t = open.Pop();
+                all.Add(t);
+                var f = t.GetComponent<MeshFilter>();
+                var m = f != null ? f.sharedMesh : null;
+                if (m != null && (MeshBuilder.Made(m) || m.name.StartsWith("Combined Mesh", StringComparison.Ordinal))) owned.Add(m);
+                for (int c = 0; c < t.childCount; c++) open.Push(t.GetChild(c));
+                if (++walked % (perPart * 5) == 0) yield return "walk";
+            }
+            yield return "walk";
             // The rooms a share at a time too: what's destroyed goes at the end of the frame, and Porchlight's
             // every room at once (tens of thousands of pieces of furniture) was a long frame.
             int rooms = 0;
             foreach (var i in interiors.Values)
             {
                 i.Dispose();
-                if (++rooms % INTERIORS_A_PART == 0) yield return 0;
+                if (++rooms % INTERIORS_A_PART == 0) yield return "rooms";
             }
             interiors.Clear();
-            yield return 0;
-            // Deepest first, so each piece goes before what it hangs from.
-            var all = root.GetComponentsInChildren<Transform>(true);
+            yield return "rooms";
+            // Deepest first (each after what it hangs from in the walk), so each piece goes before its parent.
             int done = 0;
-            for (int k = all.Length - 1; k > 0; k--)
+            for (int k = all.Count - 1; k > 0; k--)
             {
                 if (all[k] != null) UnityEngine.Object.Destroy(all[k].gameObject);
-                if (++done % perPart == 0) yield return done / perPart;
+                if (++done % perPart == 0) yield return "pieces";
             }
             UnityEngine.Object.Destroy(root);
-            yield return 0;
+            yield return "root";
             // Its meshes, a share at a time.
             int freed = 0;
             foreach (var m in owned)
             {
                 if (MeshBuilder.Made(m)) MeshBuilder.Free(m);
                 else if (m != null) UnityEngine.Object.Destroy(m);
-                if (++freed % perPart == 0) yield return 0;
+                if (++freed % perPart == 0) yield return "meshes";
             }
             owned.Clear();
+            yield return "meshes";
             palette.Dispose();
         }
 
         /// <summary>Rooms taken apart between one part and the next (each a few dozen pieces).</summary>
-        const int INTERIORS_A_PART = 24;
+        const int INTERIORS_A_PART = 12;
 
         static int Darker(int c, double k) =>
             (Numbers.RoundInt(((c >> 16) & 255) * k) << 16) | (Numbers.RoundInt(((c >> 8) & 255) * k) << 8) | Numbers.RoundInt((c & 255) * k);

@@ -129,7 +129,7 @@ namespace Porchlight.App
         readonly Dictionary<int, Built> built = new Dictionary<int, Built>();
         Built job;
         /// <summary>Spaces let go, being taken apart a share a frame (TownWorld.DisposeSteps).</summary>
-        readonly List<IEnumerator<int>> retiring = new List<IEnumerator<int>>();
+        readonly List<IEnumerator<string>> retiring = new List<IEnumerator<string>>();
         Space active;
         readonly GameObject countryside;
         string wantRoom;
@@ -157,6 +157,8 @@ namespace Porchlight.App
         public Space Active => active;
         /// <summary>How many spaces are built or building (the smoke run watches it).</summary>
         public int BuiltCount => built.Count;
+        /// <summary>The space being built now, if any (the smoke run says what a long frame was spent on).</summary>
+        public string Building => job == null ? null : job.space.name ?? job.space.kind.ToString();
         static double Now => Time.realtimeSinceStartupAsDouble * 1000;
 
         /// <summary>The county, with you in `start` (the town on screen, already built, at the origin).</summary>
@@ -395,9 +397,17 @@ namespace Porchlight.App
         void Retire()
         {
             double t0 = Now;
+            string last = null;
             for (int i = retiring.Count - 1; i >= 0; i--)
-                if (!retiring[i].MoveNext()) retiring.RemoveAt(i);
-            if (Now - t0 > 20) Log?.Invoke($"slow step: letting go {Now - t0:0} ms");
+            {
+                if (!retiring[i].MoveNext())
+                {
+                    retiring.RemoveAt(i);
+                    last = "palette";
+                }
+                else last = retiring[i].Current;
+            }
+            if (Now - t0 > 20) Log?.Invoke($"slow step: letting go ({last}) {Now - t0:0} ms");
         }
 
         /// <summary>Where you can walk, drive and fly in a built space, in its terms (its hills too): off the main thread where there are threads.</summary>
@@ -510,7 +520,7 @@ namespace Porchlight.App
             }
             if (part.StartsWith("furnishing")) return Through("furnishing", 0.35, 0.45, rooms / 48.0);
             if (part.StartsWith("doors")) return Through("doors", 0.45, 0.5, rooms / 64.0);
-            if (part.StartsWith("interiors") && part != "interiors") return Through("interiors", 0.5, 0.7, rooms / 64.0);
+            if (part.StartsWith("interiors") && part != "interiors") return Through("interiors", 0.5, 0.7, rooms / 32.0);
             if (part.StartsWith("signs")) return Through("signs", 0.82, 0.9, Math.Max(1, b.world.signs.Count / 12.0));
             if (part.StartsWith("batching") && part != "batching") return Through("batching", 0.93, 0.99, 8);
             // Trees, lamps and the survey in several parts each: as far as the part they're in.
@@ -527,7 +537,10 @@ namespace Porchlight.App
                 case "trees": return 0.75;
                 case "plazas": return 0.77;
                 case "parked": return 0.78;
-                case "ports": return 0.785;
+                case "airport": return 0.781;
+                case "zoo": return 0.782;
+                case "ports": return 0.783;
+                case "sheds": return 0.785;
                 case "lamps": return 0.79;
                 case "places": return 0.8;
                 case "signposts": return 0.82;
@@ -656,13 +669,18 @@ namespace Porchlight.App
             // ask the county's hills (view.Rise) in its terms. Set after, they were asked where the space
             // you'd left lies, so a town driven into was mostly "hillside": lots and building floors closed,
             // only the paved streets walkable, and no way into any building on foot.
+            double t0 = Now;
             active = next.space;
             view.SwitchSpace(next.world, dx, dy, WaysOf(next));
+            double t1 = Now;
             foreach (var b in built.Values)
                 if (b.world != null) Place(b.world.root.transform, b.space.x0, b.space.y0);
             Place(countryside.transform, 0, 0);
+            double t2 = Now;
             Frame?.Refresh();
             OnSpace?.Invoke(active, active.kind == SpaceKind.Town ? next.model : null);
+            double t3 = Now;
+            if (t3 - t0 > 20) Log?.Invoke($"slow step: into {active.name ?? active.kind.ToString()} {t3 - t0:0} ms (the view {t1 - t0:0}, moving the spaces {t2 - t1:0}, the rest {t3 - t2:0})");
         }
 
         /// <summary>
