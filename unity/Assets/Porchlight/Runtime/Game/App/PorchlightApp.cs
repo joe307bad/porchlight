@@ -145,7 +145,7 @@ namespace Porchlight.App
         /// </summary>
         static float DesktopDpr()
         {
-            if (float.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_UI_SCALE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var given) && given > 0) return given;
+            if (float.TryParse(Env("PORCHLIGHT_UI_SCALE"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var given) && given > 0) return given;
 #if !UNITY_WEBGL && !UNITY_EDITOR
             // A Mac says exactly, for the screen the window's on now (it changes as the window moves).
             if (Application.platform == RuntimePlatform.OSXPlayer)
@@ -365,7 +365,7 @@ namespace Porchlight.App
         {
             // Smoke run (PORCHLIGHT_SMOKE_SIGNIN=1, against a stand-in auth service): the desktop
             // sign-in with a fetch for a browser, then who that made us, then forgotten again.
-            if (Platform.Desktop && Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_SIGNIN") == "1")
+            if (Platform.Desktop && Env("PORCHLIGHT_SMOKE_SIGNIN") == "1")
             {
                 NativeSignIn.Open = url => platform.Request("GET", url, null, (st, _) => Debug.Log($"smoke: signin: the browser came back with {st}"));
                 NativeSignIn.Begin(origin, problem =>
@@ -511,8 +511,8 @@ namespace Porchlight.App
             online = user != null;
             BuildApp();
             started = true;
-            if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE") == "1") _ = Smoke();
-            var shot = Environment.GetEnvironmentVariable("PORCHLIGHT_SHOT");
+            if (Env("PORCHLIGHT_SMOKE") == "1") _ = Smoke();
+            var shot = Env("PORCHLIGHT_SHOT");
             if (!string.IsNullOrEmpty(shot)) _ = Shot(shot);
         }
 
@@ -522,7 +522,7 @@ namespace Porchlight.App
         /// </summary>
         async Task Shot(string path)
         {
-            var s = Environment.GetEnvironmentVariable("PORCHLIGHT_SHOT_SEED");
+            var s = Env("PORCHLIGHT_SHOT_SEED");
             if (!string.IsNullOrEmpty(s)) Regenerate(s, @params);
             await Explore();
             iso.SetNightNow(true);
@@ -611,14 +611,14 @@ namespace Porchlight.App
             Application.targetFrameRate = 60;
             // PORCHLIGHT_SMOKE_PORCHLIGHT: Porchlight's key, when the town on screen is another (PORCHLIGHT_SMOKE_KEY):
             // that one's your middle town up north, and you start there.
-            var porchKey = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_PORCHLIGHT");
+            var porchKey = Env("PORCHLIGHT_SMOKE_PORCHLIGHT");
             bool startNorth = !string.IsNullOrEmpty(porchKey);
             var porch = startNorth ? ParseUrlState(porchKey).@params : @params;
             var placed = new List<PlacedTown> { new PlacedTown { place = Place.Porchlight, name = "Porchlight", key = startNorth ? porchKey : TownKey, width = (int)porch.width, height = (int)porch.height } };
             placed.AddRange(CountyMap.Cities);
             // PORCHLIGHT_SMOKE_NORTH=1: your own towns up north too, and the drive is out to the middle one and back
             // down through the junction into Porchlight (the biggest town, met at speed).
-            bool north = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_NORTH") == "1";
+            bool north = Env("PORCHLIGHT_SMOKE_NORTH") == "1";
             if (north)
             {
                 placed.Add(new PlacedTown { place = Place.Mine1, name = "Mine one", key = "seed=mine-one&width=160&height=160&waterFraction=0.08&townRadius=0.45&roadDensity=0.8&buildingDensity=0.8", width = 160, height = 160 });
@@ -637,15 +637,15 @@ namespace Porchlight.App
             overlay?.SetCounty(plan, county.Terrain, WhereInCounty, TripWay, null);
             double t0 = platform.Now();
             while (platform.Now() < t0 + 4000) await Task.Yield();
-            if (north && Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_CAR") == "1")
+            if (north && Env("PORCHLIGHT_SMOKE_CAR") == "1")
             {
                 await SmokeCarDrive(plan);
                 return;
             }
-            double speed = double.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_SPEED"), out var sp0) ? sp0 : 35;
+            double speed = double.TryParse(Env("PORCHLIGHT_SMOKE_SPEED"), out var sp0) ? sp0 : 35;
             // Round the county as many times as PORCHLIGHT_SMOKE_ROUNDS says (once by default): what's built for
             // the towns behind has to be let go, or a long drive runs the web build out of memory.
-            int rounds = int.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_ROUNDS"), out var r0) ? Math.Max(1, r0) : 1;
+            int rounds = int.TryParse(Env("PORCHLIGHT_SMOKE_ROUNDS"), out var r0) ? Math.Max(1, r0) : 1;
             var round = north ? new[] { Place.Mine2, Place.Porchlight } : new[] { Place.East, Place.South, Place.West, Place.Porchlight, Place.South };
             var legs = Enumerable.Repeat(round, rounds).SelectMany(x => x);
             int leg = 0;
@@ -740,7 +740,7 @@ namespace Porchlight.App
         /// </summary>
         async Task SmokeCarDrive(CountyMap plan)
         {
-            int rounds = int.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_ROUNDS"), out var r0) ? Math.Max(1, r0) : 1;
+            int rounds = int.TryParse(Env("PORCHLIGHT_SMOKE_ROUNDS"), out var r0) ? Math.Max(1, r0) : 1;
             int carModel = Enumerable.Range(0, Porchlight.Explore.Catalog.CARS.Length).First(Porchlight.Explore.Catalog.IsCar);
             iso.SetCameraMode(CameraMode.Close);
             double worstDown = 0;
@@ -850,7 +850,7 @@ namespace Porchlight.App
         async Task Smoke()
         {
             // PORCHLIGHT_SMOKE_KEY: a town's key (server/towns/*.json) to start in, e.g. Porchlight's own.
-            var smokeKey = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_KEY");
+            var smokeKey = Env("PORCHLIGHT_SMOKE_KEY");
             if (!string.IsNullOrEmpty(smokeKey))
             {
                 var st = ParseUrlState(smokeKey);
@@ -859,7 +859,7 @@ namespace Porchlight.App
             Debug.Log($"smoke: town {seed}: {statusLabel.text}");
             await Explore();
             // Trash day on its own (PORCHLIGHT_SMOKE_TRASH: its story as the server compiles it): quits 0 if it passed.
-            var trash = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_TRASH");
+            var trash = Env("PORCHLIGHT_SMOKE_TRASH");
             if (!string.IsNullOrEmpty(trash))
             {
                 bool passed = await SmokeTrash(System.IO.File.ReadAllText(trash));
@@ -868,7 +868,7 @@ namespace Porchlight.App
                 return;
             }
             // The turkey run on its own (PORCHLIGHT_SMOKE_TURKEY: its story as the server compiles it): quits 0 if it passed.
-            var turkey = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_TURKEY");
+            var turkey = Env("PORCHLIGHT_SMOKE_TURKEY");
             if (!string.IsNullOrEmpty(turkey))
             {
                 bool passed = await SmokeTurkey(System.IO.File.ReadAllText(turkey));
@@ -876,13 +876,13 @@ namespace Porchlight.App
                 Application.Quit(passed ? 0 : 1);
                 return;
             }
-            if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_DRIVE") == "1")
+            if (Env("PORCHLIGHT_SMOKE_DRIVE") == "1")
             {
                 await SmokeDrive();
                 Application.Quit(leaks ? 1 : 0);
                 return;
             }
-            if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_BUILD") == "1")
+            if (Env("PORCHLIGHT_SMOKE_BUILD") == "1")
             {
                 await SmokeBuild();
                 Application.Quit(0);
@@ -907,11 +907,11 @@ namespace Porchlight.App
             Debug.Log($"smoke: weather: {iso?.WeatherReport()}");
             iso?.SetWeather(false, false);
             iso?.SetAuto(false);
-            var story = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_MISSION");
+            var story = Env("PORCHLIGHT_SMOKE_MISSION");
             if (!string.IsNullOrEmpty(story)) await SmokeMission(System.IO.File.ReadAllText(story));
-            var fire = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_FIRE");
+            var fire = Env("PORCHLIGHT_SMOKE_FIRE");
             if (!string.IsNullOrEmpty(fire)) await SmokeFire(System.IO.File.ReadAllText(fire));
-            var marathon = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_MARATHON");
+            var marathon = Env("PORCHLIGHT_SMOKE_MARATHON");
             if (!string.IsNullOrEmpty(marathon)) await SmokeMarathon(System.IO.File.ReadAllText(marathon));
             SmokeZoo();
             // The animals unlocked: offered in the character box, and one to be.
@@ -3259,6 +3259,27 @@ namespace Porchlight.App
         }
 
         /// <summary>URLSearchParams' parse (application/x-www-form-urlencoded).</summary>
+        /// <summary>
+        /// A smoke run's switch (PORCHLIGHT_…): from the environment, or on the web (which has none) from the
+        /// page's address, ?PORCHLIGHT_SMOKE=1&PORCHLIGHT_SMOKE_DRIVE=1&… (values URL-encoded), so the web build
+        /// can run the same smoke runs in a browser.
+        /// </summary>
+        static string Env(string name)
+        {
+            var v = System.Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrEmpty(v)) return v;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            string url = Application.absoluteURL ?? "";
+            int q = url.IndexOf('?');
+            if (q < 0) return null;
+            int h = url.IndexOf('#', q);
+            string query = h < 0 ? url.Substring(q + 1) : url.Substring(q + 1, h - q - 1);
+            return ParseQuery(query).TryGetValue(name, out var fromUrl) && name.StartsWith("PORCHLIGHT_", StringComparison.Ordinal) ? fromUrl : null;
+#else
+            return null;
+#endif
+        }
+
         static Dictionary<string, string> ParseQuery(string s)
         {
             var o = new Dictionary<string, string>();
