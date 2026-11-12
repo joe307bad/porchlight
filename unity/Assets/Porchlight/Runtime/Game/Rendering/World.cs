@@ -135,6 +135,18 @@ namespace Porchlight.Rendering
             public StreetNames names;
             public List<Signpost> signs;
 
+            /// <summary>The same, a share at a time (for the web, which has no threads: CountyDrive), then `done` with it.</summary>
+            public static IEnumerable<string> Steps(TownModel model, Action<Prepared> done)
+            {
+                IsoLayout layout = null;
+                foreach (var part in Layout.BuildSteps(model, l => layout = l)) yield return "layout" + part;
+                var names = StreetNaming.Name(model, layout.roads);
+                yield return "names";
+                List<Signpost> signs = null;
+                foreach (var part in Signs.PlanSteps(model, layout, names, s => signs = s)) yield return "signposts" + part;
+                done(new Prepared { layout = layout, names = names, signs = signs });
+            }
+
             public static Prepared Of(TownModel model)
             {
                 var layout = Layout.Build(model);
@@ -188,8 +200,11 @@ namespace Porchlight.Rendering
             var laying = Task.Run(() => BuildGround(rng));
             while (!laying.IsCompleted) yield return "ground" + WAITING;
             ground = laying.Result;
+#else
+            // No threads on the web: a share of the rows a frame (a whole town's ground at once stalled the car).
+            foreach (var part in GroundSteps(rng, g => ground = g)) yield return part;
 #endif
-            (ground ?? BuildGround(rng)).Build("ground", still);
+            ground.Build("ground", still);
             yield return "ground";
             AddWater();
             yield return "water";
@@ -200,8 +215,10 @@ namespace Porchlight.Rendering
             var drawing = Task.Run(BuildRoads);
             while (!drawing.IsCompleted) yield return "roads" + WAITING;
             roads = drawing.Result;
+#else
+            foreach (var part in RoadSteps(r => roads = r)) yield return part;
 #endif
-            (roads ?? BuildRoads()).Build("roads", still);
+            roads.Build("roads", still);
             yield return "roads";
             var sheds = new MeshBuilder(palette);
             AddHouses(rng);
@@ -382,7 +399,10 @@ namespace Porchlight.Rendering
 
         // Ground --------------------------------------------------------------------------------
 
-        MeshBuilder BuildGround(Rng rng)
+        MeshBuilder BuildGround(Rng rng) => Gen.Stepwise.Drain<MeshBuilder>(done => GroundSteps(rng, done));
+
+        /// <summary>The ground's mesh, a share of its rows at a time (for the web, with no threads), then `done` with it.</summary>
+        IEnumerable<string> GroundSteps(Rng rng, Action<MeshBuilder> done)
         {
             var tiles = model.tiles;
             int w = model.width, h = model.height;
@@ -398,6 +418,7 @@ namespace Porchlight.Rendering
             }
             for (int y = 0; y < h; y++)
             {
+                if (y % GROUND_ROWS_A_PART == GROUND_ROWS_A_PART - 1) yield return "ground" + y / GROUND_ROWS_A_PART;
                 for (int x = 0; x < w; x++)
                 {
                     int i = Grid.Index(x, y, w);
@@ -427,12 +448,16 @@ namespace Porchlight.Rendering
                     if (Wet(x + 1, y)) b.Quad(v(x + 1, 0, y), v(x + 1, 0, y + 1), v(x + 1, BED_Y, y + 1), v(x + 1, BED_Y, y), bank, new V3(1, 0, 0));
                 }
             }
-            if (inCounty) return b; // the countryside carries on
+            if (inCounty)
+            {
+                done(b); // the countryside carries on
+                yield break;
+            }
             b.Quad(v(0, 0, 0), v(w, 0, 0), v(w, -SLAB, 0), v(0, -SLAB, 0), C.slab, new V3(0, 0, -1));
             b.Quad(v(0, 0, h), v(w, 0, h), v(w, -SLAB, h), v(0, -SLAB, h), C.slab, new V3(0, 0, 1));
             b.Quad(v(0, 0, 0), v(0, 0, h), v(0, -SLAB, h), v(0, -SLAB, 0), C.slab, new V3(-1, 0, 0));
             b.Quad(v(w, 0, 0), v(w, 0, h), v(w, -SLAB, h), v(w, -SLAB, 0), C.slab, new V3(1, 0, 0));
-            return b;
+            done(b);
         }
 
         /// <summary>The water's surface: glossy, so it catches the sky and the sun.</summary>
@@ -458,7 +483,13 @@ namespace Porchlight.Rendering
             r.shadowCastingMode = ShadowCastingMode.Off;
         }
 
-        MeshBuilder BuildRoads()
+        MeshBuilder BuildRoads() => Gen.Stepwise.Drain<MeshBuilder>(RoadSteps);
+
+        /// <summary>Streets dashed between one part and the next (RoadSteps).</summary>
+        const int STREETS_A_PART = 64, GROUND_ROWS_A_PART = 32;
+
+        /// <summary>The streets' mesh, a layer at a time (for the web, with no threads), then `done` with it.</summary>
+        IEnumerable<string> RoadSteps(Action<MeshBuilder> done)
         {
             var b = new MeshBuilder(palette);
             var streets = layout.roads.Where(r => r.kind != RoadKind.Path).ToList();
@@ -480,6 +511,7 @@ namespace Porchlight.Rendering
                     }
                 }
             }
+            yield return "roads";
             foreach (var br in layout.bridges)
             {
                 double half = br.width / 2 + Layout.PARKING + Layout.SIDEWALK + 0.25;
@@ -492,10 +524,15 @@ namespace Porchlight.Rendering
             // lighter, edged with a thin line), the kerb, then the sidewalk.
             double park = Layout.PARKING * 2;
             Layer(0.012, park + Layout.SIDEWALK * 2 + 0.1, C.curb);
+            yield return "roads";
             Layer(0.016, park + Layout.SIDEWALK * 2, C.sidewalk);
+            yield return "roads";
             Layer(0.02, park + 0.08, C.curb);
+            yield return "roads";
             Layer(0.023, park, C.parking);
+            yield return "roads";
             Layer(0.026, 0, C.asphalt);
+            yield return "roads";
             foreach (var r in streets)
             {
                 // Stopping short of the junctions, as the centre line does.
@@ -505,13 +542,16 @@ namespace Porchlight.Rendering
                 var middle = Geo.SubPolyline(r.points, from, to);
                 foreach (int side in new[] { 1, -1 }) b.Ribbon(Layout.OffsetPolyline(middle, side * r.width / 2), 0.04, 0.028, C.lane);
             }
+            yield return "roads";
             foreach (var r in layout.roads.Where(rd => rd.kind == RoadKind.Path))
             {
                 b.Ribbon(r.points, r.width, 0.012, C.path);
                 foreach (var p in new[] { r.points[0], r.points[r.points.Count - 1] }) b.Disc(p, r.width / 2, 0.012, C.path);
             }
+            int dashed = 0;
             foreach (var r in streets)
             {
+                if (++dashed % STREETS_A_PART == 0) yield return "roads" + dashed / STREETS_A_PART;
                 double len = Geo.PolylineLength(r.points);
                 double from = Bulb(r, false) ? bulb + 0.2 : 1.2, to = len - (Bulb(r, true) ? bulb + 0.2 : 1.2);
                 var samples = Geo.SamplePolyline(r.points, 0.1);
@@ -537,7 +577,7 @@ namespace Porchlight.Rendering
                 }
                 Flush();
             }
-            return b;
+            done(b);
         }
     }
 }

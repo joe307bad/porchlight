@@ -40,7 +40,14 @@ namespace Porchlight.Explore
             public Vec2 dir;
         }
 
-        public static List<Signpost> Plan(TownModel model, IsoLayout layout, StreetNames names)
+        public static List<Signpost> Plan(TownModel model, IsoLayout layout, StreetNames names) =>
+            Porchlight.Gen.Stepwise.Drain<List<Signpost>>(done => PlanSteps(model, layout, names, done));
+
+        /// <summary>Junctions looked at between one share of the work and the next (PlanSteps).</summary>
+        const int JUNCTIONS_A_STEP = 40;
+
+        /// <summary>The signposts a share of the junctions at a time, then `done` with them: the same ones Plan makes all at once.</summary>
+        public static IEnumerable<string> PlanSteps(TownModel model, IsoLayout layout, StreetNames names, Action<List<Signpost>> done)
         {
             var roads = layout.roads;
             var ends = new Dictionary<int, List<End>>();
@@ -63,8 +70,10 @@ namespace Porchlight.Explore
             var nodeAt = new Dictionary<int, Vec2>();
             foreach (var n in model.roads.nodes) nodeAt[n.id] = n.at;
             var o = new List<Signpost>();
+            int seen = 0;
             foreach (int node in order)
             {
+                if (++seen % JUNCTIONS_A_STEP == 0) yield return "/junctions";
                 var here = ends[node];
                 if (!nodeAt.TryGetValue(node, out var centre) || here.Count < 2) continue;
                 var blades = new List<SignBlade>();
@@ -82,7 +91,7 @@ namespace Porchlight.Explore
                 if (blades.Count > 3) blades.RemoveRange(3, blades.Count - 3);
                 o.Add(new Signpost { at = at.Value, blades = blades });
             }
-            return o;
+            done(o);
         }
 
         static Vec2? CornerSpot(TownModel model, IsoLayout layout, Vec2 centre, List<End> here)

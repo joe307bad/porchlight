@@ -71,6 +71,8 @@ namespace Porchlight.App
         Multiplayer net;
         /// <summary>Signed in, the county round the town on screen: its highways out to the next towns (CountyDrive).</summary>
         CountyDrive county;
+        /// <summary>The network's state ("joining", "online", "offline"), as it last said.</summary>
+        string netState;
         /// <summary>What the room sees of the game, in its own terms (the county's spaces each have their own).</summary>
         NetFrame netFrame;
         /// <summary>Who's playing (signed in): chosen at the front door.</summary>
@@ -1388,7 +1390,8 @@ namespace Porchlight.App
             preferHome = atDoor;
             FrontDoor.Remember(platform, c.id);
             root.RemoveFromClassList("choosing");
-            sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home.townName, GoHome, ToggleJournal);
+            sidebar.SetCharacter(c.name, () => SwitchCharacter(), GoHome, ToggleJournal);
+            ShowWhere();
             enteringTown = true;
             await Explore();
         }
@@ -1411,7 +1414,8 @@ namespace Porchlight.App
             preferHome = false;
             FrontDoor.Remember(platform, c.id);
             root.RemoveFromClassList("choosing");
-            sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home?.townName, c.home?.hasHouse == true ? GoHome : (Action)null, ToggleJournal);
+            sidebar.SetCharacter(c.name, () => SwitchCharacter(), c.home?.hasHouse == true ? GoHome : (Action)null, ToggleJournal);
+            ShowWhere();
             GoTo(them);
         }
 
@@ -1733,8 +1737,11 @@ namespace Porchlight.App
             iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
             iso.SetWeather(raining, snowing);
             iso.OnTake = car => net?.Take(car);
+            // A car you're riding in that's out of sight is only gone once you're in a room and not waiting on the space ahead.
+            iso.RideSettled = () => (net == null || netState == "online") && county?.Waiting == null;
             iso.OnTripEnd = () =>
             {
+                if (tripTo != null) chosen.Ended(Way.Trip, tripTo);
                 tripTo = null;
                 OfferDirections();
             };
@@ -1745,6 +1752,8 @@ namespace Porchlight.App
                 followAskAt = 0;
                 UpdateFollow(platform.Now());
             };
+            // A spot picked on the map: the way there instead of any other (following someone, a trip).
+            iso.OnWaypointSet = () => Choose(Way.Spot, null);
             // The county map: directions to a town, or straight there.
             overlay.OnCountyDirections = DirectionsToTown;
             overlay.OnCountyTravel = TravelTo;
@@ -1964,6 +1973,8 @@ namespace Porchlight.App
                     var state = ParseUrlState(t.key);
                     placed.Add(new PlacedTown { place = where.Value, name = t.name, key = t.key, width = (int)state.@params.width, height = (int)state.@params.height });
                 }
+                // The town's name is known now (for the line under yours), county or not.
+                ShowWhere();
                 CountyMap plan;
                 try
                 {
@@ -1983,6 +1994,7 @@ namespace Porchlight.App
                 })
                 { Net = net, Frame = netFrame, OnSpace = DroveInto, Heading = TripNextTown };
                 county.EnterRoom();
+                ShowWhere();
                 // Now the houses in the county's other towns have roads to them.
                 OfferDirections();
                 // And the big map has a County tab.
@@ -1993,6 +2005,7 @@ namespace Porchlight.App
         /// <summary>Driven (or flown) into another space of the county: into a town, it's the town on screen now.</summary>
         void DroveInto(Space space, TownModel town)
         {
+            ShowWhere();
             if (space.kind != SpaceKind.Town || town == null)
             {
                 // On the road: no house of yours or neighbours' here.
@@ -2040,7 +2053,11 @@ namespace Porchlight.App
             netFrame = new NetFrame(iso);
             net = new Multiplayer(netFrame, playing, origin, platform, timers);
             netFrame.Room = () => net?.RoomKey;
-            net.onStatus = s => sidebar.SetOnline(s.state, s.here, s.why);
+            net.onStatus = s =>
+            {
+                netState = s.state;
+                sidebar.SetOnline(s.state, s.here, s.why);
+            };
             net.onUnlockedElsewhere = SayUnlocked;
             net.onInUse = () => SwitchCharacter(InUse(playing));
             iso.TeleportHook = (x, z) =>
@@ -2150,14 +2167,14 @@ namespace Porchlight.App
                     if (t.kind == SpaceKind.Town && (near == null || CountyMap.DistanceTo(t, at.Value) < CountyMap.DistanceTo(near, at.Value))) near = t;
                 return near != null ? $"out in the country near {near.name}" : TownLabel(room);
             }
-            switch (s.kind)
-            {
-                case SpaceKind.Town: return "in " + s.name;
-                case SpaceKind.Highway: return $"on the {county.map.highways[s.highway].name} road";
-                case SpaceKind.Junction: return "at the North junction";
-                default: return "on an empty plot up north";
-            }
+            return county.map.Where(s);
         }
+
+        /// <summary>
+        /// The line under your name: where you are now ("Currently in Ember Crossing", "Currently on the
+        /// Porchlight – South road"), the space you're in, or (out of the county) the town on screen.
+        /// </summary>
+        void ShowWhere() => sidebar.SetWhere(county?.Active != null ? county.map.Where(county.Active) : TownLabel(TownKey));
 
         /// <summary>The account's characters, as last asked (OfferJoins): whose houses there are directions to.</summary>
         List<Character> accountCharacters;
@@ -2216,6 +2233,7 @@ namespace Porchlight.App
                 overlay?.Flash($"There's no road to {townName} from here");
                 return;
             }
+            Choose(Way.Trip, id);
             tripTo = id;
             tripTown = townKey;
             iso.Trip(from =>
@@ -2267,6 +2285,7 @@ namespace Porchlight.App
                 return;
             }
             StopFollowing();
+            Choose(Way.Trip, id);
             tripTo = id;
             tripTown = town.townKey;
             string key = town.townKey, name = town.name;
@@ -2347,6 +2366,17 @@ namespace Porchlight.App
         const string FOLLOW_ROW = "following";
         string FollowTrip => followId != null ? "player:" + followId : null;
 
+        /// <summary>The way you've chosen to be shown (a spot on the map, someone you're following, a trip): one at a time.</summary>
+        readonly WayChoice chosen = new WayChoice();
+
+        /// <summary>Show this way now, instead of whichever you'd chosen before: that one stops.</summary>
+        void Choose(Way way, string id)
+        {
+            var was = chosen.Choose(way, id);
+            if (was.way == Way.Player) StopFollowing();
+            else if (was.way == Way.Trip && iso != null && iso.OnTrip) iso.Trip(null);
+        }
+
         /// <summary>The Players list ticked (their session key) or unticked (null).</summary>
         void Follow(string key)
         {
@@ -2360,6 +2390,7 @@ namespace Porchlight.App
             if (them.key == null) return;
             StopFollowing();
             if (tripTo != null) iso.Trip(null);
+            Choose(Way.Player, them.id);
             followId = them.id;
             followName = string.IsNullOrEmpty(them.name) ? "them" : them.name;
             iso.Find(key);
@@ -2368,6 +2399,7 @@ namespace Porchlight.App
         void StopFollowing()
         {
             bool tripping = tripTo != null && tripTo == FollowTrip;
+            if (followId != null) chosen.Ended(Way.Player, followId);
             followId = null;
             followAt = null;
             followMisses = 0;
@@ -2381,6 +2413,12 @@ namespace Porchlight.App
         void UpdateFollow(double now)
         {
             if (followId == null || iso == null) return;
+            // Other directions chosen since (a spot on the map, a house): no longer following them.
+            if (!chosen.Showing(Way.Player, followId))
+            {
+                StopFollowing();
+                return;
+            }
             var them = iso.Others.FirstOrDefault(o => o.id == followId);
             if (them.key != null)
             {

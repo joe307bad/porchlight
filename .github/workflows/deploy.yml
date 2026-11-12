@@ -52,6 +52,15 @@ jobs:
 
       - name: Game — towns grow (every invariant checked) and repeat
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60
+      # The web build grows and builds the towns ahead a share at a time: no share long enough to stall
+      # the car (a shared runner is slower than a desk: twice the limit), and the same towns as all at once.
+      - name: Game — the county built a share at a time, as the web build does
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- hitches 150
+      - name: Game — riding over a town line, one way shown at a time, where you are
+        run: |
+          dotnet run --project "unity/Tools~/Checks" -c Release -- ride
+          dotnet run --project "unity/Tools~/Checks" -c Release -- ways
+          dotnet run --project "unity/Tools~/Checks" -c Release -- where
 
       # Unity's import cache, reused only for the exact same sources. No
       # restore-keys fallback: opening the project on a Library left by older

@@ -381,4 +381,37 @@ namespace Porchlight.Core
             return rings;
         }
     }
+
+    /// <summary>
+    /// Points bucketed in square cells, for "is any of them closer than r to here?" without going through
+    /// them all: the same answer as checking every one (Geo.Dist &lt; r), from the cells r reaches.
+    /// </summary>
+    public sealed class PointGrid
+    {
+        readonly double cell;
+        readonly Dictionary<long, List<Vec2>> cells = new Dictionary<long, List<Vec2>>();
+
+        public PointGrid(double cell) => this.cell = cell > 0 ? cell : 1;
+
+        static long Key(long cx, long cy) => (cx << 32) ^ (cy & 0xffffffffL);
+
+        public void Add(Vec2 at)
+        {
+            long k = Key((long)Math.Floor(at.x / cell), (long)Math.Floor(at.y / cell));
+            if (!cells.TryGetValue(k, out var list)) cells[k] = list = new List<Vec2>();
+            list.Add(at);
+        }
+
+        public bool AnyWithin(Vec2 at, double r)
+        {
+            long x0 = (long)Math.Floor((at.x - r) / cell), x1 = (long)Math.Floor((at.x + r) / cell);
+            long y0 = (long)Math.Floor((at.y - r) / cell), y1 = (long)Math.Floor((at.y + r) / cell);
+            for (long cy = y0; cy <= y1; cy++)
+                for (long cx = x0; cx <= x1; cx++)
+                    if (cells.TryGetValue(Key(cx, cy), out var list))
+                        foreach (var p in list)
+                            if (Geo.Dist(p, at) < r) return true;
+            return false;
+        }
+    }
 }

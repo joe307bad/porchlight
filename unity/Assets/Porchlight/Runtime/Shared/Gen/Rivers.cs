@@ -10,7 +10,7 @@ using Porchlight.Model;
 
 namespace Porchlight.Gen
 {
-    public sealed class RiversStage : IStage
+    public sealed class RiversStage : IStepwiseStage
     {
         const double FILL_EPSILON = 1e-5;
         const double WIDTH_PER_SQRT_FLOW = 0.12;
@@ -103,12 +103,16 @@ namespace Porchlight.Gen
             return new Drainage { down = down, flow = flow };
         }
 
-        public TownModel Run(TownModel model, Rng rng)
+        public TownModel Run(TownModel model, Rng rng) => Stepwise.Drain<TownModel>(done => Steps(model, rng, done));
+
+        /// <summary>The rivers, a part at a time (Run, all at once).</summary>
+        public IEnumerable<string> Steps(TownModel model, Rng rng, Action<TownModel> done)
         {
             int w = model.width, h = model.height;
             var p = model.@params;
             var hm = (float[])model.heightmap.Clone();
             var drainage = ComputeDrainage(model);
+            yield return "/drainage";
             var down = drainage.down;
             var flow = drainage.flow;
             var riverAt = new int[w * h];
@@ -130,6 +134,7 @@ namespace Porchlight.Gen
                 if (hm[i] >= highCut && x >= margin && y >= margin && x < w - margin && y < h - margin) candidates.Add(i);
             }
             rng.Shuffle(candidates);
+            yield return "/sources";
 
             var paths = new List<List<int>>();
             for (int k = 0; k < candidates.Count && k < MAX_SOURCE_TRIES && paths.Count < p.riverCount; k++)
@@ -172,6 +177,7 @@ namespace Porchlight.Gen
                 if (!changed) break;
             }
 
+            yield return "/carving";
             var riverList = new List<River>();
             for (int id = 0; id < paths.Count; id++)
             {
@@ -193,7 +199,7 @@ namespace Porchlight.Gen
             next.heightmap = hm;
             next.rivers = riverList;
             next.fields = new DebugFields { flow = flow, roadCost = model.fields.roadCost };
-            return next;
+            done(next);
         }
 
         public List<string> Check(TownModel model)

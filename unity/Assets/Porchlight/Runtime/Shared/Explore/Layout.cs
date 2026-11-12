@@ -170,7 +170,16 @@ namespace Porchlight.Explore
         public static double RoadWidth(RoadKind kind, TownModel model) =>
             kind == RoadKind.Main ? model.@params.mainRoadWidth : kind == RoadKind.Street ? model.@params.streetWidth : 0.5;
 
-        public static IsoLayout Build(TownModel model)
+        public static IsoLayout Build(TownModel model) => Stepwise.Drain<IsoLayout>(done => BuildSteps(model, done));
+
+        /// <summary>Blocks planned between one share of the work and the next (BuildSteps).</summary>
+        const int BLOCKS_A_STEP = 2;
+
+        /// <summary>
+        /// The layout a share at a time (for the web, which has no threads and only draws between shares),
+        /// then `done` with it: the same layout Build makes all at once.
+        /// </summary>
+        public static IEnumerable<string> BuildSteps(TownModel model, Action<IsoLayout> done)
         {
             var roads = new List<RoadStroke>();
             foreach (var e in model.roads.edges)
@@ -182,18 +191,24 @@ namespace Porchlight.Explore
                     points = Geo.Chaikin(PadCorners(e.points, CORNER_RADIUS), SMOOTHING_PASSES),
                     width = RoadWidth(e.kind, model),
                 });
+            yield return "/roads";
             var bridges = FindBridges(model, roads);
-            var layout = PlanBlocks(model);
+            yield return "/bridges";
+            IsoLayout layout = null;
+            foreach (var part in PlanBlocks(model, l => layout = l)) yield return part;
+            yield return "/blocks";
             layout.cars.AddRange(ParkCars(model, roads, layout.use));
+            yield return "/parked";
             layout.roads = roads;
             layout.bridges = bridges;
             layout.bulbs = Raster.Bulbs(model.roads.edges);
-            layout.sidewalks = SidewalkNetworkOf(roads, layout.bulbs, Raster.BulbRadius(model.@params));
+            foreach (var part in SidewalkNetworkOf(roads, layout.bulbs, Raster.BulbRadius(model.@params), n => layout.sidewalks = n)) yield return part;
+            yield return "/sidewalks";
             Ports.Add(model, layout);
-            return layout;
+            done(layout);
         }
 
-        static IsoLayout PlanBlocks(TownModel model)
+        static IEnumerable<string> PlanBlocks(TownModel model, Action<IsoLayout> done)
         {
             int w = model.width, h = model.height;
             var tiles = model.tiles;
@@ -216,8 +231,10 @@ namespace Porchlight.Explore
             var buildingOnLot = new Dictionary<int, Building>();
             foreach (var b in model.buildings) buildingOnLot[b.lotId] = b;
 
+            int seen = 0;
             foreach (var block in model.blocks)
             {
+                if (++seen % BLOCKS_A_STEP == 0) yield return "/blocks";
                 var lots = model.lots.FindAll(l => l.blockId == block.id);
                 int wanted = 0, placed = 0;
                 int builtLots = 0;
@@ -300,7 +317,7 @@ namespace Porchlight.Explore
                 foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h)) if (Open(t) && use[t] == Use.NONE) use[t] = Use.GREEN;
                 plans.Add(new BlockPlan { blockId = block.id, wanted = wanted, placed = placed });
             }
-            return new IsoLayout { houses = houses, use = use, fences = fences, blocks = plans, cars = cars };
+            done(new IsoLayout { houses = houses, use = use, fences = fences, blocks = plans, cars = cars });
         }
 
         /// <summary>
@@ -541,7 +558,7 @@ namespace Porchlight.Explore
             return o;
         }
 
-        static SidewalkNetwork SidewalkNetworkOf(List<RoadStroke> roads, List<Bulb> bulbs, double bulbRadius)
+        static IEnumerable<string> SidewalkNetworkOf(List<RoadStroke> roads, List<Bulb> bulbs, double bulbRadius, Action<SidewalkNetwork> done)
         {
             var net = new SidewalkNetwork();
             // Round a bulb, the sidewalk keeps the distance it keeps beside a street from its asphalt.
@@ -567,6 +584,7 @@ namespace Porchlight.Explore
             // street joining at that junction, rather than running on into the road.
             for (int i = 0; i < lines.Count; i++)
             {
+                if (i % SIDEWALKS_A_STEP == SIDEWALKS_A_STEP - 1) yield return "/sidewalks";
                 var (points, side, road) = lines[i];
                 var at = ArcPositions(points);
                 double length = at[at.Count - 1];
@@ -673,23 +691,50 @@ namespace Porchlight.Explore
                 var r = roads[net.paths[e >> 1].road];
                 return (e & 1) == 0 ? r.from : r.to;
             }
+            // The streets (not paths) meeting at each junction, in order.
+            var roadsAtNode = new Dictionary<int, List<int>>();
+            void Meets(int node, int rd)
+            {
+                if (!roadsAtNode.TryGetValue(node, out var l)) roadsAtNode[node] = l = new List<int>();
+                if (l.Count == 0 || l[l.Count - 1] != rd) l.Add(rd);
+            }
+            for (int rd = 0; rd < roads.Count; rd++)
+            {
+                if (roads[rd].kind == RoadKind.Path) continue;
+                Meets(roads[rd].from, rd);
+                Meets(roads[rd].to, rd);
+            }
             List<int> RoadsAt(int a, int b)
             {
                 var o = new List<int>();
-                for (int rd = 0; rd < roads.Count; rd++)
-                {
-                    var r = roads[rd];
-                    if (r.kind == RoadKind.Path) continue;
-                    if (r.from == NodeAt(a) || r.to == NodeAt(a) || r.from == NodeAt(b) || r.to == NodeAt(b)) o.Add(rd);
-                }
+                if (roadsAtNode.TryGetValue(NodeAt(a), out var la)) o.AddRange(la);
+                if (NodeAt(b) != NodeAt(a) && roadsAtNode.TryGetValue(NodeAt(b), out var lb)) foreach (int rd in lb) if (!o.Contains(rd)) o.Add(rd);
                 return o;
             }
             double Dot(Vec2 a, Vec2 b) => a.x * b.x + a.y * b.y;
+            // The ends by cell (a cell as wide as the reach), so each end looks only at those in the cells round
+            // it, in the order it would have come to them going through them all.
+            var cells = new Dictionary<(long, long), List<int>>();
+            (long, long) CellOf(Vec2 p) => ((long)Math.Floor(p.x / reach), (long)Math.Floor(p.y / reach));
+            for (int j = 0; j < ends.Count; j++)
+            {
+                var c = CellOf(ends[j]);
+                if (!cells.TryGetValue(c, out var inCell)) cells[c] = inCell = new List<int>();
+                inCell.Add(j);
+            }
+            var candidates = new List<int>();
             for (int i = 0; i < ends.Count; i++)
             {
+                if (i % CORNERS_A_STEP == CORNERS_A_STEP - 1) yield return "/corners";
                 var near = new List<int>();
                 var arrive = Arriving(i);
-                for (int j = 0; j < ends.Count; j++)
+                candidates.Clear();
+                var (cx, cy) = CellOf(ends[i]);
+                for (long dy = -1; dy <= 1; dy++)
+                    for (long dx = -1; dx <= 1; dx++)
+                        if (cells.TryGetValue((cx + dx, cy + dy), out var inCell)) candidates.AddRange(inCell);
+                candidates.Sort();
+                foreach (int j in candidates)
                 {
                     if (j == i || j >> 1 == i >> 1 || Geo.Dist(ends[i], ends[j]) >= reach) continue;
                     // Round a corner or straight on across a junction, never doubling back.
@@ -715,8 +760,11 @@ namespace Porchlight.Explore
                 }
                 net.links.Add(near);
             }
-            return net;
+            done(net);
         }
+
+        /// <summary>Sidewalks trimmed at their corners, and sidewalk ends joined to the ends near them, between one share of the work and the next.</summary>
+        const int SIDEWALKS_A_STEP = 24, CORNERS_A_STEP = 400;
 
         /// <summary>
         /// How far along `points` (from its start, or back from its end) it last

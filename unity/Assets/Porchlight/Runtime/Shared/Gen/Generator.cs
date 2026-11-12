@@ -17,6 +17,27 @@ namespace Porchlight.Gen
         List<string> Check(TownModel model);
     }
 
+    /// <summary>
+    /// A stage that can also run a share at a time (for a game with no threads, which can only draw between
+    /// shares): <see cref="Steps"/> yields between shares, then hands `done` the model, the same model
+    /// <see cref="IStage.Run"/> returns. Its Run drains Steps, so the two can't differ.
+    /// </summary>
+    public interface IStepwiseStage : IStage
+    {
+        IEnumerable<string> Steps(TownModel model, Rng rng, Action<TownModel> done);
+    }
+
+    public static class Stepwise
+    {
+        /// <summary>Run a stepwise job straight through: what it hands `done`.</summary>
+        public static T Drain<T>(Func<Action<T>, IEnumerable<string>> steps)
+        {
+            T result = default;
+            foreach (var _ in steps(r => result = r)) { }
+            return result;
+        }
+    }
+
     public sealed class InvariantException : Exception
     {
         public readonly string Stage;
@@ -74,7 +95,14 @@ namespace Porchlight.Gen
             var model = TownModel.CreateEmpty(seed, GenParams.Normalize(@params ?? new GenParams()));
             foreach (var stage in Stages)
             {
-                model = stage.Run(model, Rng.Stage(seed, stage.Name));
+                if (stage is IStepwiseStage stepwise)
+                {
+                    // A share at a time: the slow stages are each many frames' work.
+                    TownModel next = null;
+                    foreach (var part in stepwise.Steps(model, Rng.Stage(seed, stage.Name), m => next = m)) yield return stage.Name + part;
+                    model = next;
+                }
+                else model = stage.Run(model, Rng.Stage(seed, stage.Name));
                 if (check)
                 {
                     var violations = stage.Check(model);

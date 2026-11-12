@@ -13,6 +13,11 @@
 //   dotnet run --project "unity/Tools~/Checks" -- arrivals [town]   # into each town by each highway, then to its houses (those by the edge and a sample), driven as the game drives a trip
 //   dotnet run --project "unity/Tools~/Checks" -- doors             # houses whose front door is near the edge of their town
 //   dotnet run --project "unity/Tools~/Checks" -- traffic <seed> 'width=256&riverCount=0'   # how smooth its traffic looks following a host, as the host slows down
+//   dotnet run --project "unity/Tools~/Checks" -- hitches [limit ms] [show ms] # every space of the county built a share at a time, as the web build does: no share too long, and the same as all at once (Hitches.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- fingerprint [towns] # a hash of each county space (and of `towns` check towns): the same before and after a change, the same towns
+//   dotnet run --project "unity/Tools~/Checks" -- ride              # riding in someone's car over a town line, on the web and on desktop (RideCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- ways              # one way shown at a time: a spot on the map is instead of following someone or a trip (WayCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- where             # the line under your name says where you are now (WhereCheck.cs)
 
 using System;
 using Porchlight.County;
@@ -43,8 +48,13 @@ static class Program
             return errs.Count == 0 ? 0 : 1;
         }
         if (args.Length > 1 && args[0] == "trips") return CountyCheck.Trips(args.Skip(1).ToArray());
+        if (args.Length > 0 && args[0] == "hitches") return Hitches.Run(args.Length > 1 ? double.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture) : 100, args.Length > 2 ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 20);
+        if (args.Length > 0 && args[0] == "fingerprint") return Fingerprint.Run(args.Length > 1 ? int.Parse(args[1]) : 0);
+        if (args.Length > 0 && args[0] == "ride") return RideCheck.Run();
+        if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
+        if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
-        Console.Error.WriteLine("usage: towns [count] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
+        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
     }
 

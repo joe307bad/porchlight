@@ -12,6 +12,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Porchlight.Core;
+using Porchlight.Explore;
 using Porchlight.Model;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -596,27 +597,34 @@ namespace Porchlight.UI
         }
 
         /// <summary>The character you're playing as online (null: playing alone), and how to switch.</summary>
-        public void SetCharacter(string name, Action onSwitch, string homeTown = null, Action onGoHome = null, Action onJournal = null)
+        public void SetCharacter(string name, Action onSwitch, Action onGoHome = null, Action onJournal = null)
         {
             characterName = name;
             this.onSwitch = onSwitch;
-            this.homeTown = homeTown;
             this.onGoHome = onGoHome;
             this.onJournal = onJournal;
-            ShowDetail(name != null ? Lives("") : "Playing alone");
+            online = "";
+            ShowDetail(name != null ? Directions.Currently(where, online) : "Playing alone");
             SyncPlaying();
         }
 
-        string homeTown;
         Action onGoHome, onJournal;
+        /// <summary>Where you are now ("in Ember Crossing", "on the Porchlight – South road"; null: not known), and how it's going online.</summary>
+        string where, online = "";
 
-        /// <summary>The line under your name: where you live, then how it's going.</summary>
-        string Lives(string then) => homeTown == null ? then : then == "" ? $"Lives in {homeTown}" : $"Lives in {homeTown} · {then}";
+        /// <summary>Where you are now, for the line under your name: "Currently in Ember Crossing".</summary>
+        public void SetWhere(string where)
+        {
+            if (where == this.where) return;
+            this.where = where;
+            if (characterName != null) ShowDetail(Directions.Currently(where, online));
+        }
 
         public void SetOnline(string state, int here, string why)
         {
             if (characterName == null) return;
-            ShowDetail(Lives(state == "joining" ? "Joining…" : state == "online" ? (here == 1 ? "Just you here" : $"{here} here") : $"Offline: {why}"));
+            online = state == "joining" ? "Joining…" : state == "online" ? (here == 1 ? "Just you here" : $"{here} here") : $"Offline: {why}";
+            ShowDetail(Directions.Currently(where, online));
         }
 
         /// <summary>The line under your name (hidden when empty).</summary>

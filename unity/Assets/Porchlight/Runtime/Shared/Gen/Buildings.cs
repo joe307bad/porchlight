@@ -12,7 +12,7 @@ using Porchlight.Model;
 
 namespace Porchlight.Gen
 {
-    public sealed class BuildingsStage : IStage
+    public sealed class BuildingsStage : IStepwiseStage
     {
         const double INSET = 0.15;
         /// <summary>How far in from its tiles' edges a building is drawn (Rendering/WorldParts), ground floor and all.</summary>
@@ -20,6 +20,8 @@ namespace Porchlight.Gen
         const double SMOOTHING_SLACK = 0.1;
         const double MIN_YARD = 0.5;
         const double CHURCH_REACH = 0.45;
+        /// <summary>Lots built on between one share of the work and the next (Steps).</summary>
+        const int LOTS_A_STEP = 8;
 
         sealed class Rect
         {
@@ -30,7 +32,10 @@ namespace Porchlight.Gen
 
         public string Name => "buildings";
 
-        public TownModel Run(TownModel model, Rng rng)
+        public TownModel Run(TownModel model, Rng rng) => Stepwise.Drain<TownModel>(done => Steps(model, rng, done));
+
+        /// <summary>The buildings, a share of the lots at a time (Run, all at once).</summary>
+        public IEnumerable<string> Steps(TownModel model, Rng rng, Action<TownModel> done)
         {
             int w = model.width, h = model.height;
             var p = model.@params;
@@ -55,8 +60,10 @@ namespace Porchlight.Gen
 
             var list = new List<Building>();
             var landmarks = new List<Landmark>(model.landmarks);
+            int seen = 0;
             foreach (var lot in model.lots)
             {
+                if (++seen % LOTS_A_STEP == 0) yield return "/lots";
                 if (plaza.Contains(lot.id)) continue;
                 bool isChurch = lot.id == church;
                 double d = Math.Min(1, Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / R);
@@ -131,7 +138,7 @@ namespace Porchlight.Gen
             var next = model.With();
             next.buildings = list;
             next.landmarks = landmarks;
-            return next;
+            done(next);
         }
 
         public List<string> Check(TownModel model) => CheckBuildings(model, Parcels.Ground(model));

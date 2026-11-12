@@ -173,17 +173,16 @@ namespace Porchlight.App
         /// get a new key there (a new session), and this is how we find them again.
         /// </summary>
         string ridingWith;
-        /// <summary>When (ms) the car we're riding in went missing from the town, if it has: a dropped update shouldn't throw us out.</summary>
-        double? rideLostAt;
-        const double RIDE_LOST_AFTER = 2000;
         /// <summary>
-        /// Where the car was last seen, when (ms), and how it was going (tiles a second): while it's out of
-        /// sight (its driver's into the next room a moment before we are), we roll on with it.
+        /// Where the car was last seen and how it was going: while it's out of sight (its driver's into the
+        /// next room a moment before we are), we roll on with it (RideFollow).
         /// </summary>
-        Vec2 rideSeen, rideVelocity;
-        double rideSeenAt;
-        /// <summary>Faster than anything goes (tiles a second): a jump that big is the view shifting, not the car.</summary>
-        const double RIDE_FASTEST = 12;
+        readonly RideFollow ride = new RideFollow();
+        /// <summary>
+        /// Settled in a room, with the space ahead built: a car out of sight now is gone (the app says; null:
+        /// always). Between rooms, or waiting at the edge of a town still being built, it's only out of sight.
+        /// </summary>
+        public Func<bool> RideSettled;
         public Func<double, double, bool> TeleportHook;
         Player player;
         Avatar playerAvatar;
@@ -314,6 +313,8 @@ namespace Porchlight.App
         (Vec2 at, string name, bool final, List<Vec2> ahead)? tripStop;
         /// <summary>The trip's done (you got there) or stopped.</summary>
         public Action OnTripEnd;
+        /// <summary>A spot's been picked on the big map to be shown the way to (a click, or the pad's A).</summary>
+        public Action OnWaypointSet;
         /// <summary>How close to the place counts as there, on a trip (tiles): parked out front will do.</summary>
         const double TRIP_REACHED = 3.0;
         /// <summary>Besides you, who opens doors by walking up to them (a mission's people).</summary>
@@ -634,6 +635,9 @@ namespace Porchlight.App
                 player.y -= dy;
                 if (player.IsAuto) player.StartAuto(next.sidewalks, autoRng);
             }
+            // Riding with a car out of sight, rolling on from where it was last seen: that spot moves too (left
+            // where it was, the next frame put you back by the width of the space you'd left).
+            ride.Shift(dx, dy);
             if (keep != null)
             {
                 keep.car.x -= dx;
@@ -890,8 +894,8 @@ namespace Porchlight.App
             int car = driving != null ? cars[driving.Value].car.model + 1 : 0;
             // Riding with a car that's out of sight (its driver's in the next room a moment before us), we
             // say we're on foot where we roll on to: the room would only turn the ride down.
-            string ride = riding != null && rideLostAt == null ? riding : "";
-            return new LocalState { x = p.x, y = p.lift, z = p.y, yaw = p.heading, speed = p.speed, car = car, ride = ride, at = simAt };
+            string rideKey = riding != null && !ride.Lost ? riding : "";
+            return new LocalState { x = p.x, y = p.lift, z = p.y, yaw = p.heading, speed = p.speed, car = car, ride = rideKey, at = simAt };
         }
 
         public void ApplySpawn(double[] at, string look)
@@ -1166,6 +1170,8 @@ namespace Porchlight.App
         public void SetWaypoint(Vec2 at)
         {
             Find(null);
+            // Instead of any other directions you'd chosen (the app stops following someone, or a trip).
+            OnWaypointSet?.Invoke();
             waypoint = at;
             findTimer = 0;
             overlay.SetWaypoint(at);
@@ -1718,10 +1724,8 @@ namespace Porchlight.App
                 }
                 riding = pk.driver.Value.key;
                 ridingWith = pk.driver.Value.id;
-                rideLostAt = null;
-                rideSeen = new Vec2(pk.driver.Value.x, pk.driver.Value.y);
-                rideSeenAt = Now;
-                rideVelocity = new Vec2(0, 0);
+                ride.Reset();
+                ride.Seen(new Vec2(pk.driver.Value.x, pk.driver.Value.y), Now);
                 held.Clear();
                 p.Halt();
                 OnCarChange?.Invoke(true);
@@ -1860,30 +1864,20 @@ namespace Porchlight.App
             double now = Now;
             if (d == null)
             {
-                rideLostAt ??= now;
-                if (now - rideLostAt > RIDE_LOST_AFTER)
+                // Out of sight for a moment: on along the way it was going (and so over into the room it's in).
+                var on = ride.Unseen(now, RideSettled?.Invoke() ?? true);
+                if (on == null)
                 {
                     LeaveRide();
                     return;
                 }
-                // Out of sight for a moment: on along the way it was going (and so over into the room it's in).
-                double lost = (now - rideSeenAt) / 1000;
-                p.x = rideSeen.x + rideVelocity.x * lost;
-                p.y = rideSeen.y + rideVelocity.y * lost;
+                p.x = on.Value.x;
+                p.y = on.Value.y;
                 p.Halt();
                 p.speed = 0;
                 return;
             }
-            rideLostAt = null;
-            var seen = new Vec2(d.Value.x, d.Value.y);
-            double since = (now - rideSeenAt) / 1000;
-            if (since > 0.02)
-            {
-                var v = new Vec2((seen.x - rideSeen.x) / since, (seen.y - rideSeen.y) / since);
-                rideVelocity = Math.Sqrt(v.x * v.x + v.y * v.y) <= RIDE_FASTEST ? v : new Vec2(0, 0);
-                rideSeen = seen;
-                rideSeenAt = now;
-            }
+            ride.Seen(new Vec2(d.Value.x, d.Value.y), now);
             p.x = d.Value.x;
             p.y = d.Value.y;
             p.heading = d.Value.heading;

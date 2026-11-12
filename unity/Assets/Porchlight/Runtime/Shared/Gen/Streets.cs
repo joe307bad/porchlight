@@ -15,7 +15,7 @@ using Porchlight.Model;
 
 namespace Porchlight.Gen
 {
-    public sealed class StreetsStage : IStage
+    public sealed class StreetsStage : IStepwiseStage
     {
         static readonly double MIN_ANGLE = (35 * Math.PI) / 180;
         static readonly double GRID_TOLERANCE = (8 * Math.PI) / 180;
@@ -30,6 +30,8 @@ namespace Porchlight.Gen
         /// <summary>A cul-de-sac runs at least this far from its junction to the middle of its bulb (tiles).</summary>
         const double CUL_DE_SAC_LENGTH = 4;
         const int MAX_PRUNE_PASSES = 50;
+        /// <summary>Proposals tried between one share of the work and the next (Steps).</summary>
+        const int PROPOSALS_A_STEP = 15, DEAD_ENDS_A_STEP = 40;
 
         struct Proposal
         {
@@ -56,7 +58,10 @@ namespace Porchlight.Gen
 
         public string Name => "streets";
 
-        public TownModel Run(TownModel model, Rng rng)
+        public TownModel Run(TownModel model, Rng rng) => Stepwise.Drain<TownModel>(done => Steps(model, rng, done));
+
+        /// <summary>The streets, a share at a time (Run, all at once).</summary>
+        public IEnumerable<string> Steps(TownModel model, Rng rng, Action<TownModel> done)
         {
             int w = model.width, h = model.height;
             var p = model.@params;
@@ -264,6 +269,7 @@ namespace Porchlight.Gen
 
             for (int q = 0; q < queue.Count && q < MAX_PROPOSALS; q++)
             {
+                if (q % PROPOSALS_A_STEP == PROPOSALS_A_STEP - 1) yield return "/growing";
                 var prop = queue[q];
                 var res = Grow(prop);
                 if (res == null)
@@ -316,12 +322,15 @@ namespace Porchlight.Gen
             bool CulDeSac(int node, RoadEdge e) =>
                 Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id) && rng.Chance(p.culDeSacs);
 
-            ConnectDeadEnds(g, keep, p.streetSegment * p.deadEndReach, FirstHit, LandOk, AngleClash, Joinable, CulDeSac);
-            AddFootpaths(model, g, water, cost, slope, terrainInfo, C);
+            foreach (var part in ConnectDeadEnds(g, keep, p.streetSegment * p.deadEndReach, FirstHit, LandOk, AngleClash, Joinable, CulDeSac)) yield return part;
+            foreach (var part in AddFootpaths(model, g, water, cost, slope, terrainInfo, C)) yield return part;
 
             RoadGraphOps.Planarize(g);
+            yield return "/planarize";
             RoadGraphOps.MergePassThrough(g, keep);
-            DropDuplicateStreets(g);
+            yield return "/merge";
+            foreach (var part in DropDuplicateStreets(g)) yield return part;
+            yield return "/dedupe";
             // A dead end without room for its bulb is cut back, a stretch at a time.
             for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
             {
@@ -333,15 +342,17 @@ namespace Porchlight.Gen
                 }
                 if (cut.Count == 0) break;
                 foreach (int e in cut) g.dead.Add(e);
+                yield return "/prune";
             }
             var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
+            yield return "/compact";
             var next = model.With();
             next.roads = roads;
             next.bridges = RoadGraphOps.ComputeBridges(next, Raster.WaterMask(next));
-            return next;
+            done(next);
         }
 
-        static void AddFootpaths(TownModel m, GraphBuilder gb, byte[] wet, float[] stepCost, float[] slope, RoadTerrain terrainInfo, Vec2 C)
+        static IEnumerable<string> AddFootpaths(TownModel m, GraphBuilder gb, byte[] wet, float[] stepCost, float[] slope, RoadTerrain terrainInfo, Vec2 C)
         {
             int w = m.width, h = m.height;
             var rock = Raster.RockMask(slope, m.@params);
@@ -376,6 +387,7 @@ namespace Porchlight.Gen
             }
             foreach (var cells in comps)
             {
+                yield return "/footpaths";
                 if (cells.Count < PATH_COMPONENT_MIN) continue;
                 var raster = Raster.RoadRaster(m, RoadGraphOps.LiveEdges(gb));
                 bool reached = false;
@@ -421,7 +433,7 @@ namespace Porchlight.Gen
             return errors;
         }
 
-        static void ConnectDeadEnds(
+        static IEnumerable<string> ConnectDeadEnds(
             GraphBuilder g,
             ISet<int> keep,
             double reach,
@@ -432,8 +444,10 @@ namespace Porchlight.Gen
             Func<int, RoadEdge, bool> culDeSac)
         {
             var inc = RoadGraphOps.Incidence(g);
+            int seen = 0;
             foreach (var kv in inc)
             {
+                if (++seen % DEAD_ENDS_A_STEP == 0) yield return "/dead-ends";
                 int node = kv.Key;
                 var list = kv.Value;
                 if (list.Count != 1 || keep.Contains(node)) continue;
@@ -475,14 +489,14 @@ namespace Porchlight.Gen
             }
         }
 
-        static void DropDuplicateStreets(GraphBuilder g)
+        static IEnumerable<string> DropDuplicateStreets(GraphBuilder g)
         {
             for (int pass = 0; pass < MAX_DUPLICATE_PASSES; pass++)
             {
                 var copy = new GraphBuilder { nodes = g.nodes, edges = g.edges, dead = new HashSet<int>(g.dead) };
                 var graph = RoadGraphOps.Compact(copy);
                 var dup = FindDuplicate(graph, true);
-                if (dup == null) return;
+                if (dup == null) yield break;
                 RoadEdge victim = null;
                 foreach (var e in RoadGraphOps.LiveEdges(g))
                 {
@@ -492,8 +506,9 @@ namespace Porchlight.Gen
                         break;
                     }
                 }
-                if (victim == null) return;
+                if (victim == null) yield break;
                 g.dead.Add(victim.id);
+                yield return "/dedupe";
             }
         }
 
@@ -568,19 +583,23 @@ namespace Porchlight.Gen
         static Duplicate? FindDuplicate(RoadGraph graph, bool droppable = false)
         {
             var edges = graph.edges;
-            bool NearNode(Vec2 pt)
+            // Asked of every half tile of every road: the nodes by cell, not all of them each time.
+            var nodes = new PointGrid(JUNCTION_CLEARANCE);
+            foreach (var n in graph.nodes) nodes.Add(n.at);
+            bool NearNode(Vec2 pt) => nodes.AnyWithin(pt, JUNCTION_CLEARANCE);
+            // And each road's box worked out once, not once for every other road.
+            var boxes = new Bounds2[edges.Count];
+            for (int i = 0; i < edges.Count; i++) boxes[i] = Geo.PolygonBounds(edges[i].points);
+            for (int i = 0; i < edges.Count; i++)
             {
-                foreach (var n in graph.nodes) if (Geo.Dist(n.at, pt) < JUNCTION_CLEARANCE) return true;
-                return false;
-            }
-            foreach (var A in edges)
-            {
+                var A = edges[i];
                 var samples = new List<Vec2>();
                 foreach (var pt in Geo.SamplePolyline(A.points, 0.5)) if (!NearNode(pt)) samples.Add(pt);
                 if (samples.Count == 0) continue;
-                foreach (var B in edges)
+                for (int j = 0; j < edges.Count; j++)
                 {
-                    if (A.id == B.id || !BoxesNear(A.points, B.points, DUPLICATE_DISTANCE)) continue;
+                    var B = edges[j];
+                    if (A.id == B.id || !BoxesNear(boxes[i], boxes[j], DUPLICATE_DISTANCE)) continue;
                     if (droppable && A.kind == RoadKind.Main && B.kind == RoadKind.Main) continue;
                     int run = 0;
                     foreach (var pt in samples)
@@ -597,10 +616,10 @@ namespace Porchlight.Gen
             return null;
         }
 
-        static bool BoxesNear(List<Vec2> a, List<Vec2> b, double pad)
+        static bool BoxesNear(List<Vec2> a, List<Vec2> b, double pad) => BoxesNear(Geo.PolygonBounds(a), Geo.PolygonBounds(b), pad);
+
+        static bool BoxesNear(Bounds2 A, Bounds2 B, double pad)
         {
-            var A = Geo.PolygonBounds(a);
-            var B = Geo.PolygonBounds(b);
             return !(B.x0 > A.x1 + pad || B.x1 < A.x0 - pad || B.y0 > A.y1 + pad || B.y1 < A.y0 - pad);
         }
 

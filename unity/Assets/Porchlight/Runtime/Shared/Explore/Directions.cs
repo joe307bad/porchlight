@@ -160,6 +160,17 @@ namespace Porchlight.Explore
             return points[(int)((Numbers.Round(deg / 45) + 8) % 8)];
         }
 
+        /// <summary>
+        /// The line under your name: where you are now (CountyMap.Where: "in Ember Crossing"), then how it's going
+        /// online ("2 here"): "Currently in Ember Crossing · 2 here". Either can be missing (null or empty).
+        /// </summary>
+        public static string Currently(string where, string then)
+        {
+            string at = string.IsNullOrEmpty(where) ? "" : "Currently " + where;
+            if (string.IsNullOrEmpty(then)) return at;
+            return at == "" ? then : at + " · " + then;
+        }
+
         /// <summary>A walking distance in tiles as shown to the player: metres, rounded like a map app would.</summary>
         public static string FormatDistance(double tiles)
         {

@@ -23,6 +23,16 @@ namespace Porchlight.County
         public static TownModel Build(CountyMap map, Space s)
         {
             if (s.kind == SpaceKind.Town) throw new ArgumentException("a town grows from its key");
+            return Stepwise.Drain<TownModel>(done => BuildSteps(map, s, done));
+        }
+
+        /// <summary>Rows of a stretch's tiles sorted (its own, the next stretch's, the countryside's) between one share of the work and the next.</summary>
+        const int ROWS_A_STEP = 24;
+
+        /// <summary>The same, a share at a time (for the web, which has no threads), then `done` with it.</summary>
+        public static IEnumerable<string> BuildSteps(CountyMap map, Space s, Action<TownModel> done)
+        {
+            if (s.kind == SpaceKind.Town) throw new ArgumentException("a town grows from its key");
             var p = new GenParams { width = s.width, height = s.height, waterFraction = 0, riverCount = 0, townRadius = 0.15 };
             string seed = $"county:{s.kind}:{s.name}:{Numbers.ToFixed(s.s0, 0)}";
             var m = TownModel.CreateEmpty(seed, p);
@@ -93,6 +103,8 @@ namespace Porchlight.County
                 var verge = Geo.SimplifyRDP(line, 0.05, (a, b) => true);
                 m.foreign = new byte[s.width * s.height];
                 for (int y = 0; y < s.height; y++)
+                {
+                    if (y % ROWS_A_STEP == ROWS_A_STEP - 1) yield return "/tiles";
                     for (int x = 0; x < s.width; x++)
                     {
                         var w = s.ToWorld(new Vec2(x + 0.5, y + 0.5));
@@ -121,6 +133,7 @@ namespace Porchlight.County
                         }
                         if (theirs) m.foreign[y * s.width + x] = 1;
                     }
+                }
             }
             else
             {
@@ -136,6 +149,7 @@ namespace Porchlight.County
             }
             m.roads = RoadGraphOps.Compact(g);
             m.spawn = m.center;
+            yield return "/roads";
             m = new RasterizeStage().Run(m, Rng.Stage(seed, "rasterize"));
             if (s.kind == SpaceKind.Highway)
             {
@@ -151,7 +165,7 @@ namespace Porchlight.County
                 trimmed.edges.Add(new RoadEdge { id = 0, from = 0, to = 1, kind = RoadKind.Main, points = own });
                 m.roads = RoadGraphOps.Compact(trimmed);
             }
-            return m;
+            done(m);
         }
     }
 }

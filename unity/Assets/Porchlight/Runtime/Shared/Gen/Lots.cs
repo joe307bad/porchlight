@@ -10,7 +10,7 @@ using Porchlight.Model;
 
 namespace Porchlight.Gen
 {
-    public sealed class LotsStage : IStage
+    public sealed class LotsStage : IStepwiseStage
     {
         const double SPLIT_JITTER = 0.15;
         const int PLAZA_LOTS = 3;
@@ -65,7 +65,10 @@ namespace Porchlight.Gen
             return dx * dx + dy * dy;
         }
 
-        public TownModel Run(TownModel model, Rng rng)
+        public TownModel Run(TownModel model, Rng rng) => Stepwise.Drain<TownModel>(done => Steps(model, rng, done));
+
+        /// <summary>The lots, a block at a time (Run, all at once).</summary>
+        public IEnumerable<string> Steps(TownModel model, Rng rng, Action<TownModel> done)
         {
             int w = model.width, h = model.height;
             var p = model.@params;
@@ -73,6 +76,7 @@ namespace Porchlight.Gen
             var list = new List<Lot>();
             foreach (var block in model.blocks)
             {
+                yield return "/block";
                 var tiles = new List<int>();
                 foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h)) if (g.free[t] != 0) tiles.Add(t);
                 var pieces = new List<List<int>>();
@@ -127,7 +131,7 @@ namespace Porchlight.Gen
             var next = model.With();
             next.lots = list;
             next.landmarks = landmarks;
-            return next;
+            done(next);
         }
 
         public List<string> Check(TownModel model)

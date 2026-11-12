@@ -63,6 +63,8 @@ namespace Porchlight.App
             public TownWorld world;
             public IEnumerator<string> steps;
             public IEnumerator<string> growing;
+            /// <summary>Its layout, street names and signposts being worked out a share at a time (where there are no threads).</summary>
+            public IEnumerator<string> preparingTown;
             public Task<(TownModel model, TownWorld.Prepared prepared)> thread;
             public TownWorld.Prepared prepared;
             /// <summary>The part of its world last built (TownWorld.Build), for how far along it is.</summary>
@@ -322,6 +324,13 @@ namespace Porchlight.App
                     return (m, TownWorld.Prepared.Of(m));
                 });
             }
+#else
+            // No threads on the web: a share of its tiles a frame.
+            else
+            {
+                var b = job;
+                b.growing = RoadSpaces.BuildSteps(map, best, m => b.model = m).GetEnumerator();
+            }
 #endif
         }
 
@@ -443,6 +452,14 @@ namespace Porchlight.App
                     }
                     if (b.world == null)
                     {
+                        // Its layout, street names and signposts: worked out on a worker thread where there are
+                        // threads (Grow), else here a share a frame (all at once, TownWorld stalled the web build).
+                        if (b.prepared == null)
+                        {
+                            b.preparingTown ??= TownWorld.Prepared.Steps(b.model, pr => b.prepared = pr).GetEnumerator();
+                            if (b.preparingTown.MoveNext()) continue;
+                            b.preparingTown = null;
+                        }
                         b.world = new TownWorld(b.model, view.Library, stepwise: true, inCounty: true, prepared: b.prepared);
                         Place(b.world.root.transform, b.space.x0, b.space.y0);
                         b.steps = b.world.Build().GetEnumerator();

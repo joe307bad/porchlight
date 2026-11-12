@@ -568,6 +568,22 @@ namespace Porchlight.County
             return Numbers.Hypot(dx, dy);
         }
 
+        /// <summary>
+        /// Where you are, in a space, in words to follow "Currently" or "Ada is": "in Ember Crossing", "on the
+        /// Porchlight – South road", "at the North junction", "on an empty plot up north". Null: nowhere known.
+        /// </summary>
+        public string Where(Space s)
+        {
+            if (s == null) return null;
+            switch (s.kind)
+            {
+                case SpaceKind.Town: return string.IsNullOrEmpty(s.name) ? null : "in " + s.name;
+                case SpaceKind.Highway: return s.highway >= 0 && s.highway < highways.Count ? $"on the {highways[s.highway].name} road" : "on the road";
+                case SpaceKind.Junction: return "at the North junction";
+                default: return "on an empty plot up north";
+            }
+        }
+
         /// <summary>The towns that come with the game, besides Porchlight: their places and keys (server/towns/*.json).</summary>
         public static readonly PlacedTown[] Cities =
         {

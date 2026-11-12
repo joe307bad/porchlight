@@ -11,7 +11,7 @@ using Porchlight.Model;
 
 namespace Porchlight.Gen
 {
-    public sealed class RoadsStage : IStage
+    public sealed class RoadsStage : IStepwiseStage
     {
         const double REUSE_COST = 0.3;
         const double BESIDE_PENALTY = 3;
@@ -21,12 +21,16 @@ namespace Porchlight.Gen
 
         public string Name => "roads";
 
-        public TownModel Run(TownModel model, Rng rng)
+        public TownModel Run(TownModel model, Rng rng) => Stepwise.Drain<TownModel>(done => Steps(model, rng, done));
+
+        /// <summary>The main roads, a route at a time (Run, all at once).</summary>
+        public IEnumerable<string> Steps(TownModel model, Rng rng, Action<TownModel> done)
         {
             int w = model.width, h = model.height;
             var terrainInfo = Raster.RoadTerrain(model);
             var cost = terrainInfo.cost;
             var segmentOk = Raster.RoadSegmentOk(terrainInfo, model);
+            yield return "/terrain";
             var onRoad = new byte[w * h];
             var beside = new byte[w * h];
 
@@ -136,7 +140,11 @@ namespace Porchlight.Gen
                 EnsureNode(from);
             }
             double Step(int to) => onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY : 0);
-            foreach (int gate in gates) Route(gate, Step);
+            foreach (int gate in gates)
+            {
+                Route(gate, Step);
+                yield return "/gate";
+            }
             // The road to the airport: out of its car park (straight across the airport's
             // own tiles, which the others go round) and on to the nearest road.
             if (model.airport != null)
@@ -147,6 +155,7 @@ namespace Porchlight.Gen
                 if (lane.Count > 0) Route(lane[0], to => inLane.Contains(to) ? 1 : onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY * 4 : 0));
             }
             // And one up to the zoo's gate, from just past the tile kept clear round it.
+            yield return "/airport";
             if (model.zoo != null)
             {
                 var at = Menagerie.RoadEnd(model.zoo);
@@ -154,6 +163,7 @@ namespace Porchlight.Gen
                 if (Grid.InBounds((int)Math.Floor(at.x), (int)Math.Floor(at.y), w, h) && !float.IsPositiveInfinity(cost[cell])) Route(cell, Step);
             }
 
+            yield return "/zoo";
             Vec2 Center(int c) => new Vec2((c % w) + 0.5, c / w + 0.5);
             var builder = new GraphBuilder();
             for (int id = 0; id < nodeCells.Count; id++) builder.nodes.Add(new RoadNode { id = id, at = Center(nodeCells[id]) });
@@ -171,12 +181,13 @@ namespace Porchlight.Gen
                     points = Geo.SimplifyRDP(centers, SIMPLIFY_EPSILON, segmentOk),
                 });
             }
+            yield return "/simplify";
             RoadGraphOps.Planarize(builder);
             PruneCenterStub(builder, Center(centerCell));
             var next = model.With();
             next.roads = RoadGraphOps.Compact(builder);
             next.bridges = RoadGraphOps.ComputeBridges(next, Raster.WaterMask(next));
-            return next;
+            done(next);
         }
 
         /// <summary>The longest stub (tiles) left poking past a junction at the town centre.</summary>
