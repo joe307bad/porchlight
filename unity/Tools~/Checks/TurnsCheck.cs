@@ -47,6 +47,18 @@ static class TurnsCheck
         var jog = new List<Vec2> { new Vec2(0, 0), new Vec2(20, 0), new Vec2(20, 1.5), new Vec2(40, 1.5) };
         Expect(RouteTurns.Find(jog, MIN, 0, 100, 3).Count == 0, $"a jog on a straightaway isn't a turn (got {RouteTurns.Find(jog, MIN, 0, 100, 3).Count})");
 
+        // The same jog with the way starting a tile before it, or partway along it (driving up to it): no turn either.
+        foreach (var x0 in new[] { 19.0, 20.0 })
+        {
+            var close = new List<Vec2> { new Vec2(x0, 0), new Vec2(20, 0), new Vec2(20, 1.5), new Vec2(40, 1.5) };
+            if (x0 == 20.0) close.RemoveAt(0);
+            Expect(RouteTurns.Find(close, MIN, 0, 100, 3).Count == 0, $"a jog from {20 - x0:0} tile(s) off isn't a turn");
+        }
+
+        // A staggered crossing: right, 7 tiles on, then left: two turns.
+        var stagger = new List<Vec2> { new Vec2(0, 0), new Vec2(20, 0), new Vec2(20, 7), new Vec2(40, 7) };
+        Expect(RouteTurns.Find(stagger, MIN, 0, 100, 3).Count == 2, $"a stagger is two turns (got {RouteTurns.Find(stagger, MIN, 0, 100, 3).Count})");
+
         // A long, gentle bend (radius 60): no turn.
         var bend = new List<Vec2>();
         for (int k = 0; k <= 40; k++) bend.Add(new Vec2(60 * Math.Sin(k * 0.02), 60 - 60 * Math.Cos(k * 0.02)));

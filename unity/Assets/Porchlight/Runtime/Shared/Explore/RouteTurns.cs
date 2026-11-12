@@ -29,10 +29,13 @@ namespace Porchlight.Explore
         /// <summary>The heading before and after a spot is over this far (tiles), as many samples.</summary>
         const int SPAN = 3;
         /// <summary>
-        /// The heading into and out of a corner over this many samples either side of it as well: the way must
-        /// end up going another way, not just jog aside and carry on (a straightaway with a step in it).
+        /// The heading this many samples before a corner (or where the way starts, if that's nearer) against the
+        /// heading this many after it: the way must end up going another way, not just jog aside a few tiles and
+        /// carry on (a straightaway stepping over from one street's middle to the next). A step longer than this
+        /// (a staggered crossing: a turn, a block, and a turn back) is two turns. A corner with less of the way
+        /// than this before it isn't shown: from there (in the middle of a jog, say) there's no telling.
         /// </summary>
-        const int LONG = 16;
+        const int LONG = 10;
         /// <summary>Two turns closer than this (tiles) are one.</summary>
         const double APART = 4;
 
@@ -64,7 +67,7 @@ namespace Porchlight.Explore
                 int c = (best + bestEnd) / 2;
                 double along = c * STEP;
                 if (along >= skip && along <= reach && (o.Count == 0 || along - o[o.Count - 1].along >= APART)
-                    && Math.Abs(Between(Dir(Math.Max(0, c - LONG), c - SPAN), Dir(c + SPAN, Math.Min(n - 1, c + LONG)))) >= min)
+                    && c >= LONG && Math.Abs(Between(Dir(c - LONG, c - LONG + SPAN), Dir(Math.Min(n - 1, c + LONG) - SPAN, Math.Min(n - 1, c + LONG)))) >= min)
                     o.Add(new Turn { at = pts[c], dir = Dir(c, Math.Min(n - 1, c + 2 * SPAN)), along = along, angle = bestA });
                 best = bestEnd = -1;
                 bestA = 0;
