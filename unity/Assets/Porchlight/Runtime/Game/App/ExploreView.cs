@@ -1389,7 +1389,10 @@ namespace Porchlight.App
         const double TURN_FROM = 3, TURN_REACH = 90;
         const int TURN_ARROWS = 3;
         /// <summary>How high the arrow's middle is over the road (tiles), and how far it glides.</summary>
-        const float ARROW_LIFT = 0.75f, ARROW_GLIDE = 0.4f;
+        const float ARROW_LIFT = 1.6f, ARROW_GLIDE = 0.25f;
+        /// <summary>How big the arrow is (the mesh is about 0.9 tiles long), and how often it glides there and back (per second).</summary>
+        const float ARROW_SIZE = 0.55f;
+        const double ARROW_RATE = 0.45;
         readonly List<(Transform t, Vector3 at, Vector3 dir)> turnArrows = new List<(Transform, Vector3, Vector3)>();
         static Mesh arrowMesh;
         static Material arrowMaterial;
@@ -1412,6 +1415,7 @@ namespace Porchlight.App
                 go.transform.localRotation = Quaternion.Euler(0, Mathf.Atan2((float)turn.dir.y, (float)turn.dir.x) * Mathf.Rad2Deg, 0);
                 var at = Coords.Map(turn.at.x, turn.at.y, ARROW_LIFT);
                 go.transform.localPosition = at;
+                go.transform.localScale = Vector3.one * ARROW_SIZE;
                 turnArrows.Add((go.transform, at, dir));
             }
         }
@@ -1420,7 +1424,7 @@ namespace Porchlight.App
         void AnimateTurnArrows()
         {
             if (turnArrows.Count == 0) return;
-            double s = 0.5 + 0.5 * Math.Sin(Now / 1000 * 2 * Math.PI * 1.2);
+            double s = 0.5 + 0.5 * Math.Sin(Now / 1000 * 2 * Math.PI * ARROW_RATE);
             foreach (var (t, at, dir) in turnArrows)
                 if (t != null) t.localPosition = at + dir * (float)(s * ARROW_GLIDE) + Vector3.up * (float)(0.06 * s);
         }

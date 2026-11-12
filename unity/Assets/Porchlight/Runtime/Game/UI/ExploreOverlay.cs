@@ -42,7 +42,8 @@ namespace Porchlight.UI
         readonly Label notice;
         readonly VisualElement garage, personBox, carBox;
         readonly VisualElement compass;
-        readonly Label compassNorth;
+        /// <summary>The compass's N, E, S and W, clockwise from north.</summary>
+        readonly Label[] compassWays = new Label[4];
         /// <summary>Which way the camera looks, as the compass last showed it (radians clockwise from north).</summary>
         double compassBearing = double.NaN;
         VisualElement chooser;
@@ -441,12 +442,16 @@ namespace Porchlight.UI
             compass.pickingMode = PickingMode.Ignore;
             compass.tooltip = "North";
             compass.generateVisualContent += DrawCompass;
-            compassNorth = new Label("N");
-            compassNorth.AddToClassList("compass-n");
-            compassNorth.AddToClassList("bold");
-            compassNorth.pickingMode = PickingMode.Ignore;
-            compass.Add(compassNorth);
-            compass.RegisterCallback<GeometryChangedEvent>(_ => PlaceCompassNorth());
+            for (int k = 0; k < 4; k++)
+            {
+                var way = compassWays[k] = new Label("NESW".Substring(k, 1));
+                way.AddToClassList("compass-way");
+                if (k == 0) way.AddToClassList("compass-n");
+                way.AddToClassList("bold");
+                way.pickingMode = PickingMode.Ignore;
+                compass.Add(way);
+            }
+            compass.RegisterCallback<GeometryChangedEvent>(_ => PlaceCompassWays());
             garage.Add(compass);
             personBox = Box("You", "Your character: click to choose someone else", () => OnPersonBox?.Invoke());
             carBox = Box("Car", "Your car: click to choose one, and have it brought right beside you", () => OnCarBox?.Invoke());
@@ -523,21 +528,26 @@ namespace Porchlight.UI
             if (!double.IsNaN(compassBearing) && Math.Abs(Orbit.ShortestTurn(compassBearing, bearing)) < 0.004) return;
             compassBearing = bearing;
             compass.MarkDirtyRepaint();
-            PlaceCompassNorth();
+            PlaceCompassWays();
         }
 
         /// <summary>North's way on the compass's face (clockwise from up), and the unit step that way (y down).</summary>
         Vector2 CompassNorth() => new Vector2((float)Math.Sin(-compassBearing), (float)-Math.Cos(-compassBearing));
 
-        void PlaceCompassNorth()
+        /// <summary>N, E, S and W around the compass's face, a quarter turn apart clockwise from north.</summary>
+        void PlaceCompassWays()
         {
             var r = compass.contentRect;
             if (double.IsNaN(compassBearing) || r.width <= 0) return;
             var c = r.center;
             float reach = Math.Min(r.width, r.height) / 2 - 10;
-            var at = c + CompassNorth() * reach;
-            compassNorth.style.left = at.x - 6;
-            compassNorth.style.top = at.y - 8;
+            for (int k = 0; k < 4; k++)
+            {
+                double a = -compassBearing + k * Math.PI / 2;
+                var at = c + new Vector2((float)Math.Sin(a), (float)-Math.Cos(a)) * reach;
+                compassWays[k].style.left = at.x - 6;
+                compassWays[k].style.top = at.y - 8;
+            }
         }
 
         void DrawCompass(MeshGenerationContext ctx)
@@ -549,14 +559,14 @@ namespace Porchlight.UI
             var painter = ctx.painter2D;
             var n = CompassNorth();
             var side = new Vector2(-n.y, n.x);
-            // A tick for each of the eight ways, the four main ones longer.
+            // A tick for each of the four ways between the main ones (N, E, S and W stand at those).
             painter.strokeColor = Coords.Hex(0x767676);
             painter.lineWidth = 1.5f;
             for (int k = 0; k < 8; k++)
             {
                 double a = -compassBearing + k * Math.PI / 4;
                 var d = new Vector2((float)Math.Sin(a), (float)-Math.Cos(a));
-                if (k == 0) continue; // the N stands there
+                if (k % 2 == 0) continue; // N, E, S or W stands there
                 float inner = rad - (k % 2 == 0 ? 7 : 4);
                 painter.BeginPath();
                 painter.MoveTo(c + d * inner);

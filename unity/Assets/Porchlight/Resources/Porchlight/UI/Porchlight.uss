@@ -1076,15 +1076,19 @@ Label {
     background-color: rgba(43, 42, 39, 0.85);
 }
 
-.compass-n {
+.compass-way {
     position: absolute;
     width: 12px;
     height: 16px;
     padding: 0;
     margin: 0;
     font-size: 11px;
-    color: #ff8a73;
+    color: #d8d0bc;
     -unity-text-align: middle-center;
+}
+
+.compass-n {
+    color: #ff8a73;
 }
 
 

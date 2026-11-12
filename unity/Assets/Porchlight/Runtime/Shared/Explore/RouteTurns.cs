@@ -28,6 +28,11 @@ namespace Porchlight.Explore
         const double STEP = 0.5;
         /// <summary>The heading before and after a spot is over this far (tiles), as many samples.</summary>
         const int SPAN = 3;
+        /// <summary>
+        /// The heading into and out of a corner over this many samples either side of it as well: the way must
+        /// end up going another way, not just jog aside and carry on (a straightaway with a step in it).
+        /// </summary>
+        const int LONG = 16;
         /// <summary>Two turns closer than this (tiles) are one.</summary>
         const double APART = 4;
 
@@ -35,7 +40,7 @@ namespace Porchlight.Explore
         public static List<Turn> Find(IReadOnlyList<Vec2> way, double min, double skip, double reach, int max)
         {
             var o = new List<Turn>();
-            var pts = Even(Unkinked(way), reach + 2 * SPAN * STEP);
+            var pts = Even(Unkinked(way), reach + (LONG + 2 * SPAN) * STEP);
             int n = pts.Count;
             if (n < 4 * SPAN + 1) return o;
             Vec2 Dir(int a, int b)
@@ -43,13 +48,12 @@ namespace Porchlight.Explore
                 double dx = pts[b].x - pts[a].x, dy = pts[b].y - pts[a].y, d = Math.Sqrt(dx * dx + dy * dy);
                 return d < 1e-9 ? new Vec2(0, 0) : new Vec2(dx / d, dy / d);
             }
-            double Angle(int i)
+            double Between(Vec2 before, Vec2 after)
             {
-                var before = Dir(i - 2 * SPAN, i - SPAN);
-                var after = Dir(i + SPAN, i + 2 * SPAN);
                 if (before.x == 0 && before.y == 0 || after.x == 0 && after.y == 0) return 0;
                 return Math.Atan2(before.x * after.y - before.y * after.x, before.x * after.x + before.y * after.y);
             }
+            double Angle(int i) => Between(Dir(i - 2 * SPAN, i - SPAN), Dir(i + SPAN, i + 2 * SPAN));
             // The sharpest spots of a run of turning ones (a corner turns them all alike for a few
             // samples either side of it): the corner is the middle of them.
             int best = -1, bestEnd = -1;
@@ -59,7 +63,8 @@ namespace Porchlight.Explore
                 if (best < 0) return;
                 int c = (best + bestEnd) / 2;
                 double along = c * STEP;
-                if (along >= skip && along <= reach && (o.Count == 0 || along - o[o.Count - 1].along >= APART))
+                if (along >= skip && along <= reach && (o.Count == 0 || along - o[o.Count - 1].along >= APART)
+                    && Math.Abs(Between(Dir(Math.Max(0, c - LONG), c - SPAN), Dir(c + SPAN, Math.Min(n - 1, c + LONG)))) >= min)
                     o.Add(new Turn { at = pts[c], dir = Dir(c, Math.Min(n - 1, c + 2 * SPAN)), along = along, angle = bestA });
                 best = bestEnd = -1;
                 bestA = 0;

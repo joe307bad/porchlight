@@ -43,6 +43,10 @@ static class TurnsCheck
         var kink = new List<Vec2> { new Vec2(0, 0), new Vec2(20, 0), new Vec2(21, 0), new Vec2(20.2, 0), new Vec2(40, 0) };
         Expect(RouteTurns.Find(kink, MIN, 0, 100, 3).Count == 0, "a kink isn't a turn");
 
+        // Straight on with a jog aside (a step over and on the same way): no turn.
+        var jog = new List<Vec2> { new Vec2(0, 0), new Vec2(20, 0), new Vec2(20, 1.5), new Vec2(40, 1.5) };
+        Expect(RouteTurns.Find(jog, MIN, 0, 100, 3).Count == 0, $"a jog on a straightaway isn't a turn (got {RouteTurns.Find(jog, MIN, 0, 100, 3).Count})");
+
         // A long, gentle bend (radius 60): no turn.
         var bend = new List<Vec2>();
         for (int k = 0; k <= 40; k++) bend.Add(new Vec2(60 * Math.Sin(k * 0.02), 60 - 60 * Math.Cos(k * 0.02)));
