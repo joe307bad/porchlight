@@ -46,7 +46,7 @@ namespace Porchlight.App
         /// <summary>Where a person can walk to, in the order they pass them (Car, Bin and Back are all reached from the kerb).</summary>
         enum Where { Inside, Door, Kerb, Car, Bin, Back }
 
-        enum Act { Walk, Pause, Hold, PutInCar, TakeFromCar, PutDown, Vanish, HopOut, HopIn, TakeBin, Dump, ReturnBin }
+        enum Act { Walk, Pause, Hold, PutInCar, TakeFromCar, PutDown, Vanish, HopOut, HopIn, TakeBin, Dump, ReturnBin, TakeFromBack }
 
         /// <summary>How high your car's door step is, that someone hops down from and up to (tiles).</summary>
         const double STEP_HEIGHT = 0.1;
@@ -58,6 +58,10 @@ namespace Porchlight.App
         const float DUMP_ANGLE = 125;
         /// <summary>The bin's lid falls open past this tip (degrees), as far as this.</summary>
         const float LID_FALLS = 60, LID_OPEN = 110;
+        /// <summary>Taking something off the pile in the back of your car: how long, and how far they lean in to the tailgate (tiles).</summary>
+        const double TAKE_TIME = 1.0, TAKE_LEAN = 0.1;
+        /// <summary>Standing behind your car with no bin to wheel: this far back from its end (tiles).</summary>
+        const double BACK_GAP = 0.12;
 
         sealed class Step
         {
@@ -115,6 +119,8 @@ namespace Porchlight.App
             public string model;
             public double size;
             public GameObject go;
+            /// <summary>Where the hands go on it (its sides), for something taken off the pile in the back.</summary>
+            public Transform gripL, gripR;
         }
 
         sealed class Person
@@ -290,6 +296,38 @@ namespace Porchlight.App
         static Material spotMaterial, beaconMaterial, redMaterial, blueMaterial;
         GameObject cargoRoot;
         readonly List<Item> cargo = new List<Item>();
+        /// <summary>What's piled in the back of your car (load_back), bottom first: the last is the top of the pile.</summary>
+        GameObject backRoot;
+        readonly List<Item> back = new List<Item>();
+        /// <summary>Each place on the pile, bottom layer first (in the bed's own space: +z your car's front, y up from the bed's floor).</summary>
+        readonly List<(Vector3 at, Quaternion turn)> pile = new List<(Vector3, Quaternion)>();
+        /// <summary>How many were loaded, and the car model the pile was heaped for.</summary>
+        int loaded, pileFor = -1;
+        /// <summary>How many things are on the pile in the back of your car, and how many have been taken off it (the smoke run checks).</summary>
+        public int BackCount => back.Count;
+        public int TakenFromBack { get; private set; }
+        /// <summary>How many things someone has put down (indoors, say).</summary>
+        public int PutDowns { get; private set; }
+        /// <summary>
+        /// Where the top of the pile in the back of your car is, from your car's middle (tiles): how far
+        /// along it (+ ahead), across it and up off the ground; and the car's roof height (the smoke run checks it's in the bed).
+        /// </summary>
+        public string BackReport(out double along, out double up, out double roof)
+        {
+            along = up = roof = 0;
+            var car = view.OwnVehicle;
+            if (car == null || back.Count == 0 || !backRoot.activeSelf) return "nothing piled in the back";
+            var town = view.world.root.transform;
+            var at = town.InverseTransformPoint(back[back.Count - 1].go.transform.position);
+            var f = car.Forward;
+            double dx = at.x - car.x, dy = -at.z - car.y;
+            along = dx * f.x + dy * f.y;
+            double across = dx * -f.y + dy * f.x;
+            up = at.y - car.altitude;
+            var model = library.Get(Catalog.CARS[car.model]);
+            roof = model.size.y * CarView.ScaleOf(model);
+            return $"{back.Count} piled in the back of the {model.name}, the top one {along:0.00} along, {across:0.00} across and {up:0.00} up (roof {roof:0.00})";
+        }
         GameObject beacon;
         /// <summary>Every bin the story put out (they stay out as it moves on), and rubbish falling from one.</summary>
         readonly List<WheelieBin> bins = new List<WheelieBin>();
@@ -419,6 +457,8 @@ namespace Porchlight.App
             rng = new Rng($"{id}::{DateTime.UtcNow.Ticks}");
             cargoRoot = new GameObject("mission cargo");
             cargoRoot.transform.SetParent(view.world.root.transform, false);
+            backRoot = new GameObject("mission load");
+            backRoot.transform.SetParent(view.world.root.transform, false);
             view.PromptOverride = Prompt;
             view.OnPadA = TryTalk;
             fight = new Firefight(view, library, input, rng, S);
@@ -451,6 +491,8 @@ namespace Porchlight.App
             hints.Clear();
             if (cargoRoot != null) UnityEngine.Object.Destroy(cargoRoot);
             cargo.Clear();
+            if (backRoot != null) UnityEngine.Object.Destroy(backRoot);
+            back.Clear();
             if (beacon != null) UnityEngine.Object.Destroy(beacon);
             if (dot != null) UnityEngine.Object.Destroy(dot);
             foreach (var b in bins) if (b.holder != null) UnityEngine.Object.Destroy(b.holder);
@@ -647,6 +689,29 @@ namespace Porchlight.App
         public void TakeFromCar(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.TakeFromCar });
 
         public void PutDown(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.PutDown });
+
+        // The back of your car: a pile of things loaded in it, for someone stood behind it to take one at a time.
+
+        public void LoadBack(string model, int count, double size)
+        {
+            if (string.IsNullOrEmpty(model)) throw new Exception("load what? (a model's name)");
+            var m = library.Get(model);
+            if (size <= 0) throw new Exception("a thing to load needs a size (tiles across)");
+            if (count < 0 || count > 40) throw new Exception($"load how many? {count} (0 to 40)");
+            foreach (var it in back) UnityEngine.Object.Destroy(it.go);
+            back.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                var item = new Item { model = model, size = size };
+                item.go = PlaceItem(item, backRoot.transform);
+                back.Add(item);
+            }
+            loaded = count;
+            pile.Clear();
+            PlaceBack();
+        }
+
+        public void TakeFromBack(string role) => PersonOf(role).steps.Enqueue(new Step { act = Act.TakeFromBack });
 
         // Bins: one out by a role's kerb, and someone from your car to empty it into the back.
 
@@ -859,8 +924,8 @@ namespace Porchlight.App
             var car = view.OwnVehicle;
             if (car == null) return null;
             var f = car.Forward;
-            double depth = p.bin?.depth ?? p.role.bin?.depth ?? 0.18;
-            double back = TownWorld.CAR_LENGTH / 2 + depth + 0.2;
+            var bin = p.bin ?? p.role.bin;
+            double back = TownWorld.CAR_LENGTH / 2 + (bin != null ? bin.depth + 0.2 : BACK_GAP);
             return new Vec2(car.x - f.x * back, car.y - f.y * back);
         }
 
@@ -1608,6 +1673,8 @@ namespace Porchlight.App
         static List<Vec2> PathTo(Person p, Where to)
         {
             var path = new List<Vec2>();
+            // From your car (beside it, or behind it), up onto the pavement first.
+            if (p.at >= Where.Car && to < Where.Kerb) path.Add(p.role.kerb);
             int a = (int)(p.at >= Where.Car ? Where.Kerb : p.at), b = (int)(to >= Where.Car ? Where.Kerb : to);
             int dir = Math.Sign(b - a);
             if (dir == 0) return path;
@@ -1723,8 +1790,12 @@ namespace Porchlight.App
                     p.steps.Dequeue();
                     return;
                 case Act.PutDown:
+                    if (p.item != null) PutDowns++;
                     DropItem(p);
                     p.steps.Dequeue();
+                    return;
+                case Act.TakeFromBack:
+                    if (TakeFromBackStep(p, step, dt)) p.steps.Dequeue();
                     return;
                 case Act.Vanish:
                     p.avatar.Visible = false;
@@ -1800,8 +1871,156 @@ namespace Porchlight.App
         static void DropItem(Person p)
         {
             if (p.item == null) return;
+            if (p.item.gripL != null && p.grip != null && p.bin == null) p.grip.on = false;
             if (p.item.go != null) UnityEngine.Object.Destroy(p.item.go);
             p.item = null;
+        }
+
+        /// <summary>
+        /// The top thing off the pile in the back of your car, into their arms (waiting while your car's away):
+        /// stood behind it (walk "back"), they lean in to the tailgate, take it by its sides and lift it out
+        /// and down to their chest, stepping back. Done once it's in their arms; nothing to do if the pile's gone.
+        /// </summary>
+        bool TakeFromBackStep(Person p, Step step, double dt)
+        {
+            var w = p.walker;
+            var car = view.OwnVehicle;
+            if (!step.started)
+            {
+                w.Moved(0, 0, dt);
+                if (p.item != null || back.Count == 0) return true;
+                if (!CarThere(p.role) || car == null) return false;
+                step.started = true;
+                p.timer = 0;
+                var f = car.Forward;
+                step.dir = new Vec2(f.x, f.y);
+                step.from = new Vec2(w.x, w.y);
+                w.heading = DetMath.Atan2(f.x, f.y);
+                p.avatar.SnapYaw(w.heading);
+                // Off the top of the pile, into their hands where it lies, then lifted to them.
+                var item = back[back.Count - 1];
+                back.RemoveAt(back.Count - 1);
+                p.item = item;
+                var t = item.go.transform;
+                t.SetParent(p.avatar.root.transform, true);
+                step.pos = t.localPosition;
+                step.rot = t.localRotation;
+                var m = library.Get(item.model);
+                // The holder's own space is the model's, scaled: its sides are half its width out, its middle half its height up.
+                Transform Grip(string name, float side)
+                {
+                    var g = new GameObject(name).transform;
+                    g.SetParent(t, false);
+                    g.localPosition = new Vector3(side * m.size.x * 0.5f, m.size.y * 0.45f, 0);
+                    return g;
+                }
+                item.gripL = Grip("grip L", -1);
+                item.gripR = Grip("grip R", 1);
+                p.grip ??= p.avatar.GripBin();
+                if (p.grip != null)
+                {
+                    p.grip.left = item.gripL;
+                    p.grip.right = item.gripR;
+                    p.grip.on = true;
+                }
+                TakenFromBack++;
+            }
+            p.timer += dt;
+            double k = p.timer / TAKE_TIME;
+            // Leaning in to the tailgate to take it, and back as it comes out.
+            double into = TAKE_LEAN * (Smooth(k / 0.3) - Smooth((k - 0.55) / 0.45));
+            w.x = step.from.x + step.dir.x * into;
+            w.y = step.from.y + step.dir.y * into;
+            w.Moved(0, 0, dt);
+            // Held where it lies while the hands get to it, then lifted up out of the bed and down into their arms.
+            double lift = Smooth((k - 0.3) / 0.7);
+            var to = HeldAt(p.item);
+            var pos = Vector3.Lerp(step.pos, to, (float)lift);
+            pos.y += (float)(Math.Sin(lift * Math.PI) * p.item.size * 0.6);
+            var held = p.item.go.transform;
+            held.localPosition = pos;
+            held.localRotation = Quaternion.Slerp(step.rot, Quaternion.identity, (float)lift);
+            if (k < 1) return false;
+            held.localPosition = to;
+            held.localRotation = Quaternion.identity;
+            return true;
+        }
+
+        /// <summary>Where something taken off the pile is held: against their chest, in both hands.</summary>
+        static Vector3 HeldAt(Item item) => new Vector3(0, (float)(Avatar.PERSON_HEIGHT * 0.4), (float)(item.size * 0.6));
+
+        /// <summary>The bed in the back of a car model, as shares of the model: how high its floor is, where its middle is along the car (+ ahead), how long and how wide it is. Cars with no open back pile things on the roof, towards the back.</summary>
+        static (double floor, double middle, double length, double width) BedOf(string car) => car switch
+        {
+            // The pickup (Tools~ measured it): its floor between the wheel arches, the tailgate to the cab.
+            "cars/truck" => (0.46, -0.276, 0.34, 0.68),
+            _ => (0.92, -0.12, 0.42, 0.62),
+        };
+
+        /// <summary>
+        /// The pile in the back of your car, where your car is: a heap as small at the bottom as holds them all
+        /// (each layer a row and a column narrower than the one under it, over its gaps), each turned a little.
+        /// </summary>
+        void PlaceBack()
+        {
+            var car = view.OwnVehicle;
+            bool show = car != null && car.kind == VehicleKind.Car && back.Count > 0;
+            backRoot.SetActive(show);
+            if (!show) return;
+            var model = library.Get(Catalog.CARS[car.model]);
+            double scale = CarView.ScaleOf(model);
+            var bed = BedOf(model.name);
+            var f = car.Forward;
+            backRoot.transform.localPosition = Coords.Map(car.x + f.x * bed.middle * model.size.z * scale, car.y + f.y * bed.middle * model.size.z * scale,
+                bed.floor * model.size.y * scale + car.altitude);
+            backRoot.transform.localRotation = Coords.Yaw(DetMath.Atan2(f.x, f.y));
+            if (pile.Count != loaded || pileFor != car.model)
+            {
+                Heap(back[0], loaded, bed.length * model.size.z * scale, bed.width * model.size.x * scale);
+                pileFor = car.model;
+            }
+            for (int i = 0; i < back.Count; i++)
+            {
+                var t = back[i].go.transform;
+                t.localPosition = pile[i].at;
+                t.localRotation = pile[i].turn;
+            }
+        }
+
+        /// <summary>The places on a heap of `count` things like `item` in a bed `length` by `width` (tiles), bottom layer first.</summary>
+        void Heap(Item item, int count, double length, double width)
+        {
+            pile.Clear();
+            var m = library.Get(item.model);
+            double s = item.size / Math.Max(m.size.x, m.size.z);
+            double il = m.size.z * s, iw = m.size.x * s, ih = m.size.y * s;
+            int cols = Math.Max(1, (int)(width / (iw * 1.06))), rows = Math.Max(1, (int)(length / (il * 1.03)));
+            int Holds(int c, int r)
+            {
+                int n = 0;
+                for (int l = 0; c - l > 0 && r - l > 0; l++) n += (c - l) * (r - l);
+                return n;
+            }
+            // The smallest bottom layer that holds them all (or the whole bed, piled as high as it takes).
+            int bc = cols, br = rows;
+            for (int c = 1; c <= cols; c++)
+                for (int r = 1; r <= rows; r++)
+                    if (Holds(c, r) >= count && (c * r < bc * br || (c * r == bc * br && Holds(c, r) > Holds(bc, br)))) (bc, br) = (c, r);
+            var rng = new Rng($"{item.model}::heap");
+            for (int layer = 0; pile.Count < count; layer++)
+            {
+                int c = Math.Max(1, bc - layer), r = Math.Max(1, br - layer);
+                for (int j = 0; j < r && pile.Count < count; j++)
+                    for (int i = 0; i < c && pile.Count < count; i++)
+                    {
+                        float x = (float)((i - (c - 1) / 2.0) * iw * 1.06);
+                        float z = (float)((j - (r - 1) / 2.0) * il * 1.03);
+                        // Each layer sits down into the gaps of the one below.
+                        float y = (float)(layer * ih * 0.72);
+                        var turn = Quaternion.Euler((float)(rng.Next() * 10 - 5), (float)(rng.Next() * 16 - 8 + (rng.Chance(0.3) ? 180 : 0)), (float)(rng.Next() * 10 - 5));
+                        pile.Add((new Vector3(x, y, z), turn));
+                    }
+            }
         }
 
         /// <summary>What rides on your car's roof: rows of three along the roof, then a layer up.</summary>
@@ -2029,6 +2248,7 @@ namespace Porchlight.App
                 view.DoorOpeners.Add(new Vec2(p.walker.x, p.walker.y));
             }
             PlaceCargo();
+            PlaceBack();
             UpdateBits(dt);
             foreach (var p in people)
             {

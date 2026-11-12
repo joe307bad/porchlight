@@ -414,6 +414,26 @@ namespace Porchlight.Rendering
         /// <summary>The warm light a room's floor and walls give off at night (how brightly: Materials.WindowGlow).</summary>
         const int ROOM_GLOW = 0x8c6a40, FLOOR_GLOW = 0x5e4630;
 
+        /// <summary>Thanksgiving dinner on every house's dining table in every town built (Feast), and whether it's shown.</summary>
+        static readonly List<GameObject> feasts = new List<GameObject>();
+        static bool feasting;
+
+        /// <summary>Whether the houses' dining tables have Thanksgiving dinner on them (the `feast` unlock), in every town.</summary>
+        public static bool Feasting
+        {
+            get => feasting;
+            set
+            {
+                if (value == feasting) return;
+                feasting = value;
+                feasts.RemoveAll(f => f == null);
+                foreach (var f in feasts) f.SetActive(value);
+            }
+        }
+
+        /// <summary>How many dining tables in the towns built have a feast laid (shown or not).</summary>
+        public static int FeastTables => feasts.Count(f => f != null);
+
         /// <summary>The furnished inside of a room (every one is built with the town).</summary>
         public Interior InteriorOf(int id)
         {
@@ -458,6 +478,16 @@ namespace Porchlight.Rendering
             {
                 var piece = Props.Place(library.Get("furniture/" + p.name), it.root.transform, p.x, p.y, p.rot, Interiors.FURNITURE_SCALE, Interiors.FURNITURE_SCALE, Interiors.FURNITURE_SCALE, p.lift + 0.012, castShadows: false);
                 if (!p.flat) it.casters.AddRange(piece.GetComponentsInChildren<Renderer>());
+                // A house's dining table has Thanksgiving dinner on it, shown once it's been earned (Feast).
+                if (room.style == HouseStyle.House && p.lift == 0 && Feast.IsDiningTable(p.name))
+                {
+                    var m = library.Get("furniture/" + p.name);
+                    var size = new FurnitureSize { w = m.size.x * Interiors.FURNITURE_SCALE, d = m.size.z * Interiors.FURNITURE_SCALE, h = m.size.y * Interiors.FURNITURE_SCALE };
+                    var feast = Feast.Lay(library, it.root.transform, p, size, 0.012);
+                    feast.SetActive(feasting);
+                    feasts.Add(feast);
+                    it.casters.AddRange(feast.GetComponentsInChildren<Renderer>(true));
+                }
             }
             interiors[id] = it;
             return it;

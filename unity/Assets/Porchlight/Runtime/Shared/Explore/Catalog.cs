@@ -146,9 +146,10 @@ namespace Porchlight.Explore
         /// What a character can unlock (a mission's unlock; the server keeps them): `animals`,
         /// to be one of the zoo's animals (the character menu offers them after the people);
         /// `firefighter`, to be the firefighter, and to have the fire engine in the car box;
-        /// `sprint`, to sprint faster on foot (Marathon Runner).
+        /// `sprint`, to sprint faster on foot (Marathon Runner); `feast`, Thanksgiving dinner on every
+        /// house's dining table (Turkey run).
         /// </summary>
-        public static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint" };
+        public static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint", "feast" };
 
         /// <summary>The car models the car box offers with these unlocks (indices into CARS): every car, the fire engine once unlocked.</summary>
         public static int[] GarageCars(ICollection<string> unlocks) =>
@@ -227,11 +228,18 @@ namespace Porchlight.Explore
         public static readonly string[] PROPS = { "suburban/planter", "suburban/fence", "commercial/detail-awning" };
         /// <summary>Wheelie bins (Tools~/bins: body, lid on its hinge, wheels, handle, emblem): missions put them out by the kerb.</summary>
         public static readonly string[] BINS = { "props/wheelie-bin-trash", "props/wheelie-bin-recycle" };
+        /// <summary>A frozen turkey in its netting (Tools~/thanksgiving): the turkey mission piles them in the back of your truck.</summary>
+        public const string FROZEN_TURKEY = "props/frozen-turkey";
+        /// <summary>
+        /// The Thanksgiving feast (Tools~/thanksgiving), set on every house's dining table once the
+        /// turkey mission's done (the `feast` unlock): the roast turkey on its platter first, then the bowls and the pie.
+        /// </summary>
+        public static readonly string[] FEAST = { "props/roast-turkey", "props/bowl-mash", "props/bowl-cranberry", "props/bowl-beans", "props/bowl-stuffing", "props/pumpkin-pie" };
 
         /// <summary>Every static model the town loads.</summary>
         public static IEnumerable<string> Statics =>
             new[] { HOUSES, SHOPS, TOWERS, INDUSTRIAL, CARS, TREES, FALL_TREES, PINES, PALMS, BUSHES, FLOWERS, CROPS, ROCKS, BOULDERS,
-                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, FURNISHINGS }.SelectMany(x => x).Distinct();
+                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, FURNISHINGS }.SelectMany(x => x).Distinct();
 
         /// <summary>Which model families suit each kind of building ("office" is a style, not a blueprint kind).</summary>
         public static string[] KindModels(HouseStyle style) => style switch

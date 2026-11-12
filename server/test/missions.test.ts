@@ -26,7 +26,7 @@ const BLOCKS = [
   'put_in_car', 'take_from_car', 'put_down', 'leave', 'mark_spot', 'clear_spot', 'guide',
   'dot', 'look', 'put_you', 'chase', 'countdown', 'standby', 'unlock', 'your_car', 'fire', 'turret',
   'course', 'stopwatch', 'stopwatch_time', 'record', 'town_record', 'town_record_holder',
-  'bin', 'get_out', 'take_bin', 'dump', 'return_bin', 'get_in',
+  'bin', 'get_out', 'take_bin', 'dump', 'return_bin', 'get_in', 'load_back', 'take_from_back',
 ];
 const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'doused', 'out', 'countdown', 'finished', 'wait'];
 const SETTINGS = [
@@ -52,7 +52,7 @@ function standInTown(story: InstanceType<typeof Story>) {
   // Each role's bin: 'home' by the kerb, 'held' by its person, and how many have been tipped into the car.
   const bins = new Map<string, 'home' | 'held'>();
   const aboard = new Set<string>();
-  const town = { cargo: 0, bins, aboard, emptied: 0, out: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, courses, unlocked: [] as string[], look: '', clock: false, turret: '', car: '', stopwatch: '', stopwatchRole: '', mine: 0, best: 0, holder: '', kept: [] as number[] };
+  const town = { cargo: 0, load: 0, delivered: 0, bins, aboard, emptied: 0, out: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, courses, unlocked: [] as string[], look: '', clock: false, turret: '', car: '', stopwatch: '', stopwatchRole: '', mine: 0, best: 0, holder: '', kept: [] as number[] };
   const oneOf = (what: string, value: string, known: string[]) => {
     if (!known.includes(value)) throw new Error(`no such ${what} '${value}' (${known.join(', ')})`);
   };
@@ -158,6 +158,20 @@ function standInTown(story: InstanceType<typeof Story>) {
   bind('put_down', (role: string) => {
     isPresent(role);
     assert.ok(holding.delete(role), `${role} has nothing to put down`);
+    town.delivered++;
+  });
+  bind('load_back', (model: string, count: number, size: number) => {
+    assert.ok(town.car !== '', 'load_back with no car to load');
+    assert.ok(model && size > 0, 'load_back needs a model and a size');
+    assert.ok(count >= 0 && count <= 40, 'load_back is 0 to 40 things');
+    town.load = count;
+  });
+  bind('take_from_back', (role: string) => {
+    isPresent(role);
+    assert.ok(town.load > 0, "there's nothing left in the back to take");
+    assert.ok(!holding.has(role), `${role} already has their hands full`);
+    town.load--;
+    holding.add(role);
   });
   bind('leave', (role: string) => {
     present.delete(role);
@@ -229,7 +243,7 @@ function standInTown(story: InstanceType<typeof Story>) {
     standing.add(role);
   });
   bind('unlock', (what: string) => {
-    oneOf('unlock', what, ['animals', 'firefighter', 'sprint']);
+    oneOf('unlock', what, ['animals', 'firefighter', 'sprint', 'feast']);
     town.unlocked.push(what);
   });
   bind('your_car', (car: string) => {
@@ -424,6 +438,45 @@ test('trash day empties five bins into the truck against a stand-in town', async
   assert.deepEqual(crew, Array(5).fill(['get_out', 'walk bin', 'take_bin', 'walk back', 'dump', 'walk bin', 'return_bin', 'get_in']).flat());
   assert.equal(town.marked.size, 0);
   assert.ok(lines.includes('All 5 bins emptied. The street\'s clean for another week.'), lines.join('\n'));
+});
+
+test('turkey run carries five frozen turkeys from the pickup into five houses, and lays the feast', async () => {
+  const mission = await new MissionStore(DEFAULT_MISSIONS_DIR).get('turkey-run');
+  assert.ok(mission?.story);
+  assert.equal(mission.unlocks, 'feast');
+  const story = new Story(mission.story);
+  story.allowExternalFunctionFallbacks = false;
+  const town = standInTown(story);
+  const waits: string[] = [];
+  const lines: string[] = [];
+  for (let guard = 0; guard < 500 && (story.canContinue || story.currentChoices.length > 0); guard++) {
+    while (story.canContinue) lines.push(story.Continue()!.trim());
+    if (story.currentChoices.length === 0) break;
+    const pick = story.currentChoices[0] as { text: string; index: number };
+    const [wait, role] = pick.text.slice(1).split(' ');
+    if (wait === 'parked') assert.ok(town.marked.has(role), `@parked ${role} with no spot marked`);
+    if (wait === 'idle') assert.ok(town.aboard.has(role), `@idle ${role} before the helper's back in the pickup`);
+    waits.push(`@${wait}`);
+    story.ChooseChoiceIndex(pick.index);
+  }
+  assert.equal(story.canContinue, false);
+  assert.equal(story.currentChoices.length, 0);
+  assert.deepEqual(waits, Array(5).fill(['@parked', '@idle']).flat());
+  // The pickup the whole way, its bed piled with turkeys (your own car back at the end).
+  assert.ok(town.log.includes('your_car(cars/truck)'));
+  assert.ok(town.log.includes('load_back(props/frozen-turkey, 10, 0.12)'));
+  assert.equal(town.car, '');
+  assert.equal(town.out, 5);
+  assert.equal(town.delivered, 5);
+  assert.equal(town.load, 5);
+  // What the helper did, in order: walks by where to, the rest by name.
+  const helper = town.log
+    .filter((l) => /^(get_out|walk|take_from_back|pause|put_down|get_in)\(/.test(l))
+    .map((l) => (l.startsWith('walk(') ? `walk ${l.slice(5, -1).split(', ')[1]}` : l.slice(0, l.indexOf('('))));
+  assert.deepEqual(helper, Array(5).fill(['get_out', 'walk back', 'take_from_back', 'walk inside', 'pause', 'put_down', 'walk door', 'get_in']).flat());
+  assert.equal(town.marked.size, 0);
+  assert.deepEqual(town.unlocked, ['feast']);
+  assert.ok(lines.includes('All 5 turkeys delivered. Look in through any window: the whole town\'s sitting down to Thanksgiving dinner.'), lines.join('\n'));
 });
 
 /** Plays the marathon through against a stand-in town with these best times, and returns what it said. */

@@ -19,7 +19,7 @@ static class MissionCheck
         static readonly string[] SETTINGS = { "talk_reach", "talk_reach_car", "park_reach", "park_speed", "park_angle", "car_reach", "walk_speed",
             "your_pace", "chase_speed", "chase_speed_car", "pull_up", "officer_speed", "officer_reach", "ring", "catch_reach", "catch_time",
             "douse_time", "water_speed", "aim_speed" };
-        static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint" };
+        static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint", "feast" };
         static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church", "zoo" };
         static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
         static readonly string[] PLACES = { "inside", "door", "kerb", "car", "bin", "back" };
@@ -53,6 +53,8 @@ static class MissionCheck
         readonly Dictionary<string, bool> bins = new Dictionary<string, bool>();
         readonly HashSet<string> aboard = new HashSet<string>();
         public int emptied;
+        /// <summary>How many things are piled in the back of your car (load_back), once everyone's errands so far are done.</summary>
+        int load;
 
         static void OneOf(string what, string value, string[] known)
         {
@@ -189,6 +191,23 @@ static class MissionCheck
             cargo--;
             holding[role] = "cargo";
             log.Add($"  {role} takes one from the car ({cargo} on board)");
+        }
+        public void LoadBack(string model, int count, double size)
+        {
+            if (car == "") throw new Exception("load what car? (your_car first)");
+            if (string.IsNullOrEmpty(model) || size <= 0) throw new Exception("load_back needs a model and a size");
+            if (count < 0 || count > 40) throw new Exception($"load how many? {count} (0 to 40)");
+            load = count;
+            log.Add($"load {count} x {model} in the back");
+        }
+        public void TakeFromBack(string role)
+        {
+            Present(role);
+            if (load == 0) throw new Exception("there's nothing left in the back to take");
+            if (holding.ContainsKey(role)) throw new Exception($"{role} already has their hands full");
+            load--;
+            holding[role] = "load";
+            log.Add($"  {role} takes one from the back ({load} left)");
         }
         public void PutDown(string role)
         {

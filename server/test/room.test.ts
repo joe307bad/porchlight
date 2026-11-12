@@ -221,7 +221,7 @@ test('missions finished are the account\'s, and can be played again', async () =
   const two = (await api('finisher', 'POST', '/mp/characters', { name: 'Two' })).json;
   const before = (await api('finisher', 'GET', '/mp/progress')).json;
   assert.deepEqual(before.missions.find((m: { id: string }) => m.id === 'chase').times, 0);
-  assert.deepEqual(before.unlocks.map((u: { id: string; at: string | null }) => [u.id, u.at]), [['animals', null], ['firefighter', null], ['sprint', null]]);
+  assert.deepEqual(before.unlocks.map((u: { id: string; at: string | null }) => [u.id, u.at]), [['animals', null], ['firefighter', null], ['sprint', null], ['feast', null]]);
   assert.equal(before.unlocks[0].mission, 'Penguin on the run');
   assert.equal(before.unlocks[2].mission, 'Marathon runner');
   for (const character of [one.id, two.id]) {

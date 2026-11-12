@@ -58,6 +58,10 @@ namespace Porchlight.Missions
         void TakeFromCar(string role);
         /// <summary>Queue: what the role's person holds is put down, and gone.</summary>
         void PutDown(string role);
+        /// <summary>`count` of a thing (a model, size tiles across) piled in the back of your car (a pickup's bed; another car's roof), in place of any load before.</summary>
+        void LoadBack(string model, int count, double size);
+        /// <summary>Queue: the role's person, stood behind your car, takes the top thing off the pile in its back into their arms.</summary>
+        void TakeFromBack(string role);
         /// <summary>The role's person drops what they're doing, goes indoors and is gone.</summary>
         void Leave(string role);
         /// <summary>A wheelie bin (a model, size tiles across) out on the pavement by the kerb outside the role's building, handle to the street.</summary>
@@ -97,7 +101,7 @@ namespace Porchlight.Missions
         /// in, from every side; called off, they go back to wait.
         /// </summary>
         void Standby(string role, int count, string car, string look);
-        /// <summary>Something the player keeps for finishing (Catalog.UNLOCKS: "animals", "firefighter").</summary>
+        /// <summary>Something the player keeps for finishing (Catalog.UNLOCKS: "animals", "firefighter", "sprint", "feast").</summary>
         void Unlock(string what);
         /// <summary>Your own car becomes a `car` (a model), and you're at its wheel; "" gives you back the one you had.</summary>
         void YourCar(string car);
@@ -203,6 +207,8 @@ namespace Porchlight.Missions
             Bind("put_in_car", a => { world.PutInCar(Str(a, 0)); return null; });
             Bind("take_from_car", a => { world.TakeFromCar(Str(a, 0)); return null; });
             Bind("put_down", a => { world.PutDown(Str(a, 0)); return null; });
+            Bind("load_back", a => { world.LoadBack(Str(a, 0), (int)Math.Round(Num(a, 1)), Num(a, 2)); return null; });
+            Bind("take_from_back", a => { world.TakeFromBack(Str(a, 0)); return null; });
             Bind("leave", a => { world.Leave(Str(a, 0)); return null; });
             Bind("bin", a => { world.Bin(Str(a, 0), Str(a, 1), Num(a, 2)); return null; });
             Bind("get_out", a => world.GetOut(Str(a, 0), Str(a, 1), Str(a, 2)) ?? "");

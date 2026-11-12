@@ -703,6 +703,15 @@ namespace Porchlight.App
                 Application.Quit(passed ? 0 : 1);
                 return;
             }
+            // The turkey run on its own (PORCHLIGHT_SMOKE_TURKEY: its story as the server compiles it): quits 0 if it passed.
+            var turkey = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_TURKEY");
+            if (!string.IsNullOrEmpty(turkey))
+            {
+                bool passed = await SmokeTurkey(System.IO.File.ReadAllText(turkey));
+                Debug.Log("smoke: done");
+                Application.Quit(passed ? 0 : 1);
+                return;
+            }
             if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_DRIVE") == "1")
             {
                 await SmokeDrive();
@@ -1099,6 +1108,86 @@ namespace Porchlight.App
             bool passed = stops == STOPS && inOrder && tipped && onRoad == 0 && truck && m.script.Done && m.script.Error == null && completed == 1
                 && m.HoppedOut == STOPS && m.BinsEmptied == STOPS && m.BinsReturned == STOPS && m.HoppedIn == STOPS;
             Debug.Log($"smoke: trash: {(passed ? "PASS" : "FAIL")}: {stops} of {STOPS} stops, crew in order={inOrder}, mission complete={completed == 1} (error={m.script.Error ?? "none"}), out {m.HoppedOut}, emptied {m.BinsEmptied}, put back {m.BinsReturned}, back in {m.HoppedIn}, hands short of a grip by up to {m.WorstGripMiss:0.000} tiles, your car now {(iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none")}");
+            if (mission != null) EndMission(null);
+            return passed;
+        }
+
+        /// <summary>
+        /// The turkey run, played through (PORCHLIGHT_SMOKE_TURKEY: the story as the server compiles it): the pickup
+        /// put straight into each house's spot, and the helper followed from hopping out to hopping back in: round
+        /// to the tailgate, a turkey off the pile, in at the door, back out and in again, five times, till the
+        /// mission's complete and every house's dining table has the feast on it. True if it all happened, in order.
+        /// </summary>
+        async Task<bool> SmokeTurkey(string story)
+        {
+            const int STOPS = 5;
+            // What the helper should do at every stop, in order.
+            string[] round = { "hopout", "walk back", "takefromback", "walk inside", "pause", "putdown", "walk door", "hopin" };
+            string doing = null;
+            var seen = new List<string>();
+            float miss = 0;
+            // What's left on the pile while the mission lasts (it goes with the mission).
+            int left = -1;
+            bool hadFeast = TownWorld.Feasting;
+            var m = mission = new MissionPlay("turkey-run", "Turkey run", story, iso, ModelLibrary.Instance, input) { OnUnlock = Unlock };
+            string Objective() => mission?.CurrentObjective ?? "(no mission)";
+            async Task<bool> Until(Func<bool> met, double seconds)
+            {
+                double end = platform.Now() + seconds * 1000;
+                while (platform.Now() < end && mission != null)
+                {
+                    if (mission.script.Line != null) mission.script.Advance();
+                    string now = m.Doing("drop");
+                    if (now == "walk inside" || now == "pause") miss = Math.Max(miss, m.GripMiss("drop"));
+                    if (m.BackCount > 0) left = m.BackCount;
+                    if (now != doing)
+                    {
+                        doing = now;
+                        if (now != "none" && now != "idle" && now != "aboard") seen.Add(now);
+                    }
+                    if (met()) return true;
+                    await Task.Yield();
+                }
+                return met();
+            }
+            bool pickup = iso.CarModel >= 0 && Catalog.CARS[iso.CarModel] == "cars/truck";
+            await Until(() => false, 0.3);
+            string pile = m.BackReport(out double along, out double up, out double roof);
+            // In the bed: behind the cab, above the ground and below the cab's roof.
+            bool inBed = m.BackCount == 10 && along < -0.15 && up > roof * 0.35 && up < roof * 0.95;
+            Debug.Log($"smoke: turkey: the pickup={pickup}, at the wheel={iso.DrivingMyCar}, {pile}: {(inBed ? "in the bed" : "NOT IN THE BED")}, error={m.script.Error}");
+            int stops = 0;
+            bool inOrder = true;
+            for (int stop = 1; stop <= STOPS; stop++)
+            {
+                bool ok = await Until(() => Objective().StartsWith("Take a turkey"), 8);
+                var spot = m.SpotOf("drop");
+                var car = iso.OwnVehicle;
+                Debug.Log($"smoke: turkey: stop {stop}: '{Objective()}' ok={ok}, error={m.script.Error}");
+                if (!ok || spot == null || car == null) break;
+                car.x = spot.Value.x;
+                car.y = spot.Value.y;
+                car.heading = spot.Value.heading;
+                car.speed = 0;
+                seen.Clear();
+                ok = await Until(() => Objective().StartsWith("Wait while"), 5);
+                if (!ok) break;
+                double start = platform.Now();
+                ok = await Until(() => m.script.Done || (Objective().StartsWith("Take a turkey") && m.Doing("drop") == "none"), 60);
+                bool order = string.Join(",", seen) == string.Join(",", round);
+                inOrder &= order;
+                Debug.Log($"smoke: turkey: stop {stop}: helper done={ok} in {(platform.Now() - start) / 1000:0.0} s, did {string.Join(" > ", seen)} (in order={order}); out {m.HoppedOut}, taken {m.TakenFromBack}, put down {m.PutDowns}, back in {m.HoppedIn}, {m.BackCount} left in the back");
+                if (!ok) break;
+                stops++;
+            }
+            await Until(() => mission == null, 3);
+            for (int i = 0; i < 5; i++) await Task.Yield();
+            finished.TryGetValue("turkey-run", out int completed);
+            bool feast = TownWorld.Feasting && Unlocks.Contains("feast") && TownWorld.FeastTables > 0;
+            Debug.Log($"smoke: turkey: feast on before={hadFeast}, now={TownWorld.Feasting} on {TownWorld.FeastTables} dining tables, unlocked={Unlocks.Contains("feast")}; hands short of the turkey by up to {miss:0.000} tiles");
+            bool passed = pickup && inBed && stops == STOPS && inOrder && feast && !hadFeast && m.script.Done && m.script.Error == null && completed == 1
+                && m.HoppedOut == STOPS && m.TakenFromBack == STOPS && m.PutDowns == STOPS && m.HoppedIn == STOPS && left == 10 - STOPS;
+            Debug.Log($"smoke: turkey: {(passed ? "PASS" : "FAIL")}: {stops} of {STOPS} stops, helper in order={inOrder}, mission complete={completed == 1} (error={m.script.Error ?? "none"}), out {m.HoppedOut}, taken {m.TakenFromBack}, put down {m.PutDowns}, back in {m.HoppedIn}, {left} left at the last house, feast={feast}, your car now {(iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none")}");
             if (mission != null) EndMission(null);
             return passed;
         }
@@ -1573,6 +1662,7 @@ namespace Porchlight.App
                 iso.viewport = ScreenRect(isoHost);
                 if (exploring) ZoomWithWheel();
                 iso.FastSprint = Unlocks.Contains("sprint");
+                TownWorld.Feasting = Unlocks.Contains("feast");
                 iso.Update();
                 if (county != null)
                 {
@@ -2624,6 +2714,7 @@ namespace Porchlight.App
             if (what == "animals") overlay?.Notify("Unlocked for all your characters: the zoo's animals. Choose one from the character box.");
             if (what == "firefighter") overlay?.Notify("Unlocked for all your characters: the firefighter and the fire engine. Find them in the character and car boxes.");
             if (what == "sprint") overlay?.Notify("Unlocked for all your characters: a faster sprint. Hold Shift (or RT) to try it.");
+            if (what == "feast") overlay?.Notify("Unlocked for all your characters: Thanksgiving dinner on every house's table. Look in through a window.");
         }
 
         /// <summary>The car box: a grid of every car (the fire engine once it's unlocked), and the one picked is yours, brought right beside you (in place of any other).</summary>
