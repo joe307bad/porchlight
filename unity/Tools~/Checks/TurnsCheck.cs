@@ -55,9 +55,19 @@ static class TurnsCheck
             Expect(RouteTurns.Find(close, MIN, 0, 100, 3).Count == 0, $"a jog from {20 - x0:0} tile(s) off isn't a turn");
         }
 
-        // A staggered crossing: right, 7 tiles on, then left: two turns.
-        var stagger = new List<Vec2> { new Vec2(0, 0), new Vec2(20, 0), new Vec2(20, 7), new Vec2(40, 7) };
-        Expect(RouteTurns.Find(stagger, MIN, 0, 100, 3).Count == 2, $"a stagger is two turns (got {RouteTurns.Find(stagger, MIN, 0, 100, 3).Count})");
+        // Steps aside of every size, each way: under 4 tiles a jog (no turn), from 4.5 a staggered crossing (two).
+        foreach (var side in new[] { 1.0, -1.0 })
+            for (double step = 1; step <= 9; step += 0.5)
+            {
+                if (step == 4) continue;
+                var sw = new List<Vec2> { new Vec2(0, 0), new Vec2(20, 0), new Vec2(20, side * step), new Vec2(40, side * step) };
+                int got = RouteTurns.Find(sw, MIN, 0, 100, 3).Count;
+                Expect(got == (step < 4 ? 0 : 2), $"a {step:0.0}-tile step {(side > 0 ? "right" : "left")}: {(step < 4 ? "a jog" : "two turns")} (got {got})");
+            }
+        // A real turn just after a jog still is one.
+        var jogTurn = new List<Vec2> { new Vec2(0, 0), new Vec2(20, 0), new Vec2(20, 2), new Vec2(30, 2), new Vec2(30, 20) };
+        var jt = RouteTurns.Find(jogTurn, MIN, 0, 100, 3);
+        Expect(jt.Count == 1 && Math.Abs(jt[0].along - 32) < 1.6, $"a turn after a jog (got {string.Join(", ", jt.Select(q => $"{q.along:0.0}"))})");
 
         // A long, gentle bend (radius 60): no turn.
         var bend = new List<Vec2>();

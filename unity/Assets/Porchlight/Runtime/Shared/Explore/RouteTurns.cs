@@ -1,7 +1,8 @@
 // Where a way shown turns: the corners an arrow is put up at, pointing the way to
 // go, so a turn can be seen coming at speed. The heading over a little way before
 // each spot against the heading over a little way after it: a corner turns it, a
-// kink (the way doubling back on itself a step, where two ways are joined) doesn't.
+// kink (the way doubling back on itself a step, where two ways are joined) doesn't,
+// and nor does a jog (a step aside and on the same way, on a straightaway).
 // Pure.
 
 using System;
@@ -29,13 +30,16 @@ namespace Porchlight.Explore
         /// <summary>The heading before and after a spot is over this far (tiles), as many samples.</summary>
         const int SPAN = 3;
         /// <summary>
-        /// The heading this many samples before a corner against the
-        /// heading this many after it: the way must end up going another way, not just jog aside a few tiles and
-        /// carry on (a straightaway stepping over from one street's middle to the next). A step longer than this
-        /// (a staggered crossing: a turn, a block, and a turn back) is two turns. A corner with less of the way
-        /// than this before it isn't shown: from there (in the middle of a jog, say) there's no telling.
+        /// A corner and the next one turning back the other way, so the way goes on as before but stepped aside less
+        /// than this (tiles), are a jog, not turns: a straightaway stepping over from one street's middle to the
+        /// next. A longer step (a staggered crossing: a turn, a block, and a turn back) is two turns.
         /// </summary>
-        const int LONG = 10;
+        const double JOG = 4;
+        /// <summary>
+        /// A corner nearer than this along the way (tiles) isn't shown: from there (partway along a jog, its first
+        /// corner behind you) there's no telling it from a turn. One further off was shown coming up to it.
+        /// </summary>
+        const double NEAREST = JOG + 1;
         /// <summary>Two turns closer than this (tiles) are one.</summary>
         const double APART = 4;
 
@@ -43,7 +47,7 @@ namespace Porchlight.Explore
         public static List<Turn> Find(IReadOnlyList<Vec2> way, double min, double skip, double reach, int max)
         {
             var o = new List<Turn>();
-            var pts = Even(Unkinked(way), reach + (LONG + 2 * SPAN) * STEP);
+            var pts = Even(Unkinked(way), reach + JOG + 4 * SPAN * STEP);
             int n = pts.Count;
             if (n < 4 * SPAN + 1) return o;
             Vec2 Dir(int a, int b)
@@ -56,23 +60,22 @@ namespace Porchlight.Explore
                 if (before.x == 0 && before.y == 0 || after.x == 0 && after.y == 0) return 0;
                 return Math.Atan2(before.x * after.y - before.y * after.x, before.x * after.x + before.y * after.y);
             }
-            double Angle(int i) => Between(Dir(i - 2 * SPAN, i - SPAN), Dir(i + SPAN, i + 2 * SPAN));
+            // Near the way's start, over what there is of it before (so a corner just ahead is found too).
+            double Angle(int i) => Between(Dir(Math.Max(0, i - 2 * SPAN), Math.Max(1, i - SPAN)), Dir(i + SPAN, i + 2 * SPAN));
             // The sharpest spots of a run of turning ones (a corner turns them all alike for a few
             // samples either side of it): the corner is the middle of them.
+            var corners = new List<(Turn t, int i)>();
             int best = -1, bestEnd = -1;
             double bestA = 0;
             void Close()
             {
                 if (best < 0) return;
                 int c = (best + bestEnd) / 2;
-                double along = c * STEP;
-                if (along >= skip && along <= reach && (o.Count == 0 || along - o[o.Count - 1].along >= APART)
-                    && c >= LONG && Math.Abs(Between(Dir(c - LONG, c - LONG + SPAN), Dir(Math.Min(n - 1, c + LONG) - SPAN, Math.Min(n - 1, c + LONG)))) >= min)
-                    o.Add(new Turn { at = pts[c], dir = Dir(c, Math.Min(n - 1, c + 2 * SPAN)), along = along, angle = bestA });
+                corners.Add((new Turn { at = pts[c], dir = Dir(c, Math.Min(n - 1, c + 2 * SPAN)), along = c * STEP, angle = bestA }, c));
                 best = bestEnd = -1;
                 bestA = 0;
             }
-            for (int i = 2 * SPAN; i + 2 * SPAN < n && o.Count < max; i++)
+            for (int i = 1; i + 2 * SPAN < n; i++)
             {
                 double a = Angle(i);
                 if (Math.Abs(a) >= min)
@@ -86,7 +89,26 @@ namespace Porchlight.Explore
                 }
                 else Close();
             }
-            if (o.Count < max) Close();
+            Close();
+            // A jog's two corners go; the rest are turns. How far aside it steps: from the way before the
+            // first corner to the way after the second, across the heading before.
+            var jog = new bool[corners.Count];
+            for (int k = 0; k + 1 < corners.Count; k++)
+            {
+                int i0 = corners[k].i, i1 = corners[k + 1].i;
+                if (Math.Abs(corners[k].t.angle + corners[k + 1].t.angle) >= min) continue;
+                int b0 = Math.Max(0, i0 - 2 * SPAN), b1 = Math.Max(1, i0 - SPAN), a0 = Math.Min(n - 1, i1 + 2 * SPAN);
+                var h = Dir(b0, b1);
+                double aside = Math.Abs(h.x * (pts[a0].y - pts[b1].y) - h.y * (pts[a0].x - pts[b1].x));
+                if (aside < JOG) jog[k] = jog[k + 1] = true;
+            }
+            for (int k = 0; k < corners.Count && o.Count < max; k++)
+            {
+                var t = corners[k].t;
+                if (jog[k] || t.along < Math.Max(skip, NEAREST) || t.along > reach) continue;
+                if (o.Count > 0 && t.along - o[o.Count - 1].along < APART) continue;
+                o.Add(t);
+            }
             return o;
         }
 
