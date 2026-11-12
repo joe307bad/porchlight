@@ -44,7 +44,7 @@ namespace Porchlight.Explore
             Porchlight.Gen.Stepwise.Drain<List<Signpost>>(done => PlanSteps(model, layout, names, done));
 
         /// <summary>Junctions looked at between one share of the work and the next (PlanSteps).</summary>
-        const int JUNCTIONS_A_STEP = 40;
+        const int JUNCTIONS_A_STEP = 8;
 
         /// <summary>The signposts a share of the junctions at a time, then `done` with them: the same ones Plan makes all at once.</summary>
         public static IEnumerable<string> PlanSteps(TownModel model, IsoLayout layout, StreetNames names, Action<List<Signpost>> done)

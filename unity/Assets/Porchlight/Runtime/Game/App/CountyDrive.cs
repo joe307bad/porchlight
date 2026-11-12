@@ -79,8 +79,36 @@ namespace Porchlight.App
             public IEnumerator<string> preparing;
             public bool ready;
             public bool failed;
+            /// <summary>When it was begun, how much work it's been (ms, every frame's share), and its longest single step and what that was (for the log).</summary>
+            public double startedAt, work, longest;
+            public string longestAt;
+            /// <summary>Work by part (ms), for the log.</summary>
+            public readonly Dictionary<string, double> byPart = new Dictionary<string, double>();
             public double failedAt;
+            /// <summary>Where there are no threads: the town's model and layout, grown (or growing) once and kept.</summary>
+            public Grown grownFrom;
         }
+
+        /// <summary>
+        /// A town's model and its layout, names and signposts (TownWorld.Prepared): what takes longest to make
+        /// (Porchlight's is nine-tenths of the work of building it), and the same every time from its key.
+        /// </summary>
+        sealed class Grown
+        {
+            public TownModel model;
+            public TownWorld.Prepared prepared;
+            /// <summary>Grows it and works out its layout, a share at a time (no threads).</summary>
+            public IEnumerator<string> steps;
+            public bool Ready => model != null && prepared != null;
+        }
+
+        /// <summary>
+        /// Where there are no threads (the web): every town grown, kept by its key for as long as the county is,
+        /// the one you start in from the start. Coming back to a town builds only its world (Porchlight's 13 s
+        /// of work, a share a frame, was 1.7 s of it); and while nothing else is being built, the towns not
+        /// grown yet are grown a share a frame (PreGrow), so the one ahead is ready by the time you get to it.
+        /// </summary>
+        readonly Dictionary<string, Grown> kept = new Dictionary<string, Grown>();
 
         /// <summary>
         /// Every town of the county grown (and its layout, names and signposts worked out) on a worker
@@ -109,6 +137,8 @@ namespace Porchlight.App
 
         /// <summary>Into another space: (the space, its town if it's a town).</summary>
         public Action<Space, TownModel> OnSpace;
+        /// <summary>Told when a space is begun and when it's ready (the smoke run logs it).</summary>
+        public Action<string> Log;
         public Multiplayer Net;
         NetFrame frame;
         /// <summary>The network's view of the game, in its room's terms: told which space you're in.</summary>
@@ -137,6 +167,15 @@ namespace Porchlight.App
             this.parseKey = parseKey;
             active = start;
             var here = built[start.id] = new Built { space = start, model = view.world.model, world = view.world, ready = true };
+            if (start.kind == SpaceKind.Town && start.townKey != null)
+            {
+                // The town on screen was grown already: kept, so driving back into it builds only its world.
+                var w = view.world;
+                var startPrepared = new TownWorld.Prepared { layout = w.layout, names = w.names, signs = w.signs };
+                kept[start.townKey] = new Grown { model = w.model, prepared = startPrepared };
+                var startModel = w.model;
+                grown[start.townKey] = new Lazy<(TownModel, TownWorld.Prepared)>(() => (startModel, startPrepared));
+            }
 #if !NO_THREADS
             foreach (var s in map.spaces)
             {
@@ -232,6 +271,9 @@ namespace Porchlight.App
             bool waiting = ahead != null && ahead != active && (wanted == null || !wanted.ready || wanted.world == null);
             Waiting = waiting ? (ahead.name, wanted == null ? 0 : Progress(wanted)) : ((string, double)?)null;
             Step(waiting ? WAIT_BUDGET_MS : BUDGET_MS);
+#if NO_THREADS
+            if (job == null) PreGrow(BUDGET_MS);
+#endif
             Retire();
             if (!waiting && wanted != null) Switch(wanted);
             Rooms(active.ToWorld(view.PlayerPosition ?? local.Value));
@@ -316,7 +358,8 @@ namespace Porchlight.App
                 LetGo(farthest);
                 built.Remove(farthest.space.id);
             }
-            job = new Built { space = best };
+            job = new Built { space = best, startedAt = Now };
+            Log?.Invoke($"building {best.name ?? best.kind.ToString()} ({best.kind}) {CountyMap.DistanceTo(best, at):0} tiles off, from {active.name ?? active.kind.ToString()}");
             built[best.id] = job;
             if (best.kind == SpaceKind.Town) Grow(job);
 #if !NO_THREADS
@@ -351,8 +394,10 @@ namespace Porchlight.App
         /// <summary>A share of what's being let go: a part of each a frame.</summary>
         void Retire()
         {
+            double t0 = Now;
             for (int i = retiring.Count - 1; i >= 0; i--)
                 if (!retiring[i].MoveNext()) retiring.RemoveAt(i);
+            if (Now - t0 > 20) Log?.Invoke($"slow step: letting go {Now - t0:0} ms");
         }
 
         /// <summary>Where you can walk, drive and fly in a built space, in its terms (its hills too): off the main thread where there are threads.</summary>
@@ -377,7 +422,7 @@ namespace Porchlight.App
         {
             var (seed, p) = parseKey(b.space.townKey);
 #if NO_THREADS
-            b.growing = Generator.GenerateSteps(seed, p, m => b.model = m).GetEnumerator();
+            b.grownFrom = GrownOf(b.space.townKey);
 #else
             // Grown already (or growing) since the county started: waits for that rather than growing it twice.
             if (!grown.TryGetValue(b.space.townKey, out var g))
@@ -388,6 +433,66 @@ namespace Porchlight.App
                 }, System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
             b.thread = g.IsValueCreated ? Task.FromResult(g.Value) : Task.Run(() => g.Value);
 #endif
+        }
+
+        /// <summary>A town's kept model, or one begun (grown a share at a time by whoever needs it first).</summary>
+        Grown GrownOf(string key)
+        {
+            if (kept.TryGetValue(key, out var g)) return g;
+            var (seed, p) = parseKey(key);
+            g = kept[key] = new Grown();
+            g.steps = GrowSteps(g, seed, p).GetEnumerator();
+            return g;
+        }
+
+        static IEnumerable<string> GrowSteps(Grown g, string seed, GenParams p)
+        {
+            foreach (var part in Generator.GenerateSteps(seed, p, m => g.model = m)) yield return "growing " + part;
+            if (g.model == null) throw new Exception("the town didn't grow");
+            foreach (var part in TownWorld.Prepared.Steps(g.model, pr => g.prepared = pr)) yield return "preparing " + part;
+        }
+
+        /// <summary>A town that failed to grow ahead isn't tried again till the county is.</summary>
+        readonly HashSet<string> wontGrow = new HashSet<string>();
+
+        /// <summary>
+        /// Nothing being built: a share of the next town not grown yet, so it's only its world to build when you
+        /// get there. The one you're heading for first, then Porchlight (every way out of your own towns comes
+        /// through it, and it's the biggest), then the nearest.
+        /// </summary>
+        void PreGrow(double budget)
+        {
+            Grown next = null;
+            string nextKey = null;
+            double best = double.PositiveInfinity;
+            var head = Heading?.Invoke();
+            var at = view.PlayerPosition is Vec2 local ? active.ToWorld(local) : new Vec2(active.x0, active.y0);
+            foreach (var s in map.spaces)
+            {
+                if (s.kind != SpaceKind.Town || s.townKey == null || wontGrow.Contains(s.townKey)) continue;
+                if (kept.TryGetValue(s.townKey, out var have) && have.Ready) continue;
+                double d = s == head ? -2 : s.place == County.Place.Porchlight ? -1 : CountyMap.DistanceTo(s, at);
+                if (d < best)
+                {
+                    best = d;
+                    nextKey = s.townKey;
+                }
+            }
+            if (nextKey == null) return;
+            next = GrownOf(nextKey);
+            double until = Now + budget;
+            try
+            {
+                while (!next.Ready && Now < until)
+                    if (!next.steps.MoveNext() && !next.Ready) throw new Exception("the town didn't grow");
+                if (next.Ready) Log?.Invoke($"grown ahead: {map.spaces.Find(s => s.townKey == nextKey)?.name}");
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("county: a town didn't grow: " + e.Message);
+                kept.Remove(nextKey);
+                wontGrow.Add(nextKey);
+            }
         }
 
         /// <summary>How far along a space's building is (0-1): growing, then its world's parts in turn.</summary>
@@ -439,8 +544,22 @@ namespace Porchlight.App
             while (job != null && Now < until)
             {
                 var b = job;
+                double t0 = Now;
+                string phase = b.model == null ? "growing" : b.world == null ? "preparing" : b.steps != null ? null : "ways";
                 try
                 {
+                    if (b.model == null && b.grownFrom != null)
+                    {
+                        var g = b.grownFrom;
+                        if (!g.Ready)
+                        {
+                            if (!g.steps.MoveNext() && !g.Ready) throw new Exception("the town didn't grow");
+                            continue;
+                        }
+                        b.model = g.model;
+                        b.prepared = g.prepared;
+                        continue;
+                    }
                     if (b.model == null)
                     {
                         if (b.thread != null)
@@ -498,15 +617,33 @@ namespace Porchlight.App
                     }
                     b.ready = true;
                     job = null;
+                    Log?.Invoke($"built {b.space.name ?? b.space.kind.ToString()} in {(Now - b.startedAt) / 1000:0.0} s ({b.work:0} ms of work), the longest step {b.longest:0} ms ({b.longestAt}); by part: {string.Join(", ", b.byPart.OrderByDescending(kv => kv.Value).Take(10).Select(kv => $"{kv.Key} {kv.Value:0}"))}; {(b.world != null ? $"{b.world.rooms.Count} rooms, {b.world.root.GetComponentsInChildren<Transform>(true).Length} objects, {b.world.root.GetComponentsInChildren<MeshFilter>(true).Length} mesh filters" : "")}");
                 }
                 catch (Exception err)
                 {
                     Debug.LogException(err);
+                    if (b.grownFrom != null && !b.grownFrom.Ready) kept.Remove(b.space.townKey);
                     b.world?.Dispose();
                     b.world = null;
                     b.failed = true;
                     b.failedAt = Now;
                     job = null;
+                }
+                finally
+                {
+                    double ms = Now - t0;
+                    b.work += ms;
+                    if (ms > 20) Log?.Invoke($"slow step: {b.space.name ?? b.space.kind.ToString()} {phase ?? b.part}{(phase == "ways" ? " " + b.preparing?.Current : phase == "growing" && b.grownFrom != null && !b.grownFrom.Ready ? " " + b.grownFrom.steps.Current : "")} {ms:0} ms");
+                    if (Log != null)
+                    {
+                        string k = (phase ?? b.part ?? "?").Replace(TownWorld.WAITING, "").TrimEnd('0', '1', '2', '3', '4', '5', '6', '7', '8', '9');
+                        b.byPart[k] = (b.byPart.TryGetValue(k, out var had) ? had : 0) + ms;
+                    }
+                    if (ms > b.longest)
+                    {
+                        b.longest = ms;
+                        b.longestAt = phase ?? b.part;
+                    }
                 }
             }
         }

@@ -56,10 +56,11 @@ namespace Porchlight.Rendering
     {
         static Vec2 Front(Facing f) => Interiors.Outward(f);
 
-        void AddHouses(Rng rng)
+        IEnumerable<int> AddHouses(Rng rng, int perPart)
         {
             for (int hi = 0; hi < layout.houses.Count; hi++)
             {
+                if (hi % perPart == perPart - 1) yield return hi / perPart;
                 var house = layout.houses[hi];
                 int x0 = house.tiles.Min(t => t.x), y0 = house.tiles.Min(t => t.y);
                 int x1 = house.tiles.Max(t => t.x) + 1, y1 = house.tiles.Max(t => t.y) + 1;

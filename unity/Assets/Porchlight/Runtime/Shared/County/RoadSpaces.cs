@@ -28,6 +28,42 @@ namespace Porchlight.County
 
         /// <summary>Rows of a stretch's tiles sorted (its own, the next stretch's, the countryside's) between one share of the work and the next.</summary>
         const int ROWS_A_STEP = 24;
+        /// <summary>Tiles measured from a road (Near) between one share of the work and the next.</summary>
+        const int MEASURED_A_STEP = 60000;
+
+        /// <summary>
+        /// How far each tile of a space is from a road (world tiles; Infinity past `reach`): each piece of the road
+        /// measured only to the tiles within `reach` of it, a share at a time, rather than every tile to the whole
+        /// road (a long highway's hundreds of points, at every tile of its space, was a tenth of a second a share
+        /// on the web). Within `reach` it's exactly Geo.DistToPolyline. `only`: just the tiles it says.
+        /// </summary>
+        static IEnumerable<string> Near(Space s, List<Vec2> road, double reach, double[] into, Func<int, bool> only = null)
+        {
+            for (int i = 0; i < into.Length; i++) into[i] = double.PositiveInfinity;
+            int measured = 0;
+            int n = road.Count == 1 ? 1 : road.Count - 1;
+            for (int k = 0; k < n; k++)
+            {
+                var a = road[k];
+                var b = road.Count == 1 ? a : road[k + 1];
+                // The tiles whose middles (x0 + x + 0.5, y0 + y + 0.5) could be within reach of this piece.
+                int xa = Math.Max(0, (int)Math.Floor(Math.Min(a.x, b.x) - reach - s.x0 - 0.5));
+                int xb = Math.Min(s.width - 1, (int)Math.Ceiling(Math.Max(a.x, b.x) + reach - s.x0 - 0.5));
+                int ya = Math.Max(0, (int)Math.Floor(Math.Min(a.y, b.y) - reach - s.y0 - 0.5));
+                int yb = Math.Min(s.height - 1, (int)Math.Ceiling(Math.Max(a.y, b.y) + reach - s.y0 - 0.5));
+                for (int y = ya; y <= yb; y++)
+                    for (int x = xa; x <= xb; x++)
+                    {
+                        int i = y * s.width + x;
+                        if (only != null && !only(i)) continue;
+                        var w = s.ToWorld(new Vec2(x + 0.5, y + 0.5));
+                        double d = road.Count == 1 ? Geo.Dist(w, a) : Geo.DistToSegment(w, a, b);
+                        if (d < into[i]) into[i] = d;
+                        if (++measured % MEASURED_A_STEP == 0) yield return "/near";
+                    }
+            }
+            for (int i = 0; i < into.Length; i++) if (into[i] > reach) into[i] = double.PositiveInfinity;
+        }
 
         /// <summary>The same, a share at a time (for the web, which has no threads), then `done` with it.</summary>
         public static IEnumerable<string> BuildSteps(CountyMap map, Space s, Action<TownModel> done)
@@ -102,36 +138,61 @@ namespace Porchlight.County
                 }
                 var verge = Geo.SimplifyRDP(line, 0.05, (a, b) => true);
                 m.foreign = new byte[s.width * s.height];
+                int count = s.width * s.height;
+                // Whose each tile is: a town's, junction's or plot's at the ends; else the countryside's off the verge.
+                var ended = new bool[count];
+                for (int y = 0; y < s.height; y++)
+                    for (int x = 0; x < s.width; x++)
+                    {
+                        var w = s.ToWorld(new Vec2(x + 0.5, y + 0.5));
+                        foreach (var e in ends) if (e.Contains(w.x, w.y)) ended[y * s.width + x] = true;
+                    }
+                yield return "/tiles";
+                // Off the verge, the countryside's: its hills rise there (CountyTerrain), and no car goes.
+                var toVerge = new double[count];
+                foreach (var part in Near(s, verge, DRAWN + 1, toVerge, i => !ended[i])) yield return part;
+                bool OnVerge(int i) => !ended[i] && toVerge[i] <= DRAWN;
+                // On it, the stretch whose road it's nearest. A tile on the verge is within DRAWN + OVERLAP + INSET
+                // of this stretch's own road, so the nearest is always within this reach (and so measured exactly).
+                List<double[]> toRoad = null;
+                if (near.Count > 1)
+                {
+                    toRoad = new List<double[]>();
+                    foreach (var (_, road) in near)
+                    {
+                        var d = new double[count];
+                        foreach (var part in Near(s, road, DRAWN + OVERLAP + CountyMap.INSET + 2, d, OnVerge)) yield return part;
+                        toRoad.Add(d);
+                    }
+                }
                 for (int y = 0; y < s.height; y++)
                 {
                     if (y % ROWS_A_STEP == ROWS_A_STEP - 1) yield return "/tiles";
                     for (int x = 0; x < s.width; x++)
                     {
-                        var w = s.ToWorld(new Vec2(x + 0.5, y + 0.5));
-                        bool theirs = false;
-                        foreach (var e in ends) if (e.Contains(w.x, w.y)) theirs = true;
-                        // Off the verge, the countryside's: its hills rise there (CountyTerrain), and no car goes.
-                        if (!theirs && Geo.DistToPolyline(w, verge) > DRAWN)
+                        int i = y * s.width + x;
+                        bool theirs = ended[i];
+                        if (!theirs && toVerge[i] > DRAWN)
                         {
-                            m.foreign[y * s.width + x] = TownModel.COUNTRYSIDE;
+                            m.foreign[i] = TownModel.COUNTRYSIDE;
                             continue;
                         }
-                        if (!theirs && near.Count > 1)
+                        if (!theirs && toRoad != null)
                         {
                             Space best = s;
                             double bestD = double.PositiveInfinity;
-                            foreach (var (seg, road) in near)
+                            for (int k = 0; k < near.Count; k++)
                             {
-                                double d = Geo.DistToPolyline(w, road);
+                                double d = toRoad[k][i];
                                 if (d < bestD - 1e-9)
                                 {
                                     bestD = d;
-                                    best = seg;
+                                    best = near[k].seg;
                                 }
                             }
                             theirs = best != s;
                         }
-                        if (theirs) m.foreign[y * s.width + x] = 1;
+                        if (theirs) m.foreign[i] = 1;
                     }
                 }
             }

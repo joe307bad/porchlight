@@ -467,7 +467,7 @@ namespace Porchlight.App
             public static IEnumerable<string> Prepare(TownWorld world, Func<double, double, double> rise, PreparedWays into)
             {
                 var model = world.model;
-                into.paved = Vehicle.Paved(model, world.layout);
+                foreach (var _ in Vehicle.PavedSteps(model, world.layout, pv => into.paved = pv)) yield return "paved";
                 yield return "paved";
                 into.drivable = Vehicle.Drivable(model, world.layout, into.paved);
                 into.sailable = Vehicle.Sailable(model, world.layout, into.paved);
@@ -822,6 +822,15 @@ namespace Porchlight.App
             player.heading = heading;
             playerAvatar?.SnapYaw(heading);
         }
+
+        /// <summary>The smoke run's hands on the wheel of the car you're driving (throttle, steer, boost), in place of the keys and pad; null: yours.</summary>
+        public Func<(double throttle, double steer, bool boost)?> Autopilot;
+
+        /// <summary>The car you're driving, if you are (the smoke run steers it).</summary>
+        public Vehicle DrivenCar => driving != null ? cars[driving.Value].car : null;
+
+        /// <summary>Which way the camera looks (the smoke run checks it doesn't end up staring at the ground).</summary>
+        public Vector3 CameraForward => camera.transform.forward;
 
         /// <summary>Besides yours, cars the town's traffic stops for (a mission's).</summary>
         public readonly List<Vec2> Obstacles = new List<Vec2>();
@@ -2272,6 +2281,8 @@ namespace Porchlight.App
                     for (int i = 0; i < cars.Count; i++) if (i != driving) others.Add(new Vec2(cars[i].car.x, cars[i].car.y));
                     autoDrive.Step(car, dt, others);
                 }
+                else if (Autopilot?.Invoke() is var (apThrottle, apSteer, apBoost))
+                    car.Drive(Clamp1(apThrottle), Clamp1(apSteer), dt, OpenFor(car), apBoost, FloorAt);
                 else
                 {
                     double triggers = pad.rt - pad.lt;

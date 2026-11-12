@@ -29,13 +29,14 @@ namespace Porchlight.Explore
         public const double CAR_BOOST = 3.4;
         const double CAR_BOOST_ACCEL = 3.0;
         const double ACCEL = 3.2;
-        public const double BRAKE = 7;
+        /// <summary>Back pressed while going forward: hard, so a car at full boost (17.7) stops in about a second.</summary>
+        public const double BRAKE = 16;
         const double DRAG = 1.4;
-        const double STEER_RATE = 2.1;
-        const double FULL_STEER_SPEED = 1.6;
+        const double STEER_RATE = 2.7;
+        const double FULL_STEER_SPEED = 1.0;
         /// <summary>How fast the wheel turns to where it's steered (full lock per second), so a key tap doesn't snap the car round.</summary>
-        const double WHEEL_RATE = 4;
-        const double WHEEL_RETURN = 6;
+        const double WHEEL_RATE = 8;
+        const double WHEEL_RETURN = 9;
         public const double CAR_HALF_LENGTH = 0.5;
         public const double CAR_HALF_WIDTH = 0.22;
 
@@ -294,19 +295,33 @@ namespace Porchlight.Explore
         const int PAVED_CELLS = 4;
 
         /// <summary>True on what's drawn as road (to the sidewalk's outer edge, which on a bridge is inside its parapets), a cul-de-sac's bulb or a path: a fine grid of cells, each paved if its middle is.</summary>
-        public static Func<double, double, bool> Paved(TownModel model, IsoLayout layout)
+        public static Func<double, double, bool> Paved(TownModel model, IsoLayout layout) =>
+            Stepwise.Drain<Func<double, double, bool>>(done => PavedSteps(model, layout, done));
+
+        /// <summary>Cells of road tested between one share of the work and the next (Porchlight's every road at once was a tenth of a second on the web).</summary>
+        const int PAVED_CELLS_A_STEP = 150000;
+
+        /// <summary>The same, a share at a time (for the web, which has no threads), then `done` with it.</summary>
+        public static IEnumerable<string> PavedSteps(TownModel model, IsoLayout layout, Action<Func<double, double, bool>> done)
         {
             int cw = model.width * PAVED_CELLS, ch = model.height * PAVED_CELLS;
             var cells = new byte[cw * ch];
-            void Mark(IReadOnlyList<Vec2> pts, double half)
+            int tested = 0;
+            IEnumerable<string> Mark(IReadOnlyList<Vec2> pts, double half)
             {
                 for (int k = 0; k + 1 < pts.Count; k++)
                 {
+                    if (tested > PAVED_CELLS_A_STEP)
+                    {
+                        tested = 0;
+                        yield return "paved";
+                    }
                     Vec2 a = pts[k], b = pts[k + 1];
                     int x0 = Math.Max(0, (int)Math.Floor((Math.Min(a.x, b.x) - half) * PAVED_CELLS));
                     int x1 = Math.Min(cw - 1, (int)Math.Floor((Math.Max(a.x, b.x) + half) * PAVED_CELLS));
                     int y0 = Math.Max(0, (int)Math.Floor((Math.Min(a.y, b.y) - half) * PAVED_CELLS));
                     int y1 = Math.Min(ch - 1, (int)Math.Floor((Math.Max(a.y, b.y) + half) * PAVED_CELLS));
+                    tested += (y1 - y0 + 1) * (x1 - x0 + 1);
                     for (int cy = y0; cy <= y1; cy++)
                         for (int cx = x0; cx <= x1; cx++)
                         {
@@ -318,14 +333,15 @@ namespace Porchlight.Explore
                 }
             }
             foreach (var r in layout.roads)
-                Mark(r.points, r.kind == RoadKind.Path ? r.width / 2 : r.width / 2 + Layout.PARKING + Layout.SIDEWALK);
+                foreach (var step in Mark(r.points, r.kind == RoadKind.Path ? r.width / 2 : r.width / 2 + Layout.PARKING + Layout.SIDEWALK)) yield return step;
             double bulb = Raster.BulbReach(model.@params);
-            foreach (var b in layout.bulbs) Mark(new[] { b.at, b.at }, bulb);
-            return (x, y) =>
+            foreach (var b in layout.bulbs)
+                foreach (var step in Mark(new[] { b.at, b.at }, bulb)) yield return step;
+            done((x, y) =>
             {
                 int cx = (int)Math.Floor(x * PAVED_CELLS), cy = (int)Math.Floor(y * PAVED_CELLS);
                 return cx >= 0 && cy >= 0 && cx < cw && cy < ch && cells[cy * cw + cx] == 1;
-            };
+            });
         }
 
         static Func<double, double, bool> Lookup(byte[] ok, int w, int h) => (x, y) =>

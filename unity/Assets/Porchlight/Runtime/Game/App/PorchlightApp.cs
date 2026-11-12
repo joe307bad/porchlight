@@ -609,8 +609,23 @@ namespace Porchlight.App
         {
             QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = 60;
-            var placed = new List<PlacedTown> { new PlacedTown { place = Place.Porchlight, name = "Porchlight", key = TownKey, width = model.width, height = model.height } };
+            // PORCHLIGHT_SMOKE_PORCHLIGHT: Porchlight's key, when the town on screen is another (PORCHLIGHT_SMOKE_KEY):
+            // that one's your middle town up north, and you start there.
+            var porchKey = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_PORCHLIGHT");
+            bool startNorth = !string.IsNullOrEmpty(porchKey);
+            var porch = startNorth ? ParseUrlState(porchKey).@params : @params;
+            var placed = new List<PlacedTown> { new PlacedTown { place = Place.Porchlight, name = "Porchlight", key = startNorth ? porchKey : TownKey, width = (int)porch.width, height = (int)porch.height } };
             placed.AddRange(CountyMap.Cities);
+            // PORCHLIGHT_SMOKE_NORTH=1: your own towns up north too, and the drive is out to the middle one and back
+            // down through the junction into Porchlight (the biggest town, met at speed).
+            bool north = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_NORTH") == "1";
+            if (north)
+            {
+                placed.Add(new PlacedTown { place = Place.Mine1, name = "Mine one", key = "seed=mine-one&width=160&height=160&waterFraction=0.08&townRadius=0.45&roadDensity=0.8&buildingDensity=0.8", width = 160, height = 160 });
+                placed.Add(startNorth
+                    ? new PlacedTown { place = Place.Mine2, name = "Mine two", key = TownKey, width = model.width, height = model.height }
+                    : new PlacedTown { place = Place.Mine2, name = "Mine two", key = "seed=mine-two&width=192&height=176&waterFraction=0.06&townRadius=0.45&roadDensity=0.9&buildingDensity=0.9&innerCity=0.5", width = 192, height = 176 });
+            }
             var plan = CountyMap.Build(placed, "smoke");
             var start = plan.spaces.Find(sp => sp.kind == SpaceKind.Town && sp.townKey == TownKey);
             county = new CountyDrive(iso, plan, start, k =>
@@ -618,15 +633,21 @@ namespace Porchlight.App
                 var st = ParseUrlState(k);
                 return (st.seed, st.@params);
             })
-            { OnSpace = DroveInto, Heading = TripNextTown };
+            { OnSpace = DroveInto, Heading = TripNextTown, Log = m => Debug.Log("smoke drive: " + m) };
             overlay?.SetCounty(plan, county.Terrain, WhereInCounty, TripWay, null);
             double t0 = platform.Now();
             while (platform.Now() < t0 + 4000) await Task.Yield();
+            if (north && Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_CAR") == "1")
+            {
+                await SmokeCarDrive(plan);
+                return;
+            }
             double speed = double.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_SPEED"), out var sp0) ? sp0 : 35;
             // Round the county as many times as PORCHLIGHT_SMOKE_ROUNDS says (once by default): what's built for
             // the towns behind has to be let go, or a long drive runs the web build out of memory.
             int rounds = int.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_ROUNDS"), out var r0) ? Math.Max(1, r0) : 1;
-            var legs = Enumerable.Repeat(new[] { Place.East, Place.South, Place.West, Place.Porchlight, Place.South }, rounds).SelectMany(x => x);
+            var round = north ? new[] { Place.Mine2, Place.Porchlight } : new[] { Place.East, Place.South, Place.West, Place.Porchlight, Place.South };
+            var legs = Enumerable.Repeat(round, rounds).SelectMany(x => x);
             int leg = 0;
             var roundEnds = new List<(int made, int all)>();
             foreach (var to in legs)
@@ -640,6 +661,7 @@ namespace Porchlight.App
                 way.Add(new Vec2(dest.x0 + dest.width / 2.0, dest.y0 + dest.height / 2.0));
                 Debug.Log($"smoke drive: from {county.Active.name} to {dest.name} at {speed} tiles/s, {way.Count} points");
                 double waited = 0, longest = 0, legStart = platform.Now(), last = legStart;
+                long peak = 0;
                 int frames = 0, slow = 0;
                 for (int i = 1; i < way.Count; i++)
                 {
@@ -654,6 +676,7 @@ namespace Porchlight.App
                         if (now - last > 50) slow++;
                         last = now;
                         frames++;
+                        peak = Math.Max(peak, UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() + UnityEngine.Profiling.Profiler.GetMonoHeapSizeLong());
                         if (county.Waiting != null)
                         {
                             waited += dt;
@@ -664,8 +687,8 @@ namespace Porchlight.App
                         iso.PutPlayer(county.Active.ToLocal(w), 0);
                     }
                 }
-                Debug.Log($"smoke drive: in {county.Active.name} after {(platform.Now() - legStart) / 1000:0.0} s, waited {waited:0.0} s at edges, {frames} frames, {slow} over 50 ms, longest {longest:0} ms; {SmokeMemory()}");
-                if (++leg % 5 == 0) roundEnds.Add((MeshBuilder.MadeCount, Resources.FindObjectsOfTypeAll<Mesh>().Length));
+                Debug.Log($"smoke drive: in {county.Active.name} after {(platform.Now() - legStart) / 1000:0.0} s, waited {waited:0.0} s at edges, {frames} frames, {slow} over 50 ms, longest {longest:0} ms; peak {peak / (double)(1 << 20):0} MB reserved; {SmokeMemory()}");
+                if (++leg % round.Length == 0) roundEnds.Add((MeshBuilder.MadeCount, Resources.FindObjectsOfTypeAll<Mesh>().Length));
             }
             // The same place each round, so the same towns built round it: as many meshes each time, or some are kept.
             if (roundEnds.Count > 1)
@@ -675,6 +698,7 @@ namespace Porchlight.App
                 leaks = made1 > made0 * 1.1 + 50 || all1 > all0 * 1.1 + 50;
                 Debug.Log($"smoke drive: {(leaks ? "LEAKS" : "no leak")}: after round 1, {made0} meshes made at runtime ({all0} in all); after round {roundEnds.Count}, {made1} ({all1})");
             }
+            if (north) return;
             // The county map: a town picked, its line, directions there.
             var west = plan.towns[Place.West];
             Debug.Log($"smoke county: describe {DescribeTown(west)} / {DescribeTown(county.Active)}");
@@ -707,6 +731,108 @@ namespace Porchlight.App
             Debug.Log($"smoke county: travelled to {east.name}: town {(TownKey == east.townKey ? "is" : "ISN'T")} {east.name}, exploring {exploring}, player {iso.PlayerPosition}, trip {iso.OnTrip}");
         }
 
+        /// <summary>
+        /// The north drive in a car (PORCHLIGHT_SMOKE_CAR=1 with PORCHLIGHT_SMOKE_NORTH=1): at the wheel, in the close
+        /// camera, flat out on boost up the highway to your middle town and back down through the junction into
+        /// Porchlight, steered along the county's way (CountyRoute) as a player would. Each leg says how long it took,
+        /// how long it was held at an edge, whether it got stuck, its longest frames, and how far down the camera
+        /// ever looked (a camera staring at the ground is what was seen coming into Porchlight on the web).
+        /// </summary>
+        async Task SmokeCarDrive(CountyMap plan)
+        {
+            int rounds = int.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_ROUNDS"), out var r0) ? Math.Max(1, r0) : 1;
+            int carModel = Enumerable.Range(0, Porchlight.Explore.Catalog.CARS.Length).First(Porchlight.Explore.Catalog.IsCar);
+            iso.SetCameraMode(CameraMode.Close);
+            double worstDown = 0;
+            for (int round = 0; round < rounds; round++)
+                foreach (var to in county.Active.place == Place.Mine2 ? new[] { Place.Porchlight, Place.Mine2 } : new[] { Place.Mine2, Place.Porchlight })
+                {
+                    var dest = plan.towns[to];
+                    var here = county.Active;
+                    var centre = new Vec2(here.x0 + here.width / 2.0, here.y0 + here.height / 2.0);
+                    var gate = CountyRoute.Next(plan, here, centre, dest);
+                    if (gate == null)
+                    {
+                        Debug.Log($"smoke car: FAIL no way from {here.name} to {dest.name}");
+                        return;
+                    }
+                    // Just inside the gate it leaves by, at the wheel.
+                    var inward = new Vec2(centre.x - gate.Value.at.x, centre.y - gate.Value.at.y);
+                    double il = Math.Max(1e-6, Numbers.Hypot(inward.x, inward.y));
+                    var start = new Vec2(gate.Value.at.x + inward.x / il * 6, gate.Value.at.y + inward.y / il * 6);
+                    iso.PutPlayer(here.ToLocal(start), 0);
+                    for (int i = 0; i < 5; i++) await Task.Yield();
+                    if (!iso.TakeWheel(carModel) || iso.DrivenCar == null)
+                    {
+                        Debug.Log($"smoke car: FAIL no car at the {gate.Value.name}");
+                        return;
+                    }
+                    for (int i = 0; i < 30; i++) await Task.Yield();
+                    var car = iso.DrivenCar;
+                    Vec2 Pos() => county.Active.ToWorld(new Vec2(car.x, car.y));
+                    var way = new List<Vec2> { Pos(), gate.Value.at };
+                    way.AddRange(CountyRoute.Ahead(plan, here, gate.Value.at, dest, double.PositiveInfinity));
+                    // On into the town a way, along the road it came in by.
+                    var last = way[way.Count - 1];
+                    var before = way[way.Count - 2];
+                    double ll = Math.Max(1e-6, Geo.Dist(before, last));
+                    way.Add(new Vec2(last.x + (last.x - before.x) / ll * 15, last.y + (last.y - before.y) / ll * 15));
+                    int next = 1, stuck = 0;
+                    double stuckSince = -1, reverseUntil = -1;
+                    iso.Autopilot = () =>
+                    {
+                        if (iso.DrivenCar != car) return null;
+                        var at = Pos();
+                        while (next < way.Count - 1 && Geo.Dist(at, way[next]) < 6) next++;
+                        var t = way[next];
+                        double want = Math.Atan2(t.y - at.y, t.x - at.x);
+                        double diff = Math.IEEERemainder(want - car.heading, Math.PI * 2);
+                        double now = platform.Now();
+                        if (now < reverseUntil) return (-1, -Math.Sign(diff), false);
+                        if (county.Waiting == null && Math.Abs(car.speed) < 0.3)
+                        {
+                            if (stuckSince < 0) stuckSince = now;
+                            else if (now - stuckSince > 1500)
+                            {
+                                stuck++;
+                                reverseUntil = now + 900;
+                                stuckSince = -1;
+                            }
+                        }
+                        else stuckSince = -1;
+                        bool sharp = Math.Abs(diff) > 0.6;
+                        return (sharp ? 0.4 : 1, diff * 3, !sharp);
+                    };
+                    double legStart = platform.Now(), last0 = legStart, longest = 0, waited = 0, minDown = 0, fastest = 0;
+                    int frames = 0, slow = 0, staring = 0;
+                    string worstAt = null;
+                    while (Geo.Dist(Pos(), way[way.Count - 1]) > 4 && platform.Now() - legStart < 120000)
+                    {
+                        await Task.Yield();
+                        double now = platform.Now();
+                        longest = Math.Max(longest, now - last0);
+                        if (now - last0 > 50) slow++;
+                        if (county.Waiting != null) waited += (now - last0) / 1000;
+                        last0 = now;
+                        frames++;
+                        fastest = Math.Max(fastest, Math.Abs(car.speed));
+                        var f = iso.CameraForward;
+                        if (f.y < minDown)
+                        {
+                            minDown = f.y;
+                            worstAt = $"{county.Active.name} at {Pos()}, {car.speed:0.0} tiles/s{(county.Waiting != null ? ", held at an edge" : "")}";
+                        }
+                        // Looking more than 60° down: staring at the ground, in the close camera.
+                        if (f.y < -0.87) staring++;
+                    }
+                    iso.Autopilot = null;
+                    bool there = county.Active == dest;
+                    worstDown = Math.Min(worstDown, minDown);
+                    Debug.Log($"smoke car: {(there ? "" : "FAIL ")}from {here.name} to {dest.name}: {(there ? "in it" : "NOT in it, in " + county.Active.name)} after {(platform.Now() - legStart) / 1000:0.0} s, fastest {fastest:0.0} tiles/s, waited {waited:0.0} s at edges, stuck {stuck} times, {frames} frames, {slow} over 50 ms, longest {longest:0} ms; the camera looked down at most {Math.Asin(-minDown) * 180 / Math.PI:0}° ({worstAt}), {staring} frames staring at the ground; {SmokeMemory()}");
+                }
+            Debug.Log($"smoke car: done, the camera's steepest {Math.Asin(-worstDown) * 180 / Math.PI:0}° down");
+        }
+
         /// <summary>How much memory the game holds (the web build has at most 4 GB, and the tab dies past it), and how many spaces are built.</summary>
         string SmokeMemory()
         {
@@ -723,6 +849,13 @@ namespace Porchlight.App
         /// <summary>A headless run through the app (PORCHLIGHT_SMOKE=1): explore, walk a while, back to the map, quit.</summary>
         async Task Smoke()
         {
+            // PORCHLIGHT_SMOKE_KEY: a town's key (server/towns/*.json) to start in, e.g. Porchlight's own.
+            var smokeKey = Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_KEY");
+            if (!string.IsNullOrEmpty(smokeKey))
+            {
+                var st = ParseUrlState(smokeKey);
+                Regenerate(st.seed, st.@params);
+            }
             Debug.Log($"smoke: town {seed}: {statusLabel.text}");
             await Explore();
             // Trash day on its own (PORCHLIGHT_SMOKE_TRASH: its story as the server compiles it): quits 0 if it passed.

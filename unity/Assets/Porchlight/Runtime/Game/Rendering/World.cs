@@ -183,7 +183,7 @@ namespace Porchlight.Rendering
         readonly List<Signpost> plannedSigns;
 
         /// <summary>Rooms furnished, doors hung and signposts put up between one part and the next: each part a few milliseconds.</summary>
-        const int ROOMS_A_PART = 16, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 250;
+        const int HOUSES_A_PART = 250, ROOMS_A_PART = 16, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 250;
         /// <summary>Rows of tiles planted, sidewalks lit, meshes surveyed for the weather and walls kept clear of doorways, between one part and the next.</summary>
         const int TREE_ROWS_A_PART = 24, LAMP_PATHS_A_PART = 40, SURVEY_A_PART = 400, WALLS_A_PART = 300;
 
@@ -214,7 +214,7 @@ namespace Porchlight.Rendering
             yield return "water";
             // The town's longest part: its streets' shapes worked out off the main thread where there are
             // threads, and only the mesh made here.
-            MeshBuilder roads = null;
+            List<MeshBuilder> roads = null;
 #if !NO_THREADS
             var drawing = Task.Run(BuildRoads);
             while (!drawing.IsCompleted) yield return "roads" + WAITING;
@@ -222,10 +222,15 @@ namespace Porchlight.Rendering
 #else
             foreach (var part in RoadSteps(r => roads = r)) yield return part;
 #endif
-            roads.Build("roads", still);
-            yield return "roads";
+            // A mesh for each layer, each made in a part of its own (Porchlight's streets as one mesh took a tenth of a second).
+            foreach (var layer in roads)
+            {
+                if (layer.Empty) continue;
+                layer.Build("roads", still);
+                yield return "roads";
+            }
             var sheds = new MeshBuilder(palette);
-            AddHouses(rng);
+            foreach (var part in AddHouses(rng, HOUSES_A_PART)) yield return "houses" + part;
             yield return "houses";
             // Rooms are furnished from a stream of their own, so the rest of the town doesn't move when they change.
             foreach (var part in Furnish(new Rng($"{model.seed}::rooms"), ROOMS_A_PART)) yield return "furnishing" + part;
@@ -403,7 +408,15 @@ namespace Porchlight.Rendering
         {
             // Its own meshes noted while there's still something drawing them (rooms furnished since it was built too).
             Own();
-            foreach (var i in interiors.Values) i.Dispose();
+            yield return 0;
+            // The rooms a share at a time too: what's destroyed goes at the end of the frame, and Porchlight's
+            // every room at once (tens of thousands of pieces of furniture) was a long frame.
+            int rooms = 0;
+            foreach (var i in interiors.Values)
+            {
+                i.Dispose();
+                if (++rooms % INTERIORS_A_PART == 0) yield return 0;
+            }
             interiors.Clear();
             yield return 0;
             // Deepest first, so each piece goes before what it hangs from.
@@ -415,8 +428,21 @@ namespace Porchlight.Rendering
                 if (++done % perPart == 0) yield return done / perPart;
             }
             UnityEngine.Object.Destroy(root);
-            FreeOwned();
+            yield return 0;
+            // Its meshes, a share at a time.
+            int freed = 0;
+            foreach (var m in owned)
+            {
+                if (MeshBuilder.Made(m)) MeshBuilder.Free(m);
+                else if (m != null) UnityEngine.Object.Destroy(m);
+                if (++freed % perPart == 0) yield return 0;
+            }
+            owned.Clear();
+            palette.Dispose();
         }
+
+        /// <summary>Rooms taken apart between one part and the next (each a few dozen pieces).</summary>
+        const int INTERIORS_A_PART = 24;
 
         static int Darker(int c, double k) =>
             (Numbers.RoundInt(((c >> 16) & 255) * k) << 16) | (Numbers.RoundInt(((c >> 8) & 255) * k) << 8) | Numbers.RoundInt((c & 255) * k);
@@ -526,24 +552,35 @@ namespace Porchlight.Rendering
             r.shadowCastingMode = ShadowCastingMode.Off;
         }
 
-        MeshBuilder BuildRoads() => Gen.Stepwise.Drain<MeshBuilder>(RoadSteps);
+        List<MeshBuilder> BuildRoads() => Gen.Stepwise.Drain<List<MeshBuilder>>(RoadSteps);
 
         /// <summary>Streets dashed between one part and the next (RoadSteps).</summary>
         const int STREETS_A_PART = 64, GROUND_ROWS_A_PART = 32;
 
         /// <summary>The streets' mesh, a layer at a time (for the web, with no threads), then `done` with it.</summary>
-        IEnumerable<string> RoadSteps(Action<MeshBuilder> done)
+        IEnumerable<string> RoadSteps(Action<List<MeshBuilder>> done)
         {
-            var b = new MeshBuilder(palette);
+            // Each layer of the streets in a builder (and so a mesh) of its own.
+            var builders = new List<MeshBuilder>();
+            MeshBuilder b = null;
+            void Next()
+            {
+                b = new MeshBuilder(palette);
+                builders.Add(b);
+            }
+            Next();
             var streets = layout.roads.Where(r => r.kind != RoadKind.Path).ToList();
             bool InMap(Vec2 p) => p.x > 0.01 && p.y > 0.01 && p.x < model.width - 0.01 && p.y < model.height - 0.01;
             // A cul-de-sac's end widens into its bulb.
             double bulb = Gen.Raster.BulbRadius(model.@params);
             bool Bulb(RoadStroke r, bool atEnd) => layout.bulbs.Exists(q => layout.roads[q.edge] == r && q.atEnd == atEnd);
-            void Layer(double y, double extra, int color)
+            // A share of the streets at a time (Porchlight's every street in one layer was tens of milliseconds on the web).
+            IEnumerable<string> Layer(double y, double extra, int color)
             {
+                int laid = 0;
                 foreach (var r in streets)
                 {
+                    if (++laid % STREETS_A_PART == 0) yield return "roads";
                     b.Ribbon(r.points, r.width + extra, y, color);
                     foreach (bool atEnd in new[] { false, true })
                     {
@@ -566,16 +603,22 @@ namespace Porchlight.Rendering
             // Out from the middle: the asphalt, a parking lane each side (a shade
             // lighter, edged with a thin line), the kerb, then the sidewalk.
             double park = Layout.PARKING * 2;
-            Layer(0.012, park + Layout.SIDEWALK * 2 + 0.1, C.curb);
+            Next();
+            foreach (var part in Layer(0.012, park + Layout.SIDEWALK * 2 + 0.1, C.curb)) yield return part;
             yield return "roads";
-            Layer(0.016, park + Layout.SIDEWALK * 2, C.sidewalk);
+            Next();
+            foreach (var part in Layer(0.016, park + Layout.SIDEWALK * 2, C.sidewalk)) yield return part;
             yield return "roads";
-            Layer(0.02, park + 0.08, C.curb);
+            Next();
+            foreach (var part in Layer(0.02, park + 0.08, C.curb)) yield return part;
             yield return "roads";
-            Layer(0.023, park, C.parking);
+            Next();
+            foreach (var part in Layer(0.023, park, C.parking)) yield return part;
             yield return "roads";
-            Layer(0.026, 0, C.asphalt);
+            Next();
+            foreach (var part in Layer(0.026, 0, C.asphalt)) yield return part;
             yield return "roads";
+            Next();
             foreach (var r in streets)
             {
                 // Stopping short of the junctions, as the centre line does.
@@ -586,6 +629,7 @@ namespace Porchlight.Rendering
                 foreach (int side in new[] { 1, -1 }) b.Ribbon(Layout.OffsetPolyline(middle, side * r.width / 2), 0.04, 0.028, C.lane);
             }
             yield return "roads";
+            Next();
             foreach (var r in layout.roads.Where(rd => rd.kind == RoadKind.Path))
             {
                 b.Ribbon(r.points, r.width, 0.012, C.path);
@@ -620,7 +664,7 @@ namespace Porchlight.Rendering
                 }
                 Flush();
             }
-            done(b);
+            done(builders);
         }
     }
 }
