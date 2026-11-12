@@ -130,6 +130,8 @@ namespace Porchlight.App
         Built job;
         /// <summary>Spaces let go, being taken apart a share a frame (TownWorld.DisposeSteps).</summary>
         readonly List<IEnumerator<string>> retiring = new List<IEnumerator<string>>();
+        int retireNext;
+        const double RETIRE_MS = 3;
         Space active;
         readonly GameObject countryside;
         string wantRoom;
@@ -393,19 +395,24 @@ namespace Porchlight.App
             b.world = null;
         }
 
-        /// <summary>A share of what's being let go: a part of each a frame.</summary>
+        /// <summary>A share of what's being let go: a few milliseconds' worth a frame, each in turn.</summary>
         void Retire()
         {
+            // A share of one at a time, round them all: several let go at once (a town and the stretches of road
+            // round it), each its share every frame, were a frame of well over 100 ms. Only walking a town's tree
+            // goes on for a few milliseconds more: what's destroyed is paid for at the end of the frame, where
+            // timing here doesn't see it, so one share of that a frame.
             double t0 = Now;
             string last = null;
-            for (int i = retiring.Count - 1; i >= 0; i--)
+            while (retiring.Count > 0 && (last == null || last == "walk" && Now - t0 < RETIRE_MS))
             {
-                if (!retiring[i].MoveNext())
+                retireNext %= retiring.Count;
+                if (!retiring[retireNext].MoveNext())
                 {
-                    retiring.RemoveAt(i);
+                    retiring.RemoveAt(retireNext);
                     last = "palette";
                 }
-                else last = retiring[i].Current;
+                else last = retiring[retireNext++].Current;
             }
             if (Now - t0 > 20) Log?.Invoke($"slow step: letting go ({last}) {Now - t0:0} ms");
         }

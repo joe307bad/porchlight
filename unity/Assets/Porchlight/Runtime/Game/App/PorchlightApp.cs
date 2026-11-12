@@ -806,15 +806,22 @@ namespace Porchlight.App
                         return (sharp ? 0.4 : 1, diff * 3, !sharp);
                     };
                     double legStart = platform.Now(), last0 = legStart, longest = 0, waited = 0, minDown = 0, maxDown = -1, fastest = 0;
-                    int frames = 0, slow = 0, staring = 0;
+                    int frames = 0, slow = 0, staring = 0, gcs = GC.CollectionCount(0), gcsAtStart = gcs, slowWithGc = 0;
                     string worstAt = null;
                     while (Geo.Dist(Pos(), way[way.Count - 1]) > 4 && platform.Now() - legStart < 120000)
                     {
                         await Task.Yield();
                         double now = platform.Now();
                         longest = Math.Max(longest, now - last0);
-                        if (now - last0 > 50) slow++;
-                        if (now - last0 > 100) Debug.Log($"smoke car: long frame {now - last0:0} ms, {(now - legStart) / 1000:0.0} s in, in {county.Active.name}, building {county.Building ?? "nothing"}{(county.Waiting != null ? ", held at an edge" : "")}");
+                        int gcNow = GC.CollectionCount(0);
+                        bool collected = gcNow != gcs;
+                        gcs = gcNow;
+                        if (now - last0 > 50)
+                        {
+                            slow++;
+                            if (collected) slowWithGc++;
+                        }
+                        if (now - last0 > 100) Debug.Log($"smoke car: long frame {now - last0:0} ms, {(now - legStart) / 1000:0.0} s in, in {county.Active.name}, building {county.Building ?? "nothing"}{(county.Waiting != null ? ", held at an edge" : "")}{(collected ? ", a garbage collection" : "")}, managed {GC.GetTotalMemory(false) >> 20} MB");
                         if (county.Waiting != null) waited += (now - last0) / 1000;
                         last0 = now;
                         frames++;
@@ -833,7 +840,7 @@ namespace Porchlight.App
                     bool there = county.Active == dest;
                     worstDown = Math.Min(worstDown, minDown);
                     worstUp = Math.Max(worstUp, maxDown);
-                    Debug.Log($"smoke car: {(there ? "" : "FAIL ")}from {here.name} to {dest.name}: {(there ? "in it" : "NOT in it, in " + county.Active.name)} after {(platform.Now() - legStart) / 1000:0.0} s, fastest {fastest:0.0} tiles/s, waited {waited:0.0} s at edges, stuck {stuck} times, {frames} frames, {slow} over 50 ms, longest {longest:0} ms; the camera ({(isoCamera ? "iso" : "close")}) looked down {Math.Asin(-maxDown) * 180 / Math.PI:0}° to {Math.Asin(-minDown) * 180 / Math.PI:0}° ({worstAt}), {staring} frames staring at the ground; {SmokeMemory()}");
+                    Debug.Log($"smoke car: {(there ? "" : "FAIL ")}from {here.name} to {dest.name}: {(there ? "in it" : "NOT in it, in " + county.Active.name)} after {(platform.Now() - legStart) / 1000:0.0} s, fastest {fastest:0.0} tiles/s, waited {waited:0.0} s at edges, stuck {stuck} times, {frames} frames, {slow} over 50 ms ({slowWithGc} with a garbage collection, of {gcs - gcsAtStart} on the way), longest {longest:0} ms; the camera ({(isoCamera ? "iso" : "close")}) looked down {Math.Asin(-maxDown) * 180 / Math.PI:0}° to {Math.Asin(-minDown) * 180 / Math.PI:0}° ({worstAt}), {staring} frames staring at the ground; {SmokeMemory()}");
                 }
             Debug.Log($"smoke car: done, the camera ({(isoCamera ? "iso" : "close")}) between {Math.Asin(-worstUp) * 180 / Math.PI:0}° and {Math.Asin(-worstDown) * 180 / Math.PI:0}° down");
         }

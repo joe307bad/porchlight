@@ -182,8 +182,12 @@ namespace Porchlight.Rendering
 
         readonly List<Signpost> plannedSigns;
 
+        /// <summary>How long a step of rooms' interiors may run before it stops for the frame.</summary>
+        const int ROOMS_MS = 6;
+        readonly System.Diagnostics.Stopwatch roomsSince = new System.Diagnostics.Stopwatch();
+
         /// <summary>Rooms furnished, doors hung and signposts put up between one part and the next: each part a few milliseconds.</summary>
-        const int HOUSES_A_PART = 250, ROOMS_A_PART = 16, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 120;
+        const int HOUSES_A_PART = 250, ROOMS_A_PART = 16, DOORS_A_PART = 64, SIGNS_A_PART = 12, BATCH_A_PART = 120, BATCH_CORNERS = 24000;
         /// <summary>Rows of tiles planted, sidewalks lit, meshes surveyed for the weather and walls kept clear of doorways, between one part and the next.</summary>
         const int TREE_ROWS_A_PART = 24, LAMP_PATHS_A_PART = 40, SURVEY_A_PART = 400, WALLS_A_PART = 300;
 
@@ -199,7 +203,7 @@ namespace Porchlight.Rendering
             var rng = new Rng($"{model.seed}::iso");
             // The ground's tiles worked out off the main thread too, where there are threads (waited for, so
             // the town's random numbers come out in the same order).
-            MeshBuilder ground = null;
+            List<MeshBuilder> ground = null;
 #if !NO_THREADS
             var laying = Task.Run(() => BuildGround(rng));
             while (!laying.IsCompleted) yield return "ground" + WAITING;
@@ -208,8 +212,14 @@ namespace Porchlight.Rendering
             // No threads on the web: a share of the rows a frame (a whole town's ground at once stalled the car).
             foreach (var part in GroundSteps(rng, g => ground = g)) yield return part;
 #endif
-            ground.Build("ground", still);
-            yield return "ground";
+            // A band of rows a mesh, each made in a step of its own: Porchlight's ground as one mesh (a quarter of
+            // a million corners) was a frame of well over 100 ms on the web.
+            foreach (var band in ground)
+            {
+                if (band.Empty) continue;
+                band.Build("ground", still);
+                yield return "ground";
+            }
             AddWater();
             yield return "water";
             // The town's longest part: its streets' shapes worked out off the main thread where there are
@@ -241,8 +251,15 @@ namespace Porchlight.Rendering
             const int ROOMS_A_STEP = 32;
             for (int i = 0; i < rooms.Count; i++)
             {
+                // So many rooms a step, or fewer when they're big ones (a tower's floors of flats): a step's time is
+                // what counts, and 32 of Porchlight's were 100 ms at worst.
+                if (i % ROOMS_A_STEP == 0) roomsSince.Restart();
                 InteriorOf(i);
-                if (i % ROOMS_A_STEP == ROOMS_A_STEP - 1) yield return "interiors" + i / ROOMS_A_STEP;
+                if (i % ROOMS_A_STEP == ROOMS_A_STEP - 1 || roomsSince.ElapsedMilliseconds > ROOMS_MS)
+                {
+                    yield return "interiors" + i / ROOMS_A_STEP;
+                    roomsSince.Restart();
+                }
             }
             yield return "interiors";
             foreach (var part in AddYards(sheds, rng)) yield return "yards" + (part < 0 ? "" : part.ToString());
@@ -274,13 +291,36 @@ namespace Porchlight.Rendering
             // Combined a share at a time (each share its own batches), not the whole town in one frame. Its own
             // meshes noted first: once batched, what draws them shows the batch instead.
             Own();
-            var parts = still.GetComponentsInChildren<MeshRenderer>().Select(r => r.gameObject).ToArray();
-            for (int i = 0; i < parts.Length; i += BATCH_A_PART)
+            yield return "batching-";
+            var parts = still.GetComponentsInChildren<MeshFilter>();
+            yield return "batching-";
+            // A share is so many pieces or so many corners, whichever comes first: combining costs by the corner,
+            // and a share of Porchlight's towers (a hundred-odd, many floors each) was over 100 ms a frame.
+            var share = new List<MeshFilter>();
+            int corners = 0, shares = 0;
+            void Combine()
             {
-                StaticBatchingUtility.Combine(parts.Skip(i).Take(BATCH_A_PART).ToArray(), still.gameObject);
-                if (i + BATCH_A_PART < parts.Length) yield return "batching" + i / BATCH_A_PART;
+                StaticBatchingUtility.Combine(share.Select(f => f.gameObject).ToArray(), still.gameObject);
+                // The batches it made: the town's own, freed with it.
+                foreach (var f in share)
+                {
+                    var b = f.sharedMesh;
+                    if (b != null && b.name.StartsWith("Combined Mesh", StringComparison.Ordinal)) owned.Add(b);
+                }
+                share.Clear();
+                corners = 0;
             }
-            Own();
+            foreach (var f in parts)
+            {
+                var m = f.sharedMesh;
+                if (m == null) continue;
+                share.Add(f);
+                corners += m.vertexCount;
+                if (share.Count < BATCH_A_PART && corners < BATCH_CORNERS) continue;
+                Combine();
+                yield return "batching" + shares++;
+            }
+            if (share.Count > 0) Combine();
             yield return "batching";
         }
 
@@ -426,7 +466,7 @@ namespace Porchlight.Rendering
                 var m = f != null ? f.sharedMesh : null;
                 if (m != null && (MeshBuilder.Made(m) || m.name.StartsWith("Combined Mesh", StringComparison.Ordinal))) owned.Add(m);
                 for (int c = 0; c < t.childCount; c++) open.Push(t.GetChild(c));
-                if (++walked % (perPart * 5) == 0) yield return "walk";
+                if (++walked % (perPart * 2) == 0) yield return "walk";
             }
             yield return "walk";
             // The rooms a share at a time too: what's destroyed goes at the end of the frame, and Porchlight's
@@ -488,14 +528,15 @@ namespace Porchlight.Rendering
 
         // Ground --------------------------------------------------------------------------------
 
-        MeshBuilder BuildGround(Rng rng) => Gen.Stepwise.Drain<MeshBuilder>(done => GroundSteps(rng, done));
+        List<MeshBuilder> BuildGround(Rng rng) => Gen.Stepwise.Drain<List<MeshBuilder>>(done => GroundSteps(rng, done));
 
-        /// <summary>The ground's mesh, a share of its rows at a time (for the web, with no threads), then `done` with it.</summary>
-        IEnumerable<string> GroundSteps(Rng rng, Action<MeshBuilder> done)
+        /// <summary>The ground's meshes (a band of rows each), a share of its rows at a time (for the web, with no threads), then `done` with them.</summary>
+        IEnumerable<string> GroundSteps(Rng rng, Action<List<MeshBuilder>> done)
         {
             var tiles = model.tiles;
             int w = model.width, h = model.height;
-            var b = new MeshBuilder(palette);
+            var bands = new List<MeshBuilder>();
+            MeshBuilder b = null;
             bool Wet(int x, int y) => Grid.InBounds(x, y, w, h) && IsWaterTerrain(tiles.terrain[Grid.Index(x, y, w)]);
             int Jitter(int c, double amount)
             {
@@ -508,6 +549,11 @@ namespace Porchlight.Rendering
             for (int y = 0; y < h; y++)
             {
                 if (y % GROUND_ROWS_A_PART == GROUND_ROWS_A_PART - 1) yield return "ground" + y / GROUND_ROWS_A_PART;
+                if (y % GROUND_ROWS_A_MESH == 0)
+                {
+                    b = new MeshBuilder(palette);
+                    bands.Add(b);
+                }
                 for (int x = 0; x < w; x++)
                 {
                     int i = Grid.Index(x, y, w);
@@ -539,14 +585,19 @@ namespace Porchlight.Rendering
             }
             if (inCounty)
             {
-                done(b); // the countryside carries on
+                done(bands); // the countryside carries on
                 yield break;
+            }
+            if (b == null)
+            {
+                b = new MeshBuilder(palette);
+                bands.Add(b);
             }
             b.Quad(v(0, 0, 0), v(w, 0, 0), v(w, -SLAB, 0), v(0, -SLAB, 0), C.slab, new V3(0, 0, -1));
             b.Quad(v(0, 0, h), v(w, 0, h), v(w, -SLAB, h), v(0, -SLAB, h), C.slab, new V3(0, 0, 1));
             b.Quad(v(0, 0, 0), v(0, 0, h), v(0, -SLAB, h), v(0, -SLAB, 0), C.slab, new V3(-1, 0, 0));
             b.Quad(v(w, 0, 0), v(w, 0, h), v(w, -SLAB, h), v(w, -SLAB, 0), C.slab, new V3(1, 0, 0));
-            done(b);
+            done(bands);
         }
 
         /// <summary>The water's surface: glossy, so it catches the sky and the sun.</summary>
@@ -575,7 +626,7 @@ namespace Porchlight.Rendering
         List<MeshBuilder> BuildRoads() => Gen.Stepwise.Drain<List<MeshBuilder>>(RoadSteps);
 
         /// <summary>Streets dashed between one part and the next (RoadSteps).</summary>
-        const int STREETS_A_PART = 64, GROUND_ROWS_A_PART = 32;
+        const int STREETS_A_PART = 64, GROUND_ROWS_A_PART = 32, GROUND_ROWS_A_MESH = 48;
 
         /// <summary>The streets' mesh, a layer at a time (for the web, with no threads), then `done` with it.</summary>
         IEnumerable<string> RoadSteps(Action<List<MeshBuilder>> done)

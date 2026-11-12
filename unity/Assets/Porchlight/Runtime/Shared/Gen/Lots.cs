@@ -18,6 +18,8 @@ namespace Porchlight.Gen
 
         public string Name => "lots";
 
+        const int PIECES_A_STEP = 48;
+
         static void Split(List<int> tiles, int w, double maxSize, Rng rng, List<List<int>> o)
         {
             if (tiles.Count <= maxSize)
@@ -73,6 +75,7 @@ namespace Porchlight.Gen
             int w = model.width, h = model.height;
             var p = model.@params;
             var g = Parcels.Ground(model);
+            yield return "/ground";
             var list = new List<Lot>();
             foreach (var block in model.blocks)
             {
@@ -81,8 +84,11 @@ namespace Porchlight.Gen
                 foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h)) if (g.free[t] != 0) tiles.Add(t);
                 var pieces = new List<List<int>>();
                 foreach (var comp in Parcels.Components(tiles, w)) Split(comp, w, p.lotMaxSize, rng, pieces);
+                int looked = 0;
                 foreach (var piece in pieces)
                 {
+                    // A big block's lots a share at a time too (a town's farmland was one block of 100 ms).
+                    if (++looked % PIECES_A_STEP == 0) yield return "/block";
                     if (piece.Count < p.lotMinSize) continue;
                     var counts = Parcels.FrontageCounts(piece, g, w, h);
                     if (counts[0] == 0 && counts[1] == 0 && counts[2] == 0 && counts[3] == 0) continue;
