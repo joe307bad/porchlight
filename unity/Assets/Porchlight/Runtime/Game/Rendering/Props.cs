@@ -39,5 +39,32 @@ namespace Porchlight.Rendering
 
         /// <summary>Car models are scaled to one length.</summary>
         public static double CarScale(ModelLibrary.Model car) => TownWorld.CAR_LENGTH / car.size.z;
+
+        /// <summary>
+        /// Everything drawn under go, boxed in space's own terms (world space if null), from the meshes themselves:
+        /// as drawn, scales in the model's own file and all, and whether it's shown or not.
+        /// </summary>
+        public static Bounds? MeshBox(GameObject go, Transform space = null)
+        {
+            Bounds? all = null;
+            foreach (var mf in go.GetComponentsInChildren<MeshFilter>(true))
+            {
+                if (mf.sharedMesh == null) continue;
+                var b = mf.sharedMesh.bounds;
+                var m = space != null ? space.worldToLocalMatrix * mf.transform.localToWorldMatrix : mf.transform.localToWorldMatrix;
+                for (int k = 0; k < 8; k++)
+                {
+                    var c = m.MultiplyPoint3x4(new Vector3((k & 1) == 0 ? b.min.x : b.max.x, (k & 2) == 0 ? b.min.y : b.max.y, (k & 4) == 0 ? b.min.z : b.max.z));
+                    if (all == null) all = new Bounds(c, Vector3.zero);
+                    else
+                    {
+                        var u = all.Value;
+                        u.Encapsulate(c);
+                        all = u;
+                    }
+                }
+            }
+            return all;
+        }
     }
 }

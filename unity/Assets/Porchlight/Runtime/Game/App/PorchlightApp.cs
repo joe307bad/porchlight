@@ -1154,7 +1154,7 @@ namespace Porchlight.App
             await Until(() => false, 0.3);
             string pile = m.BackReport(out double along, out double up, out double roof);
             // In the bed: behind the cab, above the ground and below the cab's roof.
-            bool inBed = m.BackCount == 10 && along < -0.15 && up > roof * 0.35 && up < roof * 0.95;
+            bool inBed = m.BackCount == 20 && along < -0.15 && up > roof * 0.35 && up < roof * 0.95;
             Debug.Log($"smoke: turkey: the pickup={pickup}, at the wheel={iso.DrivingMyCar}, {pile}: {(inBed ? "in the bed" : "NOT IN THE BED")}, error={m.script.Error}");
             int stops = 0;
             bool inOrder = true;
@@ -1185,8 +1185,12 @@ namespace Porchlight.App
             finished.TryGetValue("turkey-run", out int completed);
             bool feast = TownWorld.Feasting && Unlocks.Contains("feast") && TownWorld.FeastTables > 0;
             Debug.Log($"smoke: turkey: feast on before={hadFeast}, now={TownWorld.Feasting} on {TownWorld.FeastTables} dining tables, unlocked={Unlocks.Contains("feast")}; hands short of the turkey by up to {miss:0.000} tiles");
-            bool passed = pickup && inBed && stops == STOPS && inOrder && feast && !hadFeast && m.script.Done && m.script.Error == null && completed == 1
-                && m.HoppedOut == STOPS && m.TakenFromBack == STOPS && m.PutDowns == STOPS && m.HoppedIn == STOPS && left == 10 - STOPS;
+            // The dishes on the tabletop: not floating over it, not sunk into it, not hanging off its edge.
+            var fit = TownWorld.FeastFit();
+            bool onTables = fit.tables > 0 && fit.highest < 0.01f && fit.lowest > -0.01f && fit.overhang < 0.01f;
+            Debug.Log($"smoke: turkey: the feast on {fit.tables} tables: the dishes {fit.lowest:0.000} to {fit.highest:0.000} tiles off the tabletop, up to {fit.overhang:0.000} past its edge: {(onTables ? "on the tables" : "NOT ON THE TABLES")}");
+            bool passed = pickup && inBed && onTables && stops == STOPS && inOrder && feast && !hadFeast && m.script.Done && m.script.Error == null && completed == 1
+                && m.HoppedOut == STOPS && m.TakenFromBack == STOPS && m.PutDowns == STOPS && m.HoppedIn == STOPS && left == 20 - STOPS;
             Debug.Log($"smoke: turkey: {(passed ? "PASS" : "FAIL")}: {stops} of {STOPS} stops, helper in order={inOrder}, mission complete={completed == 1} (error={m.script.Error ?? "none"}), out {m.HoppedOut}, taken {m.TakenFromBack}, put down {m.PutDowns}, back in {m.HoppedIn}, {left} left at the last house, feast={feast}, your car now {(iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none")}");
             if (mission != null) EndMission(null);
             return passed;

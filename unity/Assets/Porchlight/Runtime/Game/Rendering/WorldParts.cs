@@ -434,6 +434,34 @@ namespace Porchlight.Rendering
         /// <summary>How many dining tables in the towns built have a feast laid (shown or not).</summary>
         public static int FeastTables => feasts.Count(f => f != null);
 
+        /// <summary>Each feast's table (the piece of furniture it's laid on).</summary>
+        static readonly Dictionary<GameObject, GameObject> feastTables = new Dictionary<GameObject, GameObject>();
+
+        /// <summary>
+        /// How well every feast sits on its table (the smoke run checks): the dishes' lowest point above the
+        /// tabletop, at worst either way (+ floating, - sunk in), and how far the dishes reach past the table's edge.
+        /// From the meshes themselves, so it holds for a room that isn't shown.
+        /// </summary>
+        public static (int tables, float highest, float lowest, float overhang) FeastFit()
+        {
+            int n = 0;
+            float highest = float.MinValue, lowest = float.MaxValue, overhang = 0;
+            foreach (var f in feasts)
+            {
+                if (f == null || !feastTables.TryGetValue(f, out var table) || table == null) continue;
+                var t = Props.MeshBox(table);
+                var d = Props.MeshBox(f);
+                if (t == null || d == null) continue;
+                n++;
+                float gap = d.Value.min.y - t.Value.max.y;
+                highest = Math.Max(highest, gap);
+                lowest = Math.Min(lowest, gap);
+                overhang = Math.Max(overhang, Math.Max(Math.Max(t.Value.min.x - d.Value.min.x, d.Value.max.x - t.Value.max.x),
+                    Math.Max(t.Value.min.z - d.Value.min.z, d.Value.max.z - t.Value.max.z)));
+            }
+            return n == 0 ? (0, 0, 0, 0) : (n, highest, lowest, overhang);
+        }
+
         /// <summary>The furnished inside of a room (every one is built with the town).</summary>
         public Interior InteriorOf(int id)
         {
@@ -481,11 +509,10 @@ namespace Porchlight.Rendering
                 // A house's dining table has Thanksgiving dinner on it, shown once it's been earned (Feast).
                 if (room.style == HouseStyle.House && p.lift == 0 && Feast.IsDiningTable(p.name))
                 {
-                    var m = library.Get("furniture/" + p.name);
-                    var size = new FurnitureSize { w = m.size.x * Interiors.FURNITURE_SCALE, d = m.size.z * Interiors.FURNITURE_SCALE, h = m.size.y * Interiors.FURNITURE_SCALE };
-                    var feast = Feast.Lay(library, it.root.transform, p, size, 0.012);
+                    var feast = Feast.Lay(library, it.root.transform, piece);
                     feast.SetActive(feasting);
                     feasts.Add(feast);
+                    feastTables[feast] = piece;
                     it.casters.AddRange(feast.GetComponentsInChildren<Renderer>(true));
                 }
             }

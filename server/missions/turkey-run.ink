@@ -23,13 +23,14 @@ EXTERNAL put_down(role)
 EXTERNAL get_in(role)
 EXTERNAL unlock(what)
 
-// The pickup, and what's piled in its bed: frozen turkeys (tiles long: about
-// half a metre, bag and all). A few more than the round needs, so the pile
-// still looks like one at the last house.
+// The pickup, and what's piled in its bed: a big heap of frozen turkeys
+// (tiles long: about 60 cm, bag and all; three by two fill a layer of the
+// bed). Far more than the round needs: the church drive's whole load, heaped
+// up over the sides, and still a heap at the last house.
 CONST TRUCK = "cars/truck"
 CONST TURKEY = "props/frozen-turkey"
-CONST TURKEY_SIZE = 0.12
-CONST LOADED = 10
+CONST TURKEY_SIZE = 0.15
+CONST LOADED = 20
 CONST HELPER_LOOK = "people/character-5-2-3"
 // How many houses get a turkey.
 CONST STOPS = 5

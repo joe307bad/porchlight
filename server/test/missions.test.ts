@@ -464,11 +464,11 @@ test('turkey run carries five frozen turkeys from the pickup into five houses, a
   assert.deepEqual(waits, Array(5).fill(['@parked', '@idle']).flat());
   // The pickup the whole way, its bed piled with turkeys (your own car back at the end).
   assert.ok(town.log.includes('your_car(cars/truck)'));
-  assert.ok(town.log.includes('load_back(props/frozen-turkey, 10, 0.12)'));
+  assert.ok(town.log.includes('load_back(props/frozen-turkey, 20, 0.15)'));
   assert.equal(town.car, '');
   assert.equal(town.out, 5);
   assert.equal(town.delivered, 5);
-  assert.equal(town.load, 5);
+  assert.equal(town.load, 15);
   // What the helper did, in order: walks by where to, the rest by name.
   const helper = town.log
     .filter((l) => /^(get_out|walk|take_from_back|pause|put_down|get_in)\(/.test(l))

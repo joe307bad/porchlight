@@ -704,6 +704,10 @@ namespace Porchlight.App
             {
                 var item = new Item { model = model, size = size };
                 item.go = PlaceItem(item, backRoot.transform);
+                // The pile sits in your car, which is drawn through walls (the player layer): over the bed it covers,
+                // the bed's x-ray would paint it orange. On the companion layer, it marks the stencil as those
+                // working alongside you do, so the x-ray's never drawn over it (nor over one being carried).
+                Avatar.SetLayer(item.go, Avatar.COMPANION_LAYER);
                 back.Add(item);
             }
             loaded = count;
@@ -1959,7 +1963,8 @@ namespace Porchlight.App
 
         /// <summary>
         /// The pile in the back of your car, where your car is: a heap as small at the bottom as holds them all
-        /// (each layer a row and a column narrower than the one under it, over its gaps), each turned a little.
+        /// (each layer a row and a column narrower than the one under it, over its gaps; more than the whole bed heaps,
+        /// whole layers over the bed under the heap), each turned a little.
         /// </summary>
         void PlaceBack()
         {
@@ -2007,19 +2012,30 @@ namespace Porchlight.App
                 for (int r = 1; r <= rows; r++)
                     if (Holds(c, r) >= count && (c * r < bc * br || (c * r == bc * br && Holds(c, r) > Holds(bc, br)))) (bc, br) = (c, r);
             var rng = new Rng($"{item.model}::heap");
+            // More than a heap on the whole bed holds: whole layers over the bed first, as many as it takes for
+            // the rest to heap up on top (not a column of one on one on the top of the heap).
+            int narrowed = 0;
+            double y0 = 0;
             for (int layer = 0; pile.Count < count; layer++)
             {
-                int c = Math.Max(1, bc - layer), r = Math.Max(1, br - layer);
+                int c = Math.Max(1, bc - narrowed), r = Math.Max(1, br - narrowed);
+                bool whole = narrowed == 0 && count - pile.Count > Holds(c, r);
                 for (int j = 0; j < r && pile.Count < count; j++)
                     for (int i = 0; i < c && pile.Count < count; i++)
                     {
                         float x = (float)((i - (c - 1) / 2.0) * iw * 1.06);
                         float z = (float)((j - (r - 1) / 2.0) * il * 1.03);
-                        // Each layer sits down into the gaps of the one below.
-                        float y = (float)(layer * ih * 0.72);
+                        float y = (float)y0;
                         var turn = Quaternion.Euler((float)(rng.Next() * 10 - 5), (float)(rng.Next() * 16 - 8 + (rng.Chance(0.3) ? 180 : 0)), (float)(rng.Next() * 10 - 5));
                         pile.Add((new Vector3(x, y, z), turn));
                     }
+                // A whole layer lies on the one below, just settled into it; a narrower one sits down into its gaps.
+                if (whole) y0 += ih * 0.88;
+                else
+                {
+                    y0 += ih * 0.72;
+                    narrowed++;
+                }
             }
         }
 
