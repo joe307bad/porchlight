@@ -41,6 +41,15 @@ def coloured(m, rgb):
     return out
 
 
+def scaled(rgba, size):
+    """Smaller, the colour and the cover scaled apart: scaled together (straight alpha), what's under
+    the clear pixels bleeds into the edge, a light or dark rim round the shape."""
+    rgb = rgba.convert('RGB').resize(size, Image.LANCZOS)
+    out = rgb.convert('RGBA')
+    out.putalpha(rgba.getchannel('A').resize(size, Image.LANCZOS))
+    return out
+
+
 # The logo: white on nothing.
 coloured(fit(512), (255, 255, 255)).save(os.path.join(UNITY, 'Branding', 'Logo.png'))
 
@@ -57,17 +66,24 @@ card.save(os.path.join(UNITY, 'Resources', 'Porchlight', 'UI', 'LogoShadow.png')
 def icon(size, inset, radius):
     k = 4
     n = size * k
-    img = Image.new('RGBA', (n, n), (0, 0, 0, 0))
+    # Blue all over, even where it's clear (so the clear corners are blue underneath, and scaling the
+    # icon, here or by the system, can't draw a dark or white rim round it), the lantern on it, and
+    # the rounded square as the cover.
+    img = Image.new('RGBA', (n, n), BLUE + (255,))
     i = int(inset * n)
-    ImageDraw.Draw(img).rounded_rectangle([i, i, n - i - 1, n - i - 1], radius=int(radius * n), fill=BLUE + (255,))
     lm = fit(int((n - 2 * i) * 0.66))
     img.alpha_composite(coloured(lm, (255, 255, 255)), ((n - lm.size[0]) // 2, (n - lm.size[1]) // 2))
-    return img.resize((size, size), Image.LANCZOS)
+    cover = Image.new('L', (n, n), 0)
+    ImageDraw.Draw(cover).rounded_rectangle([i, i, n - i - 1, n - i - 1], radius=int(radius * n), fill=255)
+    img.putalpha(cover)
+    return scaled(img, (size, size))
 
 
 # The app icon: macOS's grid (824 of 1024, corners 185), which Unity makes every size of.
 icon(1024, 100 / 1024, 185 / 1024).save(os.path.join(UNITY, 'Branding', 'AppIcon.png'))
 # Windows: the whole square, a little rounded, every size in one .ico.
-icon(256, 0, 0.12).save(os.path.join(ROOT, 'desktop', 'AppIcon.ico'),
-                        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
+# Each size made on its own (left to the .ico writer, the big one was shrunk with a rim round it).
+ICO = [16, 24, 32, 48, 64, 128, 256]
+frames = [icon(s, 0, 0.12) for s in ICO]
+frames[-1].save(os.path.join(ROOT, 'desktop', 'AppIcon.ico'), sizes=[(s, s) for s in ICO], append_images=frames[:-1])
 print('lantern made; blue is #%02x%02x%02x' % BLUE)
