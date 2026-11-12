@@ -53,6 +53,7 @@ static class Program
         if (args.Length > 0 && args[0] == "ride") return RideCheck.Run();
         if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
         if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();
+        if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;

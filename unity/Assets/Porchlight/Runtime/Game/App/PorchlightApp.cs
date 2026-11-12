@@ -2529,7 +2529,7 @@ namespace Porchlight.App
                 var stop = CountyRoute.Next(county.map, here, w, dest);
                 if (stop == null) return null;
                 // And on along the highways, in this space's terms, for the dots to run on over.
-                var ahead = CountyRoute.Ahead(county.map, here, w, dest, TRIP_AHEAD).Select(here.ToLocal).ToList();
+                var ahead = CountyRoute.Ahead(county.map, here, w, dest, TRIP_AHEAD, county.Through).Select(here.ToLocal).ToList();
                 return (here.ToLocal(stop.Value.at), stop.Value.name, false, ahead);
             });
             overlay?.Flash(townKey == TownKey ? $"Directions to {label}" : $"Directions to {label} in {townName}: {Directions.FormatDistance(TripLength(townKey))} by road");
@@ -2569,7 +2569,7 @@ namespace Porchlight.App
                 var w = here.ToWorld(from);
                 var stop = CountyRoute.Next(county.map, here, w, dest);
                 if (stop == null) return null;
-                var ahead = CountyRoute.Ahead(county.map, here, w, dest, TRIP_AHEAD).Select(here.ToLocal).ToList();
+                var ahead = CountyRoute.Ahead(county.map, here, w, dest, TRIP_AHEAD, county.Through).Select(here.ToLocal).ToList();
                 return (here.ToLocal(stop.Value.at), stop.Value.name, false, ahead);
             });
             overlay?.Flash($"Directions to {name}: {Directions.FormatDistance(TripLength(key))} by road");
@@ -2769,7 +2769,7 @@ namespace Porchlight.App
             var fromW = here.ToWorld(from);
             var stop = CountyRoute.Next(map, here, fromW, dest);
             if (stop == null) return (here.ToLocal(at.Value), followName, false, null);
-            var ahead = CountyRoute.Ahead(map, here, fromW, dest, TRIP_AHEAD).Select(here.ToLocal).ToList();
+            var ahead = CountyRoute.Ahead(map, here, fromW, dest, TRIP_AHEAD, county.Through).Select(here.ToLocal).ToList();
             return (here.ToLocal(stop.Value.at), $"{stop.Value.name} ({followName})", false, ahead);
         }
 

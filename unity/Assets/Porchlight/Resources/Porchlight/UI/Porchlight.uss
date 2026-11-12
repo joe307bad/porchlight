@@ -1066,6 +1066,27 @@ Label {
     border-color: #767676;
 }
 
+/* The compass, above your character: the needle's red end is north, up is the way the camera looks. */
+.compass {
+    width: 64px;
+    height: 64px;
+    border-width: 2px;
+    border-color: #444038;
+    border-radius: 32px;
+    background-color: rgba(43, 42, 39, 0.85);
+}
+
+.compass-n {
+    position: absolute;
+    width: 12px;
+    height: 16px;
+    padding: 0;
+    margin: 0;
+    font-size: 11px;
+    color: #ff8a73;
+    -unity-text-align: middle-center;
+}
+
 
 .garage-label {
     font-size: 10px;

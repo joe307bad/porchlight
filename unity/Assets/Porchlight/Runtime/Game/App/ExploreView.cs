@@ -88,6 +88,8 @@ namespace Porchlight.App
         /// <summary>On the county: directions to the town picked (A), or there now (Y).</summary>
         void CountyDirections();
         void CountyTravel();
+        /// <summary>The compass: which way the camera looks (radians clockwise from north, the map's -y).</summary>
+        void SetCompass(double bearing);
     }
 
     public sealed class ExploreView : INetHost
@@ -1303,6 +1305,7 @@ namespace Porchlight.App
 
         void ClearFindPath()
         {
+            turnArrows.Clear();
             if (findPath == null) return;
             UnityEngine.Object.Destroy(findPath.GetComponent<MeshFilter>().sharedMesh);
             UnityEngine.Object.Destroy(findPath);
@@ -1374,6 +1377,70 @@ namespace Porchlight.App
             var r = findPath.AddComponent<MeshRenderer>();
             r.sharedMaterial = findMaterial;
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            AddTurnArrows();
+        }
+
+        // The turns ahead: an arrow up over the road at each, pointing the way to go, gliding that way and
+        // back, so a turn coming can be seen at speed.
+
+        /// <summary>A turn this sharp or more (radians) gets an arrow.</summary>
+        const double TURN_SHARP = 40 * Math.PI / 180;
+        /// <summary>Arrows at the turns from this far along the way (tiles; one you're in the middle of is behind you) to this far.</summary>
+        const double TURN_FROM = 3, TURN_REACH = 90;
+        const int TURN_ARROWS = 3;
+        /// <summary>How high the arrow's middle is over the road (tiles), and how far it glides.</summary>
+        const float ARROW_LIFT = 0.75f, ARROW_GLIDE = 0.4f;
+        readonly List<(Transform t, Vector3 at, Vector3 dir)> turnArrows = new List<(Transform, Vector3, Vector3)>();
+        static Mesh arrowMesh;
+        static Material arrowMaterial;
+
+        void AddTurnArrows()
+        {
+            turnArrows.Clear();
+            if (findPath == null) return;
+            foreach (var turn in RouteTurns.Find(findRoute, TURN_SHARP, TURN_FROM, TURN_REACH, TURN_ARROWS))
+            {
+                if (Built != null && !Built(turn.at.x, turn.at.y)) continue;
+                var go = new GameObject("turn");
+                go.transform.SetParent(findPath.transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = arrowMesh ??= ArrowMesh();
+                var r = go.AddComponent<MeshRenderer>();
+                r.sharedMaterial = arrowMaterial ??= Materials.Unlit(Coords.Hex(0x4fb3ff));
+                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                // Upright, along the way out: from the way in, it's seen side on, pointing left or right.
+                var dir = new Vector3((float)turn.dir.x, 0, (float)-turn.dir.y);
+                go.transform.localRotation = Quaternion.Euler(0, Mathf.Atan2((float)turn.dir.y, (float)turn.dir.x) * Mathf.Rad2Deg, 0);
+                var at = Coords.Map(turn.at.x, turn.at.y, ARROW_LIFT);
+                go.transform.localPosition = at;
+                turnArrows.Add((go.transform, at, dir));
+            }
+        }
+
+        /// <summary>The arrows gliding the way of their turns and back, and bobbing a little.</summary>
+        void AnimateTurnArrows()
+        {
+            if (turnArrows.Count == 0) return;
+            double s = 0.5 + 0.5 * Math.Sin(Now / 1000 * 2 * Math.PI * 1.2);
+            foreach (var (t, at, dir) in turnArrows)
+                if (t != null) t.localPosition = at + dir * (float)(s * ARROW_GLIDE) + Vector3.up * (float)(0.06 * s);
+        }
+
+        /// <summary>An arrow pointing along +x, upright (in x and y), seen from either side: a shaft and a head, about 0.9 tiles long.</summary>
+        static Mesh ArrowMesh()
+        {
+            var v = new[]
+            {
+                // The shaft.
+                new Vector3(-0.45f, -0.1f, 0), new Vector3(0, -0.1f, 0), new Vector3(0, 0.1f, 0), new Vector3(-0.45f, 0.1f, 0),
+                // The head.
+                new Vector3(0, -0.28f, 0), new Vector3(0.42f, 0, 0), new Vector3(0, 0.28f, 0),
+            };
+            var front = new[] { 0, 2, 1, 0, 3, 2, 4, 6, 5 };
+            var tris = new List<int>(front);
+            for (int i = 0; i < front.Length; i += 3) tris.AddRange(new[] { front[i], front[i + 2], front[i + 1] });
+            var m = new Mesh { name = "turn arrow", vertices = v, triangles = tris.ToArray() };
+            m.RecalculateBounds();
+            return m;
         }
 
         // Your car: one at a time.
@@ -2591,6 +2658,12 @@ namespace Porchlight.App
             snap = false;
             overridden = room == null ? CameraOverride?.Invoke() : null;
             PlaceCamera();
+            // The compass: which way the camera looks (the scene's +z is the map's north, -y), or, looking
+            // straight down, which way is up on the screen.
+            var fw = camera.transform.forward;
+            if (fw.x * fw.x + fw.z * fw.z < 0.01f) fw = camera.transform.up;
+            overlay.SetCompass(Math.Atan2(fw.x, fw.z));
+            AnimateTurnArrows();
 
             AnimateDayNight(roomLight);
             routeTimer -= dt;

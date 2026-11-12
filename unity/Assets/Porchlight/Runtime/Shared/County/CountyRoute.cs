@@ -56,8 +56,12 @@ namespace Porchlight.County
         /// The way on past where to head in `here` (Next), along the highways towards the town `to`
         /// (world tiles): so the way shown carries on over the spaces ahead. Whole highways, till it's
         /// `max` tiles or more, so it always ends at a gate (a spot that stays put as you drive on).
+        /// Through a town (or the junction, or a plot) on the way, from the gate in to the gate out, it's
+        /// `through`'s way along that space's streets (world tiles); where it has none (the space isn't
+        /// built yet), the way stops at the gate in. (Straight across from gate to gate, as it is with no
+        /// `through`, the dots shown cut over the town, then swung back onto its streets once you were in it.)
         /// </summary>
-        public static List<Vec2> Ahead(CountyMap map, Space here, Vec2 from, Space to, double max)
+        public static List<Vec2> Ahead(CountyMap map, Space here, Vec2 from, Space to, double max, Func<Space, Vec2, Vec2, List<Vec2>> through = null)
         {
             var o = new List<Vec2>();
             if (here == null || to == null || here.id == to.id) return o;
@@ -99,6 +103,13 @@ namespace Porchlight.County
                 if (best == null) break;
                 var pts = new List<Vec2>(best.points);
                 if (!fromA) pts.Reverse();
+                // Come into this stop along a highway: across it by its own streets, to the gate out.
+                if (through != null && o.Count > 0 && pts.Count > 0)
+                {
+                    var across = through(map.spaces[at], o[o.Count - 1], pts[0]);
+                    if (across == null || across.Count == 0) break;
+                    Append(o, across);
+                }
                 Append(o, pts);
                 at = fromA ? best.b.space : best.a.space;
             }

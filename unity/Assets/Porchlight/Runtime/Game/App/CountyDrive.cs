@@ -231,6 +231,22 @@ namespace Porchlight.App
         /// <summary>The hills between the towns.</summary>
         public readonly CountyTerrain Terrain;
 
+        /// <summary>
+        /// The way across a space ahead along its own streets, from `a` to `b` (world tiles: a trip's way
+        /// through a town between the gate in and the gate out, CountyRoute.Ahead); null while the space
+        /// isn't built (its streets unknown).
+        /// </summary>
+        public List<Vec2> Through(Space s, Vec2 a, Vec2 b)
+        {
+            if (s == null || !built.TryGetValue(s.id, out var got) || !got.ready || got.world == null) return null;
+            var way = Porchlight.Explore.StreetRoute.Between(got.world.layout.roads, s.ToLocal(a), s.ToLocal(b));
+            if (way == null || way.points.Count == 0) return null;
+            var o = new List<Vec2> { a };
+            foreach (var q in way.points) o.Add(s.ToWorld(q));
+            o.Add(b);
+            return o;
+        }
+
         /// <summary>Back out of the county (to a town loaded afresh): every space but the one on screen goes.</summary>
         public void Dispose()
         {

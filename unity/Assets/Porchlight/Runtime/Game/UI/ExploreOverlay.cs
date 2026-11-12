@@ -41,6 +41,10 @@ namespace Porchlight.UI
         readonly Label prompt;
         readonly Label notice;
         readonly VisualElement garage, personBox, carBox;
+        readonly VisualElement compass;
+        readonly Label compassNorth;
+        /// <summary>Which way the camera looks, as the compass last showed it (radians clockwise from north).</summary>
+        double compassBearing = double.NaN;
         VisualElement chooser;
         /// <summary>The character box or the car box was clicked.</summary>
         public Action OnPersonBox, OnCarBox;
@@ -431,6 +435,19 @@ namespace Porchlight.UI
 
             garage = new VisualElement();
             garage.AddToClassList("garage");
+            // The compass, above the character: north turning as the camera does.
+            compass = new VisualElement();
+            compass.AddToClassList("compass");
+            compass.pickingMode = PickingMode.Ignore;
+            compass.tooltip = "North";
+            compass.generateVisualContent += DrawCompass;
+            compassNorth = new Label("N");
+            compassNorth.AddToClassList("compass-n");
+            compassNorth.AddToClassList("bold");
+            compassNorth.pickingMode = PickingMode.Ignore;
+            compass.Add(compassNorth);
+            compass.RegisterCallback<GeometryChangedEvent>(_ => PlaceCompassNorth());
+            garage.Add(compass);
             personBox = Box("You", "Your character: click to choose someone else", () => OnPersonBox?.Invoke());
             carBox = Box("Car", "Your car: click to choose one, and have it brought right beside you", () => OnCarBox?.Invoke());
             garage.Add(personBox);
@@ -498,6 +515,74 @@ namespace Porchlight.UI
             host.RegisterCallback<GeometryChangedEvent>(_ => Center());
             prompt.RegisterCallback<GeometryChangedEvent>(_ => Center());
             notice.RegisterCallback<GeometryChangedEvent>(_ => Center());
+        }
+
+        /// <summary>The compass turned to the camera: up on it is the way the camera looks.</summary>
+        public void SetCompass(double bearing)
+        {
+            if (!double.IsNaN(compassBearing) && Math.Abs(Orbit.ShortestTurn(compassBearing, bearing)) < 0.004) return;
+            compassBearing = bearing;
+            compass.MarkDirtyRepaint();
+            PlaceCompassNorth();
+        }
+
+        /// <summary>North's way on the compass's face (clockwise from up), and the unit step that way (y down).</summary>
+        Vector2 CompassNorth() => new Vector2((float)Math.Sin(-compassBearing), (float)-Math.Cos(-compassBearing));
+
+        void PlaceCompassNorth()
+        {
+            var r = compass.contentRect;
+            if (double.IsNaN(compassBearing) || r.width <= 0) return;
+            var c = r.center;
+            float reach = Math.Min(r.width, r.height) / 2 - 10;
+            var at = c + CompassNorth() * reach;
+            compassNorth.style.left = at.x - 6;
+            compassNorth.style.top = at.y - 8;
+        }
+
+        void DrawCompass(MeshGenerationContext ctx)
+        {
+            if (double.IsNaN(compassBearing)) return;
+            var r = compass.contentRect;
+            var c = r.center;
+            float rad = Math.Min(r.width, r.height) / 2;
+            var painter = ctx.painter2D;
+            var n = CompassNorth();
+            var side = new Vector2(-n.y, n.x);
+            // A tick for each of the eight ways, the four main ones longer.
+            painter.strokeColor = Coords.Hex(0x767676);
+            painter.lineWidth = 1.5f;
+            for (int k = 0; k < 8; k++)
+            {
+                double a = -compassBearing + k * Math.PI / 4;
+                var d = new Vector2((float)Math.Sin(a), (float)-Math.Cos(a));
+                if (k == 0) continue; // the N stands there
+                float inner = rad - (k % 2 == 0 ? 7 : 4);
+                painter.BeginPath();
+                painter.MoveTo(c + d * inner);
+                painter.LineTo(c + d * (rad - 1.5f));
+                painter.Stroke();
+            }
+            // The needle: north's half red, south's pale.
+            float len = rad - 20, half = 4.5f;
+            painter.fillColor = Coords.Hex(0xc2412d);
+            painter.BeginPath();
+            painter.MoveTo(c + n * len);
+            painter.LineTo(c + side * half);
+            painter.LineTo(c - side * half);
+            painter.ClosePath();
+            painter.Fill();
+            painter.fillColor = Coords.Hex(0xe8e0cc);
+            painter.BeginPath();
+            painter.MoveTo(c - n * len);
+            painter.LineTo(c - side * half);
+            painter.LineTo(c + side * half);
+            painter.ClosePath();
+            painter.Fill();
+            painter.fillColor = Coords.Hex(0x2b2a27);
+            painter.BeginPath();
+            painter.Arc(c, 2f, 0, 360);
+            painter.Fill();
         }
 
         static VisualElement Box(string label, string tooltip, Action click)
