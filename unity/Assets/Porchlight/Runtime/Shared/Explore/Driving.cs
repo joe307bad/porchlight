@@ -37,20 +37,33 @@ namespace Porchlight.Explore
         /// <summary>How fast the wheel turns to where it's steered (full lock per second), so a key tap doesn't snap the car round.</summary>
         const double WHEEL_RATE = 8;
         const double WHEEL_RETURN = 9;
-        // Your own steering (Drive's `gentle`): a tap nudges the car, a held turn still turns it full.
-        /// <summary>How fast your wheel turns to where it's steered (full lock per second): a tap is a small correction.</summary>
-        const double GENTLE_WHEEL_RATE = 3.2;
+        // Your own steering (Drive's `gentle`), by how fast you go: up at speed it's calm (a tap a nudge, a
+        // straight line easy to hold); slowing down it's quick (the wheel straight round, the car turning harder).
+        /// <summary>Calm from nothing at this speed (times top speed, unboosted) to all of it at the second.</summary>
+        const double CALM_FROM = 0.5, CALM_FULL = 1.0;
+        /// <summary>How fast your wheel turns to where it's steered (full lock per second), quick and calm.</summary>
+        const double QUICK_WHEEL_RATE = 6, CALM_WHEEL_RATE = 3.2;
         /// <summary>How fast it comes back when you let go, or steer the other way (it passes through straight first).</summary>
-        const double GENTLE_WHEEL_RETURN = 7;
-        /// <summary>How much of the turn a wheel just off straight gives (the rest comes in as it nears full lock).</summary>
-        const double GENTLE_CENTRE = 0.35;
+        const double QUICK_WHEEL_RETURN = 10, CALM_WHEEL_RETURN = 7;
+        /// <summary>Calm: how much of the turn a wheel just off straight gives (the rest comes in as it nears full lock).</summary>
+        const double CALM_CENTRE = 0.35;
+        /// <summary>Quick: the car turns this much harder than the autopilot's does.</summary>
+        const double QUICK_TURN = 1.4;
         /// <summary>Past top speed (on boost), the turn eases off by this much per top speed over (at full boost, to about half).</summary>
         const double GENTLE_FAST = 0.35;
         /// <summary>
-        /// Let go of the wheel with the car this near a street's way (radians off the map's grid, which a town's
-        /// streets run along) and it settles onto it, this fast (per second): a straight line is easy to hold.
+        /// Calm, let go of the wheel with the car this near a street's way (radians off the map's grid, which a
+        /// town's streets run along) and it settles onto it, this fast (per second, all calm): a straight line
+        /// holds itself. Under a quarter calm, none.
         /// </summary>
-        const double ALIGN_WITHIN = 8 * Math.PI / 180, ALIGN_RATE = 4;
+        const double ALIGN_WITHIN = 8 * Math.PI / 180, ALIGN_RATE = 4, ALIGN_FROM = 0.25;
+
+        /// <summary>How calm your steering is at this speed: 0 quick (slow), 1 calm (at speed), smoothly between.</summary>
+        public static double Calm(double speed)
+        {
+            double t = Math.Max(0, Math.Min(1, (Math.Abs(speed) / TOP_SPEED - CALM_FROM) / (CALM_FULL - CALM_FROM)));
+            return t * t * (3 - 2 * t);
+        }
         public const double CAR_HALF_LENGTH = 0.5;
         public const double CAR_HALF_WIDTH = 0.22;
 
@@ -136,19 +149,23 @@ namespace Porchlight.Explore
         /// One step of driving: throttle +1 / -1 / 0, steer -1 (left) to +1 (right).
         /// `open`: where it may be on the ground (or water, for a boat). `floor`: for a
         /// plane in the air, how low it may fly over a point (Infinity off the map).
-        /// `gentle`: your own steering (not the autopilot's or a chaser's): the wheel turns slower and
-        /// gives less just off straight, turns ease off on boost, and a car let go of near a street's
-        /// way settles onto it.
+        /// `gentle`: your own steering (not the autopilot's or a chaser's), by speed (Calm): at speed the
+        /// wheel turns slower and gives less just off straight, turns ease off on boost, and a car let go
+        /// of near a street's way settles onto it; slowing down, the wheel is quick and the car turns harder.
         /// </summary>
         public void Drive(double throttle, double steer, double dt, Func<double, double, bool> open, bool boost = false, Func<double, double, double> floor = null, bool gentle = false)
         {
             double held = steer;
             bool back = Math.Abs(steer) < Math.Abs(wheel) || steer * wheel < 0;
-            double rate = gentle ? (back ? GENTLE_WHEEL_RETURN : GENTLE_WHEEL_RATE) : back ? WHEEL_RETURN : WHEEL_RATE;
+            double calm = gentle ? Calm(speed) : 0;
+            double rate = gentle
+                ? (back ? QUICK_WHEEL_RETURN + (CALM_WHEEL_RETURN - QUICK_WHEEL_RETURN) * calm : QUICK_WHEEL_RATE + (CALM_WHEEL_RATE - QUICK_WHEEL_RATE) * calm)
+                : back ? WHEEL_RETURN : WHEEL_RATE;
             // The other way: back to straight first (at the return rate), then on round.
             double to = gentle && steer * wheel < 0 ? 0 : steer;
             wheel += Math.Max(-rate * dt, Math.Min(rate * dt, to - wheel));
-            steer = gentle ? wheel * (GENTLE_CENTRE + (1 - GENTLE_CENTRE) * Math.Abs(wheel)) : wheel;
+            double centre = 1 + (CALM_CENTRE - 1) * calm;
+            steer = gentle ? wheel * (centre + (1 - centre) * Math.Abs(wheel)) : wheel;
             if (kind == VehicleKind.Plane && Airborne)
             {
                 Fly(throttle, steer, dt, open, floor, boost);
@@ -174,14 +191,14 @@ namespace Porchlight.Explore
                 double bite = Math.Min(1, Math.Abs(speed) / FULL_STEER_SPEED) * Numbers.Sign(speed);
                 // A plane rolling fast keeps straight: it turns as hard as it does at taxiing speed.
                 turn = plane ? PLANE_TAXI_STEER * bite * Math.Min(1, FULL_STEER_SPEED * 1.5 / Math.Max(1e-6, Math.Abs(speed))) : STEER_RATE * bite;
-                if (gentle && !plane) turn /= 1 + GENTLE_FAST * Math.Max(0, Math.Abs(speed) / TOP_SPEED - 1);
+                if (gentle && !plane) turn *= (QUICK_TURN + (1 - QUICK_TURN) * calm) / (1 + GENTLE_FAST * Math.Max(0, Math.Abs(speed) / TOP_SPEED - 1));
             }
             double h = heading + steer * turn * dt;
             // Let go near a street's way: onto it.
-            if (gentle && kind == VehicleKind.Car && Math.Abs(held) < 0.08 && Math.Abs(wheel) < 0.05 && Math.Abs(speed) > FULL_STEER_SPEED)
+            if (gentle && kind == VehicleKind.Car && calm >= ALIGN_FROM && Math.Abs(held) < 0.08 && Math.Abs(wheel) < 0.05)
             {
                 double quarter = Math.PI / 2, off = h - Math.Round(h / quarter) * quarter;
-                if (Math.Abs(off) < ALIGN_WITHIN) h -= off * Math.Min(1, ALIGN_RATE * dt);
+                if (Math.Abs(off) < ALIGN_WITHIN) h -= off * Math.Min(1, ALIGN_RATE * calm * dt);
             }
             double step = speed * dt;
             double nx = x + Math.Cos(h) * step;
