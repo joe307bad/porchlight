@@ -29,7 +29,7 @@ namespace Porchlight.Explore
         /// <summary>The heading before and after a spot is over this far (tiles), as many samples.</summary>
         const int SPAN = 3;
         /// <summary>
-        /// The heading this many samples before a corner (or where the way starts, if that's nearer) against the
+        /// The heading this many samples before a corner against the
         /// heading this many after it: the way must end up going another way, not just jog aside a few tiles and
         /// carry on (a straightaway stepping over from one street's middle to the next). A step longer than this
         /// (a staggered crossing: a turn, a block, and a turn back) is two turns. A corner with less of the way
