@@ -1389,7 +1389,7 @@ namespace Porchlight.App
         const double TURN_FROM = 3, TURN_REACH = 90;
         const int TURN_ARROWS = 3;
         /// <summary>How high the arrow's middle is over the road (tiles), and how far it glides.</summary>
-        const float ARROW_LIFT = 1.6f, ARROW_GLIDE = 0.25f;
+        const float ARROW_LIFT = 0.75f, ARROW_GLIDE = 0.25f;
         /// <summary>How big the arrow is (the mesh is about 0.9 tiles long), and how often it glides there and back (per second).</summary>
         const float ARROW_SIZE = 0.55f;
         const double ARROW_RATE = 0.45;
@@ -1408,7 +1408,7 @@ namespace Porchlight.App
                 go.transform.SetParent(findPath.transform, false);
                 go.AddComponent<MeshFilter>().sharedMesh = arrowMesh ??= ArrowMesh();
                 var r = go.AddComponent<MeshRenderer>();
-                r.sharedMaterial = arrowMaterial ??= Materials.Unlit(Coords.Hex(0x4fb3ff));
+                r.sharedMaterial = arrowMaterial ??= Materials.Unlit(Coords.Hex(0xff8c1a));
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 // Upright, along the way out: from the way in, it's seen side on, pointing left or right.
                 var dir = new Vector3((float)turn.dir.x, 0, (float)-turn.dir.y);
