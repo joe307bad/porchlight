@@ -602,6 +602,9 @@ namespace Porchlight.App
         /// edge while the space ahead isn't ready, as the game holds you: how long it waited and its longest frames,
         /// each leg. Then the county map's directions and Travel now, and the way to someone in another room.
         /// </summary>
+        /// <summary>Whether the drive round the county kept meshes from the towns it left behind (PORCHLIGHT_SMOKE_ROUNDS over 1).</summary>
+        bool leaks;
+
         async Task SmokeDrive()
         {
             QualitySettings.vSyncCount = 0;
@@ -620,7 +623,13 @@ namespace Porchlight.App
             double t0 = platform.Now();
             while (platform.Now() < t0 + 4000) await Task.Yield();
             double speed = double.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_SPEED"), out var sp0) ? sp0 : 35;
-            foreach (var to in new[] { Place.East, Place.South, Place.West, Place.Porchlight, Place.South })
+            // Round the county as many times as PORCHLIGHT_SMOKE_ROUNDS says (once by default): what's built for
+            // the towns behind has to be let go, or a long drive runs the web build out of memory.
+            int rounds = int.TryParse(Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_ROUNDS"), out var r0) ? Math.Max(1, r0) : 1;
+            var legs = Enumerable.Repeat(new[] { Place.East, Place.South, Place.West, Place.Porchlight, Place.South }, rounds).SelectMany(x => x);
+            int leg = 0;
+            var roundEnds = new List<(int made, int all)>();
+            foreach (var to in legs)
             {
                 var dest = plan.towns[to];
                 var from = county.Active.ToWorld(iso.PlayerPosition.Value);
@@ -655,7 +664,16 @@ namespace Porchlight.App
                         iso.PutPlayer(county.Active.ToLocal(w), 0);
                     }
                 }
-                Debug.Log($"smoke drive: in {county.Active.name} after {(platform.Now() - legStart) / 1000:0.0} s, waited {waited:0.0} s at edges, {frames} frames, {slow} over 50 ms, longest {longest:0} ms");
+                Debug.Log($"smoke drive: in {county.Active.name} after {(platform.Now() - legStart) / 1000:0.0} s, waited {waited:0.0} s at edges, {frames} frames, {slow} over 50 ms, longest {longest:0} ms; {SmokeMemory()}");
+                if (++leg % 5 == 0) roundEnds.Add((MeshBuilder.MadeCount, Resources.FindObjectsOfTypeAll<Mesh>().Length));
+            }
+            // The same place each round, so the same towns built round it: as many meshes each time, or some are kept.
+            if (roundEnds.Count > 1)
+            {
+                var (made0, all0) = roundEnds[0];
+                var (made1, all1) = roundEnds[roundEnds.Count - 1];
+                leaks = made1 > made0 * 1.1 + 50 || all1 > all0 * 1.1 + 50;
+                Debug.Log($"smoke drive: {(leaks ? "LEAKS" : "no leak")}: after round 1, {made0} meshes made at runtime ({all0} in all); after round {roundEnds.Count}, {made1} ({all1})");
             }
             // The county map: a town picked, its line, directions there.
             var west = plan.towns[Place.West];
@@ -689,6 +707,19 @@ namespace Porchlight.App
             Debug.Log($"smoke county: travelled to {east.name}: town {(TownKey == east.townKey ? "is" : "ISN'T")} {east.name}, exploring {exploring}, player {iso.PlayerPosition}, trip {iso.OnTrip}");
         }
 
+        /// <summary>How much memory the game holds (the web build has at most 4 GB, and the tab dies past it), and how many spaces are built.</summary>
+        string SmokeMemory()
+        {
+            const double MB = 1 << 20;
+            return $"memory: managed {GC.GetTotalMemory(false) / MB:0} MB (heap {UnityEngine.Profiling.Profiler.GetMonoHeapSizeLong() / MB:0}), " +
+                $"Unity {UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / MB:0} MB allocated of {UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() / MB:0} reserved, " +
+                $"graphics {UnityEngine.Profiling.Profiler.GetAllocatedMemoryForGraphicsDriver() / MB:0} MB; {county?.BuiltCount ?? 0} spaces built; {MeshBuilder.MadeCount} meshes made at runtime, " +
+                $"{Resources.FindObjectsOfTypeAll<Mesh>().Length} meshes ({Resources.FindObjectsOfTypeAll<Mesh>().Sum(m => UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(m)) / MB:0} MB), " +
+                $"{Resources.FindObjectsOfTypeAll<Material>().Length} materials, {Resources.FindObjectsOfTypeAll<Texture>().Length} textures " +
+                $"({Resources.FindObjectsOfTypeAll<Texture>().Sum(t => UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(t)) / MB:0} MB), " +
+                $"{Resources.FindObjectsOfTypeAll<GameObject>().Length} game objects";
+        }
+
         /// <summary>A headless run through the app (PORCHLIGHT_SMOKE=1): explore, walk a while, back to the map, quit.</summary>
         async Task Smoke()
         {
@@ -715,7 +746,7 @@ namespace Porchlight.App
             if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_DRIVE") == "1")
             {
                 await SmokeDrive();
-                Application.Quit(0);
+                Application.Quit(leaks ? 1 : 0);
                 return;
             }
             if (Environment.GetEnvironmentVariable("PORCHLIGHT_SMOKE_BUILD") == "1")

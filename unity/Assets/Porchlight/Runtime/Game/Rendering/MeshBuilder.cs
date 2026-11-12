@@ -148,9 +148,30 @@ namespace Porchlight.Rendering
             Quad(v(x1, h0, y0), v(x1, h0, y1), v(x1, h1, y1), v(x1, h1, y0), color, new V3(1, 0, 0), glow);
         }
 
+        /// <summary>
+        /// Every mesh made here that's still about. A mesh made at runtime isn't freed with the GameObject drawing it:
+        /// whatever lets go of one (a town left behind) frees it too (Free), or it's held for as long as the game runs.
+        /// </summary>
+        static readonly HashSet<Mesh> made = new HashSet<Mesh>();
+
+        /// <summary>Whether this mesh was made here (and not freed yet), as against a model's, shared by everything drawing that model.</summary>
+        public static bool Made(Mesh m) => m != null && made.Contains(m);
+
+        /// <summary>A mesh made here freed (nothing's to draw it again).</summary>
+        public static void Free(Mesh m)
+        {
+            if (m == null) return;
+            made.Remove(m);
+            UnityEngine.Object.Destroy(m);
+        }
+
+        /// <summary>How many meshes made here are still about (the smoke run watches it).</summary>
+        public static int MadeCount => made.Count;
+
         public Mesh Build(string name = "built")
         {
             var mesh = new Mesh { name = name, indexFormat = pos.Count > 65000 ? IndexFormat.UInt32 : IndexFormat.UInt16 };
+            made.Add(mesh);
             mesh.SetVertices(pos);
             mesh.SetUVs(0, uv);
             mesh.SetTriangles(idx, 0, true);

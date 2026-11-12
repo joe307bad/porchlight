@@ -57,6 +57,14 @@ namespace Porchlight.Rendering
 
         static Material glass;
 
+        /// <summary>A material made by Textured freed (what it drew is gone), and no longer lit at night.</summary>
+        public static void Free(Material m)
+        {
+            if (m == null) return;
+            windows.Remove(m);
+            UnityEngine.Object.Destroy(m);
+        }
+
         /// <summary>Clear window glass, faintly blue: what a shown room's windows are.</summary>
         public static Material Glass()
         {

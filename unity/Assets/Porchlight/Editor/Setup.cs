@@ -7,6 +7,7 @@
 // WebGL player (a full-window canvas at the screen's pixel ratio).
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Porchlight.App;
@@ -415,6 +416,18 @@ namespace Porchlight.EditorTools
             Debug.Log($"Porchlight: stamped {release} {commit}");
         }
 
+        /// <summary>
+        /// The desktop app's define; and PORCHLIGHT_NO_THREADS=1 in the environment builds a player that runs as the
+        /// web build does, with no threads (towns ahead grown and built a share a frame), to try the web's way natively.
+        /// </summary>
+        static string[] Defines(bool desktop)
+        {
+            var d = new List<string>();
+            if (desktop) d.Add("PORCHLIGHT_DESKTOP");
+            if (Environment.GetEnvironmentVariable("PORCHLIGHT_NO_THREADS") == "1") d.Add("PORCHLIGHT_NO_THREADS");
+            return d.Count > 0 ? d.ToArray() : null;
+        }
+
         static void Build(BuildTarget target, string path, bool desktop = false)
         {
             Run();
@@ -426,7 +439,7 @@ namespace Porchlight.EditorTools
                 locationPathName = path,
                 target = target,
                 options = BuildOptions.None,
-                extraScriptingDefines = desktop ? new[] { "PORCHLIGHT_DESKTOP" } : null,
+                extraScriptingDefines = Defines(desktop),
             });
             var s = report.summary;
             Debug.Log($"Porchlight: build {s.result} in {s.totalTime} ({s.totalErrors} errors, {s.totalWarnings} warnings) → {path}");

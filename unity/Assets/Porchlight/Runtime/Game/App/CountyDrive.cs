@@ -1,3 +1,7 @@
+#if (UNITY_WEBGL && !UNITY_EDITOR) || PORCHLIGHT_NO_THREADS
+// No threads: the web build, or a desktop player built to run as the web build does (Setup: PORCHLIGHT_NO_THREADS=1).
+#define NO_THREADS
+#endif
 // Driving the county (Shared/County): from Porchlight out along its highways to
 // the cities and to your own towns north of it, and flying anywhere over the
 // fields between them, with no loading screen.
@@ -121,6 +125,8 @@ namespace Porchlight.App
         public bool Paused;
 
         public Space Active => active;
+        /// <summary>How many spaces are built or building (the smoke run watches it).</summary>
+        public int BuiltCount => built.Count;
         static double Now => Time.realtimeSinceStartupAsDouble * 1000;
 
         /// <summary>The county, with you in `start` (the town on screen, already built, at the origin).</summary>
@@ -131,7 +137,7 @@ namespace Porchlight.App
             this.parseKey = parseKey;
             active = start;
             var here = built[start.id] = new Built { space = start, model = view.world.model, world = view.world, ready = true };
-#if !(UNITY_WEBGL && !UNITY_EDITOR)
+#if !NO_THREADS
             foreach (var s in map.spaces)
             {
                 if (s.kind != SpaceKind.Town || s == start || grown.ContainsKey(s.townKey)) continue;
@@ -155,7 +161,7 @@ namespace Porchlight.App
             });
 #endif
             Terrain = CountyTerrain.Build(map);
-#if !(UNITY_WEBGL && !UNITY_EDITOR)
+#if !NO_THREADS
             // The town you start in is built already, but not its ways in the county's terms (its hills): worked
             // out meanwhile, for when you drive back into it.
             BeginWays(here);
@@ -313,7 +319,7 @@ namespace Porchlight.App
             job = new Built { space = best };
             built[best.id] = job;
             if (best.kind == SpaceKind.Town) Grow(job);
-#if !(UNITY_WEBGL && !UNITY_EDITOR)
+#if !NO_THREADS
             // A stretch of highway is a long thin town of its own (half a second's work for the longest): on a worker thread too.
             else
             {
@@ -355,7 +361,7 @@ namespace Porchlight.App
             b.ways = new ExploreView.PreparedWays();
             var space = b.space;
             var prepare = ExploreView.PreparedWays.Prepare(b.world, (x, y) => Terrain.Height(space.x0 + x, space.y0 + y), b.ways);
-#if UNITY_WEBGL && !UNITY_EDITOR
+#if NO_THREADS
             b.preparing = prepare.GetEnumerator();
 #else
             b.preparingThread = Task.Run(() => { foreach (var _ in prepare) { } });
@@ -370,7 +376,7 @@ namespace Porchlight.App
         void Grow(Built b)
         {
             var (seed, p) = parseKey(b.space.townKey);
-#if UNITY_WEBGL && !UNITY_EDITOR
+#if NO_THREADS
             b.growing = Generator.GenerateSteps(seed, p, m => b.model = m).GetEnumerator();
 #else
             // Grown already (or growing) since the county started: waits for that rather than growing it twice.

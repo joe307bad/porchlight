@@ -42,6 +42,15 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>The material every palette mesh draws with (its textures brought up to date).</summary>
+        /// <summary>Its textures and material freed, with the town it coloured.</summary>
+        public void Dispose()
+        {
+            Materials.Free(material);
+            material = null;
+            UnityEngine.Object.Destroy(albedo);
+            UnityEngine.Object.Destroy(emission);
+        }
+
         public Material Material
         {
             get

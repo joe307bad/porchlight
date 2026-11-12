@@ -1,3 +1,7 @@
+#if (UNITY_WEBGL && !UNITY_EDITOR) || PORCHLIGHT_NO_THREADS
+// No threads: the web build, or a desktop player built to run as the web build does (Setup: PORCHLIGHT_NO_THREADS=1).
+#define NO_THREADS
+#endif
 // The 3D town for a TownModel, built as GameObjects from its layout: tiled
 // ground with sunken rivers, roads with sidewalks and kerbs, stone bridges,
 // Kenney houses, shops and towers fitted to every blueprint footprint (long
@@ -196,7 +200,7 @@ namespace Porchlight.Rendering
             // The ground's tiles worked out off the main thread too, where there are threads (waited for, so
             // the town's random numbers come out in the same order).
             MeshBuilder ground = null;
-#if !(UNITY_WEBGL && !UNITY_EDITOR)
+#if !NO_THREADS
             var laying = Task.Run(() => BuildGround(rng));
             while (!laying.IsCompleted) yield return "ground" + WAITING;
             ground = laying.Result;
@@ -211,7 +215,7 @@ namespace Porchlight.Rendering
             // The town's longest part: its streets' shapes worked out off the main thread where there are
             // threads, and only the mesh made here.
             MeshBuilder roads = null;
-#if !(UNITY_WEBGL && !UNITY_EDITOR)
+#if !NO_THREADS
             var drawing = Task.Run(BuildRoads);
             while (!drawing.IsCompleted) yield return "roads" + WAITING;
             roads = drawing.Result;
@@ -259,14 +263,48 @@ namespace Porchlight.Rendering
             yield return "signs";
             foreach (var part in Survey()) yield return "survey" + part;
             yield return "survey";
-            // Combined a share at a time (each share its own batches), not the whole town in one frame.
+            // Combined a share at a time (each share its own batches), not the whole town in one frame. Its own
+            // meshes noted first: once batched, what draws them shows the batch instead.
+            Own();
             var parts = still.GetComponentsInChildren<MeshRenderer>().Select(r => r.gameObject).ToArray();
             for (int i = 0; i < parts.Length; i += BATCH_A_PART)
             {
                 StaticBatchingUtility.Combine(parts.Skip(i).Take(BATCH_A_PART).ToArray(), still.gameObject);
                 if (i + BATCH_A_PART < parts.Length) yield return "batching" + i / BATCH_A_PART;
             }
+            Own();
             yield return "batching";
+        }
+
+        /// <summary>
+        /// The meshes this town made for itself (its ground, roads, walls, floors; its batches), freed with it. A mesh
+        /// made at runtime outlives the GameObject drawing it: left, each town driven past held on to hundreds of MB,
+        /// and the web build (which can't give memory back, and has 4 GB at most) crashed the tab a few towns on.
+        /// Never a model's meshes: those are shared by everything drawing the model.
+        /// </summary>
+        readonly HashSet<Mesh> owned = new HashSet<Mesh>();
+
+        /// <summary>Notes the town's own meshes, as they are now.</summary>
+        void Own()
+        {
+            if (root == null) return;
+            foreach (var f in root.GetComponentsInChildren<MeshFilter>(true))
+            {
+                var m = f.sharedMesh;
+                if (m != null && (MeshBuilder.Made(m) || m.name.StartsWith("Combined Mesh", StringComparison.Ordinal))) owned.Add(m);
+            }
+        }
+
+        /// <summary>Frees the town's own meshes and its palette (its GameObjects are gone or going).</summary>
+        void FreeOwned()
+        {
+            foreach (var m in owned)
+            {
+                if (MeshBuilder.Made(m)) MeshBuilder.Free(m);
+                else if (m != null) UnityEngine.Object.Destroy(m);
+            }
+            owned.Clear();
+            palette.Dispose();
         }
 
         /// <summary>The material the ground, roads and sheds are drawn with (the weather wets it).</summary>
@@ -350,8 +388,10 @@ namespace Porchlight.Rendering
 
         public void Dispose()
         {
+            Own();
             foreach (var i in interiors.Values) i.Dispose();
             UnityEngine.Object.Destroy(root);
+            FreeOwned();
         }
 
         /// <summary>
@@ -361,6 +401,8 @@ namespace Porchlight.Rendering
         /// </summary>
         public IEnumerable<int> DisposeSteps(int perPart = 400)
         {
+            // Its own meshes noted while there's still something drawing them (rooms furnished since it was built too).
+            Own();
             foreach (var i in interiors.Values) i.Dispose();
             interiors.Clear();
             yield return 0;
@@ -373,6 +415,7 @@ namespace Porchlight.Rendering
                 if (++done % perPart == 0) yield return done / perPart;
             }
             UnityEngine.Object.Destroy(root);
+            FreeOwned();
         }
 
         static int Darker(int c, double k) =>
