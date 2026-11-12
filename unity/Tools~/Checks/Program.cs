@@ -17,6 +17,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- fingerprint [towns] # a hash of each county space (and of `towns` check towns): the same before and after a change, the same towns
 //   dotnet run --project "unity/Tools~/Checks" -- ride              # riding in someone's car over a town line, on the web and on desktop (RideCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- ways              # one way shown at a time: a spot on the map is instead of following someone or a trip (WayCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- steering          # your own steering: a tap a nudge, a held turn full, straight easy to hold (SteeringCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- where             # the line under your name says where you are now (WhereCheck.cs)
 
 using System;
@@ -54,6 +55,7 @@ static class Program
         if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
         if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();
         if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();
+        if (args.Length > 0 && args[0] == "steering") return SteeringCheck.Run();
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json>");
         return 2;
