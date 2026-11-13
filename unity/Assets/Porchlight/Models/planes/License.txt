@@ -20,3 +20,5 @@ biplane-a.glb — "Airplane" by Poly by Google, https://poly.pizza/m/6D4MwQoxK-K
 biplane-b.glb — "Airplane" by Poly by Google, https://poly.pizza/m/8VysVKMXN2J
 biplane-c.glb — "plane 2" by Jake Blakeley, https://poly.pizza/m/amIu9ua-L0A
 biplane-dh2.glb — "AIRCO DH2 v2" by Joshua Johanson, https://poly.pizza/m/9iVI9GHMleJ
+
+santa-sleigh.glb — Santa in his sleigh behind nine reindeer, made for Porchlight in Blender (unity/Tools~/christmas/santa.py); not from Poly Pizza.

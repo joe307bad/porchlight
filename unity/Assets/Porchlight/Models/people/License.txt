@@ -11,3 +11,5 @@ Repacked for Porchlight: the shared texture atlas (atlas.png) is referenced by
 every character rather than embedded in each, the two zombie characters are
 left out, and animations.glb keeps only the idle, walk, run, jump and looking
 around clips.
+
+santa.glb — Santa, made for Porchlight in Blender (unity/Tools~/christmas/santa.py) on this pack's armature (copied from character-5-2-3.glb).

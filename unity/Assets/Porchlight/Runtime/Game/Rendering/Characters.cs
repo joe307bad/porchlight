@@ -144,7 +144,7 @@ namespace Porchlight.Rendering
         public void Update(Walker w, double dt)
         {
             double k = Math.Max(1e-3, dt);
-            root.transform.localPosition = Coords.Map(w.x, w.y, FEET + w.lift);
+            root.transform.localPosition = Coords.Map(w.x, w.y, FEET + w.floor + w.lift);
             root.transform.localScale = Vector3.one * (float)w.scale;
             rootYaw += Orbit.ShortestTurn(rootYaw, w.heading) * Math.Min(1, dt * (12 + w.speed * 2));
             root.transform.localRotation = Coords.Yaw(rootYaw);

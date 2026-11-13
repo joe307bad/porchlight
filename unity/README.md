@@ -72,7 +72,10 @@ dotnet run --project "unity/Tools~/Checks" -- net '<that line>'   # two C# clien
 
 (cd server && node scripts/mission.ts delivery) > /tmp/delivery.json
 dotnet run --project "unity/Tools~/Checks" -- mission /tmp/delivery.json   # a mission plays to its end
+dotnet run --project "unity/Tools~/Checks" -- sleigh      # the presents mission's flying: rings, landings, chimneys
 ```
+
+The Christmas models (Santa on the people's armature, the sleigh and its nine reindeer, the tree and the present) are made in Blender by `Tools~/christmas/christmas.py`; `Tools~/santa-smoke.sh` builds the macOS player and plays the presents mission through headless.
 
 To smoke-test the whole app without a window, build macOS (**Porchlight ▸ Build macOS**) and run it like this:
 

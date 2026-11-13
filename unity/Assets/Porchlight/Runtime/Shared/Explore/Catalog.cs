@@ -50,8 +50,19 @@ namespace Porchlight.Explore
             ("airliner-d", 90, 3.0, 1.5),
             ("airliner-f", 0, 2.6, 1.5),
             ("airliner-g", 0, 3.2, 1),
+            // Santa's sleigh and its nine reindeer (Tools~/christmas): never parked at the airport, only
+            // flown on a mission (your_plane).
+            ("santa-sleigh", 0, 4.0, 0),
         };
         public static readonly string[] PLANES = PLANE_TABLE.Select(p => $"planes/{p.name}").ToArray();
+
+        /// <summary>Santa's sleigh behind his nine reindeer: a plane, flown on a mission (your_plane).</summary>
+        public const string SLEIGH = "planes/santa-sleigh";
+        /// <summary>
+        /// Where Santa sits in the sleigh: this far behind the middle of the model (the team runs out ahead of
+        /// him), and this high (tiles, as the sleigh's drawn: PLANE_TABLE's length).
+        /// </summary>
+        public const double SLEIGH_SEAT = 1.53, SLEIGH_SEAT_HEIGHT = 0.47;
 
         /// <summary>
         /// Every vehicle model, by index: the cars, then the boats and planes. The index
@@ -89,8 +100,14 @@ namespace Porchlight.Explore
         /// <summary>The fire engine, which the firefighter unlock adds to the car box.</summary>
         public const string FIRETRUCK = "cars/firetruck";
 
-        /// <summary>Everyone the library builds: the characters, and the firefighter.</summary>
-        public static IEnumerable<string> PEOPLE => CHARACTERS.Append(FIREFIGHTER);
+        /// <summary>
+        /// Santa (Tools~/christmas: made on the people's own armature, so their clips play on him). Not one of
+        /// the town's people either: a mission makes you him.
+        /// </summary>
+        public const string SANTA = "people/santa";
+
+        /// <summary>Everyone the library builds: the characters, the firefighter and Santa.</summary>
+        public static IEnumerable<string> PEOPLE => CHARACTERS.Append(FIREFIGHTER).Append(SANTA);
 
         public const string PEOPLE_CLIPS = "people/animations";
 
@@ -231,6 +248,11 @@ namespace Porchlight.Explore
         /// <summary>A frozen turkey in its netting (Tools~/thanksgiving): the turkey mission piles them in the back of your truck.</summary>
         public const string FROZEN_TURKEY = "props/frozen-turkey";
         /// <summary>
+        /// Christmas (Tools~/christmas): a decorated tree in its pot, and a wrapped present. The presents mission
+        /// stands a tree in each house you call at (tree) and you put a present under it.
+        /// </summary>
+        public static readonly string[] CHRISTMAS = { "props/christmas-tree", "props/present" };
+        /// <summary>
         /// The Thanksgiving feast (Tools~/thanksgiving), set on every house's dining table once the
         /// turkey mission's done (the `feast` unlock): the roast turkey on its platter first, then the bowls and the pie.
         /// </summary>
@@ -239,7 +261,7 @@ namespace Porchlight.Explore
         /// <summary>Every static model the town loads.</summary>
         public static IEnumerable<string> Statics =>
             new[] { HOUSES, SHOPS, TOWERS, INDUSTRIAL, CARS, TREES, FALL_TREES, PINES, PALMS, BUSHES, FLOWERS, CROPS, ROCKS, BOULDERS,
-                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, FURNISHINGS }.SelectMany(x => x).Distinct();
+                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, CHRISTMAS, FURNISHINGS }.SelectMany(x => x).Distinct();
 
         /// <summary>Which model families suit each kind of building ("office" is a style, not a blueprint kind).</summary>
         public static string[] KindModels(HouseStyle style) => style switch
@@ -301,6 +323,7 @@ namespace Porchlight.Explore
             double r = rng.Next() * total;
             foreach (var p in PLANE_TABLE)
             {
+                if (p.weight <= 0) continue;
                 r -= p.weight;
                 if (r <= 0) return System.Array.IndexOf(CARS, $"planes/{p.name}");
             }
@@ -324,6 +347,6 @@ namespace Porchlight.Explore
             return 0;
         }
 
-        public static bool IsCharacter(string look) => System.Array.IndexOf(CHARACTERS, look) >= 0 || look == FIREFIGHTER;
+        public static bool IsCharacter(string look) => System.Array.IndexOf(CHARACTERS, look) >= 0 || look == FIREFIGHTER || look == SANTA;
     }
 }

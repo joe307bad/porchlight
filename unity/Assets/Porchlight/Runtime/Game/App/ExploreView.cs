@@ -352,6 +352,8 @@ namespace Porchlight.App
         float[] skyFloor = new float[0];
         /// <summary>How far above a roof a plane keeps.</summary>
         const double ROOF_CLEARANCE = 0.6;
+        /// <summary>Higher than this (tiles, over a jump's top) you're up on a roof, not in the rooms under it.</summary>
+        const double ROOF_LIFT = 0.6;
         double hudTimer;
         int? street;
         List<Step> steps;
@@ -794,14 +796,15 @@ namespace Porchlight.App
         /// Put you here, facing `heading`, out of whatever you're in (a plane in the air
         /// is left to come down where it is): a mission's doing, so nothing refuses.
         /// </summary>
-        public void PutPlayer(Vec2 at, double heading)
+        public void PutPlayer(Vec2 at, double heading, bool keepHeight = false)
         {
             if (player == null || world == null) return;
             if (driving != null)
             {
                 var car = cars[driving.Value].car;
                 car.speed = 0;
-                car.altitude = 0;
+                // A mission's own plane, set down where it wants it (on a roof, say), stays there.
+                if (!keepHeight) car.altitude = 0;
                 driving = null;
                 if (autoDrive != null)
                 {
@@ -827,6 +830,21 @@ namespace Porchlight.App
 
         /// <summary>The smoke run's hands on the wheel of the car you're driving (throttle, steer, boost), in place of the keys and pad; null: yours.</summary>
         public Func<(double throttle, double steer, bool boost)?> Autopilot;
+
+        /// <summary>
+        /// A mission flying the plane you're at the controls of (bringing it down on a roof, say): given it and the
+        /// step's time, it puts it where it's to be and says true; false leaves it to you (or Autopilot).
+        /// </summary>
+        public Func<Vehicle, double, bool> FlyOverride;
+
+        /// <summary>
+        /// A mission moving you on foot itself (across a roof and down a chimney): where you are, how high what
+        /// you're stood on is, how high off it you are, which way you face, how fast you're walking (for your
+        /// stride) and whether you're to be seen; null leaves you to the keys.
+        /// </summary>
+        public Func<(Vec2 at, double floor, double lift, double heading, double pace, bool shown)?> Scripted;
+        /// <summary>Out of sight while a mission moves you (down inside a chimney).</summary>
+        bool scriptHidden;
 
         /// <summary>The car you're driving, if you are (the smoke run steers it).</summary>
         public Vehicle DrivenCar => driving != null ? cars[driving.Value].car : null;
@@ -1492,6 +1510,78 @@ namespace Porchlight.App
             return true;
         }
 
+        /// <summary>
+        /// A mission's: you at the controls of your own plane, a `model`, flying `height` tiles up where you are and
+        /// the way you face, in place of any car you had (out of anything else first). False if it isn't a plane.
+        /// </summary>
+        public bool TakeFlight(int model, double height)
+        {
+            if (player == null || world == null || Catalog.KindOf(model) != VehicleKind.Plane) return false;
+            if (riding != null) LeaveRide();
+            if (driving != null) PutPlayer(new Vec2(player.x, player.y), player.heading);
+            if (player.IsAuto)
+            {
+                player.StopAuto();
+                OnAutoChange?.Invoke();
+            }
+            // A car's heading points along (cos, sin); yours, (sin, cos).
+            double heading = Math.PI / 2 - player.heading;
+            AddCar(new Vehicle(model, player.x, player.y, heading) { altitude = Math.Max(0.5, height), speed = Vehicle.TAKEOFF_SPEED });
+            driving = 0;
+            held.Clear();
+            SyncDriver();
+            OnCarChange?.Invoke(true);
+            return true;
+        }
+
+        /// <summary>Out of your seat, leaving your vehicle just where it is (up on a roof, say): a mission moves you on from there (Scripted).</summary>
+        public void LeaveSeat()
+        {
+            if (driving == null || player == null) return;
+            cars[driving.Value].car.speed = 0;
+            driving = null;
+            if (autoDrive != null)
+            {
+                autoDrive = null;
+                OnAutoChange?.Invoke();
+            }
+            held.Clear();
+            player.Halt();
+            player.speed = 0;
+            OnCarChange?.Invoke(false);
+        }
+
+        /// <summary>Into the seat of your own vehicle wherever it is (a mission's: back from down a chimney, say).</summary>
+        public void Board()
+        {
+            if (player == null || cars.Count == 0 || driving != null) return;
+            if (riding != null) LeaveRide();
+            if (player.IsAuto)
+            {
+                player.StopAuto();
+                OnAutoChange?.Invoke();
+            }
+            driving = 0;
+            held.Clear();
+            SyncDriver();
+            OnCarChange?.Invoke(true);
+        }
+
+        /// <summary>Your own vehicle gone (a mission's, at its end): you're set down on open ground nearby first if you're in it.</summary>
+        public void DropCar()
+        {
+            if (player == null || world == null || cars.Count == 0) return;
+            if (driving != null)
+            {
+                var near = StandableNear(new Vec2(player.x, player.y));
+                PutPlayer(near, player.heading);
+            }
+            foreach (var c in cars) RemoveCar(c);
+            cars.Clear();
+            driving = null;
+            OnCarChange?.Invoke(false);
+        }
+
         /// <summary>Where the town's cars are, besides yours: parked (by the town or other players) and in traffic.</summary>
         public List<Vec2> CarsAbout()
         {
@@ -1786,7 +1876,14 @@ namespace Porchlight.App
                     best = new Pick { kind = kind, i = i, driver = driver };
                 }
             }
-            for (int i = 0; i < cars.Count; i++) Consider(PickKind.Own, i, cars[i].car.x, cars[i].car.y);
+            for (int i = 0; i < cars.Count; i++)
+            {
+                // A long plane (the sleigh and its team) is in reach from anywhere along it, not only its middle.
+                var c = cars[i].car;
+                var f = c.Forward;
+                double along = c.kind == VehicleKind.Plane ? Math.Max(-c.halfLength, Math.Min(c.halfLength, (p.x - c.x) * f.x + (p.y - c.y) * f.y)) : 0;
+                Consider(PickKind.Own, i, c.x + f.x * along, c.y + f.y * along);
+            }
             for (int i = 0; i < world.parked.Count; i++) if (!takenParked.Contains(i)) Consider(PickKind.Parked, i, world.parked[i].x, world.parked[i].y);
             int t = traffic?.Nearest(new Vec2(p.x, p.y), bestD) ?? -1;
             if (t >= 0) Consider(PickKind.Traffic, t, traffic.cars[t].x, traffic.cars[t].y);
@@ -2041,6 +2138,12 @@ namespace Porchlight.App
             if (x < 0.5 || y < 0.5 || x > w - 0.5 || y > h - 0.5) return Countryside != null && Countryside(x, y) ? hill : double.PositiveInfinity;
             return Math.Max(hill, skyFloor[Grid.Index((int)Math.Floor(x), (int)Math.Floor(y), w)]);
         }
+
+        /// <summary>The lowest a plane may fly at (x, y): clear of the roofs (Infinity where it can't fly).</summary>
+        public double FlyFloor(double x, double y) => world != null ? FloorAt(x, y) : 0;
+
+        /// <summary>The town's buildings as boxes (map rectangles and how high their tops are).</summary>
+        public IReadOnlyList<Box> Boxes => world != null ? (IReadOnlyList<Box>)world.boxes : Array.Empty<Box>();
 
         Func<double, double, bool> OpenFor(Vehicle car) => car.kind == VehicleKind.Boat ? canSail : car.kind == VehicleKind.Plane ? canTaxi : canDrive;
 
@@ -2345,6 +2448,13 @@ namespace Porchlight.App
             var pad = padState;
             var inputV = new Vec2(kx + pad.move.x, ky + pad.move.y);
             var p = player;
+            // A mission moving you on foot; back on the ground (and in sight) once it's done.
+            var scripted = p != null && driving == null && riding == null ? Scripted?.Invoke() : null;
+            if (p != null && scripted == null && (p.floor != 0 || scriptHidden))
+            {
+                p.floor = 0;
+                scriptHidden = false;
+            }
             steering = held.Count > 0 || pad.move.x != 0 || pad.move.y != 0;
             // Turbo: RT, or A held (at once in a vehicle; on foot a tap of A is a jump, and holding it on runs into a sprint).
             aHeldFor = pad.Held(Button.A) ? aHeldFor + dt : 0;
@@ -2360,7 +2470,10 @@ namespace Porchlight.App
             else if (p != null && driving != null)
             {
                 var car = cars[driving.Value].car;
-                if (autoDrive != null)
+                if (FlyOverride != null && FlyOverride(car, dt))
+                {
+                }
+                else if (autoDrive != null)
                 {
                     var others = traffic?.Positions().Select(c => new Vec2(c.x, c.y)).ToList() ?? new List<Vec2>();
                     for (int i = 0; i < cars.Count; i++) if (i != driving) others.Add(new Vec2(cars[i].car.x, cars[i].car.y));
@@ -2377,6 +2490,19 @@ namespace Porchlight.App
                     car.Drive(throttle, Clamp1(inputV.x), dt, OpenFor(car), turbo, FloorAt, gentle: true);
                 }
                 SyncDriver();
+            }
+            else if (p != null && scripted != null)
+            {
+                var s = scripted.Value;
+                p.x = s.at.x;
+                p.y = s.at.y;
+                p.floor = s.floor;
+                p.lift = s.lift;
+                p.rise = s.lift > 0 ? -1 : 0;
+                p.heading = s.heading;
+                p.speed = s.pace;
+                p.Halt();
+                scriptHidden = !s.shown;
             }
             else if (p != null && mode == CameraMode.Close && !p.IsAuto && room == null && !screenKeys)
             {
@@ -2491,8 +2617,8 @@ namespace Porchlight.App
         {
             var p = player;
             int? now = null;
-            // At the wheel (or flying over a building) you're never in its rooms.
-            if (p != null && !InCar)
+            // At the wheel (or flying over a building, or up on its roof) you're never in its rooms.
+            if (p != null && !InCar && p.floor + p.lift < ROOF_LIFT)
             {
                 var at = new Vec2(p.x, p.y);
                 if (room != null && Interiors.InRoom(world.rooms[room.Value], at, Interiors.LEAVE_MARGIN)) now = room;
@@ -2617,7 +2743,7 @@ namespace Porchlight.App
             var p = player;
             if (p != null && playerAvatar != null)
             {
-                playerAvatar.Visible = !InCar;
+                playerAvatar.Visible = !InCar && !scriptHidden;
                 playerAvatar.Update(p, dt);
             }
             for (int i = 0; i < cars.Count; i++)
@@ -2662,7 +2788,7 @@ namespace Porchlight.App
             shownZoom += (zoomTarget - shownZoom) * (snap ? 1 : Math.Min(1, dt * (fixedView != null ? 5 : 10)));
             var target = fixedView?.focus
                 ?? (Attract ? new Vector3((float)world.model.center.x, 0.3f, (float)world.model.center.y)
-                : p != null ? new Vector3((float)p.x, 0.3f + (float)(InCar ? p.lift : 0), (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
+                : p != null ? new Vector3((float)p.x, 0.3f + (float)(InCar ? p.lift : p.floor), (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
             focusFollow.Update(target.x, target.y, target.z, dt, snap);
             focus = new Vector3((float)focusFollow.ax, (float)focusFollow.ay, (float)focusFollow.az);
             pitch += (pitchTarget - pitch) * (snap ? 1 : Math.Min(1, dt * 6));
@@ -2747,6 +2873,7 @@ namespace Porchlight.App
         string NameOf(Pick pick)
         {
             int model = pick.kind == PickKind.Own ? cars[pick.i].car.model : pick.kind == PickKind.Parked ? world.parked[pick.i].model : traffic.cars[pick.i].model;
+            if (model >= 0 && model < Catalog.CARS.Length && Catalog.CARS[model] == Catalog.SLEIGH) return "sleigh";
             return Catalog.KindOf(model) switch { VehicleKind.Boat => "boat", VehicleKind.Plane => "plane", _ => "car" };
         }
 

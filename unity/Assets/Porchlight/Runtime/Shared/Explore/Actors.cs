@@ -20,6 +20,8 @@ namespace Porchlight.Explore
         public double lift;
         /// <summary>Upward speed mid-jump (tiles per second; negative coming down).</summary>
         public double rise;
+        /// <summary>How high what they're stood on is (tiles): 0 on the ground, a roof's height up on one (a mission's doing).</summary>
+        public double floor;
         public readonly string look;
         public double x;
         public double y;

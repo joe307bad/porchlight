@@ -15,8 +15,11 @@
 // they've been close enough for long enough; and a countdown runs while
 // you're where it says. A role's building can burn, and your car can be one
 // the story gives you, with a water turret on its roof to put the fire out
-// from (Firefight). Local to this player: no one else sees a mission's
-// people, its fires, or what it's made you.
+// from (Firefight). A mission can give you a plane to fly (Santa's sleigh),
+// hang rings in the sky to fly through, bring your plane down on a roof or in
+// the street, take you down a chimney and back up it, and stand a tree indoors
+// for you to put a present under (MissionSky). Local to this player: no one
+// else sees a mission's people, its fires, or what it's made you.
 
 using System;
 using System.Collections.Generic;
@@ -32,7 +35,7 @@ using Avatar = Porchlight.Rendering.Avatar;
 
 namespace Porchlight.App
 {
-    public sealed class MissionPlay : IMissionWorld
+    public sealed partial class MissionPlay : IMissionWorld
     {
         /// <summary>The pavement in front of a building is no further than this from its door.</summary>
         const double KERB_REACH = 6;
@@ -162,6 +165,8 @@ namespace Porchlight.App
             public WheelieBin bin;
             /// <summary>Spoken to (since the story last asked).</summary>
             public bool talked;
+            /// <summary>Its ring in the sky, where your plane came down at it, its chimney and its tree (MissionSky).</summary>
+            public SkyStop sky;
             public Vec2 Outside => new Vec2(door.x + outward.x * 0.35, door.y + outward.y * 0.35);
             public Vec2 Inside => within ?? new Vec2(door.x - outward.x * 0.4, door.y - outward.y * 0.4);
             public bool Marked => mark != null && spot != null;
@@ -463,6 +468,7 @@ namespace Porchlight.App
             view.OnPadA = TryTalk;
             fight = new Firefight(view, library, input, rng, S);
             view.CameraOverride = fight.Camera;
+            StartSky();
             script = new MissionScript(story, this);
         }
 
@@ -472,6 +478,7 @@ namespace Porchlight.App
             foreach (var p in people) DisposePerson(p);
             people.Clear();
             foreach (var r in roles.Values) ClearMark(r);
+            DisposeSky();
             roles.Clear();
             foreach (var c in chases.Values) CallOff(c);
             chases.Clear();
@@ -1248,14 +1255,21 @@ namespace Porchlight.App
             view.Guide(TargetOf(r, to, "guide"), string.IsNullOrEmpty(label) ? r.street : label);
         }
 
-        /// <summary>Where a role's `to` is, as it moves: its spot, its person, its house (the pavement outside) or its door (just outside it).</summary>
-        static Func<Vec2?> TargetOf(Role r, string to, string what) => to switch
+        /// <summary>
+        /// Where a role's `to` is, as it moves: its spot, its person, its house (the pavement outside), its door (just
+        /// outside it), the ground under its ring, its tree (where you stand to put the present under it), or your
+        /// own car (or plane: your seat in it).
+        /// </summary>
+        Func<Vec2?> TargetOf(Role r, string to, string what) => to switch
         {
             "spot" => () => r.Marked ? r.Spot : r.kerb,
             "person" => () => r.person != null ? new Vec2(r.person.walker.x, r.person.walker.y) : r.kerb,
             "house" => () => r.kerb,
             "door" => () => r.Outside,
-            _ => throw new Exception($"{what} to what? '{to}' (spot, person, house or door)"),
+            "ring" => () => r.sky?.ring != null ? new Vec2(r.sky.ring.Value.x, r.sky.ring.Value.y) : r.kerb,
+            "tree" => () => r.sky?.treeGo != null ? r.sky.treeStand : r.Inside,
+            "car" => () => view.OwnVehicle != null ? YourSeat() : (Vec2?)null,
+            _ => throw new Exception($"{what} to what? '{to}' (spot, person, house, door, ring, tree or car)"),
         };
 
         public void Dot(string role, string to)
@@ -1317,8 +1331,9 @@ namespace Porchlight.App
             var r = RoleOf(role);
             var to = WhereOf(at);
             if (to >= Where.Car) throw new Exception($"put you where? '{at}' (inside, door or kerb)");
-            // Facing out, the way you'd go.
-            view.PutPlayer(PointOf(r, to), DetMath.Atan2(r.outward.x, r.outward.y));
+            // Facing out, the way you'd go. The story's plane, set down where it brought it, stays there.
+            parked = false;
+            view.PutPlayer(PointOf(r, to), DetMath.Atan2(r.outward.x, r.outward.y), keepHeight: storyPlane >= 0 && view.OwnVehicle?.model == storyPlane);
         }
 
         public string Chase(string role, string name, int count, string car, string look)
@@ -1413,8 +1428,20 @@ namespace Porchlight.App
         void GiveCarBack()
         {
             if (carBefore == null) return;
-            if (carBefore.Value >= 0) view.ChangeCar(carBefore.Value);
+            var own = view.OwnVehicle;
+            if (storyPlane >= 0 && own != null && own.model == storyPlane)
+            {
+                // The story's plane goes (you set down on the ground first), and your car's brought back beside you.
+                landing = null;
+                trip = null;
+                pose = null;
+                parked = false;
+                view.DropCar();
+                if (carBefore.Value >= 0) view.SpawnCar(carBefore.Value);
+            }
+            else if (carBefore.Value >= 0) view.ChangeCar(carBefore.Value);
             carBefore = null;
+            storyPlane = -1;
         }
 
         public int Fire(string role, int windows)
@@ -1588,6 +1615,7 @@ namespace Porchlight.App
         public bool Met(string wait, string role)
         {
             if (wait == "countdown") return clock != null && clock.left <= 0;
+            if (wait == "aboard") return view.DrivingMyCar;
             if (wait == "finished") return races.TryGetValue(role ?? "", out var race) && race.run.Finished;
             if (wait == "out") return fight.Out(role);
             if (wait == "doused") return fight.TakeDoused(role);
@@ -1612,6 +1640,18 @@ namespace Porchlight.App
                     return YouInside(r);
                 case "outside":
                     return view.PlayerPosition != null && !YouInside(r);
+                case "ring":
+                    if (r.sky == null || !r.sky.through) return false;
+                    r.sky.through = false;
+                    return true;
+                case "landed":
+                    return r.sky != null && r.sky.landed && landingFor != r;
+                case "chimney":
+                    if (r.sky == null || !r.sky.chimneyDone) return false;
+                    r.sky.chimneyDone = false;
+                    return true;
+                case "gift":
+                    return r.sky != null && r.sky.given;
                 default:
                     return false;
             }
@@ -2093,6 +2133,7 @@ namespace Porchlight.App
         void Forget(Role r)
         {
             ClearMark(r);
+            ClearSky(r);
             if (r.person != null) GoIndoors(r.person);
         }
 
@@ -2110,22 +2151,26 @@ namespace Porchlight.App
                 if (beacon != null) beacon.SetActive(false);
                 return;
             }
-            if (beacon == null)
-            {
-                beacon = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                UnityEngine.Object.Destroy(beacon.GetComponent<Collider>());
-                beacon.name = "mission beacon";
-                beacon.transform.SetParent(view.world.root.transform, false);
-                beacon.transform.localScale = Vector3.one * 0.07f;
-                beaconMaterial ??= Materials.Glowing(Coords.Hex(SPOT_COLOR));
-                var r = beacon.GetComponent<Renderer>();
-                r.sharedMaterial = beaconMaterial;
-                r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            }
+            EnsureBeacon();
             beacon.SetActive(true);
             var w = waiting.person.walker;
             double bob = Math.Sin(Time.realtimeSinceStartupAsDouble * 3) * 0.025;
             beacon.transform.localPosition = Coords.Map(w.x, w.y, Avatar.PERSON_HEIGHT + 0.13 + bob);
+        }
+
+        /// <summary>The light over whoever (or whatever) the story's waiting on you to go up to, made the first time it's needed.</summary>
+        void EnsureBeacon()
+        {
+            if (beacon != null) return;
+            beacon = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            UnityEngine.Object.Destroy(beacon.GetComponent<Collider>());
+            beacon.name = "mission beacon";
+            beacon.transform.SetParent(view.world.root.transform, false);
+            beacon.transform.localScale = Vector3.one * 0.07f;
+            beaconMaterial ??= Materials.Glowing(Coords.Hex(SPOT_COLOR));
+            var r = beacon.GetComponent<Renderer>();
+            r.sharedMaterial = beaconMaterial;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         }
 
         // Talking: walk (or drive) up to someone the story is waiting for you to talk to.
@@ -2154,6 +2199,7 @@ namespace Porchlight.App
         /// <summary>Talk to whoever's in reach (Enter, or the pad's A), else up to the turret if there's one: true if either.</summary>
         public bool TryTalk()
         {
+            if (TryGift()) return true;
             var r = TalkTarget();
             if (r == null) return fight.TryMount();
             r.talked = true;
@@ -2168,6 +2214,7 @@ namespace Porchlight.App
             if (fight.Manned) return fight.Prompt();
             var r = TalkTarget();
             if (r != null) return $"Press {(input.Connected ? "A" : "Enter")} to talk to {r.name}";
+            if (GiftTarget() != null) return $"Press {(input.Connected ? "A" : "Enter")} to put the present under the tree";
             foreach (var h in hints)
                 if (HintShows(h)) return h.text;
             return null;
@@ -2275,6 +2322,8 @@ namespace Porchlight.App
                 if (p.bin.lid != null) PeakLid = Math.Max(PeakLid, Quaternion.Angle(p.bin.lidRest, p.bin.lid.localRotation));
             }
             UpdateBeacon(WaitingToTalk(), dt);
+            UpdateSky(dt);
+            UpdateTreeBeacon();
             UpdateDot();
             UpdateChases(dt);
             UpdateRaces(dt);

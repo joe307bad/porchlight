@@ -27,15 +27,18 @@ const BLOCKS = [
   'dot', 'look', 'put_you', 'chase', 'countdown', 'standby', 'unlock', 'your_car', 'fire', 'turret',
   'course', 'stopwatch', 'stopwatch_time', 'record', 'town_record', 'town_record_holder',
   'bin', 'get_out', 'take_bin', 'dump', 'return_bin', 'get_in', 'load_back', 'take_from_back',
+  'your_plane', 'ring', 'land', 'chimney', 'tree',
 ];
-const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'doused', 'out', 'countdown', 'finished', 'wait'];
+const WAITS = ['talk', 'parked', 'idle', 'inside', 'outside', 'caught', 'doused', 'out', 'countdown', 'finished', 'ring', 'landed', 'chimney', 'gift', 'aboard', 'wait'];
 const SETTINGS = [
   'talk_reach', 'talk_reach_car', 'park_reach', 'park_speed', 'park_angle', 'car_reach', 'walk_speed',
   'your_pace', 'chase_speed', 'chase_speed_car', 'pull_up', 'officer_speed', 'officer_reach', 'ring', 'catch_reach', 'catch_time',
   'douse_time', 'water_speed', 'aim_speed',
 ];
-// What a person (or you) can look like: the game's characters, the firefighter and the animals.
-const LOOKS = /^(people\/(character-[\w-]+|policeman-a-4-1|firefighter)|animals\/animal-(penguin|lion|tiger|elephant|giraffe|panda|polar|monkey|koala|parrot))$/;
+// What a person (or you) can look like: the game's characters, the firefighter, Santa and the animals.
+const LOOKS = /^(people\/(character-[\w-]+|policeman-a-4-1|firefighter|santa)|animals\/animal-(penguin|lion|tiger|elephant|giraffe|panda|polar|monkey|koala|parrot))$/;
+// The planes a mission can give you (Catalog.PLANES).
+const PLANES = /^planes\/(prop-small|biplane-b|biplane-c|prop-warbird|jet-private|airliner-[adfg]|santa-sleigh)$/;
 
 /** Binds a stand-in town to a story: it keeps track of who's where and what's held or on the car, and throws on misuse. */
 function standInTown(story: InstanceType<typeof Story>) {
@@ -52,7 +55,14 @@ function standInTown(story: InstanceType<typeof Story>) {
   // Each role's bin: 'home' by the kerb, 'held' by its person, and how many have been tipped into the car.
   const bins = new Map<string, 'home' | 'held'>();
   const aboard = new Set<string>();
-  const town = { cargo: 0, load: 0, delivered: 0, bins, aboard, emptied: 0, out: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, courses, unlocked: [] as string[], look: '', clock: false, turret: '', car: '', stopwatch: '', stopwatchRole: '', mine: 0, best: 0, holder: '', kept: [] as number[] };
+  // The sky: the plane the story gave you ('' none) and whether you're in its seat (or down a role's chimney,
+  // or out on foot); each role's ring (true: flown through); where your plane's coming down, or is down; the
+  // chimney trip under way; and each role's tree (true: its present's under it).
+  const rings = new Map<string, boolean>();
+  const landed = new Map<string, 'roof' | 'kerb'>();
+  const trees = new Map<string, boolean>();
+  const sky = { plane: '', where: 'ground' as 'seat' | 'ground' | 'chimney', downAt: '', landing: '', landingAt: '' as '' | 'roof' | 'kerb', climbing: '', climbWay: '', rings, landed, trees, ringsFlown: 0, gifts: 0 };
+  const town = { cargo: 0, load: 0, delivered: 0, bins, aboard, emptied: 0, out: 0, names: new Map<string, string>(), log: [] as string[], present, marked, placed, chases, standing, burning, courses, unlocked: [] as string[], look: '', clock: false, turret: '', car: '', stopwatch: '', stopwatchRole: '', mine: 0, best: 0, holder: '', kept: [] as number[], sky };
   const oneOf = (what: string, value: string, known: string[]) => {
     if (!known.includes(value)) throw new Error(`no such ${what} '${value}' (${known.join(', ')})`);
   };
@@ -84,6 +94,9 @@ function standInTown(story: InstanceType<typeof Story>) {
     marked.delete(role);
     bins.delete(role);
     aboard.delete(role);
+    rings.delete(role);
+    landed.delete(role);
+    trees.delete(role);
     return `${role} street`;
   });
   bind('spawn', (role: string, name: string, look: string) => {
@@ -186,12 +199,56 @@ function standInTown(story: InstanceType<typeof Story>) {
   bind('guide', (role: string, to: string) => {
     if (role === '') return;
     isPlaced(role);
-    oneOf('guide', to, ['spot', 'person', 'house', 'door']);
+    oneOf('guide', to, ['spot', 'person', 'house', 'door', 'ring', 'tree', 'car']);
+    if (to === 'ring') assert.ok(rings.has(role), `guide to ${role}'s ring with none hung`);
+    if (to === 'car') assert.ok(town.car !== '' || sky.plane !== '', `guide to your car with none`);
   });
   bind('dot', (role: string, to: string) => {
     if (role === '') return;
     isPlaced(role);
-    oneOf('dot', to, ['spot', 'person', 'house', 'door']);
+    oneOf('dot', to, ['spot', 'person', 'house', 'door', 'ring', 'tree', 'car']);
+    if (to === 'tree') assert.ok(trees.has(role), `a dot at ${role}'s tree with none there`);
+  });
+  bind('your_plane', (model: string, height: number) => {
+    if (model === '') {
+      sky.plane = '';
+      if (sky.where === 'seat') sky.where = 'ground';
+      return;
+    }
+    assert.match(model, PLANES, `no such plane '${model}'`);
+    assert.ok(height >= 1 && height <= 24, `fly how high? ${height} (1 to 24 tiles)`);
+    sky.plane = model;
+    sky.where = 'seat';
+  });
+  bind('ring', (role: string, height: number, size: number) => {
+    isPlaced(role);
+    if (size <= 0) return rings.delete(role);
+    assert.ok(height >= 1 && height <= 24, `a ring how high? ${height}`);
+    assert.ok(size <= 12, `a ring how big? ${size}`);
+    rings.set(role, false);
+  });
+  bind('land', (role: string, at: string) => {
+    isPlaced(role);
+    oneOf('place to land', at, ['roof', 'kerb']);
+    assert.ok(sky.plane !== '' && sky.where === 'seat', `land at ${role} when you're not flying a plane`);
+    sky.landing = role;
+    sky.landingAt = at as 'roof' | 'kerb';
+    landed.delete(role);
+  });
+  bind('chimney', (role: string, way: string) => {
+    isPlaced(role);
+    oneOf('way', way, ['down', 'up']);
+    assert.equal(landed.get(role), 'roof', `a chimney at ${role} with your sleigh not on its roof`);
+    assert.equal(sky.climbing, '', 'already on the way up or down a chimney');
+    if (way === 'down') assert.equal(sky.where, 'seat', `down ${role}'s chimney from out of your seat`);
+    else assert.ok(sky.where === 'chimney' && sky.downAt === role, `up ${role}'s chimney without being down it`);
+    sky.climbing = role;
+    sky.climbWay = way;
+  });
+  bind('tree', (role: string, gift: string) => {
+    isPlaced(role);
+    assert.ok(gift, 'a tree needs a present');
+    trees.set(role, false);
   });
   bind('look', (model: string) => {
     assert.ok(model === '' || LOOKS.test(model), `no such look '${model}'`);
@@ -201,6 +258,8 @@ function standInTown(story: InstanceType<typeof Story>) {
     if (courses.has(role)) return oneOf('place on a course', at, ['start', 'finish']);
     isPlaced(role);
     oneOf('place', at, ['inside', 'door', 'kerb']);
+    sky.where = 'ground';
+    sky.downAt = '';
   });
   bind('course', (role: string, crowd: number) => {
     assert.ok(role && !placed.has(role) && !chases.has(role), `a course needs a role of its own`);
@@ -477,6 +536,100 @@ test('turkey run carries five frozen turkeys from the pickup into five houses, a
   assert.equal(town.marked.size, 0);
   assert.deepEqual(town.unlocked, ['feast']);
   assert.ok(lines.includes('All 5 turkeys delivered. Look in through any window: the whole town\'s sitting down to Thanksgiving dinner.'), lines.join('\n'));
+});
+
+test('deliver the presents flies Santa to five houses: down the chimney at every other one, in at the front door at the rest', async () => {
+  const mission = await new MissionStore(DEFAULT_MISSIONS_DIR).get('deliver-the-presents');
+  assert.ok(mission?.story);
+  assert.equal(mission.title, 'Deliver the Presents');
+  const story = new Story(mission.story);
+  story.allowExternalFunctionFallbacks = false;
+  const town = standInTown(story);
+  const { sky } = town;
+  const waits: string[] = [];
+  const lines: string[] = [];
+  // Where you are on foot: inside the role's house once you've gone in at its door.
+  let insideAt = '';
+  for (let guard = 0; guard < 500 && (story.canContinue || story.currentChoices.length > 0); guard++) {
+    while (story.canContinue) lines.push(story.Continue()!.trim());
+    if (story.currentChoices.length === 0) break;
+    const choices = story.currentChoices as { text: string; index: number }[];
+    assert.equal(choices.length, 1, `one wait at a time: ${choices.map((c) => c.text).join(', ')}`);
+    const pick = choices[0];
+    const [wait, role] = pick.text.slice(1).split(' ');
+    // Each wait met as the town would meet it, once it could be.
+    switch (wait) {
+      case 'ring':
+        assert.ok(sky.rings.has(role), `@ring ${role} with no ring hung`);
+        assert.ok(sky.plane !== '' && sky.where === 'seat', `@ring ${role} with no plane to fly through it`);
+        sky.rings.delete(role);
+        sky.ringsFlown++;
+        break;
+      case 'landed':
+        assert.equal(sky.landing, role, `@landed ${role} with no landing on the way`);
+        sky.landed.set(role, sky.landingAt as 'roof' | 'kerb');
+        sky.landing = '';
+        break;
+      case 'chimney':
+        assert.equal(sky.climbing, role, `@chimney ${role} with no trip up or down it`);
+        if (sky.climbWay === 'down') {
+          sky.where = 'chimney';
+          sky.downAt = role;
+        } else {
+          sky.where = 'seat';
+          sky.downAt = '';
+        }
+        sky.climbing = '';
+        break;
+      case 'inside':
+        assert.equal(sky.where, 'ground', `@inside ${role} while you're not on foot outside it`);
+        insideAt = role;
+        break;
+      case 'gift':
+        assert.equal(sky.trees.get(role), false, `@gift ${role} with no tree waiting`);
+        assert.ok(sky.downAt === role || insideAt === role, `@gift ${role} from outside the house`);
+        sky.trees.set(role, true);
+        sky.gifts++;
+        break;
+      case 'aboard':
+        assert.equal(sky.where, 'ground', '@aboard while not out on foot');
+        assert.ok(sky.plane !== '', '@aboard with no sleigh to climb into');
+        sky.where = 'seat';
+        insideAt = '';
+        break;
+      default:
+        assert.fail(`@${wait} isn't one this mission waits on`);
+    }
+    waits.push(`@${wait}`);
+    story.ChooseChoiceIndex(pick.index);
+  }
+  assert.equal(story.canContinue, false);
+  assert.equal(story.currentChoices.length, 0);
+  // Down the chimney at the first, third and fifth houses; in at the front door at the second and fourth.
+  const chimney = ['@ring', '@landed', '@chimney', '@gift', '@chimney'];
+  const door = ['@ring', '@landed', '@inside', '@gift', '@aboard'];
+  assert.deepEqual(waits, [chimney, door, chimney, door, chimney].flat());
+  // Santa in his sleigh from the start, high up; yourself, on the ground, at the end.
+  assert.ok(town.log.indexOf('look(people/santa)') < town.log.indexOf('your_plane(planes/santa-sleigh, 16)'));
+  assert.equal(town.look, '');
+  assert.equal(sky.plane, '');
+  // Five rings flown through, five trees with a present under each.
+  assert.equal(sky.ringsFlown, 5);
+  assert.equal(sky.gifts, 5);
+  assert.equal(town.log.filter((l) => l.startsWith('tree(home, props/present)')).length, 5);
+  assert.equal(town.log.filter((l) => l.startsWith('ring(home, ')).length, 5);
+  // Landed on the roof three times and in the street twice, every other house; down and back up each chimney.
+  const landings = town.log.filter((l) => l.startsWith('land(')).map((l) => l.slice(5, -1).split(', ')[1]);
+  assert.deepEqual(landings, ['roof', 'kerb', 'roof', 'kerb', 'roof']);
+  const trips = town.log.filter((l) => l.startsWith('chimney(')).map((l) => l.slice(8, -1).split(', ')[1]);
+  assert.deepEqual(trips, ['down', 'up', 'down', 'up', 'down', 'up']);
+  // Out onto the pavement only at the front-door houses, and shown the way back to the sleigh there.
+  assert.equal(town.log.filter((l) => l === 'put_you(home, kerb)').length, 2);
+  assert.equal(town.log.filter((l) => l === 'guide(home, car, the sleigh)').length, 2);
+  // Every house has room in the street to set the sleigh down, a few streets on.
+  assert.ok(town.log.filter((l) => l.startsWith('place(')).every((l) => l === 'place(home, house, , 10, 30, true)'));
+  assert.ok(lines.includes("You're Santa! Your sleigh's high over the rooftops, nine reindeer in harness and Rudolph's nose lighting the way."), lines.join('\n'));
+  assert.ok(lines.includes('Merry Christmas! The whole town wakes up to presents under the tree.'), lines.join('\n'));
 });
 
 /** Plays the marathon through against a stand-in town with these best times, and returns what it said. */

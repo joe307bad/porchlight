@@ -61,6 +61,9 @@ jobs:
           dotnet run --project "unity/Tools~/Checks" -c Release -- ride
           dotnet run --project "unity/Tools~/Checks" -c Release -- ways
           dotnet run --project "unity/Tools~/Checks" -c Release -- where
+      # The presents mission's flying: through the rings, the story's landings, down the chimneys and back.
+      - name: Game — the sleigh flies through its rings, lands where it's sent, and down the chimney and back
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- sleigh
 
       # Unity's import cache, reused only for the exact same sources. No
       # restore-keys fallback: opening the project on a Library left by older

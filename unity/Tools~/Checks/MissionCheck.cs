@@ -24,7 +24,7 @@ static class MissionCheck
         static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
         static readonly string[] PLACES = { "inside", "door", "kerb", "car", "bin", "back" };
         static readonly string[] BINS = { "props/wheelie-bin-trash", "props/wheelie-bin-recycle" };
-        static readonly string[] GUIDES = { "spot", "person", "house", "door" };
+        static readonly string[] GUIDES = { "spot", "person", "house", "door", "ring", "tree", "car" };
 
         public readonly List<string> log = new List<string>();
         readonly Dictionary<string, string> names = new Dictionary<string, string>();
@@ -55,6 +55,21 @@ static class MissionCheck
         public int emptied;
         /// <summary>How many things are piled in the back of your car (load_back), once everyone's errands so far are done.</summary>
         int load;
+        /// <summary>
+        /// The plane the story gave you ("" none) and whether you're in its seat; each role's ring (true: flown
+        /// through, not yet heard), where your plane's coming down (role and roof or kerb) or is down, the chimney
+        /// trip under way (role, down or up) and where you are with it, and each role's tree (true: given).
+        /// </summary>
+        string plane = "";
+        bool seated;
+        readonly Dictionary<string, bool> rings = new Dictionary<string, bool>();
+        string landing = "", landingAt = "";
+        readonly Dictionary<string, string> landed = new Dictionary<string, string>();
+        string climbing = "", climbWay = "";
+        /// <summary>Down a role's chimney (its role), out of sight of your seat.</summary>
+        string downAt = "";
+        readonly Dictionary<string, bool> trees = new Dictionary<string, bool>();
+        public int ringsFlown, landings, chimneys, gifts;
 
         static void OneOf(string what, string value, string[] known)
         {
@@ -95,6 +110,9 @@ static class MissionCheck
             marked.Remove(role);
             bins.Remove(role);
             aboard.Remove(role);
+            rings.Remove(role);
+            landed.Remove(role);
+            trees.Remove(role);
             log.Add($"place {role} {kind} {(near == "" ? "you" : near)} {min}..{max}{(parking ? " parking" : "")}");
             return kind == "zoo" ? "the zoo" : role == "drop" ? "Elm Street" : "Mill Road";
         }
@@ -266,7 +284,68 @@ static class MissionCheck
             }
             Placed(role);
             OneOf("place", at, PLACES);
+            seated = false;
+            downAt = "";
             log.Add($"put you {at} {role}");
+        }
+        public void YourPlane(string model, double height)
+        {
+            if (model == "")
+            {
+                plane = "";
+                seated = false;
+                log.Add("your plane gone");
+                return;
+            }
+            if (!model.StartsWith("planes/")) throw new Exception($"no such plane '{model}'");
+            if (height < 1 || height > 24) throw new Exception($"fly how high? {height} (1 to 24 tiles)");
+            plane = model;
+            seated = true;
+            log.Add($"your plane: {model}, {height} up");
+        }
+        public void Ring(string role, double height, double size)
+        {
+            Placed(role);
+            if (size <= 0)
+            {
+                rings.Remove(role);
+                log.Add($"ring at {role} down");
+                return;
+            }
+            if (height < 1 || height > 24) throw new Exception($"a ring how high? {height} (1 to 24 tiles)");
+            if (size > 12) throw new Exception($"a ring how big? {size} (up to 12 tiles across)");
+            rings[role] = false;
+            log.Add($"ring at {role}, {height} up, {size} across");
+        }
+        public void Land(string role, string at)
+        {
+            Placed(role);
+            OneOf("place to land", at, new[] { "roof", "kerb" });
+            if (plane == "" || !seated) throw new Exception("you're not flying a plane (your_plane first)");
+            landing = role;
+            landingAt = at;
+            landed.Remove(role);
+            log.Add($"land on {role}'s {at}");
+        }
+        public void Chimney(string role, string way)
+        {
+            Placed(role);
+            OneOf("way", way, new[] { "down", "up" });
+            if (!landed.TryGetValue(role, out var at) || at != "roof") throw new Exception($"there's no chimney to climb at '{role}' (land on its roof first)");
+            if (climbing != "") throw new Exception("you're already on your way up or down a chimney");
+            if (way == "down" && !seated) throw new Exception("down the chimney from where? (you're not in your seat on the roof)");
+            if (way == "up" && downAt != role) throw new Exception("up the chimney from where? (you're not down it)");
+            climbing = role;
+            climbWay = way;
+            seated = false;
+            log.Add($"chimney {way} at {role}");
+        }
+        public void Tree(string role, string gift)
+        {
+            Placed(role);
+            if (string.IsNullOrEmpty(gift)) throw new Exception("a tree needs a present to go under it");
+            trees[role] = false;
+            log.Add($"tree at {role} for {gift}");
         }
         public string Chase(string role, string name, int count, string car, string model)
         {
@@ -361,6 +440,12 @@ static class MissionCheck
         /// </summary>
         public bool Met(string wait, string role)
         {
+            // You fly through a ring, are brought down, go down or up a chimney, leave a present, climb back in.
+            if (wait == "ring" && (!rings.ContainsKey(role) || plane == "" || !seated)) return false;
+            if (wait == "landed" && landing != role && !landed.ContainsKey(role)) return false;
+            if (wait == "chimney" && climbing != role) return false;
+            if (wait == "gift" && (!trees.ContainsKey(role) || seated)) return false;
+            if (wait == "aboard" && (plane == "" || downAt != "" || climbing != "")) return false;
             if (wait == "parked" && !marked.Contains(role)) return false;
             if ((wait == "talk" || wait == "idle") && !present.Contains(role)) return false;
             if ((wait == "inside" || wait == "outside") && !placed.Contains(role)) return false;
@@ -371,6 +456,34 @@ static class MissionCheck
             if ((wait == "doused" || wait == "out") && (turret != role || !burning.TryGetValue(role, out int left) || left == 0 || (wait == "doused") != (left > 1))) return false;
             if (asked.Add($"{wait} {role} {log.Count}")) return false;
             if (wait == "caught") catches++;
+            if (wait == "ring")
+            {
+                rings.Remove(role);
+                ringsFlown++;
+            }
+            if (wait == "landed" && landing == role)
+            {
+                landed[role] = landingAt;
+                landing = "";
+                landings++;
+            }
+            if (wait == "chimney")
+            {
+                if (climbWay == "down") downAt = role;
+                else
+                {
+                    downAt = "";
+                    seated = true;
+                }
+                climbing = "";
+                chimneys++;
+            }
+            if (wait == "gift" && !trees[role])
+            {
+                trees[role] = true;
+                gifts++;
+            }
+            if (wait == "aboard") seated = true;
             if (wait == "doused" || wait == "out") burning[role] = wait == "out" ? 0 : burning[role] - 1;
             return true;
         }
@@ -379,7 +492,7 @@ static class MissionCheck
         public int Cargo => cargo;
         /// <summary>Still looking like something else, or chased, at the end.</summary>
         public string Loose => look != "" ? $"still looking like {look}" : chases.Count > 0 ? $"still chased by {string.Join(", ", chases)}" : clock ? "a countdown still running"
-            : car != "" ? $"still in the story's {car}" : turret != "" ? "a turret still offered" : burning.Count > 0 ? "a fire still burning" : stopwatch != "" ? "a stopwatch still showing" : null;
+            : car != "" ? $"still in the story's {car}" : plane != "" ? $"still flying the story's {plane}" : turret != "" ? "a turret still offered" : burning.Count > 0 ? "a fire still burning" : stopwatch != "" ? "a stopwatch still showing" : null;
     }
 
     public static int Run(string path)

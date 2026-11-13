@@ -888,6 +888,15 @@ namespace Porchlight.App
                 Application.Quit(passed ? 0 : 1);
                 return;
             }
+            // Deliver the presents on its own (PORCHLIGHT_SMOKE_SANTA: its story as the server compiles it): quits 0 if it passed.
+            var santa = Env("PORCHLIGHT_SMOKE_SANTA");
+            if (!string.IsNullOrEmpty(santa))
+            {
+                bool passed = await SmokeSanta(System.IO.File.ReadAllText(santa));
+                Debug.Log("smoke: done");
+                Application.Quit(passed ? 0 : 1);
+                return;
+            }
             if (Env("PORCHLIGHT_SMOKE_DRIVE") == "1")
             {
                 await SmokeDrive();
@@ -1368,6 +1377,141 @@ namespace Porchlight.App
             bool passed = pickup && inBed && onTables && stops == STOPS && inOrder && feast && !hadFeast && m.script.Done && m.script.Error == null && completed == 1
                 && m.HoppedOut == STOPS && m.TakenFromBack == STOPS && m.PutDowns == STOPS && m.HoppedIn == STOPS && left == 20 - STOPS;
             Debug.Log($"smoke: turkey: {(passed ? "PASS" : "FAIL")}: {stops} of {STOPS} stops, helper in order={inOrder}, mission complete={completed == 1} (error={m.script.Error ?? "none"}), out {m.HoppedOut}, taken {m.TakenFromBack}, put down {m.PutDowns}, back in {m.HoppedIn}, {left} left at the last house, feast={feast}, your car now {(iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none")}");
+            if (mission != null) EndMission(null);
+            return passed;
+        }
+
+        /// <summary>
+        /// Deliver the presents, played through (PORCHLIGHT_SMOKE_SANTA: the story as the server compiles it): Santa in
+        /// his sleigh high over the town, flown (Autopilot, steering for it) through the ring over each house; the story
+        /// taking the controls and bringing the sleigh down, on the roof at the first, third and fifth houses (down the
+        /// chimney to the tree, the present under it, back up to the seat) and in the street at the others (out onto the
+        /// pavement, in at the door to the tree, the present under it, back out and in with G); and at the end yourself
+        /// again, the sleigh gone. True if it all happened, in order.
+        /// </summary>
+        async Task<bool> SmokeSanta(string story)
+        {
+            const int STOPS = 5;
+            string carBefore = iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none";
+            var m = mission = new MissionPlay("deliver-the-presents", "Deliver the Presents", story, iso, ModelLibrary.Instance, input) { OnUnlock = Unlock };
+            string Objective() => mission?.CurrentObjective ?? "(no mission)";
+            // The biggest jump the sleigh made in a frame while the story had its controls (tiles), and in which landing.
+            double jump = 0;
+            Vec2? last = null;
+            async Task<bool> Until(Func<bool> met, double seconds)
+            {
+                double end = platform.Now() + seconds * 1000;
+                while (platform.Now() < end && mission != null)
+                {
+                    if (mission.script.Line != null) mission.script.Advance();
+                    var car = iso.OwnVehicle;
+                    if (m.IsLanding && car != null)
+                    {
+                        var at = new Vec2(car.x, car.y);
+                        if (last != null) jump = Math.Max(jump, Geo.Dist(at, last.Value));
+                        last = at;
+                    }
+                    else last = null;
+                    if (met()) return true;
+                    await Task.Yield();
+                }
+                return met();
+            }
+            await Until(() => false, 0.3);
+            var sleigh = iso.OwnVehicle;
+            bool flying = sleigh != null && Catalog.CARS[sleigh.model] == Catalog.SLEIGH && sleigh.Airborne && iso.DrivingMyCar;
+            bool santa = iso.LookOverride == Catalog.SANTA;
+            Debug.Log($"smoke: santa: in the sleigh={flying}, {sleigh?.altitude:0.0} up, looking like {iso.LookOverride}, error={m.script.Error}");
+            int stops = 0;
+            bool roofs = true;
+            for (int stop = 1; stop <= STOPS && flying; stop++)
+            {
+                bool chimney = stop % 2 == 1;
+                bool ok = await Until(() => Objective().StartsWith("Fly through"), 8);
+                var ring = m.RingOf("home");
+                Debug.Log($"smoke: santa: stop {stop}: '{Objective()}' ok={ok}, ring {(ring != null ? $"at ({ring.Value.x:0.0}, {ring.Value.y:0.0}) {ring.Value.h:0.0} up" : "none")}, error={m.script.Error}");
+                if (!ok || ring == null) break;
+                // Steer for the ring, climbing or diving to its height, as a player would.
+                int rings = m.RingsFlown;
+                var r = ring.Value;
+                iso.Autopilot = () =>
+                {
+                    var car = iso.OwnVehicle;
+                    if (car == null) return null;
+                    double turn = Orbit.ShortestTurn(car.heading, Math.Atan2(r.y - car.y, r.x - car.x));
+                    return (car.altitude < r.h - 0.3 ? 1 : car.altitude > r.h + 0.3 ? -1 : 0, Math.Max(-1, Math.Min(1, turn * 3)), false);
+                };
+                double start = platform.Now();
+                ok = await Until(() => m.RingsFlown > rings, 45);
+                iso.Autopilot = null;
+                Debug.Log($"smoke: santa: stop {stop}: through the ring={ok} in {(platform.Now() - start) / 1000:0.0} s");
+                if (!ok) break;
+                // The story brings it down.
+                int landings = m.Landings;
+                jump = 0;
+                ok = await Until(() => m.Landings > landings, 15);
+                var down = iso.OwnVehicle;
+                double roof = iso.FlyFloor(down?.x ?? 0, down?.y ?? 0);
+                Debug.Log($"smoke: santa: stop {stop}: landed={ok} {(chimney ? "on the roof" : "in the street")} at {down?.altitude:0.00} up (the flying floor there {roof:0.00}), stopped={down?.speed == 0}, the biggest jump in a frame {jump:0.00} tiles");
+                if (!ok || down == null) break;
+                if (chimney && down.altitude < 0.8) roofs = false;
+                if (!chimney && down.altitude > 0.2) roofs = false;
+                int gifts = m.Gifts, trips = m.ChimneyTrips;
+                if (chimney)
+                {
+                    // Down the chimney and out by the tree, the present under it, back up to the seat.
+                    ok = await Until(() => m.ChimneyTrips > trips && Objective().StartsWith("Put a present"), 15);
+                    Debug.Log($"smoke: santa: stop {stop}: down the chimney={ok}, in a room={iso.InRoom}, '{Objective()}'");
+                    if (!ok) break;
+                }
+                else
+                {
+                    // Out onto the pavement, in at the door (to where you stand by the tree), the present under it.
+                    ok = await Until(() => Objective().StartsWith("Go in at"), 8);
+                    var stand = m.TreeStandOf("home");
+                    Debug.Log($"smoke: santa: stop {stop}: out of the sleigh={ok && !iso.InCar}, the sleigh still {iso.OwnVehicle?.altitude:0.00} up");
+                    if (!ok || stand == null) break;
+                    iso.PutPlayer(stand.Value, 0);
+                    ok = await Until(() => Objective().StartsWith("Put a present"), 5);
+                    Debug.Log($"smoke: santa: stop {stop}: inside={ok}, in a room={iso.InRoom}");
+                    if (!ok) break;
+                }
+                ok = await Until(() => m.TryTalk(), 3) && await Until(() => m.Gifts > gifts, 3);
+                Debug.Log($"smoke: santa: stop {stop}: present under the tree={ok}");
+                if (!ok) break;
+                if (chimney)
+                {
+                    ok = await Until(() => m.ChimneyTrips > trips + 1 && iso.DrivingMyCar, 15);
+                    Debug.Log($"smoke: santa: stop {stop}: back up the chimney and in the sleigh={ok}");
+                }
+                else
+                {
+                    // Back out beside the sleigh's seat, and in with G.
+                    ok = await Until(() => Objective().StartsWith("Back to the sleigh"), 5);
+                    var car = iso.OwnVehicle;
+                    if (!ok || car == null) break;
+                    var f = car.Forward;
+                    var seat = new Vec2(car.x - f.x * Catalog.SLEIGH_SEAT, car.y - f.y * Catalog.SLEIGH_SEAT);
+                    var beside = new Vec2(seat.x - f.y * 0.55, seat.y + f.x * 0.55);
+                    if (!iso.CanStandAt(beside.x, beside.y)) beside = new Vec2(seat.x + f.y * 0.55, seat.y - f.x * 0.55);
+                    iso.PutPlayer(beside, 0);
+                    await Until(() => false, 0.2);
+                    iso.ToggleCar();
+                    ok = await Until(() => iso.DrivingMyCar, 3);
+                    Debug.Log($"smoke: santa: stop {stop}: back in the sleigh with G={ok}");
+                }
+                if (!ok) break;
+                stops++;
+            }
+            iso.Autopilot = null;
+            await Until(() => mission == null, 6);
+            for (int i = 0; i < 5; i++) await Task.Yield();
+            finished.TryGetValue("deliver-the-presents", out int completed);
+            string carNow = iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none";
+            bool back = carNow != Catalog.SLEIGH && iso.LookOverride == null && !iso.InCar;
+            bool passed = flying && santa && roofs && back && stops == STOPS && m.script.Done && m.script.Error == null && completed == 1
+                && m.RingsFlown == STOPS && m.Landings == STOPS && m.Gifts == STOPS && m.ChimneyTrips == 6;
+            Debug.Log($"smoke: santa: {(passed ? "PASS" : "FAIL")}: {stops} of {STOPS} houses, rings {m.RingsFlown}, landings {m.Landings} (roof and street heights right={roofs}), chimney trips {m.ChimneyTrips}, presents {m.Gifts}, mission complete={completed == 1} (error={m.script.Error ?? "none"}), your car {carBefore} before and {carNow} now, yourself again={back}");
             if (mission != null) EndMission(null);
             return passed;
         }

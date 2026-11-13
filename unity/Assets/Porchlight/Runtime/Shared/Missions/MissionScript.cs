@@ -10,7 +10,10 @@
 // the role's chasers have had you, @countdown: the countdown's run out,
 // @doused fire: one of the role's burning windows has gone out, @out fire:
 // they all have, @finished race: you've run the role's course to its finish,
-// @wait 3: three seconds on). The story changes the town through its EXTERNAL
+// @ring drop: you've flown through the role's ring, @landed drop: the story's
+// brought your plane down at the role, @chimney drop: you're down (or back up)
+// its chimney, @gift drop: you've put the present under its tree, @aboard:
+// you're at the controls of your own car or plane, @wait 3: three seconds on). The story changes the town through its EXTERNAL
 // functions, generic building blocks the world (IMissionWorld) carries out:
 // what a mission is about lives in its story, not here. Pure: the game
 // supplies the world.
@@ -132,7 +135,33 @@ namespace Porchlight.Missions
         double TownRecord();
         /// <summary>Who ran it ("" none).</summary>
         string TownRecordHolder();
-        /// <summary>Is this wait met yet? talk, parked, idle, inside, outside, caught, doused, out or finished for a role, or countdown.</summary>
+        /// <summary>
+        /// Your own vehicle becomes a `plane` (a model), and you're at its controls, flying `height` tiles up
+        /// where you are; "" gives you back the car you had (set down on the ground first).
+        /// </summary>
+        void YourPlane(string plane, double height);
+        /// <summary>
+        /// A ring `size` tiles across hung `height` tiles up out over the street in front of the role's
+        /// building, facing you, to fly through (@ring); 0 size takes it down.
+        /// </summary>
+        void Ring(string role, double height, double size);
+        /// <summary>
+        /// The story takes your plane's controls from you, gently, and brings it down at the role's building:
+        /// "roof" on its roof (by a chimney), or "kerb" in the street outside (@landed once it's down).
+        /// </summary>
+        void Land(string role, string at);
+        /// <summary>
+        /// "down": out of your seat on the role's roof, across to its chimney and down it, to come out inside
+        /// by its tree (or just in at the door); "up": back up the chimney and across the roof to your seat
+        /// (@chimney once you're there).
+        /// </summary>
+        void Chimney(string role, string way);
+        /// <summary>
+        /// A Christmas tree in a corner of the role's building, with a light over it while @gift waits: go up
+        /// to it and press Enter or A, and `gift` (a model) goes under it.
+        /// </summary>
+        void Tree(string role, string gift);
+        /// <summary>Is this wait met yet? talk, parked, idle, inside, outside, caught, doused, out, finished, ring, landed, chimney or gift for a role; countdown or aboard.</summary>
         bool Met(string wait, string role);
         /// <summary>Who plays the role, for their lines (null: no such role).</summary>
         string NameOf(string role);
@@ -147,7 +176,7 @@ namespace Porchlight.Missions
 
     public struct MissionWait
     {
-        /// <summary>talk, parked, idle, inside, outside, caught, doused, out, finished, countdown or wait.</summary>
+        /// <summary>talk, parked, idle, inside, outside, caught, doused, out, finished, ring, landed, chimney, gift, countdown, aboard or wait.</summary>
         public string kind;
         public string role;
         /// <summary>For @wait: how many seconds.</summary>
@@ -156,8 +185,12 @@ namespace Porchlight.Missions
 
     public sealed class MissionScript
     {
-        /// <summary>The waits the town knows (@talk, @parked, @idle, @inside, @outside, @caught, @doused, @out and @finished a role, @countdown, @wait seconds).</summary>
-        static readonly string[] WAITS = { "talk", "parked", "idle", "inside", "outside", "caught", "doused", "out", "finished", "countdown", "wait" };
+        /// <summary>
+        /// The waits the town knows (@talk, @parked, @idle, @inside, @outside, @caught, @doused, @out, @finished,
+        /// @ring, @landed, @chimney and @gift a role, @countdown, @aboard, @wait seconds).
+        /// </summary>
+        public static readonly string[] WAITS = { "talk", "parked", "idle", "inside", "outside", "caught", "doused", "out", "finished",
+            "ring", "landed", "chimney", "gift", "countdown", "aboard", "wait" };
 
         readonly Story story;
         readonly IMissionWorld world;
@@ -235,6 +268,11 @@ namespace Porchlight.Missions
             Bind("record", a => (float)world.Record(Num(a, 0)));
             Bind("town_record", a => (float)world.TownRecord());
             Bind("town_record_holder", a => world.TownRecordHolder() ?? "");
+            Bind("your_plane", a => { world.YourPlane(Str(a, 0), Num(a, 1)); return null; });
+            Bind("ring", a => { world.Ring(Str(a, 0), Num(a, 1), Num(a, 2)); return null; });
+            Bind("land", a => { world.Land(Str(a, 0), Str(a, 1)); return null; });
+            Bind("chimney", a => { world.Chimney(Str(a, 0), Str(a, 1)); return null; });
+            Bind("tree", a => { world.Tree(Str(a, 0), Str(a, 1)); return null; });
             Pump();
         }
 

@@ -66,7 +66,9 @@ namespace Porchlight.EditorTools
             lib.models = Catalog.Statics.Select(name => StaticModel(name, converted, looks)).ToList();
             lib.peopleController = PeopleController();
             lib.people = Catalog.CHARACTERS.Select(name => PersonModel(name, converted, looks, lib.peopleController))
-                .Append(PersonModel(Catalog.FIREFIGHTER_FROM, converted, looks, lib.peopleController, Catalog.FIREFIGHTER, Firefighter.Dress)).ToList();
+                .Append(PersonModel(Catalog.FIREFIGHTER_FROM, converted, looks, lib.peopleController, Catalog.FIREFIGHTER, Firefighter.Dress))
+                // Santa (Tools~/christmas), on the people's own armature: their clips play on him as they are.
+                .Append(PersonModel(Catalog.SANTA, converted, looks, lib.peopleController)).ToList();
             EditorUtility.SetDirty(lib);
             AssetDatabase.SaveAssets();
             Debug.Log($"Porchlight: library built ({lib.models.Count} models, {lib.people.Count} people, {lib.kits.Count} kits)");
