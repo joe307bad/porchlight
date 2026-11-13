@@ -514,8 +514,8 @@ namespace Porchlight.App
             if (view.CameraOverride == (Func<(Vector3 at, Vector3 look)?>)Camera) view.CameraOverride = null;
         }
 
-        /// <summary>The mission's camera, when it has one: the move round a house as you go down its chimney, else up at the water turret.</summary>
-        (Vector3 at, Vector3 look)? Camera() => SkyCamera() ?? fight.Camera();
+        /// <summary>The mission's camera, when it has one: the move round a house as you go down its chimney (or hop out), flying the story's plane, else up at the water turret.</summary>
+        (Vector3 at, Vector3 look)? Camera() => SkyCamera() ?? FlyingCamera() ?? fight.Camera();
 
         // The story's building blocks (IMissionWorld).
 
@@ -1337,7 +1337,8 @@ namespace Porchlight.App
             // Out onto the pavement from the story's plane, set down in the street: you hop out of it yourself (A).
             if (to == Where.Kerb && storyPlane >= 0 && view.OwnVehicle?.model == storyPlane && view.DrivingMyCar && landing == null)
             {
-                WaitToHopOut(r, PointOf(r, to), DetMath.Atan2(r.outward.x, r.outward.y));
+                // Facing the house: in at its front door's next.
+                WaitToHopOut(r, PointOf(r, to), DetMath.Atan2(-r.outward.x, -r.outward.y));
                 return;
             }
             // Facing out, the way you'd go. The story's plane, set down where it brought it, stays there.

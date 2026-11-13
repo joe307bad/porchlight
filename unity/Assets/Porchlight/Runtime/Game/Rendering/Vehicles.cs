@@ -48,6 +48,9 @@ namespace Porchlight.Rendering
             if (kind == VehicleKind.Boat) return;
             if (kind == VehicleKind.Plane && model.name == Catalog.SLEIGH)
             {
+                // Drawn ahead of where it is: that's Santa's seat (Catalog.SLEIGH_AHEAD), what it turns and banks about.
+                var drawn = root.transform.GetChild(0);
+                drawn.localPosition += new Vector3(0, 0, (float)(Catalog.SLEIGH_AHEAD / scale));
                 sleigh = new SleighRig(root) { Space = parent };
                 return;
             }

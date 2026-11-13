@@ -1,10 +1,13 @@
 // Flying a mission's sleigh (or any plane a mission gives you): rings hung in
-// the sky to fly through, the gentle hand-over as the story takes the
-// controls and brings you down (on a roof, or in the street), and the trip
-// across a roof and down a chimney (and back up it to your seat). Pure: the
-// game (MissionPlay) puts the plane and you where these say.
+// the sky to fly through (or near), the story taking the controls and
+// bringing you down as a pilot would (round onto a straight run-in, gliding
+// down it, flaring and sliding to a stop on a roof or in the street), a leap
+// out of your seat onto a chimney's top and down it (and back up it to your
+// seat), and a leap out onto the pavement. Pure: the game (MissionPlay) puts
+// the plane and you where these say.
 
 using System;
+using System.Collections.Generic;
 using Porchlight.Core;
 
 namespace Porchlight.Explore
@@ -52,83 +55,345 @@ namespace Porchlight.Explore
             double off = Math.Sqrt((px - x) * (px - x) + (py - y) * (py - y) + (ph - h) * (ph - h));
             return off <= radius * slack;
         }
+        /// <summary>How near the ring counts as through it (tiles past its rim, any way: you needn't thread it).</summary>
+        public const double NEAR = 1.5;
+
+        /// <summary>
+        /// Whether a move from (x0, y0, h0) to (x1, y1, h1) reaches the ring: through it (Through), or anywhere along the
+        /// way within NEAR tiles of its rim (the nearest the move comes to its middle).
+        /// </summary>
+        public bool Reached(double x0, double y0, double h0, double x1, double y1, double h1, double near = NEAR)
+        {
+            if (Through(x0, y0, h0, x1, y1, h1)) return true;
+            double mx = x1 - x0, my = y1 - y0, mh = h1 - h0;
+            double len = mx * mx + my * my + mh * mh;
+            double k = len < 1e-12 ? 0 : Math.Max(0, Math.Min(1, ((x - x0) * mx + (y - y0) * my + (h - h0) * mh) / len));
+            double px = x0 + mx * k - x, py = y0 + my * k - y, ph = h0 + mh * k - h;
+            return Math.Sqrt(px * px + py * py + ph * ph) <= radius + near;
+        }
     }
 
     /// <summary>
-    /// The story bringing a plane down: from where it is, the way it's going and as fast, along a smooth curve
-    /// to a spot (on a roof, or the street), lower and slower as it comes, facing the way it's to stand.
-    /// Position and velocity carry straight on from yours as it takes over, so there's no jolt, only a turn
-    /// and a glide; it's done once it's there.
+    /// The story bringing a plane down, as a pilot would: from where it is, the way it's going and as fast, round
+    /// in the tightest smooth turns it can make (a Dubins path: arcs of one radius and the straight between them)
+    /// onto a straight run-in lined up with its spot, coming down and slowing as it goes; then down the run-in,
+    /// gliding lower, flaring level just as it touches down, and sliding on its runners (or wheels) to a stop on
+    /// its spot. Kept clear of whatever's under its way (`floor`) until it's nearly down. Position, heading and
+    /// speed carry straight on from yours as it takes over, so there's no jolt; it's done once it's stopped.
     /// </summary>
     public sealed class Landing
     {
-        /// <summary>How fast it's going as it touches down (tiles a second), and how fast it glides on average.</summary>
-        public const double TOUCH_SPEED = 0.8, GLIDE = 3.5;
-        /// <summary>The shortest and longest a landing takes (seconds).</summary>
-        public const double MIN_TIME = 4.5, MAX_TIME = 9;
+        /// <summary>How fast it's going as it touches down, and down the run-in (tiles a second).</summary>
+        public const double TOUCH_SPEED = 0.9, APPROACH_SPEED = 3.2;
+        /// <summary>How tight it turns (tiles), how long the straight run-in is, and how far it slides once down (tiles).</summary>
+        public const double RADIUS = 2.4, FINAL = 4.5, SLIDE = 0.5;
+        /// <summary>How high over its spot the run-in starts, a share of its length; the steepest it climbs or dives to keep clear of something.</summary>
+        public const double GLIDE = 0.3, SLOPE = 0.6;
+        /// <summary>How far it goes from its old speed to its approach speed (tiles, as a decay); how far out it pays no heed to the floor (tiles before it touches down).</summary>
+        const double SLOW_OVER = 2.5, CLEAR_TILL = 1.0;
+        /// <summary>How finely the way is worked out (tiles between samples).</summary>
+        const double STEP = 0.05;
 
-        readonly double x0, y0, h0, mx0, my0;
-        readonly double x1, y1, h1, mx1, my1;
+        readonly double[] xs, ys, hs, ds;
+        readonly double v0, vGate;
+        /// <summary>Where the run-in starts (map x, y).</summary>
+        readonly double gx, gy;
+        /// <summary>How long its way is (tiles), where the run-in starts along it, and where it touches down.</summary>
+        public readonly double length, runIn, touch;
         /// <summary>Where it's to stand: the spot, how high, and which way (a map heading, as Vehicle's).</summary>
         public readonly double toX, toY, toH, toHeading;
         /// <summary>How long it takes (seconds).</summary>
         public readonly double duration;
-        public double time;
+        /// <summary>How far along its way it is (tiles), and how long it's been at it (seconds).</summary>
+        public double along, time;
 
         /// <summary>
-        /// From a plane at (x, y) `h` up, heading `heading` at `speed`, to (toX, toY) `toH` up facing `toHeading`.
+        /// From a plane at (x, y) `h` up, heading `heading` at `speed`, to (toX, toY) `toH` up facing `toHeading`,
+        /// touching down `slide` tiles short of it. `floor` says how low it may be at a point facing a way (null: anywhere).
         /// </summary>
-        public Landing(double x, double y, double h, double heading, double speed, double toX, double toY, double toH, double toHeading)
+        public Landing(double x, double y, double h, double heading, double speed, double toX, double toY, double toH, double toHeading,
+            double slide = SLIDE, Func<double, double, double, double> floor = null)
         {
-            x0 = x;
-            y0 = y;
-            h0 = h;
-            x1 = toX;
-            y1 = toY;
-            h1 = toH;
             this.toX = toX;
             this.toY = toY;
             this.toH = toH;
             this.toHeading = toHeading;
-            double chord = Numbers.Hypot(toX - x, toY - y);
-            duration = Math.Max(MIN_TIME, Math.Min(MAX_TIME, chord / GLIDE));
-            // Hermite tangents are velocities times the duration.
-            double v = Math.Max(0, speed);
-            mx0 = Math.Cos(heading) * v * duration;
-            my0 = Math.Sin(heading) * v * duration;
-            mx1 = Math.Cos(toHeading) * TOUCH_SPEED * duration;
-            my1 = Math.Sin(toHeading) * TOUCH_SPEED * duration;
+            slide = Math.Max(0, slide);
+            double fx = Math.Cos(toHeading), fy = Math.Sin(toHeading);
+            gx = toX - fx * (slide + FINAL);
+            gy = toY - fy * (slide + FINAL);
+            var turns = Dubins.Shortest(x, y, heading, gx, gy, toHeading, RADIUS);
+            runIn = turns.Length;
+            touch = runIn + FINAL;
+            length = touch + slide;
+            int n = Math.Max(2, (int)Math.Ceiling(length / STEP) + 1);
+            xs = new double[n];
+            ys = new double[n];
+            hs = new double[n];
+            ds = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                double s = Math.Min(length, i * STEP);
+                if (s < runIn)
+                {
+                    var (px, py, pd) = turns.At(s);
+                    xs[i] = px;
+                    ys[i] = py;
+                    ds[i] = pd;
+                }
+                else
+                {
+                    double u = s - runIn;
+                    xs[i] = gx + fx * u;
+                    ys[i] = gy + fy * u;
+                    ds[i] = toHeading;
+                }
+            }
+            // Down the way: to the top of the run-in (no higher than it is now, unless the spot is), down it to touch down
+            // (level at both ends: the flare), then on the spot's height.
+            double gateH = Math.Max(toH, Math.Min(toH + FINAL * GLIDE, h));
+            double[] floorAt = new double[n];
+            for (int i = 0; i < n; i++)
+            {
+                double s = Math.Min(length, i * STEP);
+                double down;
+                if (s < runIn) down = h + (gateH - h) * Smooth(s / runIn);
+                else if (s < touch) down = toH + (gateH - toH) * Smooth(1 - (s - runIn) / FINAL);
+                else down = toH;
+                hs[i] = down;
+                floorAt[i] = floor != null && s < touch - CLEAR_TILL ? floor(xs[i], ys[i], ds[i]) : double.NegativeInfinity;
+                if (double.IsNaN(floorAt[i]) || double.IsInfinity(floorAt[i])) floorAt[i] = double.NegativeInfinity;
+            }
+            // Clear of what's under it: up over it, no steeper than SLOPE either side.
+            double rise = SLOPE * STEP;
+            for (int i = 1; i < n; i++) floorAt[i] = Math.Max(floorAt[i], floorAt[i - 1] - rise);
+            for (int i = n - 2; i >= 0; i--) floorAt[i] = Math.Max(floorAt[i], floorAt[i + 1] - rise);
+            // Taking over from just as high as it is, whatever's under it.
+            double blend = Math.Min(1.5, length * 0.5);
+            for (int i = 0; i < n; i++)
+            {
+                double s = Math.Min(length, i * STEP);
+                double want = Math.Max(hs[i], floorAt[i]);
+                hs[i] = h + (want - h) * Smooth(blend <= 0 ? 1 : s / blend);
+            }
+            hs[n - 1] = toH;
+            v0 = Math.Max(0.3, speed);
+            vGate = APPROACH_SPEED + (v0 - APPROACH_SPEED) * Math.Exp(-runIn / SLOW_OVER);
+            // How long it takes, stepped as it will be.
+            var copy = 0.0;
+            double t = 0;
+            for (int k = 0; k < 20000 && copy < length - 1e-9; k++)
+            {
+                copy = Advance(copy, 1.0 / 60);
+                t += 1.0 / 60;
+            }
+            duration = t;
         }
 
-        public bool Done => time >= duration;
+        static double Smooth(double k)
+        {
+            k = Math.Max(0, Math.Min(1, k));
+            return k * k * (3 - 2 * k);
+        }
+
+        /// <summary>How fast it goes `s` tiles along: slowing from its own speed to the approach's, down the run-in to touch-down speed, then sliding to a stop.</summary>
+        public double SpeedAt(double s)
+        {
+            if (s < runIn) return APPROACH_SPEED + (v0 - APPROACH_SPEED) * Math.Exp(-s / SLOW_OVER);
+            if (s < touch) return TOUCH_SPEED + (vGate - TOUCH_SPEED) * Smooth(1 - (s - runIn) / FINAL);
+            double left = length - s, slide = length - touch;
+            return slide <= 1e-9 ? TOUCH_SPEED : Math.Max(0.15, TOUCH_SPEED * Math.Sqrt(Math.Max(0, left) / slide));
+        }
+
+        double Advance(double s, double dt)
+        {
+            double mid = Math.Min(length, s + SpeedAt(s) * dt / 2);
+            return Math.Min(length, s + SpeedAt(mid) * dt);
+        }
+
+        public bool Done => along >= length - 1e-9;
 
         /// <summary>How far through it is (0 to 1).</summary>
-        public double Progress => Math.Min(1, time / duration);
+        public double Progress => length <= 0 ? 1 : Math.Min(1, along / length);
 
-        /// <summary>Where it is `t` (0 to 1) of the way through: map x, y, height, heading, and speed (tiles a second).</summary>
+        /// <summary>Whether it's down (touched down, sliding to its stop or stopped).</summary>
+        public bool Down => along >= touch - 1e-9;
+
+        /// <summary>Where it is `t` (0 to 1) of the way along: map x, y, height, heading, and speed (tiles a second).</summary>
         public (double x, double y, double h, double heading, double speed) At(double t)
         {
-            t = Math.Max(0, Math.Min(1, t));
-            double t2 = t * t, t3 = t2 * t;
-            double a = 2 * t3 - 3 * t2 + 1, b = t3 - 2 * t2 + t, c = -2 * t3 + 3 * t2, d = t3 - t2;
-            double x = a * x0 + b * mx0 + c * x1 + d * mx1;
-            double y = a * y0 + b * my0 + c * y1 + d * my1;
-            // Down smoothly: level as it takes over, level as it touches down.
-            double h = h0 + (h1 - h0) * (3 * t2 - 2 * t3);
-            double da = 6 * t2 - 6 * t, db = 3 * t2 - 4 * t + 1, dc = -6 * t2 + 6 * t, dd = 3 * t2 - 2 * t;
-            double vx = (da * x0 + db * mx0 + dc * x1 + dd * mx1) / duration;
-            double vy = (da * y0 + db * my0 + dc * y1 + dd * my1) / duration;
-            double speed = Numbers.Hypot(vx, vy);
-            double heading = t >= 1 || speed < 1e-6 ? toHeading : Math.Atan2(vy, vx);
-            return (x, y, h, heading, speed);
+            double s = Math.Max(0, Math.Min(1, t)) * length;
+            double f = s / STEP;
+            int i = Math.Min(xs.Length - 2, (int)Math.Floor(f));
+            double k = Math.Max(0, Math.Min(1, f - i));
+            // The last sample is at the very end (it may be nearer the one before than a step).
+            if (i == xs.Length - 2)
+            {
+                double s0 = i * STEP, gap = length - s0;
+                k = gap <= 1e-12 ? 1 : Math.Max(0, Math.Min(1, (s - s0) / gap));
+            }
+            double h = s >= touch ? toH : hs[i] + (hs[i + 1] - hs[i]) * k;
+            // Down the run-in, on its line exactly.
+            if (s >= runIn)
+            {
+                double u = s - runIn;
+                return (gx + Math.Cos(toHeading) * u, gy + Math.Sin(toHeading) * u, h, toHeading, SpeedAt(s));
+            }
+            double x = xs[i] + (xs[i + 1] - xs[i]) * k;
+            double y = ys[i] + (ys[i + 1] - ys[i]) * k;
+            double heading = ds[i] + Orbit.ShortestTurn(ds[i], ds[i + 1]) * k;
+            return (x, y, h, heading, SpeedAt(s));
         }
 
         /// <summary>On by dt seconds; where it is now.</summary>
         public (double x, double y, double h, double heading, double speed) Step(double dt)
         {
-            time = Math.Min(duration, time + Math.Max(0, dt));
-            var at = At(time / duration);
-            return Done ? (toX, toY, toH, toHeading, 0) : at;
+            time += Math.Max(0, dt);
+            along = Advance(along, Math.Max(0, dt));
+            if (Done)
+            {
+                along = length;
+                return (toX, toY, toH, toHeading, 0);
+            }
+            return At(along / length);
+        }
+    }
+
+    /// <summary>
+    /// The shortest way from one place and heading to another for something that turns no tighter than a radius
+    /// (Dubins): an arc, a straight (or a third arc) and an arc. Map terms: a heading points along (cos, sin).
+    /// </summary>
+    public sealed class Dubins
+    {
+        /// <summary>Each part: which way it turns (+1 towards a bigger heading, -1 the other, 0 straight) and how long it is (tiles).</summary>
+        readonly (int turn, double length)[] parts;
+        readonly double x0, y0, h0, radius;
+        public double Length { get; }
+
+        Dubins(double x, double y, double heading, double radius, (int, double)[] parts)
+        {
+            x0 = x;
+            y0 = y;
+            h0 = heading;
+            this.radius = radius;
+            this.parts = parts;
+            double l = 0;
+            foreach (var p in parts) l += p.Item2;
+            Length = l;
+        }
+
+        static double Mod(double a)
+        {
+            double t = Math.PI * 2;
+            a %= t;
+            return a < 0 ? a + t : a;
+        }
+
+        /// <summary>From (x, y, heading), `turn` (+1, -1, 0) for `s` tiles.</summary>
+        static (double x, double y, double h) Go(double x, double y, double h, int turn, double s, double r)
+        {
+            if (turn == 0) return (x + Math.Cos(h) * s, y + Math.Sin(h) * s, h);
+            double phi = s / r * turn;
+            return (x + turn * r * (Math.Sin(h + phi) - Math.Sin(h)), y - turn * r * (Math.Cos(h + phi) - Math.Cos(h)), h + phi);
+        }
+
+        /// <summary>Where it is `s` tiles along: map x, y and heading.</summary>
+        public (double x, double y, double heading) At(double s)
+        {
+            double x = x0, y = y0, h = h0;
+            s = Math.Max(0, s);
+            foreach (var (turn, length) in parts)
+            {
+                double go = Math.Min(s, length);
+                (x, y, h) = Go(x, y, h, turn, go, radius);
+                s -= go;
+                if (s <= 0) break;
+            }
+            return (x, y, h);
+        }
+
+        /// <summary>The shortest of the six kinds of way that gets there (checked by going it); a straight line if, somehow, none does.</summary>
+        public static Dubins Shortest(double x, double y, double heading, double toX, double toY, double toHeading, double radius)
+        {
+            double dx = toX - x, dy = toY - y;
+            double d = Numbers.Hypot(dx, dy) / radius;
+            double theta = Mod(Math.Atan2(dy, dx));
+            double a = Mod(heading - theta), b = Mod(toHeading - theta);
+            double sa = Math.Sin(a), sb = Math.Sin(b), ca = Math.Cos(a), cb = Math.Cos(b), cab = Math.Cos(a - b), dd = d * d;
+            var found = new List<(int, int, int, double, double, double)>();
+            // LSL
+            {
+                double p2 = 2 + dd - 2 * cab + 2 * d * (sa - sb);
+                if (p2 >= 0)
+                {
+                    double t1 = Math.Atan2(cb - ca, d + sa - sb);
+                    found.Add((1, 0, 1, Mod(t1 - a), Math.Sqrt(p2), Mod(b - t1)));
+                }
+            }
+            // RSR
+            {
+                double p2 = 2 + dd - 2 * cab + 2 * d * (sb - sa);
+                if (p2 >= 0)
+                {
+                    double t1 = Math.Atan2(ca - cb, d - sa + sb);
+                    found.Add((-1, 0, -1, Mod(a - t1), Math.Sqrt(p2), Mod(t1 - b)));
+                }
+            }
+            // LSR
+            {
+                double p2 = -2 + dd + 2 * cab + 2 * d * (sa + sb);
+                if (p2 >= 0)
+                {
+                    double p = Math.Sqrt(p2);
+                    double t0 = Math.Atan2(-ca - cb, d + sa + sb) - Math.Atan2(-2, p);
+                    found.Add((1, 0, -1, Mod(t0 - a), p, Mod(t0 - b)));
+                }
+            }
+            // RSL
+            {
+                double p2 = -2 + dd + 2 * cab - 2 * d * (sa + sb);
+                if (p2 >= 0)
+                {
+                    double p = Math.Sqrt(p2);
+                    double t0 = Math.Atan2(ca + cb, d - sa - sb) - Math.Atan2(2, p);
+                    found.Add((-1, 0, 1, Mod(a - t0), p, Mod(b - t0)));
+                }
+            }
+            // RLR
+            {
+                double c = (6 - dd + 2 * cab + 2 * d * (sa - sb)) / 8;
+                if (Math.Abs(c) <= 1)
+                {
+                    double phi = Math.Atan2(ca - cb, d - sa + sb);
+                    double p = Mod(Math.PI * 2 - Math.Acos(c));
+                    double t = Mod(a - phi + p / 2);
+                    found.Add((-1, 1, -1, t, p, Mod(a - b - t + p)));
+                }
+            }
+            // LRL
+            {
+                double c = (6 - dd + 2 * cab + 2 * d * (sb - sa)) / 8;
+                if (Math.Abs(c) <= 1)
+                {
+                    double phi = Math.Atan2(ca - cb, d + sa - sb);
+                    double p = Mod(Math.PI * 2 - Math.Acos(c));
+                    double t = Mod(-a - phi + p / 2);
+                    found.Add((1, -1, 1, t, p, Mod(b - a - t + p)));
+                }
+            }
+            Dubins best = null;
+            foreach (var (k1, k2, k3, t, p, q) in found)
+            {
+                // The middle's a straight (its length in radii) or an arc (its angle).
+                var way = new Dubins(x, y, heading, radius, new[] { (k1, t * radius), (k2, p * radius), (k3, q * radius) });
+                if (best != null && way.Length >= best.Length) continue;
+                var end = way.At(way.Length);
+                if (Numbers.Hypot(end.x - toX, end.y - toY) > 1e-6 * Math.Max(1, radius) || Math.Abs(Orbit.ShortestTurn(end.heading, toHeading)) > 1e-6) continue;
+                best = way;
+            }
+            if (best != null) return best;
+            double dist = Numbers.Hypot(dx, dy);
+            return new Dubins(x, y, Math.Atan2(dy, dx), radius, new[] { (0, dist) });
         }
     }
 
@@ -333,161 +598,200 @@ namespace Porchlight.Explore
     }
 
     /// <summary>
-    /// A jump from one place to another: out of the sleigh's seat onto a roof or the pavement, say. An arc from
-    /// (from, fromHeight) to (to, toHeight), over `height` higher than the straight line at its middle. Where you
-    /// are as it goes: map x, y, the height of the ground (or roof) under you, how high off it you are, which way
-    /// you face, and that you're to be seen.
+    /// Where someone is as the story moves them (a jump, a walk): map x, y, the height of the ground (or roof) under
+    /// them, how high off it they are, which way they face (Walker's heading: along (sin, cos)), how fast they walk,
+    /// whether they're to be seen, and how fast they're going up (tiles a second; down is less than 0).
     /// </summary>
-    public sealed class Hop
+    public struct WalkerPose
     {
-        public readonly Vec2 from, to;
-        public readonly double fromHeight, toHeight, height, duration;
-        readonly Func<double, double, double> ground;
-        public double time;
+        public Vec2 at;
+        public double floor, lift, heading, pace, rise;
+        public bool shown;
 
-        public Hop(Vec2 from, double fromHeight, Vec2 to, double toHeight, double height, double duration, Func<double, double, double> ground)
+        public WalkerPose(Vec2 at, double floor, double lift, double heading, double pace, bool shown, double rise)
         {
-            this.from = from;
-            this.to = to;
-            this.fromHeight = fromHeight;
-            this.toHeight = toHeight;
-            this.height = height;
-            this.duration = Math.Max(1e-3, duration);
-            this.ground = ground;
+            this.at = at;
+            this.floor = floor;
+            this.lift = lift;
+            this.heading = heading;
+            this.pace = pace;
+            this.shown = shown;
+            this.rise = rise;
         }
 
-        public bool Done => time >= duration;
+        /// <summary>How high their feet are.</summary>
+        public double Up => floor + lift;
+    }
 
-        public (Vec2 at, double floor, double lift, double heading, double pace, bool shown) Step(double dt)
+    /// <summary>A leap: a parabola from one height to another over (0 to 1) of it, at its highest `apex` (over both ends).</summary>
+    public static class Leap
+    {
+        /// <summary>How high it is `k` of the way through (0 to 1), and how fast it's rising then (per unit of k).</summary>
+        public static (double up, double rate) At(double from, double to, double apex, double k)
         {
-            time = Math.Min(duration, time + Math.Max(0, dt));
-            return At(time);
+            k = Math.Max(0, Math.Min(1, k));
+            double a = Math.Max(apex - from, Math.Max(to - from, 0) + 1e-6), d = to - from;
+            // up = from + B k - C k^2, through `to` at 1, with its top at `apex`.
+            double c = 2 * a - d + 2 * Math.Sqrt(Math.Max(0, a * (a - d)));
+            double b = c + d;
+            return (from + b * k - c * k * k, b - 2 * c * k);
         }
 
-        public (Vec2 at, double floor, double lift, double heading, double pace, bool shown) At(double t)
-        {
-            double k = Math.Max(0, Math.Min(1, t / duration));
-            var at = new Vec2(from.x + (to.x - from.x) * k, from.y + (to.y - from.y) * k);
-            double up = fromHeight + (toHeight - fromHeight) * k + height * Math.Sin(Math.PI * k);
-            double floor = ground?.Invoke(at.x, at.y) ?? double.NaN;
-            if (double.IsNaN(floor)) floor = Math.Min(fromHeight, toHeight);
-            floor = Math.Min(floor, up);
-            double heading = Geo.Dist(from, to) < 1e-6 ? 0 : DetMath.Atan2(to.x - from.x, to.y - from.y);
-            return (at, floor, up - floor, heading, 0, true);
-        }
+        /// <summary>A walker's heading from one point to another (or `otherwise`, if they're the same).</summary>
+        public static double Facing(Vec2 from, Vec2 to, double otherwise) => Geo.Dist(from, to) < 1e-6 ? otherwise : DetMath.Atan2(to.x - from.x, to.y - from.y);
     }
 
     /// <summary>
-    /// Down a chimney from your seat in the sleigh on the roof, or back up it to your seat: a jump out of your
-    /// seat onto the roof beside the sleigh, a walk across the roof to the chimney, a hop up onto its top, and
-    /// the drop down inside it (out of sight once you're in); or climbing out of it and all of that backwards,
-    /// ending with a jump up into your seat. Where you are as it goes: map x, y, the height of the roof under
-    /// you, how high off it you are, which way you face, how fast you walk, and whether you're to be seen.
+    /// Out of the sleigh's seat onto the pavement: a turn to face the way out, a leap up and out over its side in an
+    /// arc, down onto the pavement (knees bending: the landing), a moment's settle, a walk to where you're to stand,
+    /// and a turn to face the way you're to go.
     /// </summary>
-    public sealed class ChimneyTrip
+    public sealed class Hop
     {
-        /// <summary>How fast you walk across a roof (tiles a second); how long the jump out of your seat, the hop up onto the chimney and the drop take (seconds).</summary>
-        public const double WALK = 0.7, JUMP = 0.6, HOP = 0.45, DROP = 0.6;
-        /// <summary>How far from the chimney's middle you stand to hop up onto it, how high over the line the jump and the hop go, and how far below its top you drop out of sight (tiles).</summary>
-        public const double BESIDE = 0.16, JUMP_HEIGHT = 0.2, HOP_HEIGHT = 0.12, DOWN_INTO = 0.45;
-        /// <summary>Under its top by this much (tiles), you're out of sight inside it.</summary>
-        public const double HIDDEN = 0.12;
+        /// <summary>How long the turn, the leap, the settle and the last turn take (seconds); how fast you walk (tiles a second).</summary>
+        public const double TURN = 0.25, LEAP = 0.7, SETTLE = 0.3, FACE = 0.3, WALK = 0.75;
+        /// <summary>How high over your seat the leap goes (tiles).</summary>
+        public const double HEIGHT = 0.3;
 
-        public readonly bool down;
-        readonly Vec2 seat, jumpTo, beside, chimney;
-        readonly double seatHeight, rim;
-        readonly Func<double, double, double> roof;
+        public readonly Vec2 from, landAt, to;
+        public readonly double fromHeight, facing;
+        readonly Func<double, double, double> ground;
         readonly double walk;
         public double time;
 
-        /// <summary>
-        /// `down`: from your seat (its top `seatHeight` up) out onto the roof at `jumpTo`, to the chimney (its top `rim`
-        /// up) and down it; else up out of it and back to your seat. `roof` says how high the roof is at a point (NaN
-        /// off it).
-        /// </summary>
-        public ChimneyTrip(bool down, Vec2 seat, double seatHeight, Vec2 jumpTo, Vec2 chimney, double rim, Func<double, double, double> roof)
+        /// <summary>From your seat (`from`, its top `fromHeight` up) out to `landAt`, then on to `to`, to face `facing` (a walker's heading). `ground`: how high it is at a point.</summary>
+        public Hop(Vec2 from, double fromHeight, Vec2 landAt, Vec2 to, double facing, Func<double, double, double> ground)
         {
-            this.down = down;
-            this.seat = seat;
-            this.seatHeight = seatHeight;
-            this.jumpTo = jumpTo;
-            this.chimney = chimney;
-            this.roof = roof;
-            double d = Geo.Dist(jumpTo, chimney);
-            var dir = d < 1e-6 ? new Vec2(1, 0) : new Vec2((chimney.x - jumpTo.x) / d, (chimney.y - jumpTo.y) / d);
-            double toBeside = Math.Max(0, d - BESIDE);
-            beside = new Vec2(jumpTo.x + dir.x * toBeside, jumpTo.y + dir.y * toBeside);
-            walk = toBeside / WALK;
-            this.rim = Math.Max(RoofAt(chimney), rim);
+            this.from = from;
+            this.fromHeight = fromHeight;
+            this.landAt = landAt;
+            this.to = to;
+            this.facing = facing;
+            this.ground = ground;
+            walk = Geo.Dist(landAt, to) / WALK;
         }
 
-        /// <summary>How high the roof is at a point (or, off it, the nearest height we know: the seat's).</summary>
-        double RoofAt(Vec2 p)
-        {
-            double h = roof?.Invoke(p.x, p.y) ?? double.NaN;
-            return double.IsNaN(h) ? seatHeight : h;
-        }
-
-        public double Duration => JUMP + walk + HOP + DROP;
+        public double Duration => TURN + LEAP + SETTLE + walk + FACE;
 
         public bool Done => time >= Duration;
 
-        public (Vec2 at, double floor, double lift, double heading, double pace, bool shown) Step(double dt)
+        double Ground(Vec2 p)
+        {
+            double g = ground?.Invoke(p.x, p.y) ?? 0;
+            return double.IsNaN(g) ? 0 : g;
+        }
+
+        public WalkerPose Step(double dt)
         {
             time = Math.Min(Duration, time + Math.Max(0, dt));
             return At(time);
         }
 
-        static double Facing(Vec2 from, Vec2 to, double otherwise) => Geo.Dist(from, to) < 1e-6 ? otherwise : DetMath.Atan2(to.x - from.x, to.y - from.y);
-
-        /// <summary>Where you are `t` seconds into it.</summary>
-        public (Vec2 at, double floor, double lift, double heading, double pace, bool shown) At(double t)
+        public WalkerPose At(double t)
         {
             t = Math.Max(0, Math.Min(Duration, t));
-            // Up is down played backwards (the way you face turned round).
+            double out_ = Leap.Facing(from, landAt, facing);
+            double on = Leap.Facing(landAt, to, out_);
+            if (t < TURN)
+            {
+                // Up out of your seat, turning to the way out.
+                return new WalkerPose(from, fromHeight, 0, out_, 0, true, 0);
+            }
+            if ((t -= TURN) < LEAP)
+            {
+                double k = t / LEAP;
+                double land = Ground(landAt);
+                var (up, rate) = Leap.At(fromHeight, land, Math.Max(fromHeight, land) + HEIGHT, k);
+                var at = new Vec2(from.x + (landAt.x - from.x) * k, from.y + (landAt.y - from.y) * k);
+                double floor = Math.Min(Math.Min(fromHeight, land), up);
+                return new WalkerPose(at, floor, up - floor, out_, 0, true, rate / LEAP);
+            }
+            if ((t -= LEAP) < SETTLE) return new WalkerPose(landAt, Ground(landAt), 0, out_, 0, true, 0);
+            if ((t -= SETTLE) < walk)
+            {
+                double k = walk <= 0 ? 1 : t / walk;
+                var at = new Vec2(landAt.x + (to.x - landAt.x) * k, landAt.y + (to.y - landAt.y) * k);
+                return new WalkerPose(at, Ground(at), 0, on, WALK, true, 0);
+            }
+            return new WalkerPose(to, Ground(to), 0, facing, 0, true, 0);
+        }
+    }
+
+    /// <summary>
+    /// Down a chimney from your seat in the sleigh on the roof, or back up it to your seat: a turn towards the
+    /// chimney, a leap out of your seat in a high arc right onto its top (landing on it, knees bending), a moment
+    /// stood there turned to the street, then a little hop and down inside it feet first (out of sight once you're
+    /// in); or popping up out of it and all of that backwards, ending with the leap back into your seat. Where you
+    /// are as it goes (WalkerPose).
+    /// </summary>
+    public sealed class ChimneyTrip
+    {
+        /// <summary>How long the turn, the stand on top and the drop take; the leap, this long and as long again a tile across (seconds).</summary>
+        public const double TURN = 0.3, PERCH = 0.6, DROP = 0.65, LEAP = 0.6, LEAP_PER_TILE = 0.3;
+        /// <summary>How high over the higher end the leap goes, and the hop before the drop (tiles); how far below the top you drop to.</summary>
+        public const double LEAP_HEIGHT = 0.35, HOP_HEIGHT = 0.1, DOWN_INTO = 0.5;
+        /// <summary>Under its top by this much (tiles), you're out of sight inside it.</summary>
+        public const double HIDDEN = 0.14;
+
+        public readonly bool down;
+        readonly Vec2 seat, chimney;
+        readonly double seatHeight, rim, perched, leap;
+        public double time;
+
+        /// <summary>
+        /// `down`: from your seat (its top `seatHeight` up) to the chimney (its top `rim` up) and down it, turned to face
+        /// `perched` (a walker's heading: the street's way, say) on its top; else up out of it and back to your seat.
+        /// </summary>
+        public ChimneyTrip(bool down, Vec2 seat, double seatHeight, Vec2 chimney, double rim, double perched)
+        {
+            this.down = down;
+            this.seat = seat;
+            this.seatHeight = seatHeight;
+            this.chimney = chimney;
+            this.rim = rim;
+            this.perched = perched;
+            leap = LEAP + LEAP_PER_TILE * Geo.Dist(seat, chimney);
+        }
+
+        public double Duration => TURN + leap + PERCH + DROP;
+
+        /// <summary>When you're on the chimney's top (seconds in): the leap's done.</summary>
+        public double OnTop => down ? TURN + leap : DROP;
+
+        public bool Done => time >= Duration;
+
+        public WalkerPose Step(double dt)
+        {
+            time = Math.Min(Duration, time + Math.Max(0, dt));
+            return At(time);
+        }
+
+        /// <summary>Where you are `t` seconds into it.</summary>
+        public WalkerPose At(double t)
+        {
+            t = Math.Max(0, Math.Min(Duration, t));
+            // Up is down played backwards (going up where it went down, facing back the way it came).
             double s = down ? t : Duration - t;
-            double toChimney = Facing(jumpTo, chimney, Facing(seat, chimney, 0));
+            double sign = down ? 1 : -1;
+            double toChimney = Leap.Facing(seat, chimney, perched);
             double turn = down ? 0 : Math.PI;
-            Vec2 at;
-            double up, pace = 0, heading;
-            bool shown = true;
-            if (s < JUMP)
+            if (s < TURN) return new WalkerPose(seat, seatHeight, 0, toChimney + turn, 0, true, 0);
+            if ((s -= TURN) < leap)
             {
-                // Out of your seat in an arc, down onto the roof by the sleigh (or up into your seat, coming back).
-                double k = s / JUMP;
-                at = new Vec2(seat.x + (jumpTo.x - seat.x) * k, seat.y + (jumpTo.y - seat.y) * k);
-                up = seatHeight + (RoofAt(jumpTo) - seatHeight) * k + JUMP_HEIGHT * Math.Sin(Math.PI * k);
-                heading = Facing(seat, jumpTo, toChimney) + turn;
+                double k = s / leap;
+                var (up, rate) = Leap.At(seatHeight, rim, Math.Max(seatHeight, rim) + LEAP_HEIGHT, k);
+                var at = new Vec2(seat.x + (chimney.x - seat.x) * k, seat.y + (chimney.y - seat.y) * k);
+                double floor = Math.Min(Math.Min(seatHeight, rim), up);
+                return new WalkerPose(at, floor, up - floor, toChimney + turn, 0, true, sign * rate / leap);
             }
-            else if ((s -= JUMP) < walk)
+            if ((s -= leap) < PERCH) return new WalkerPose(chimney, rim, 0, perched, 0, true, 0);
+            s -= PERCH;
             {
-                double k = walk <= 0 ? 1 : s / walk;
-                at = new Vec2(jumpTo.x + (beside.x - jumpTo.x) * k, jumpTo.y + (beside.y - jumpTo.y) * k);
-                up = RoofAt(at);
-                pace = WALK;
-                heading = toChimney + turn;
-            }
-            else if ((s -= walk) < HOP)
-            {
-                // Up onto the chimney's top in an arc (or down off it, coming back).
-                double k = s / HOP;
-                at = new Vec2(beside.x + (chimney.x - beside.x) * k, beside.y + (chimney.y - beside.y) * k);
-                double from = RoofAt(beside);
-                up = from + (rim - from) * k + HOP_HEIGHT * Math.Sin(Math.PI * k);
-                heading = toChimney + turn;
-            }
-            else
-            {
-                // Down inside it (or up out of it, coming back): out of sight once in.
-                s -= HOP;
                 double k = Math.Min(1, s / DROP);
-                at = chimney;
-                up = rim - DOWN_INTO * k * k;
-                heading = toChimney + turn;
-                shown = up > rim - HIDDEN;
+                double bottom = rim - DOWN_INTO;
+                var (up, rate) = Leap.At(rim, bottom, rim + HOP_HEIGHT, k);
+                return new WalkerPose(chimney, bottom, up - bottom, perched, 0, up > rim - HIDDEN, sign * rate / DROP);
             }
-            double floor = Math.Min(RoofAt(at), up);
-            return (at, floor, up - floor, heading, pace, shown);
         }
     }
 }

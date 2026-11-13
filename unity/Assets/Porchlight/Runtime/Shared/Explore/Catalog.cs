@@ -69,6 +69,14 @@ namespace Porchlight.Explore
         /// </summary>
         public const double SLEIGH_SEAT = 2.432 * SLEIGH_SCALE, SLEIGH_SEAT_HEIGHT = 0.716 * SLEIGH_SCALE;
         /// <summary>
+        /// The sleigh (as a Vehicle: where it is, what it turns about) is Santa in his seat, as a plane is its
+        /// cockpit: its model's middle is drawn this far ahead of that (tiles), out among the team, so it turns and
+        /// banks about him and the reindeer swing round ahead of him as a plane's nose does.
+        /// </summary>
+        public const double SLEIGH_AHEAD = SLEIGH_SEAT;
+        /// <summary>How far the model reaches behind Santa's seat (the back of the sleigh), and ahead of it (Rudolph's nose), tiles.</summary>
+        public const double SLEIGH_TAIL = SLEIGH_LENGTH / 2 - SLEIGH_AHEAD, SLEIGH_NOSE = SLEIGH_LENGTH / 2 + SLEIGH_AHEAD;
+        /// <summary>
         /// The sleigh's runners (tiles): how high their undersides are over the bottom of the model (the
         /// reindeer's hooves), how far out to each side, and from how far behind the middle to how far.
         /// </summary>

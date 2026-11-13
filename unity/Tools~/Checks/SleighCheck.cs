@@ -1,15 +1,19 @@
 // The presents mission's flying, as sums (Explore/Sleigh.cs): a ring is flown
-// through whichever way you go and however long the frames are, and missed
-// past its rim; the story's landing takes your plane on from just where it is,
-// as fast and the same way, without a jolt, and sets it down on its spot
-// facing the way it's to stand, coming down all the way (over a few hundred
-// made-up approaches from every side); the sleigh set down on a roof is along
-// its ridge with its runners resting on it, the chimney beside it on the
-// street's side; and down a chimney is a jump out of your seat onto the roof,
-// across it, up onto the chimney's top and in out of sight, and back up it is
-// the same played backwards, ending in your seat. Then the sleigh flown for real (Vehicle, the
-// game's own flying) at a ring from a little way off, steered only by where
-// the ring is, goes through it.
+// through whichever way you go and however long the frames are, or passed
+// near enough, and missed well off it; the story's landing takes your plane on
+// from just where it is, as fast and the same way, without a jolt, round in
+// turns no tighter than it can make onto a straight run-in lined up with its
+// spot, down it to touch down level and slide to a stop on its spot facing the
+// way it's to stand, coming down all the way and up over anything in its way
+// (over a few hundred made-up approaches from every side); the sleigh set down
+// on a roof is along its ridge with its runners resting on it, the chimney
+// beside it on the street's side; down a chimney is a leap out of your seat in
+// a high arc onto its top, a moment stood there and a hop down inside out of
+// sight, and back up it is the same played backwards, ending in your seat; and
+// out onto the pavement is a leap over the side, down onto it, and a walk on
+// to where you're to stand. Then the sleigh flown for real (Vehicle, the game's
+// own flying) at a ring from a little way off, steered only by where the ring
+// is, goes through it.
 //
 //   dotnet run --project "unity/Tools~/Checks" -- sleigh
 
@@ -49,6 +53,9 @@ static class SleighCheck
         expect(ring.Through(9.5, 11.5, 7, 10.5, 11.5, 7), "through it near its rim (1.5 across, 1 up: 1.8 off its middle of 2)");
         expect(ring.Through(9.5, 12.25, 6, 10.5, 12.25, 6), "a near miss just past its rim counts (2.25 off its middle: within the slack)");
         expect(!ring.Through(9.5, 13, 6, 10.5, 13, 6), "past its side: no");
+        expect(ring.Reached(9.5, 13, 6, 10.5, 13, 6) && ring.Reached(9.5, 10, 9, 10.5, 10, 9), "but past its side or over its top, near enough, it counts");
+        expect(ring.Reached(8, 10.5, 6.5, 8, 13, 6.5) && !ring.Reached(5, 14, 6, 6, 15, 6), "flying near it without crossing its face counts too; well off it doesn't");
+        expect(!ring.Reached(9.5, 15, 6, 10.5, 15, 6) && !ring.Reached(10, 10, 11, 10.2, 10, 11), "well past its side or well over it: no");
         expect(!ring.Through(9.5, 10, 9, 10.5, 10, 9), "over its top: no");
         expect(!ring.Through(9.5, 10, 3.5, 10.5, 10, 3.5), "under it: no");
         expect(!ring.Through(8, 10, 6, 9.9, 10, 6), "short of it: no");
@@ -71,11 +78,11 @@ static class SleighCheck
         var start = l.At(0);
         expect(Math.Abs(start.x) < 1e-9 && Math.Abs(start.y) < 1e-9 && Math.Abs(start.h - 6) < 1e-9, "it takes over from just where the plane is");
         expect(Math.Abs(start.speed - Vehicle.PLANE_TOP) < 1e-6 && Math.Abs(start.heading) < 1e-6, "as fast as it was going, and the same way: no jolt");
-        expect(l.duration >= Landing.MIN_TIME && l.duration <= Landing.MAX_TIME, $"it takes a few seconds ({l.duration:0.0} s)");
+        expect(l.duration > 2 && l.duration < 25, $"it takes a few seconds ({l.duration:0.0} s)");
 
         // Hundreds of approaches, from every side and height, onto roofs and into streets.
         var rng = new Rng("sleigh::landings");
-        int bad = 0, jolts = 0, ends = 0, ups = 0, fast = 0;
+        int bad = 0, jolts = 0, ends = 0, ups = 0, fast = 0, sharp = 0, unaligned = 0, unflared = 0, slides = 0, long_ = 0;
         string first = null;
         for (int k = 0; k < 400; k++)
         {
@@ -83,109 +90,151 @@ static class SleighCheck
             double heading = rng.Next() * Math.PI * 2, speed = 3.4 + rng.Next() * 7.7;
             double tx = rng.Next() * 10 - 5, ty = rng.Next() * 10 - 5, th = rng.Chance(0.5) ? 0.03 : 1 + rng.Next() * 2;
             double toHeading = rng.Next() * Math.PI * 2;
-            var land = new Landing(x, y, h, heading, speed, tx, ty, th, toHeading);
+            double slide = rng.Chance(0.3) ? 0 : rng.Next() * 0.9;
+            var land = new Landing(x, y, h, heading, speed, tx, ty, th, toHeading, slide);
             double px = x, py = y, ph = h, pheading = heading;
             double peak = speed;
             int steps = 0;
-            while (!land.Done && steps++ < 2000)
+            bool wasDown = false;
+            while (!land.Done && steps++ < 4000)
             {
                 var at = land.Step(DT);
                 if (double.IsNaN(at.x) || double.IsNaN(at.y) || double.IsNaN(at.h) || double.IsNaN(at.heading)) bad++;
                 double moved = Numbers.Hypot(at.x - px, at.y - py);
                 // Never further in a frame than three times as fast as it came in (it swings round, not jumps).
                 if (moved > Math.Max(speed, 6) * 3 * DT) jolts++;
+                // Turning no tighter than its radius (a little over, for the steps).
+                if (moved > 1e-4 && Math.Abs(Orbit.ShortestTurn(pheading, at.heading)) > moved / Landing.RADIUS * 1.2 + 1e-3) sharp++;
                 if (at.h > ph + 1e-9) ups++;
                 peak = Math.Max(peak, at.speed);
+                // Down the run-in it's lined up with its spot; once down, it's on the spot's height, sliding along.
+                double left = Numbers.Hypot(tx - at.x, ty - at.y);
+                if (!land.Done && land.along > land.runIn + 0.05 && Math.Abs(Orbit.ShortestTurn(at.heading, toHeading)) > 1e-6) unaligned++;
+                if (land.Down && !land.Done && Math.Abs(at.h - th) > 1e-6) unflared++;
+                if (land.Down && !wasDown && Math.Abs(left - slide) > 0.1) slides++;
+                wasDown |= land.Down;
                 px = at.x;
                 py = at.y;
                 ph = at.h;
                 pheading = at.heading;
             }
+            if (steps >= 4000) long_++;
             if (Numbers.Hypot(px - tx, py - ty) > 1e-6 || Math.Abs(ph - th) > 1e-6 || Math.Abs(Orbit.ShortestTurn(pheading, toHeading)) > 1e-6 || !land.Done) ends++;
             if (peak > Math.Max(speed, 6) * 3) fast++;
-            if (first == null && (ends > 0 || jolts > 0 || bad > 0)) first = $"#{k} from ({x:0.0}, {y:0.0}) {h:0.0} up, heading {heading:0.00} at {speed:0.0}, to ({tx:0.0}, {ty:0.0}) {th:0.00} up facing {toHeading:0.00}";
+            if (first == null && (ends > 0 || jolts > 0 || bad > 0 || sharp > 0 || unaligned > 0 || unflared > 0 || slides > 0 || long_ > 0)) first = $"#{k} new Landing({x:R}, {y:R}, {h:R}, {heading:R}, {speed:R}, {tx:R}, {ty:R}, {th:R}, {toHeading:R}, {slide:R}), ends {ends} unaligned {unaligned} unflared {unflared} slides {slides} long {long_}";
         }
         expect(bad == 0, "no landing ever goes wild (NaN)");
-        expect(ends == 0, "every landing ends exactly on its spot, at its height, facing the way it's to stand");
+        expect(ends == 0 && long_ == 0, "every landing ends exactly on its spot, at its height, facing the way it's to stand");
         expect(jolts == 0, "no frame of any landing jumps");
+        expect(sharp == 0, $"no landing turns tighter than it can (a Dubins way round, {sharp} too sharp)");
         expect(fast == 0, "no landing speeds up past three times as fast as it came in");
         expect(ups == 0, "every landing comes down all the way, never up");
+        expect(unaligned == 0, "down its run-in, every landing is lined up with its spot");
+        expect(unflared == 0 && slides == 0, "it touches down (level, on its spot's height) just as far back as it slides, and slides on to a stop");
         if (first != null) Console.WriteLine($"  first bad one: {first}");
         // Once down, it stays put.
         var done = new Landing(0, 0, 5, 0, 5, 4, 4, 1, Math.PI / 2);
         while (!done.Done) done.Step(0.1);
         var after = done.Step(0.5);
         expect(after.x == 4 && after.y == 4 && after.h == 1 && after.speed == 0, "down, it stays down on its spot, stopped");
-        // Its heading as it touches down is the spot's (a turn round onto the street's way, not a skid).
         var nearly = done.At(0.97);
-        expect(Math.Abs(Orbit.ShortestTurn(nearly.heading, Math.PI / 2)) < 0.35, "just before it touches down it's already facing the way it's to stand");
+        expect(Math.Abs(Orbit.ShortestTurn(nearly.heading, Math.PI / 2)) < 1e-6, "just before it stops it's facing the way it's to stand");
+        // Slowing down the run-in, touching down slow.
+        var glide = new Landing(-20, 0, 8, 0, 7, 0, 0, 2, 0, 0.5);
+        var atTouch = glide.SpeedAt(glide.touch - 1e-6);
+        expect(atTouch <= Landing.TOUCH_SPEED + 1e-6 && glide.SpeedAt(glide.runIn + 0.01) > atTouch, $"slowing down the run-in, touching down at {atTouch:0.00} tiles a second");
+
+        // Over a building in its way: up over it, and down again to its spot beyond.
+        Func<double, double, double, double> block = (px, py, _) => px > -9 && px < -6 && Math.Abs(py) < 2 ? 4.3 : double.NegativeInfinity;
+        var over = new Landing(-20, 0, 3, 0, 4, 0, 0, 0.03, 0, 0.5, block);
+        bool clear = true;
+        double highest = 0;
+        for (double t = 0; t <= 1; t += 0.002)
+        {
+            var at = over.At(t);
+            if (at.x > -8.9 && at.x < -6.1) clear &= at.h >= 4.3 - 1e-6;
+            highest = Math.Max(highest, at.h);
+        }
+        var stop = over.At(1);
+        expect(clear && Math.Abs(stop.h - 0.03) < 1e-9, $"a building in the way: it goes up over it ({highest:0.00} up over its 4.3) and down again to its spot");
+        // Dubins: a turn right round onto a spot behind it.
+        var back = Dubins.Shortest(0, 0, 0, -3, 0, Math.PI, 2);
+        var end = back.At(back.Length);
+        expect(Numbers.Hypot(end.x + 3, end.y) < 1e-6 && Math.Abs(Orbit.ShortestTurn(end.heading, Math.PI)) < 1e-6 && back.Length > Math.PI * 2 - 1e-6,
+            $"a Dubins way round to a spot behind it gets there, facing back ({back.Length:0.00} tiles)");
     }
 
     static void Chimneys(Action<bool, string> expect)
     {
         var seat = new Vec2(5, 5);
-        var jumpTo = new Vec2(5, 5.2);
-        var chimney = new Vec2(5.6, 5.2);
-        double roof = 1.6, seatHeight = 1.85, rim = 1.9;
-        Func<double, double, double> flat = (x, y) => roof;
-        var down = new ChimneyTrip(true, seat, seatHeight, jumpTo, chimney, rim, flat);
-        var up = new ChimneyTrip(false, seat, seatHeight, jumpTo, chimney, rim, flat);
+        var chimney = new Vec2(5.4, 5.3);
+        double seatHeight = 1.85, rim = 1.95, perched = 0.7;
+        var down = new ChimneyTrip(true, seat, seatHeight, chimney, rim, perched);
+        var up = new ChimneyTrip(false, seat, seatHeight, chimney, rim, perched);
         var s0 = down.At(0);
-        expect(Geo.Dist(s0.at, seat) < 1e-9 && Math.Abs(s0.floor + s0.lift - seatHeight) < 1e-9 && s0.shown, "down a chimney starts in your seat, in sight");
-        var landed = down.At(ChimneyTrip.JUMP);
-        expect(Geo.Dist(landed.at, jumpTo) < 1e-9 && Math.Abs(landed.floor - roof) < 1e-9 && Math.Abs(landed.lift) < 1e-9, "you jump out of your seat and land on the roof beside the sleigh");
-        double jumpTop = 0;
-        for (double t = 0; t <= ChimneyTrip.JUMP; t += 0.01) jumpTop = Math.Max(jumpTop, down.At(t).floor + down.At(t).lift);
-        expect(jumpTop > seatHeight, $"jumping up and out of it ({jumpTop:0.00} over your seat's {seatHeight:0.00})");
-        var walking = down.At(ChimneyTrip.JUMP + 0.05);
-        expect(walking.pace > 0 && Math.Abs(walking.heading - DetMath.Atan2(chimney.x - jumpTo.x, chimney.y - jumpTo.y)) < 1e-9 && walking.lift == 0, "then walking across the roof, towards the chimney");
-        var end = down.At(down.Duration);
-        expect(Geo.Dist(end.at, chimney) < 1e-9 && !end.shown && end.floor + end.lift < rim, "and ends down inside the chimney, out of sight");
-        // Over the chimney's top on the way in: the hop goes higher than its rim.
-        double highest = 0;
-        int flips = 0;
-        bool was = true;
-        for (double t = 0; t <= down.Duration; t += 0.01)
+        expect(Geo.Dist(s0.at, seat) < 1e-9 && Math.Abs(s0.Up - seatHeight) < 1e-9 && s0.shown && s0.lift == 0, "down a chimney starts stood up in your seat, in sight");
+        var onTop = down.At(down.OnTop + 0.01);
+        expect(Geo.Dist(onTop.at, chimney) < 1e-9 && Math.Abs(onTop.floor - rim) < 1e-9 && onTop.lift == 0 && Math.Abs(onTop.heading - perched) < 1e-9,
+            "you leap out of your seat right onto the chimney's top, and stand on it turned to the street");
+        double leapTop = 0, takeOff = 0, landing = 0;
+        bool arc = true;
+        for (double t = ChimneyTrip.TURN; t <= down.OnTop; t += 0.005)
         {
             var a = down.At(t);
-            if (t > ChimneyTrip.JUMP) highest = Math.Max(highest, a.floor + a.lift);
+            leapTop = Math.Max(leapTop, a.Up);
+            if (t < ChimneyTrip.TURN + 0.02) takeOff = Math.Max(takeOff, a.rise);
+            if (t > down.OnTop - 0.02) landing = Math.Min(landing, a.rise);
+            arc &= a.lift >= -1e-9 && a.shown;
+        }
+        expect(leapTop > Math.Max(seatHeight, rim) + 0.2 && arc, $"in a high arc ({leapTop:0.00} over the higher end's {Math.Max(seatHeight, rim):0.00})");
+        expect(takeOff > 0.5 && landing < -0.5, $"going up as you take off ({takeOff:0.0}) and down as you land ({landing:0.0}): the jump's poses");
+        var end = down.At(down.Duration);
+        expect(Geo.Dist(end.at, chimney) < 1e-9 && !end.shown && end.Up < rim - ChimneyTrip.HIDDEN, "and ends down inside the chimney, out of sight");
+        int flips = 0;
+        bool was = true;
+        double hop = 0;
+        for (double t = 0; t <= down.Duration; t += 0.005)
+        {
+            var a = down.At(t);
+            if (t > down.OnTop + ChimneyTrip.PERCH) hop = Math.Max(hop, a.Up);
             if (a.shown != was) flips++;
             was = a.shown;
-            if (a.floor + a.lift < rim - ChimneyTrip.DOWN_INTO - 1e-9 || a.lift < -1e-9) flips += 10;
+            if (a.Up < rim - ChimneyTrip.DOWN_INTO - 1e-9 || a.lift < -1e-9) flips += 10;
         }
-        expect(highest > rim, $"you hop up over the chimney's top ({highest:0.00} over its rim {rim:0.00})");
+        expect(hop > rim, $"a little hop on its top first ({hop:0.00} over its rim {rim:0.00})");
         expect(flips == 1, "out of sight once, as you drop in, and no lower than the drop");
-        // Back up is down played backwards.
+        // Back up is down played backwards, going up where it went down.
         bool same = Math.Abs(up.Duration - down.Duration) < 1e-9;
         for (double t = 0; t <= up.Duration && same; t += 0.05)
         {
             var a = up.At(t);
             var b = down.At(down.Duration - t);
-            same = Geo.Dist(a.at, b.at) < 1e-9 && Math.Abs(a.floor + a.lift - b.floor - b.lift) < 1e-9 && a.shown == b.shown;
+            same = Geo.Dist(a.at, b.at) < 1e-9 && Math.Abs(a.Up - b.Up) < 1e-9 && a.shown == b.shown && Math.Abs(a.rise + b.rise) < 1e-9;
         }
         expect(same, "back up the chimney is the trip down played backwards");
         var back = up.At(up.Duration);
-        expect(Geo.Dist(back.at, seat) < 1e-9 && Math.Abs(back.floor + back.lift - seatHeight) < 1e-9 && back.shown, "ending with a jump back up into your seat, in sight");
-        expect(Math.Abs(Orbit.ShortestTurn(back.heading, DetMath.Atan2(seat.x - jumpTo.x, seat.y - jumpTo.y))) < 1e-9, "facing your seat as you jump back into it");
-        // Stepped in frames, it gets there.
-        var stepped = new ChimneyTrip(true, seat, seatHeight, jumpTo, chimney, rim, flat);
+        expect(Geo.Dist(back.at, seat) < 1e-9 && Math.Abs(back.Up - seatHeight) < 1e-9 && back.shown, "ending with a leap back into your seat, in sight");
+        expect(Math.Abs(Orbit.ShortestTurn(back.heading, DetMath.Atan2(seat.x - chimney.x, seat.y - chimney.y))) < 1e-9, "facing your seat as you leap back into it");
+        var stepped = new ChimneyTrip(true, seat, seatHeight, chimney, rim, perched);
         int frames = 0;
         while (!stepped.Done && frames++ < 1000) stepped.Step(1.0 / 30);
-        expect(stepped.Done && frames < 200, $"stepped a frame at a time it's done in a few seconds ({frames} frames)");
-        // A chimney right by your seat: no walk, no NaN.
-        var close = new ChimneyTrip(true, seat, seatHeight, seat, seat, rim, flat);
+        expect(stepped.Done && frames < 150, $"stepped a frame at a time it's done in a few seconds ({frames} frames)");
+        var close = new ChimneyTrip(true, seat, seatHeight, seat, rim, perched);
         var c = close.At(close.Duration / 2);
-        expect(!double.IsNaN(c.at.x) && !double.IsNaN(c.lift) && close.Duration > 0, "a chimney right by your seat is still a jump, a hop and a drop");
-        // On a pitched roof you walk on its slope, never in it or over it.
-        Func<double, double, double> pitched = (x, y) => 1.8 - 0.6 * Math.Abs(y - 5);
-        var slope = new ChimneyTrip(true, seat, 2.05, new Vec2(5, 5.25), new Vec2(5.5, 5.35), 1.9, pitched);
-        bool onIt = true;
-        for (double t = ChimneyTrip.JUMP; t < ChimneyTrip.JUMP + 0.3; t += 0.02)
-        {
-            var a = slope.At(t);
-            if (a.pace > 0) onIt &= a.lift == 0 && Math.Abs(a.floor - pitched(a.at.x, a.at.y)) < 1e-9;
-        }
-        expect(onIt, "walking across a pitched roof, your feet are on its slope");
+        expect(!double.IsNaN(c.at.x) && !double.IsNaN(c.lift) && close.Duration > 0, "a chimney right by your seat is still a leap and a drop");
+
+        // Out onto the pavement: up out of the seat, over the side, down onto the pavement, and on to where you're to stand.
+        var to = new Vec2(6.5, 5.4);
+        var landAt = new Vec2(5, 5.42);
+        double facing = 1.2;
+        var hopOut = new Hop(seat, 0.27, landAt, to, facing, (x, y) => 0);
+        double hopTop = 0;
+        for (double t = Hop.TURN; t <= Hop.TURN + Hop.LEAP; t += 0.005) hopTop = Math.Max(hopTop, hopOut.At(t).Up);
+        var landed = hopOut.At(Hop.TURN + Hop.LEAP + 0.01);
+        var walking = hopOut.At(Hop.TURN + Hop.LEAP + Hop.SETTLE + 0.1);
+        var stood = hopOut.At(hopOut.Duration);
+        expect(hopTop > 0.27 + 0.2 && Geo.Dist(landed.at, landAt) < 1e-9 && landed.Up == 0, $"hopping out: up over the side ({hopTop:0.00}) and down on the pavement beside it");
+        expect(walking.pace > 0 && Geo.Dist(stood.at, to) < 1e-9 && Math.Abs(stood.heading - facing) < 1e-9, "then walking on to where you're to stand, and turning to face the house");
     }
 
     /// <summary>The sleigh set down on roofs: along the ridge, its runners resting on the roof, the chimney beside it.</summary>

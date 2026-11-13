@@ -1,11 +1,14 @@
 // A mission's flying (MissionPlay's building blocks for it): a plane of your
-// own to fly (your_plane: Santa's sleigh, say), rings hung in the sky to fly
-// through (ring, @ring), the story taking the controls from you, gently, to
-// bring the plane down on a role's roof or in the street outside (land,
-// @landed), out of your seat on the roof (A: a jump out onto the roof), across
-// to the chimney and down it, the camera swinging round to watch from the
-// street, and back up it to your seat (chimney, @chimney), a hop out of your
-// seat onto the pavement (put_you "kerb" from the plane, A), and a Christmas
+// own to fly (your_plane: Santa's sleigh, say), seen from one place only,
+// straight behind you and a little above; rings hung in the sky to fly through
+// or just near (ring, @ring), an arrow at the edge of the screen pointing the
+// way to the next; the story taking the controls from you to bring the plane
+// down as a pilot would, round onto a straight run-in, gliding down it,
+// flaring and sliding to a stop on a role's roof or in the street outside
+// (land, @landed); out of your seat on the roof (A) in one leap onto the
+// chimney's top and down it, the camera swinging round to watch from the
+// street, and back up it to your seat (chimney, @chimney); a leap out of your
+// seat onto the pavement (put_you "kerb" from the plane, A); and a Christmas
 // tree in a corner of the role's building to put a present under (tree,
 // @gift). The sums are Explore/Sleigh.cs's (SkyRing, Landing, RoofMap,
 // RoofStop, ChimneyTrip, Hop); this puts the plane and you where they say,
@@ -36,20 +39,32 @@ namespace Porchlight.App
         const double TREE_HEIGHT = 0.62, GIFT_SIZE = 0.15;
         /// <summary>How near a tree you come to put the present under it (tiles), and where you stand to (out from it).</summary>
         const double GIFT_REACH = 0.8, TREE_STAND = 0.42;
-        /// <summary>The landing curve keeps clear of the roofs it passes until it's this near its spot (tiles).</summary>
-        const double LANDING_CLEAR = 1.6;
+        /// <summary>A plane coming down keeps this far over the roofs it passes (tiles), and this far out from their walls.</summary>
+        const double LANDING_CLEAR = 0.3, LANDING_MARGIN = 0.15;
         /// <summary>A plane set down in the street is this high (tiles): its runners on the road, but still up, so it lifts off on its own way when you fly on.</summary>
         const double KERB_HOVER = 0.002;
+        /// <summary>How far a plane set down in the street slides on its runners before it stops (tiles).</summary>
+        const double KERB_SLIDE = 0.9;
         /// <summary>How finely a roof is read (tiles between samples).</summary>
         const double ROOF_STEP = 0.08;
-        /// <summary>A hop out of your seat onto the pavement: how long it takes (seconds) and how high over the line it goes (tiles).</summary>
-        const double HOP_TIME = 0.6, HOP_HEIGHT = 0.18;
+        /// <summary>A leap out of your seat onto the pavement lands this far out to the side of the sleigh (tiles).</summary>
+        const double HOP_OUT = 0.42;
         /// <summary>
-        /// The camera going down a chimney with you: how long it takes to swing round (seconds), and where it ends up,
-        /// out over the street (how far round from straight out the front, how far up and back: radians, tiles);
-        /// how long it watches the chimney once you're in it before you're inside by the tree.
+        /// The camera flying the sleigh (or any plane the story gives you): straight behind you, this far back and up
+        /// from the point it looks at (tiles), that ahead of you among the team; how quickly it swings round after
+        /// you as you turn (a rate).
         /// </summary>
-        const double SHOT_TURN = 1.8, SHOT_SIDE = 0.55, SHOT_ELEVATION = 0.42, SHOT_DISTANCE = 3.2, SHOT_HOLD = 0.8;
+        const double CAM_BACK = 3.9, CAM_UP = 1.45, CAM_TURN = 5;
+        /// <summary>
+        /// The camera going down a chimney with you: where it ends up, out over the street (how far round from
+        /// straight out the front, how far up and back: radians, tiles); how long it watches the chimney once you're
+        /// in it before you're inside by the tree (seconds). And hopping out onto the pavement: where it ends up,
+        /// behind you as you face the house.
+        /// </summary>
+        const double SHOT_SIDE = 0.55, SHOT_ELEVATION = 0.38, SHOT_DISTANCE = 2.9, SHOT_HOLD = 0.9;
+        const double HOP_SHOT_SIDE = 0.5, HOP_SHOT_ELEVATION = 0.42, HOP_SHOT_DISTANCE = 2.6;
+        /// <summary>A ring reached grows and fades over this long (seconds); a puff of soot and snow from a chimney lasts this long.</summary>
+        const double RING_POP = 0.45, PUFF_TIME = 0.9;
         static readonly Func<double, double, double> Street = (x, y) => 0;
 
         /// <summary>What a role has of the sky: its ring, where the story brought your plane down at it, its chimney and its tree.</summary>
@@ -98,7 +113,14 @@ namespace Porchlight.App
         /// <summary>Your trip down or up a chimney, at which role, and where it has you now (or your hop).</summary>
         ChimneyTrip trip;
         Role tripFor;
-        (Vec2 at, double floor, double lift, double heading, double pace, bool shown)? pose;
+        WalkerPose? pose;
+        /// <summary>The flying camera's way round (a map heading), once it's following you.</summary>
+        double? camYaw;
+        double camLast = -1;
+        /// <summary>Rings reached, growing and fading away; puffs from a chimney (each with how long it's been going).</summary>
+        readonly List<(GameObject go, double age)> popping = new List<(GameObject, double)>();
+        readonly List<(GameObject go, double age)> puffs = new List<(GameObject, double)>();
+        static Material puffMaterial;
         /// <summary>Down inside a chimney: how much longer the camera watches it before you're in by the tree (seconds).</summary>
         double? inChimney;
         /// <summary>The camera's move round the house while you're on its roof (null: the game's own camera).</summary>
@@ -111,14 +133,14 @@ namespace Porchlight.App
         static Mesh ringMesh;
 
         /// <summary>
-        /// A camera move (map terms): round a point that follows you, from one way, height and distance to another
-        /// over `turn` seconds, eased in and out.
+        /// A camera move (map terms): round a point, from one way, height and distance to another, and from looking
+        /// at one point to another, over `turn` seconds, eased in and out.
         /// </summary>
         sealed class Shot
         {
             public double yaw0, elevation0, distance0, yaw1, elevation1, distance1, turn, time;
-            public Vec2 anchor;
-            public double anchorHeight;
+            /// <summary>What it looks at, from and to (map x, y and height).</summary>
+            public Vector3 anchor0, anchor1;
 
             /// <summary>How far round it is (0 to 1), eased.</summary>
             public double K
@@ -151,6 +173,7 @@ namespace Porchlight.App
         {
             view.FlyOverride = FlyOverride;
             view.Scripted = Scripted;
+            view.PointerTarget = NextRing;
         }
 
         void DisposeSky()
@@ -158,11 +181,16 @@ namespace Porchlight.App
             foreach (var r in roles.Values) ClearSky(r);
             foreach (var go in leftBehind) if (go != null) UnityEngine.Object.Destroy(go);
             leftBehind.Clear();
+            foreach (var (go, _) in popping) if (go != null) UnityEngine.Object.Destroy(go);
+            popping.Clear();
+            foreach (var (go, _) in puffs) if (go != null) UnityEngine.Object.Destroy(go);
+            puffs.Clear();
+            if (view.PointerTarget == (Func<Vector3?>)NextRing) view.PointerTarget = null;
             StopMoving();
             var rig = view.OwnCarView?.Sleigh;
             if (rig != null) rig.Ground = null;
             if (view.FlyOverride == (Func<Vehicle, double, bool>)FlyOverride) view.FlyOverride = null;
-            if (view.Scripted == (Func<(Vec2 at, double floor, double lift, double heading, double pace, bool shown)?>)Scripted) view.Scripted = null;
+            if (view.Scripted == (Func<WalkerPose?>)Scripted) view.Scripted = null;
         }
 
         /// <summary>Whatever the story had your plane or you doing, stopped: a landing, a jump waited for, a hop or a chimney trip, the camera's move.</summary>
@@ -268,23 +296,29 @@ namespace Porchlight.App
             if (car == null || car.kind != VehicleKind.Plane || !view.DrivingMyCar) throw new Exception("you're not flying a plane (your_plane first)");
             if (at == "roof" && r.room < 0) throw new Exception($"'{role}' has no roof to land on");
             bool sleigh = Catalog.CARS[car.model] == Catalog.SLEIGH;
-            double seatBack = sleigh ? Catalog.SLEIGH_SEAT : 0;
+            // The sleigh is where Santa sits; its model's middle is out ahead of him (RoofStop works from the middle).
+            double ahead = sleigh ? Catalog.SLEIGH_AHEAD : 0;
+            double tail = sleigh ? Catalog.SLEIGH_TAIL : car.halfLength;
             r.sky ??= new SkyStop();
             var s = r.sky;
             Vec2 to;
-            double heading, height;
+            double heading, height, slide;
+            Box? own = null;
             if (at == "roof")
             {
                 // Read off the building itself: along its ridge, the runners resting on the roof under them.
                 var map = RoofMapOf(r);
-                var stop = RoofStop.Place(map, car.x, car.y, r.outward, seatBack, sleigh ? Catalog.SLEIGH_SEAT_HEIGHT : 0.2,
+                var stop = RoofStop.Place(map, car.x, car.y, r.outward, ahead, sleigh ? Catalog.SLEIGH_SEAT_HEIGHT : 0.2,
                     sleigh ? Catalog.SLEIGH_RUNNER_FROM : 0, sleigh ? Catalog.SLEIGH_RUNNER_TO : car.halfLength,
                     sleigh ? Catalog.SLEIGH_RUNNER_GAUGE : car.halfWidth * 0.5, sleigh ? Catalog.SLEIGH_RUNNER_LOW : 0, CarView.LIFT);
                 s.roofMap = map;
                 s.stop = stop;
-                to = stop.middle;
                 heading = stop.heading;
+                to = new Vec2(stop.middle.x - Math.Cos(heading) * ahead, stop.middle.y - Math.Sin(heading) * ahead);
                 height = stop.altitude;
+                // Touching down on the roof itself and sliding along its ridge to a stop: as far back as the roof goes under the back of it.
+                slide = RoofSlide(map, to, heading, tail, stop.altitude + CarView.LIFT + (sleigh ? Catalog.SLEIGH_RUNNER_LOW : 0));
+                own = RoofOf(r);
                 if (s.chimneyGo != null) UnityEngine.Object.Destroy(s.chimneyGo);
                 double under = map.At(stop.chimney.x, stop.chimney.y);
                 s.chimneyGo = DrawChimney(stop.chimney, double.IsNaN(under) ? stop.rim - RoofStop.CHIMNEY_UP : under, stop.rim);
@@ -296,7 +330,8 @@ namespace Porchlight.App
                 var seat = spot != null ? new Vec2(spot.Value.x, spot.Value.y) : r.kerb;
                 heading = Toward(spot?.heading ?? DetMath.Atan2(r.outward.x, -r.outward.y), car, seat);
                 height = KERB_HOVER;
-                to = new Vec2(seat.x + Math.Cos(heading) * seatBack, seat.y + Math.Sin(heading) * seatBack);
+                to = seat;
+                slide = KERB_SLIDE;
                 s.roofMap = null;
                 s.stop = null;
             }
@@ -304,10 +339,59 @@ namespace Porchlight.App
             s.landed = false;
             s.at = to;
             s.atHeight = height;
-            landing = new Landing(car.x, car.y, car.altitude, car.heading, car.speed, to.x, to.y, height, heading);
+            landing = new Landing(car.x, car.y, car.altitude, car.heading, car.speed, to.x, to.y, height, heading, slide, LandingFloor(car, own));
             landingFor = r;
             parked = false;
         }
+
+        /// <summary>
+        /// How far a plane set down on a roof at `to` facing `heading` can slide along it as it stops: as far as the
+        /// roof's still under the back of it (`tail` behind it), at the height its runners touch down at (tiles).
+        /// </summary>
+        static double RoofSlide(RoofMap map, Vec2 to, double heading, double tail, double runners)
+        {
+            double fx = Math.Cos(heading), fy = Math.Sin(heading);
+            for (double slide = Landing.SLIDE; slide > 0.04; slide -= 0.05)
+            {
+                bool ok = true;
+                for (double u = 0; u <= slide + 1e-9 && ok; u += 0.05)
+                {
+                    double h = map.At(to.x - fx * (tail + u), to.y - fy * (tail + u));
+                    ok = !double.IsNaN(h) && Math.Abs(h - runners) < 0.08;
+                }
+                if (ok) return slide;
+            }
+            return 0;
+        }
+
+        /// <summary>
+        /// How low a plane coming down may be at a point, facing a way: clear over the buildings any of it (from its
+        /// tail to its nose) is over, by LANDING_CLEAR; `own` (the building it's setting down on) aside.
+        /// </summary>
+        Func<double, double, double, double> LandingFloor(Vehicle car, Box? own)
+        {
+            var boxes = view.Boxes;
+            bool sleigh = Catalog.CARS[car.model] == Catalog.SLEIGH;
+            double back = sleigh ? Catalog.SLEIGH_TAIL : car.halfLength, ahead = sleigh ? Catalog.SLEIGH_NOSE : car.halfLength;
+            return (x, y, heading) =>
+            {
+                double fx = Math.Cos(heading), fy = Math.Sin(heading), most = double.NegativeInfinity;
+                for (int k = 0; k <= 4; k++)
+                {
+                    double u = -back + (back + ahead) * k / 4;
+                    double px = x + fx * u, py = y + fy * u;
+                    foreach (var b in boxes)
+                    {
+                        if (own != null && SameBox(b, own.Value)) continue;
+                        if (px < b.x0 - LANDING_MARGIN || px > b.x1 + LANDING_MARGIN || py < b.y0 - LANDING_MARGIN || py > b.y1 + LANDING_MARGIN) continue;
+                        most = Math.Max(most, b.top + LANDING_CLEAR - CarView.LIFT);
+                    }
+                }
+                return most;
+            };
+        }
+
+        static bool SameBox(Box a, Box b) => a.x0 == b.x0 && a.y0 == b.y0 && a.x1 == b.x1 && a.y1 == b.y1 && a.top == b.top;
 
         /// <summary>Of a way along a line (a map heading) and its reverse, the one nearer the way from the plane to `to` (else its heading).</summary>
         static double Toward(double along, Vehicle car, Vec2 to)
@@ -399,53 +483,59 @@ namespace Porchlight.App
         {
             var s = r.sky;
             var st = s.stop;
-            trip = new ChimneyTrip(down, st.seat, st.seatHeight, st.jumpTo, st.chimney, st.rim, s.roofMap.At);
+            // On the chimney's top, turned to the street.
+            double perched = DetMath.Atan2(r.outward.x, r.outward.y);
+            trip = new ChimneyTrip(down, st.seat, st.seatHeight, st.chimney, st.rim, perched);
             tripFor = r;
             pose = trip.At(0);
             inChimney = null;
             // The camera swings round to watch from out over the street (coming back up, from there round behind the sleigh).
-            var street = Math.Atan2(r.outward.y, r.outward.x) + SHOT_SIDE * (Geo.Dot(new Vec2(st.chimney.x - st.seat.x, st.chimney.y - st.seat.y), new Vec2(-r.outward.y, r.outward.x)) >= 0 ? -1 : 1);
-            var anchor = AnchorOf(st.chimney, st.rim);
+            var across = new Vec2(-r.outward.y, r.outward.x);
+            double street = Math.Atan2(r.outward.y, r.outward.x) + SHOT_SIDE * (Geo.Dot(new Vec2(st.chimney.x - st.seat.x, st.chimney.y - st.seat.y), across) >= 0 ? -1 : 1);
+            var top = new Vector3((float)st.chimney.x, (float)st.chimney.y, (float)(st.rim + 0.12));
             if (down)
             {
-                var cam = view.CameraAt;
-                double ox = cam.x - anchor.x, oy = -cam.z - anchor.y, oh = cam.y - anchor.z;
-                double flat = Math.Max(1e-3, Numbers.Hypot(ox, oy));
-                shot = new Shot
-                {
-                    yaw0 = Math.Atan2(oy, ox),
-                    elevation0 = Math.Atan2(oh, flat),
-                    distance0 = Math.Max(1.5, Math.Min(10, Numbers.Hypot(flat, oh))),
-                    yaw1 = street,
-                    elevation1 = SHOT_ELEVATION,
-                    distance1 = SHOT_DISTANCE,
-                    turn = SHOT_TURN,
-                };
+                shot = From(view.CameraAt, FlyingLook(view.OwnVehicle));
+                shot.yaw1 = street;
+                shot.elevation1 = SHOT_ELEVATION;
+                shot.distance1 = SHOT_DISTANCE;
+                shot.anchor1 = top;
+                // Round by the time you're stood on top of it.
+                shot.turn = trip.OnTop + ChimneyTrip.PERCH * 0.5;
             }
             else
             {
-                double behind = st.heading + Math.PI;
+                var car = view.OwnVehicle;
                 shot = new Shot
                 {
                     yaw0 = street,
                     elevation0 = SHOT_ELEVATION,
                     distance0 = SHOT_DISTANCE,
-                    yaw1 = behind,
-                    elevation1 = 0.35,
-                    distance1 = 2.6,
+                    anchor0 = top,
+                    // Ending just where the flying camera is, behind the sleigh.
+                    yaw1 = (car?.heading ?? st.heading) + Math.PI,
+                    elevation1 = Math.Atan2(CAM_UP, CAM_BACK),
+                    distance1 = Numbers.Hypot(CAM_UP, CAM_BACK),
+                    anchor1 = FlyingLook(car) ?? top,
                     turn = trip.Duration,
                 };
             }
-            shot.anchor = new Vec2(anchor.x, anchor.y);
-            shot.anchorHeight = anchor.z;
         }
 
-        /// <summary>What the camera looks at on a roof: between the chimney's top and you (map x, y and height).</summary>
-        Vector3 AnchorOf(Vec2 chimney, double rim)
+        /// <summary>A camera move starting just where the camera is (a scene position), looking at `anchor` (map terms; else straight on down).</summary>
+        static Shot From(Vector3 cam, Vector3? anchor)
         {
-            var at = pose?.at ?? chimney;
-            double h = pose != null ? pose.Value.floor + pose.Value.lift + 0.15 : rim;
-            return new Vector3((float)(chimney.x * 0.55 + at.x * 0.45), (float)(chimney.y * 0.55 + at.y * 0.45), (float)(rim * 0.55 + h * 0.45));
+            var a = anchor ?? new Vector3(cam.x, -cam.z, cam.y - 1);
+            double ox = cam.x - a.x, oy = -cam.z - a.y, oh = cam.y - a.z;
+            double flat = Math.Max(1e-3, Numbers.Hypot(ox, oy));
+            return new Shot
+            {
+                yaw0 = Math.Atan2(oy, ox),
+                elevation0 = Math.Atan2(oh, flat),
+                distance0 = Math.Max(0.8, Numbers.Hypot(flat, oh)),
+                anchor0 = a,
+                anchor1 = a,
+            };
         }
 
         /// <summary>Out onto the pavement from the story's plane: once you press A, you hop out of your seat to `to`, facing `facing`.</summary>
@@ -475,9 +565,24 @@ namespace Porchlight.App
             var car = view.OwnVehicle;
             var seat = YourSeat();
             double from = car.altitude + CarView.LIFT + (Catalog.CARS[car.model] == Catalog.SLEIGH ? Catalog.SLEIGH_SEAT_HEIGHT : 0.2);
+            // Out over the side nearer where you're going (the pavement), and on from there.
+            var f = car.Forward;
+            var side = new Vec2(-f.y, f.x);
+            if (Geo.Dot(side, new Vec2(hopTo.x - seat.x, hopTo.y - seat.y)) < 0) side = new Vec2(f.y, -f.x);
+            var landAt = new Vec2(seat.x + side.x * HOP_OUT, seat.y + side.y * HOP_OUT);
+            if (!view.CanStandAt(landAt.x, landAt.y) || Geo.Dist(seat, hopTo) < HOP_OUT) landAt = hopTo;
+            var look = FlyingLook(car);
             view.LeaveSeat();
-            hop = new Hop(seat, from, hopTo, 0, HOP_HEIGHT, HOP_TIME, Street);
+            hop = new Hop(seat, from, landAt, hopTo, hopFacing, Street);
             pose = hop.At(0);
+            // The camera comes round behind you as you go, to look at the house over your shoulder.
+            double behind = Math.Atan2(-Math.Cos(hopFacing), -Math.Sin(hopFacing)) + HOP_SHOT_SIDE * (Geo.Dot(side, new Vec2(Math.Sin(hopFacing), Math.Cos(hopFacing))) >= 0 ? 1 : -1);
+            shot = From(view.CameraAt, look);
+            shot.yaw1 = behind;
+            shot.elevation1 = HOP_SHOT_ELEVATION;
+            shot.distance1 = HOP_SHOT_DISTANCE;
+            shot.anchor1 = new Vector3((float)hopTo.x, (float)hopTo.y, 0.25f);
+            shot.turn = hop.Duration;
             return true;
         }
 
@@ -573,12 +678,6 @@ namespace Porchlight.App
                 return true;
             }
             var (x, y, h, heading, speed) = landing.Step(dt);
-            // Clear of the roofs it passes, until it's coming down onto its spot.
-            if (Numbers.Hypot(landing.toX - x, landing.toY - y) > LANDING_CLEAR)
-            {
-                double floor = view.FlyFloor(x, y);
-                if (!double.IsInfinity(floor)) h = Math.Max(h, floor);
-            }
             double was = car.altitude;
             car.x = x;
             car.y = y;
@@ -586,10 +685,14 @@ namespace Porchlight.App
             car.speed = speed;
             double turn = Orbit.ShortestTurn(car.heading, heading);
             car.heading = heading;
-            // Banked into its turns and nosed down as it descends, then level as it touches down.
-            double k = Math.Min(1, dt * 3);
-            car.bank += (Math.Max(-0.5, Math.Min(0.5, turn / Math.Max(1e-3, dt) * 0.25)) - car.bank) * k;
-            car.pitch += (DetMath.Atan2((h - was) / Math.Max(1e-3, dt), Math.Max(1, speed)) - car.pitch) * k;
+            // Banked into its turns and nosed down a little as it descends, then level as it touches down (and sliding).
+            // The sleigh hardly noses down at all: its team's out ahead, and would be in the roof.
+            double k = Math.Min(1, dt * 4);
+            bool sleigh = Catalog.CARS[car.model] == Catalog.SLEIGH;
+            double bankTo = landing.Down ? 0 : Math.Max(-0.45, Math.Min(0.45, turn / Math.Max(1e-3, dt) * 0.3));
+            double pitchTo = landing.Down ? 0 : DetMath.Atan2((h - was) / Math.Max(1e-3, dt), Math.Max(1, speed)) * (sleigh ? 0.25 : 1);
+            car.bank += (bankTo - car.bank) * k;
+            car.pitch += (pitchTo - car.pitch) * k;
             if (!landing.Done) return true;
             car.bank = 0;
             car.pitch = 0;
@@ -602,7 +705,26 @@ namespace Porchlight.App
             return true;
         }
 
-        (Vec2 at, double floor, double lift, double heading, double pace, bool shown)? Scripted() => pose;
+        WalkerPose? Scripted() => pose;
+
+        /// <summary>The ring the arrow at the edge of the screen points to: the nearest still to fly through (map x, y and height).</summary>
+        Vector3? NextRing()
+        {
+            if (landing != null || !view.DrivingMyCar) return null;
+            var you = view.OwnVehicle;
+            Vector3? best = null;
+            double bestD = double.PositiveInfinity;
+            foreach (var r in roles.Values)
+            {
+                var ring = r.sky?.ring;
+                if (ring == null || r.sky.through) continue;
+                double d = you != null ? Numbers.Hypot(ring.Value.x - you.x, ring.Value.y - you.y) : 0;
+                if (d >= bestD) continue;
+                bestD = d;
+                best = new Vector3((float)ring.Value.x, (float)ring.Value.y, (float)ring.Value.h);
+            }
+            return best;
+        }
 
         void UpdateSky(double dt)
         {
@@ -615,9 +737,18 @@ namespace Porchlight.App
                     {
                         var s = r.sky;
                         if (s?.ring == null || s.through) continue;
-                        if (!s.ring.Value.Through(lastX.Value, lastY.Value, lastH.Value, car.x, car.y, car.altitude)) continue;
+                        // Through it, or near enough: from Santa at the back of the sleigh to the reindeer out in front.
+                        var f = car.Forward;
+                        double reach = Catalog.CARS[car.model] == Catalog.SLEIGH ? Catalog.SLEIGH_AHEAD : 0;
+                        var ring = s.ring.Value;
+                        bool near = ring.Reached(lastX.Value, lastY.Value, lastH.Value, car.x, car.y, car.altitude)
+                            || ring.Reached(lastX.Value + f.x * reach, lastY.Value + f.y * reach, lastH.Value, car.x + f.x * reach, car.y + f.y * reach, car.altitude);
+                        if (!near) continue;
                         s.through = true;
                         RingsFlown++;
+                        // It grows and fades as you pass.
+                        if (s.ringGo != null) popping.Add((s.ringGo, 0));
+                        s.ringGo = null;
                         ClearRing(s);
                     }
                 lastX = car.x;
@@ -628,6 +759,7 @@ namespace Porchlight.App
             // The sleigh down on a roof (or in the street): its reindeer stand on it.
             var rig = view.OwnCarView?.Sleigh;
             if (rig != null) rig.Ground = GroundUnder(car);
+            if (shot != null) shot.time += dt;
             // Out onto the pavement.
             if (hop != null)
             {
@@ -636,24 +768,20 @@ namespace Porchlight.App
                 {
                     hop = null;
                     pose = null;
+                    shot = null;
                     view.PutPlayer(hopTo, hopFacing);
                 }
             }
             // Down or up a chimney.
             if (trip != null)
             {
-                if (shot != null)
-                {
-                    shot.time += dt;
-                    // The camera keeps you and the chimney in view as you go.
-                    var a = AnchorOf(tripFor?.sky?.stop?.chimney ?? shot.anchor, tripFor?.sky?.stop?.rim ?? shot.anchorHeight);
-                    double ease = Math.Min(1, dt * 4);
-                    shot.anchor = new Vec2(shot.anchor.x + (a.x - shot.anchor.x) * ease, shot.anchor.y + (a.y - shot.anchor.y) * ease);
-                    shot.anchorHeight += (a.z - shot.anchorHeight) * ease;
-                }
+                bool wasShown = pose?.shown ?? true;
                 if (!trip.Done) pose = trip.Step(dt);
-                else if (trip.down && (inChimney ??= SHOT_HOLD) > 0) inChimney -= dt;
-                else
+                // A puff of soot and snow out of the top as you drop in (or pop out).
+                if (pose != null && pose.Value.shown != wasShown && tripFor?.sky?.stop != null) Puff(tripFor.sky.stop.chimney, tripFor.sky.stop.rim);
+                // Down it, the camera watches the chimney a moment before you're inside.
+                if (trip.Done && trip.down && (inChimney ??= SHOT_HOLD) > 0) inChimney -= dt;
+                else if (trip.Done)
                 {
                     var r = tripFor;
                     bool down = trip.down;
@@ -679,6 +807,43 @@ namespace Porchlight.App
                             parked = true;
                         }
                     }
+                }
+            }
+            // Rings reached grow and fade; puffs rise and spread.
+            for (int i = popping.Count - 1; i >= 0; i--)
+            {
+                var (go, age) = popping[i];
+                age += dt;
+                if (go == null || age >= RING_POP)
+                {
+                    if (go != null) UnityEngine.Object.Destroy(go);
+                    popping.RemoveAt(i);
+                    continue;
+                }
+                popping[i] = (go, age);
+                double k = age / RING_POP;
+                go.transform.localScale *= (float)(1 + dt * 1.6);
+                var glowing = go.GetComponent<Renderer>();
+                if (glowing != null) Materials.SetGlow(glowing, RingGold, (float)(4 * (1 - k)));
+                if (k > 0.6) go.transform.localScale *= (float)Math.Max(0, 1 - dt * 7);
+            }
+            for (int i = puffs.Count - 1; i >= 0; i--)
+            {
+                var (go, age) = puffs[i];
+                age += dt;
+                if (go == null || age >= PUFF_TIME)
+                {
+                    if (go != null) UnityEngine.Object.Destroy(go);
+                    puffs.RemoveAt(i);
+                    continue;
+                }
+                puffs[i] = (go, age);
+                double k = age / PUFF_TIME;
+                foreach (Transform t in go.transform)
+                {
+                    var dir = new Vector3(t.localPosition.x, 0, t.localPosition.z).normalized;
+                    t.localPosition += (dir * 0.3f + Vector3.up * 0.3f) * (float)(dt * (1 - k));
+                    t.localScale = Vector3.one * (float)(0.06 + 0.11 * Math.Sin(Math.PI * k));
                 }
             }
             // The rings glow and turn a little; a light over a tree waiting for its present.
@@ -707,7 +872,7 @@ namespace Porchlight.App
             return null;
         }
 
-        /// <summary>The camera's move round the house as you go down (or come up) its chimney, while it's on.</summary>
+        /// <summary>The camera's move round the house as you go down (or come up) its chimney, or hop out, while it's on.</summary>
         (Vector3 at, Vector3 look)? SkyCamera()
         {
             var sh = shot;
@@ -716,9 +881,63 @@ namespace Porchlight.App
             double yaw = sh.yaw0 + Orbit.ShortestTurn(sh.yaw0, sh.yaw1) * k;
             double elevation = sh.elevation0 + (sh.elevation1 - sh.elevation0) * k;
             double distance = sh.distance0 + (sh.distance1 - sh.distance0) * k;
+            var a = Vector3.Lerp(sh.anchor0, sh.anchor1, (float)k);
             double flat = Math.Cos(elevation) * distance;
-            var at = Coords.Map(sh.anchor.x + Math.Cos(yaw) * flat, sh.anchor.y + Math.Sin(yaw) * flat, sh.anchorHeight + Math.Sin(elevation) * distance);
-            return (at, Coords.Map(sh.anchor.x, sh.anchor.y, sh.anchorHeight));
+            var at = Coords.Map(a.x + Math.Cos(yaw) * flat, a.y + Math.Sin(yaw) * flat, a.z + Math.Sin(elevation) * distance);
+            return (at, Coords.Map(a.x, a.y, a.z));
+        }
+
+        /// <summary>What the flying camera looks at: just ahead of you among the team, a little over the sleigh (map x, y and height).</summary>
+        static Vector3? FlyingLook(Vehicle car)
+        {
+            if (car == null) return null;
+            bool sleigh = Catalog.CARS[car.model] == Catalog.SLEIGH;
+            double ahead = sleigh ? ExploreView.SLEIGH_FOCUS : 0;
+            return new Vector3((float)(car.x + Math.Cos(car.heading) * ahead), (float)(car.y + Math.Sin(car.heading) * ahead), (float)(car.altitude + CarView.LIFT + 0.22));
+        }
+
+        /// <summary>
+        /// Flying the story's plane (and set down in it), one place for the camera only: straight behind you, a little
+        /// above, looking at the sleigh so it's in the middle of the view; swinging round after you as you turn.
+        /// </summary>
+        (Vector3 at, Vector3 look)? FlyingCamera()
+        {
+            double now = Time.realtimeSinceStartupAsDouble;
+            double dt = camLast < 0 ? 0 : Math.Max(0, Math.Min(0.1, now - camLast));
+            camLast = now;
+            var car = view.OwnVehicle;
+            if (storyPlane < 0 || car == null || car.model != storyPlane || !view.DrivingMyCar)
+            {
+                camYaw = null;
+                return null;
+            }
+            camYaw = camYaw == null ? car.heading : camYaw.Value + Orbit.ShortestTurn(camYaw.Value, car.heading) * Math.Min(1, dt * CAM_TURN);
+            var look = FlyingLook(car).Value;
+            double yaw = camYaw.Value;
+            var at = Coords.Map(look.x - Math.Cos(yaw) * CAM_BACK, look.y - Math.Sin(yaw) * CAM_BACK, look.z + CAM_UP);
+            return (at, Coords.Map(look.x, look.y, look.z));
+        }
+
+        /// <summary>A puff of soot and snow out of a chimney's top.</summary>
+        void Puff(Vec2 at, double rim)
+        {
+            puffMaterial ??= Materials.Glowing(Coords.Hex(0xdfe3ea));
+            var go = new GameObject("chimney puff");
+            go.transform.SetParent(view.world.root.transform, false);
+            go.transform.localPosition = Coords.Map(at.x, at.y, rim + 0.05);
+            for (int i = 0; i < 7; i++)
+            {
+                var b = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                UnityEngine.Object.Destroy(b.GetComponent<Collider>());
+                b.transform.SetParent(go.transform, false);
+                double a = i * Math.PI * 2 / 7 + rng.Next() * 0.5;
+                b.transform.localPosition = new Vector3((float)(Math.Cos(a) * 0.05), (float)(rng.Next() * 0.05), (float)(Math.Sin(a) * 0.05));
+                b.transform.localScale = Vector3.one * 0.06f;
+                var mr = b.GetComponent<Renderer>();
+                mr.sharedMaterial = puffMaterial;
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            }
+            puffs.Add((go, 0));
         }
 
         /// <summary>A tree waiting for its present, if the story is.</summary>
@@ -768,13 +987,12 @@ namespace Porchlight.App
             beacon.transform.localPosition = Coords.Map(r.sky.tree.x, r.sky.tree.y, TREE_HEIGHT + 0.12 + bob);
         }
 
-        /// <summary>Where you'd sit in your own vehicle (the sleigh's seat is at its back; a car's is its middle).</summary>
+        /// <summary>Where you'd sit in your own vehicle: where it is (the sleigh's Santa's seat, its team out ahead).</summary>
         Vec2 YourSeat()
         {
             var car = view.OwnVehicle;
             if (car == null) return view.PlayerPosition ?? default;
-            double back = Catalog.CARS[car.model] == Catalog.SLEIGH ? Catalog.SLEIGH_SEAT : 0;
-            return new Vec2(car.x - Math.Cos(car.heading) * back, car.y - Math.Sin(car.heading) * back);
+            return new Vec2(car.x, car.y);
         }
 
         // Drawing.

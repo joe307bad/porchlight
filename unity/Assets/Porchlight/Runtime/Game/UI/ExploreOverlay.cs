@@ -42,6 +42,11 @@ namespace Porchlight.UI
         readonly Label notice;
         readonly VisualElement garage, personBox, carBox;
         readonly VisualElement compass;
+        /// <summary>The arrow at the edge of the view towards where a mission wants you (SetPointer): where, which way, and whether it's shown.</summary>
+        readonly VisualElement pointer;
+        Vector2 pointerAt;
+        double pointerAngle;
+        bool pointerShown;
         /// <summary>The compass's N, E, S and W, clockwise from north.</summary>
         readonly Label[] compassWays = new Label[4];
         /// <summary>Which way the camera looks, as the compass last showed it (radians clockwise from north).</summary>
@@ -434,6 +439,13 @@ namespace Porchlight.UI
             });
             host.Add(minimap);
 
+            pointer = new VisualElement();
+            pointer.style.position = Position.Absolute;
+            pointer.style.left = pointer.style.top = pointer.style.right = pointer.style.bottom = 0;
+            pointer.pickingMode = PickingMode.Ignore;
+            pointer.generateVisualContent += DrawPointer;
+            host.Add(pointer);
+
             garage = new VisualElement();
             garage.AddToClassList("garage");
             // The compass, above the character: north turning as the camera does.
@@ -520,6 +532,55 @@ namespace Porchlight.UI
             host.RegisterCallback<GeometryChangedEvent>(_ => Center());
             prompt.RegisterCallback<GeometryChangedEvent>(_ => Center());
             notice.RegisterCallback<GeometryChangedEvent>(_ => Center());
+        }
+
+        public void SetPointer(Vector2? at, double angle)
+        {
+            if (at == null)
+            {
+                if (!pointerShown) return;
+                pointerShown = false;
+                pointer.MarkDirtyRepaint();
+                return;
+            }
+            pointerShown = true;
+            pointerAt = at.Value;
+            pointerAngle = angle;
+            // Redrawn every frame: it moves as you turn, and pulses.
+            pointer.MarkDirtyRepaint();
+        }
+
+        /// <summary>A gold arrowhead at the edge of the view, outlined dark so it shows against snow and sky, pulsing gently.</summary>
+        void DrawPointer(MeshGenerationContext ctx)
+        {
+            if (!pointerShown) return;
+            var r = pointer.contentRect;
+            if (r.width <= 0 || r.height <= 0) return;
+            var c = new Vector2(r.x + pointerAt.x * r.width, r.y + pointerAt.y * r.height);
+            // Screen y is down: the angle's anticlockwise as seen, so its y flips.
+            var d = new Vector2((float)Math.Cos(pointerAngle), (float)-Math.Sin(pointerAngle));
+            var side = new Vector2(-d.y, d.x);
+            float pulse = 1 + 0.12f * Mathf.Sin(Time.realtimeSinceStartup * 5);
+            float len = 26 * pulse, half = 15 * pulse, notch = 8 * pulse;
+            // Pulled in so all of it is on the screen.
+            c -= d * (len * 0.5f);
+            var tip = c + d * len;
+            var left = c + side * half;
+            var right = c - side * half;
+            var back = c + d * notch;
+            var painter = ctx.painter2D;
+            painter.lineJoin = LineJoin.Round;
+            painter.BeginPath();
+            painter.MoveTo(tip);
+            painter.LineTo(left);
+            painter.LineTo(back);
+            painter.LineTo(right);
+            painter.ClosePath();
+            painter.fillColor = Coords.Hex(0xffc93a);
+            painter.Fill();
+            painter.lineWidth = 2.5f;
+            painter.strokeColor = Coords.Hex(0x3a2a10);
+            painter.Stroke();
         }
 
         /// <summary>The compass turned to the camera: up on it is the way the camera looks.</summary>

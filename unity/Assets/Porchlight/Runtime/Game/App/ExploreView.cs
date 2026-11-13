@@ -90,6 +90,11 @@ namespace Porchlight.App
         void CountyTravel();
         /// <summary>The compass: which way the camera looks (radians clockwise from north, the map's -y).</summary>
         void SetCompass(double bearing);
+        /// <summary>
+        /// An arrow at the edge of the view, at `at` (a share of the view's width and height, from its top left)
+        /// pointing `angle` (radians, anticlockwise from right, as the screen's seen); null hides it.
+        /// </summary>
+        void SetPointer(Vector2? at, double angle);
     }
 
     public sealed class ExploreView : INetHost
@@ -328,6 +333,8 @@ namespace Porchlight.App
         public Func<string> PromptOverride;
         /// <summary>Where a mission has the camera (a close-up camera at `at` looking at `look`, world space), while it returns one.</summary>
         public Func<(Vector3 at, Vector3 look)?> CameraOverride;
+        /// <summary>Somewhere a mission wants you to go (map x, y and height): an arrow at the edge of the screen points there while it's out of sight.</summary>
+        public Func<Vector3?> PointerTarget;
         /// <summary>The sign-in screen's town: no controls, an auto walk and a slowly turning camera.</summary>
         public bool Attract;
         /// <summary>
@@ -838,11 +845,12 @@ namespace Porchlight.App
         public Func<Vehicle, double, bool> FlyOverride;
 
         /// <summary>
-        /// A mission moving you on foot itself (across a roof and down a chimney): where you are, how high what
+        /// A mission moving you on foot itself (a leap onto a chimney and down it): where you are, how high what
         /// you're stood on is, how high off it you are, which way you face, how fast you're walking (for your
-        /// stride) and whether you're to be seen; null leaves you to the keys.
+        /// stride), how fast you're going up (for a jump's pose) and whether you're to be seen; null leaves you to
+        /// the keys.
         /// </summary>
-        public Func<(Vec2 at, double floor, double lift, double heading, double pace, bool shown)?> Scripted;
+        public Func<WalkerPose?> Scripted;
         /// <summary>Out of sight while a mission moves you (down inside a chimney).</summary>
         bool scriptHidden;
 
@@ -1885,7 +1893,9 @@ namespace Porchlight.App
                 // A long plane (the sleigh and its team) is in reach from anywhere along it, not only its middle.
                 var c = cars[i].car;
                 var f = c.Forward;
-                double along = c.kind == VehicleKind.Plane ? Math.Max(-c.halfLength, Math.Min(c.halfLength, (p.x - c.x) * f.x + (p.y - c.y) * f.y)) : 0;
+                bool sleigh = Catalog.CARS[c.model] == Catalog.SLEIGH;
+                double back = sleigh ? Catalog.SLEIGH_TAIL : c.halfLength, ahead = sleigh ? Catalog.SLEIGH_NOSE : c.halfLength;
+                double along = c.kind == VehicleKind.Plane ? Math.Max(-back, Math.Min(ahead, (p.x - c.x) * f.x + (p.y - c.y) * f.y)) : 0;
                 Consider(PickKind.Own, i, c.x + f.x * along, c.y + f.y * along);
             }
             for (int i = 0; i < world.parked.Count; i++) if (!takenParked.Contains(i)) Consider(PickKind.Parked, i, world.parked[i].x, world.parked[i].y);
@@ -2502,7 +2512,7 @@ namespace Porchlight.App
                 p.y = s.at.y;
                 p.floor = s.floor;
                 p.lift = s.lift;
-                p.rise = s.lift > 0 ? -1 : 0;
+                p.rise = s.rise;
                 p.heading = s.heading;
                 p.speed = s.pace;
                 p.Halt();
@@ -2804,7 +2814,15 @@ namespace Porchlight.App
             Vector3? roomLight = fixedView != null ? Coords.Map(fixedView.Value.focus.x, fixedView.Value.focus.z, world.rooms[room.Value].height * 0.9) : (Vector3?)null;
             snap = false;
             overridden = room == null ? CameraOverride?.Invoke() : null;
+            // Back from a mission's camera, the close camera eases over from where it was.
+            if (overridden != null)
+            {
+                lastOverride = overridden;
+                sinceOverride = 0;
+            }
+            else if (lastOverride != null && (sinceOverride += dt) >= OVERRIDE_EASE) lastOverride = null;
             PlaceCamera();
+            PlacePointer();
             // The compass: which way the camera looks (the scene's +z is the map's north, -y), or, looking
             // straight down, which way is up on the screen.
             var fw = camera.transform.forward;
@@ -2959,7 +2977,7 @@ namespace Porchlight.App
 
         /// <summary>
         /// What the camera keeps in the middle of the view: you, or the vehicle you're at the controls of; Santa's
-        /// sleigh, the sleigh and the reindeer nearest it (its middle is out among the team, well ahead of Santa).
+        /// sleigh, the sleigh and the reindeer nearest it (Santa's at its back, the team out ahead of him).
         /// </summary>
         Vec2 FocusOf(Player p)
         {
@@ -2967,11 +2985,11 @@ namespace Porchlight.App
             var car = cars[driving.Value].car;
             if (Catalog.CARS[car.model] != Catalog.SLEIGH) return new Vec2(p.x, p.y);
             var f = car.Forward;
-            return new Vec2(car.x - f.x * SLEIGH_FOCUS, car.y - f.y * SLEIGH_FOCUS);
+            return new Vec2(car.x + f.x * SLEIGH_FOCUS, car.y + f.y * SLEIGH_FOCUS);
         }
 
-        /// <summary>The sleigh's camera looks this far behind its middle (tiles): between Santa's seat and the team.</summary>
-        const double SLEIGH_FOCUS = Catalog.SLEIGH_SEAT * 0.6;
+        /// <summary>The sleigh's camera looks this far ahead of Santa (tiles): between him and the team.</summary>
+        public const double SLEIGH_FOCUS = Catalog.SLEIGH_AHEAD * 0.6;
 
         void PlaceChase(Player p, double dt)
         {
@@ -3007,6 +3025,47 @@ namespace Porchlight.App
         /// <summary>A mission has the camera (CameraOverride), for now.</summary>
         bool Overridden => overridden != null;
         (Vector3 at, Vector3 look)? overridden;
+        /// <summary>Where a mission last had the camera, and how long ago it let go (seconds); the close camera eases back over this long.</summary>
+        (Vector3 at, Vector3 look)? lastOverride;
+        double sinceOverride;
+        const double OVERRIDE_EASE = 0.8;
+
+        /// <summary>The arrow at the edge of the screen, towards where a mission wants you to go, while it's out of sight.</summary>
+        void PlacePointer()
+        {
+            var target = room == null && !overlay.MapOpen ? PointerTarget?.Invoke() : null;
+            if (target == null)
+            {
+                overlay.SetPointer(null, 0);
+                return;
+            }
+            var t = target.Value;
+            var w = world.root.transform.TransformPoint(Coords.Map(t.x, t.y, t.z));
+            var v = camera.WorldToViewportPoint(w);
+            double dx = v.x - 0.5, dy = v.y - 0.5;
+            if (v.z < 0)
+            {
+                // Behind you: the other way round, and right out at the edge.
+                dx = -dx;
+                dy = -dy;
+                if (Math.Abs(dx) < 1e-3 && Math.Abs(dy) < 1e-3) dy = -0.5;
+            }
+            else if (v.x > POINTER_INSET && v.x < 1 - POINTER_INSET && v.y > POINTER_INSET && v.y < 1 - POINTER_INSET)
+            {
+                overlay.SetPointer(null, 0);
+                return;
+            }
+            // Out to the edge of the screen (a little in from it), the way it is.
+            double reach = 0.5 - POINTER_INSET;
+            double m = Math.Max(Math.Abs(dx), Math.Abs(dy)) / reach;
+            if (m < 1e-9) m = 1;
+            double ex = 0.5 + dx / m, ey = 0.5 + dy / m;
+            // The overlay's down is the screen's; the viewport's up.
+            overlay.SetPointer(new Vector2((float)ex, (float)(1 - ey)), Math.Atan2(-dy, dx));
+        }
+
+        /// <summary>How far in from the screen's edge the arrow sits (a share of the view).</summary>
+        const double POINTER_INSET = 0.06;
 
         void PlaceCamera()
         {
@@ -3014,6 +3073,13 @@ namespace Porchlight.App
             if (mode == CameraMode.Close || Overridden)
             {
                 var (at, look) = overridden ?? (chasePos, chaseLook);
+                if (overridden == null && lastOverride != null)
+                {
+                    float k = (float)Math.Min(1, sinceOverride / OVERRIDE_EASE);
+                    k = k * k * (3 - 2 * k);
+                    at = Vector3.Lerp(lastOverride.Value.at, at, k);
+                    look = Vector3.Lerp(lastOverride.Value.look, look, k);
+                }
                 camera.orthographic = false;
                 camera.fieldOfView = (float)CHASE_FOV;
                 camera.nearClipPlane = 0.05f;

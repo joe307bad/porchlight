@@ -1499,7 +1499,7 @@ namespace Porchlight.App
                     var car = iso.OwnVehicle;
                     if (!ok || car == null) break;
                     var f = car.Forward;
-                    var seat = new Vec2(car.x - f.x * Catalog.SLEIGH_SEAT, car.y - f.y * Catalog.SLEIGH_SEAT);
+                    var seat = new Vec2(car.x, car.y);
                     var beside = new Vec2(seat.x - f.y * 0.55, seat.y + f.x * 0.55);
                     if (!iso.CanStandAt(beside.x, beside.y)) beside = new Vec2(seat.x + f.y * 0.55, seat.y - f.x * 0.55);
                     iso.PutPlayer(beside, 0);

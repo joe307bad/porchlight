@@ -50,7 +50,7 @@ The sack's full of presents, and there are five houses on the list tonight. Ever
 ~ tree("home", PRESENT)
 ~ ring("home", RING_HEIGHT, RING_SIZE)
 ~ guide("home", "ring", "the ring over {street}")
-~ hint("always", "", "Fly through the golden ring: W climbs, S dives, A and D bank (on a pad: RT, LT and the stick)")
+~ hint("always", "", "Fly through the golden ring, or just near it: follow the gold arrow at the edge of the screen. W climbs, S dives, A and D bank (on a pad: RT, LT and the stick)")
 ~ objective("Fly through the golden ring over {street} ({stop} of {STOPS})")
 + [@ring home] -> through
 
