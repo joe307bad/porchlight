@@ -278,12 +278,31 @@ namespace Porchlight.App
         /// <summary>Put this at a world corner (tiles), as seen from the space you're in.</summary>
         void Place(Transform t, double x0, double y0) => t.localPosition = Coords.Map(x0 - active.x0, y0 - active.y0);
 
+        /// <summary>A spot (world tiles) you're on your way to without driving there (joining someone out of town), and what's done once you're in its space (with the spot in its terms).</summary>
+        Vec2? sendTo;
+        Action<Vec2> sent;
+
+        /// <summary>
+        /// Off to this spot (world tiles) in another space: it's built first (a loading bar meanwhile, as at
+        /// the edge of a space that isn't ready), then the view moves into it and you into its room, and
+        /// `arrived` puts you there (given the spot in the space's terms). Null: you stay where you are.
+        /// </summary>
+        public void SendTo(Vec2? world, Action<Vec2> arrived)
+        {
+            sendTo = world != null && map.SpaceAt(world.Value) != null ? world : null;
+            sent = sendTo != null ? arrived : null;
+        }
+
+        /// <summary>On the way to a spot (SendTo) and its space isn't built yet.</summary>
+        public bool Sending => sendTo != null;
+
         public void Update()
         {
             var local = view.PlayerPosition;
             if (local == null || view.world == null) return;
             var at = active.ToWorld(local.Value);
             Plan(at);
+            if (sendTo != null && Send()) return;
             // Over the line into a space that isn't ready: you wait at its edge, and it's built faster meanwhile.
             var ahead = Paused ? null : map.SpaceAt(at, active);
             Built wanted = null;
@@ -299,6 +318,35 @@ namespace Porchlight.App
             Rooms(active.ToWorld(view.PlayerPosition ?? local.Value));
         }
 
+        /// <summary>Into the space you're being sent to, if it's ready (built faster till it is): true once you're there.</summary>
+        bool Send()
+        {
+            var to = map.SpaceAt(sendTo.Value);
+            Built there = null;
+            if (to != null && to != active) built.TryGetValue(to.id, out there);
+            if (to != null && to != active && (there == null || !there.ready || there.world == null))
+            {
+                Waiting = (to.name ?? map.Where(to), there == null ? 0 : Progress(there));
+                Step(WAIT_BUDGET_MS);
+                return false;
+            }
+            var world = sendTo.Value;
+            var arrived = sent;
+            sendTo = null;
+            sent = null;
+            Waiting = null;
+            if (there != null) Switch(there);
+            arrived?.Invoke(active.ToLocal(world));
+            // Into its room now, from where you've been put: left in the room you were in, the jump there
+            // would be a move it puts back.
+            var at = view.PlayerPosition is Vec2 l ? active.ToWorld(l) : world;
+            string want = map.RoomAt(at);
+            wantRoom = want;
+            wantSince = Now;
+            if (Net != null && Net.RoomKey != null && want != Net.RoomKey) EnterRoomAt(want, at);
+            return true;
+        }
+
         // Building --------------------------------------------------------------------------------
 
         /// <summary>What should be built from here: the road spaces near you, the nearest towns, and the one you're in.</summary>
@@ -307,6 +355,13 @@ namespace Porchlight.App
             var towns = new List<(Space s, double d)>();
             var want = new HashSet<int> { active.id };
             var head = Heading?.Invoke();
+            // Being sent somewhere: its space before anything else.
+            var send = sendTo != null ? map.SpaceAt(sendTo.Value) : null;
+            if (send != null && send != active)
+            {
+                if (send.kind == SpaceKind.Town) head = send;
+                else want.Add(send.id);
+            }
             foreach (var s in map.spaces)
             {
                 double d = CountyMap.DistanceTo(s, at);
@@ -830,7 +885,12 @@ namespace Porchlight.App
                 wantSince = Now;
             }
             if (want == Net.RoomKey || Now - wantSince < ROOM_SETTLE_MS) return;
-            // Over into its ground: there, carrying on from here (in its terms).
+            EnterRoomAt(want, at);
+        }
+
+        /// <summary>Over into this room's ground: there, carrying on from here (world tiles; in its terms).</summary>
+        void EnterRoomAt(string want, Vec2 at)
+        {
             var o = map.RoomOrigin(want);
             var s = view.GetLocalState();
             double height = s?.y ?? 0, yaw = s?.yaw ?? 0;

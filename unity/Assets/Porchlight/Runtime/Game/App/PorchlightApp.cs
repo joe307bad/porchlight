@@ -2265,6 +2265,8 @@ namespace Porchlight.App
                 { Net = net, Frame = netFrame, OnSpace = DroveInto, Heading = TripNextTown };
                 county.EnterRoom();
                 ShowWhere();
+                // Joining someone out at the junction: out to them now.
+                if (sendingTo != null) SendOut();
                 // Now the houses in the county's other towns have roads to them.
                 OfferDirections();
                 // And the big map has a County tab.
@@ -2369,7 +2371,7 @@ namespace Porchlight.App
                 if (list == null || playing?.id != mine) return;
                 accountCharacters = list;
                 OfferDirections();
-                var others = list.Where(c => c.inUse && !string.IsNullOrEmpty(c.town) && c.id != mine && c.town != TownKey).ToList();
+                var others = list.Where(c => c.inUse && !string.IsNullOrEmpty(c.town) && c.id != mine && c.town != TownKey && c.town != net?.RoomKey).ToList();
                 if (others.Count == 0)
                 {
                     ShowJoins(others, new string[0]);
@@ -2791,7 +2793,7 @@ namespace Porchlight.App
             {
                 if (list == null || playing?.id != mine) return;
                 var them = list.Find(c => c.id == id);
-                if (them != null && them.inUse && !string.IsNullOrEmpty(them.town) && them.town != TownKey) Join(them);
+                if (them != null && them.inUse && !string.IsNullOrEmpty(them.town) && them.town != TownKey && them.town != net?.RoomKey) Join(them);
                 else OfferJoins();
             });
         }
@@ -2805,12 +2807,79 @@ namespace Porchlight.App
 
         async void GoTo(Character them)
         {
-            await Run(ShowTownSteps(them.town), "town/");
-            enteringTown = true;
             joining = them.name;
             joiningSession = them.session;
             joiningUntil = platform.Now() + JOIN_FIND_MS;
-            _ = Explore();
+            if (!OutOfTown(them.town))
+            {
+                sendingTo = null;
+                await Run(ShowTownSteps(them.town), "town/");
+                enteringTown = true;
+                _ = Explore();
+                return;
+            }
+            // Out at the junction or on its plots (the north room): there's no town of theirs to load. In the
+            // county already, straight out to them; if not, Porchlight (just south of the junction), and from
+            // there out to them once its county's up.
+            sendingTo = them.id;
+            if (county != null && exploring)
+            {
+                HideLoader();
+                SendOut();
+                return;
+            }
+            string porchlight = await PorchlightKey();
+            if (porchlight == null)
+            {
+                sendingTo = null;
+                joining = null;
+                HideLoader(false);
+                statusLabel.text = $"couldn't find the way to {them.name}";
+                statusLabel.AddToClassList("error");
+                return;
+            }
+            await Run(ShowTownSteps(porchlight), "town/");
+            enteringTown = true;
+            await Explore();
+            if (county != null) SendOut();
+        }
+
+        /// <summary>A room that isn't a town's: the north room (the junction and the account's plots).</summary>
+        static bool OutOfTown(string room) => room != null && room.StartsWith(CountyMap.NORTH, StringComparison.Ordinal);
+
+        /// <summary>Joining someone out of town (the character's id): sent out to where they are once the county's up; null: not.</summary>
+        string sendingTo;
+
+        /// <summary>Porchlight's key (the county's middle town), asked of the server; null if it can't say.</summary>
+        Task<string> PorchlightKey()
+        {
+            var done = new TaskCompletionSource<string>();
+            Account.ListTowns(platform, origin, (list, _) => done.TrySetResult(list?.towns.Find(t =>
+                !t.mine && t.place != null && Enum.TryParse(t.place, true, out Place p) && p == Place.Porchlight)?.key));
+            return done.Task;
+        }
+
+        /// <summary>Out over the county to whoever's being joined out of town: where they are now, asked afresh.</summary>
+        void SendOut()
+        {
+            string id = sendingTo;
+            sendingTo = null;
+            var on = county;
+            if (id == null || on == null) return;
+            Account.Where(platform, origin, id, (w, _) =>
+            {
+                if (w == null || county != on || iso == null) return;
+                var at = CountyWorld(w.Value.room, w.Value.x, w.Value.z);
+                // Somewhere this county doesn't have: the Join button again, for wherever they are now.
+                if (at == null)
+                {
+                    joining = null;
+                    OfferJoins();
+                    return;
+                }
+                joiningUntil = platform.Now() + JOIN_FIND_MS;
+                on.SendTo(at, local => iso?.JumpBeside(local, true));
+            });
         }
 
         /// <summary>Someone else is playing: back to the front door (saying why, if there's a reason to).</summary>
@@ -2825,6 +2894,7 @@ namespace Porchlight.App
             FrontDoor.Forget(platform);
             playing = null;
             joining = null;
+            sendingTo = null;
             joinsShown = "";
             sidebar.SetJoins(null);
             accountCharacters = null;
