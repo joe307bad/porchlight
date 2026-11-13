@@ -105,6 +105,13 @@ namespace Porchlight.Rendering
         public void Place(double x, double y, double rot, double altitude = 0, double pitch = 0, double bank = 0)
         {
             root.transform.localPosition = Coords.Map(x, y, lift + altitude);
+            // The sleigh turns and climbs about Santa with its team out ahead: it tips and leans only a little, or the
+            // reindeer would swing up and down and out to the side of him.
+            if (sleigh != null)
+            {
+                pitch *= SleighRig.PITCH_SHARE;
+                bank *= SleighRig.BANK_SHARE;
+            }
             var turn = Coords.Yaw(rot);
             if (pitch != 0 || bank != 0) turn *= Quaternion.Euler((float)(-pitch * 180 / Math.PI), 0, (float)(-bank * 180 / Math.PI));
             root.transform.localRotation = turn;
@@ -149,6 +156,8 @@ namespace Porchlight.Rendering
     /// </summary>
     public sealed class SleighRig
     {
+        /// <summary>How much of a plane's nose-up and lean into a turn the sleigh shows.</summary>
+        public const double PITCH_SHARE = 0.3, BANK_SHARE = 0.55;
         /// <summary>How far a reindeer rises through a stride and rocks (model units, degrees), and Santa and the sack bob.</summary>
         const float DEER_RISE = 0.06f, DEER_ROCK = 6, SANTA_BOB = 0.025f, SACK_BOB = 0.02f;
         /// <summary>Strides a second, galloping flat out and paddling the air standing still.</summary>
@@ -208,8 +217,32 @@ namespace Porchlight.Rendering
             }
         }
 
+        /// <summary>Where Santa is drawn, and the middle of everything drawn (the sleigh and its team: world space).</summary>
+        public Vector3 SantaAt => santa != null ? santa.position : root.transform.position;
+        public Vector3 Middle
+        {
+            get
+            {
+                Bounds? all = null;
+                foreach (var r in renderers)
+                {
+                    if (r == null || !r.enabled || !r.gameObject.activeInHierarchy) continue;
+                    if (all == null) all = r.bounds;
+                    else
+                    {
+                        var b = all.Value;
+                        b.Encapsulate(r.bounds);
+                        all = b;
+                    }
+                }
+                return all?.center ?? root.transform.position;
+            }
+        }
+        readonly Renderer[] renderers;
+
         public SleighRig(GameObject root)
         {
+            renderers = root.GetComponentsInChildren<Renderer>(true);
             this.root = root;
             var all = root.GetComponentsInChildren<Transform>(true);
             // The model's own up and forward (its nose is down the holder's +z), in each part's own terms below.

@@ -2222,7 +2222,7 @@ namespace Porchlight.App
             if (fight.Manned) return fight.Prompt();
             var r = TalkTarget();
             if (r != null) return $"Press {(input.Connected ? "A" : "Enter")} to talk to {r.name}";
-            string jump = JumpPrompt(input.Connected ? "A" : "Enter");
+            string jump = JumpPrompt(input.Connected ? "A" : "A (or Enter)");
             if (jump != null) return jump;
             if (GiftTarget() != null) return $"Press {(input.Connected ? "A" : "Enter")} to put the present under the tree";
             foreach (var h in hints)
@@ -2264,7 +2264,8 @@ namespace Porchlight.App
         public bool OnKey(Key code)
         {
             bool ok = code == Key.Enter || code == Key.NumpadEnter || code == Key.Space;
-            if (script.Line == null && script.Choices.Count == 0 && ok && TryJump()) return true;
+            // Out of the sleigh: A (as on a pad: the sleigh's held still, so it steers nothing), Enter or Space.
+            if (script.Line == null && script.Choices.Count == 0 && (ok || code == Key.A) && TryJump()) return true;
             if (script.Line == null && script.Choices.Count == 0) return fight.OnKey(code) || (code != Key.Space && ok && TryTalk());
             if (script.Line != null)
             {

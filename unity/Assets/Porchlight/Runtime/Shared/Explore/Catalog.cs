@@ -51,8 +51,8 @@ namespace Porchlight.Explore
             ("airliner-f", 0, 2.6, 1.5),
             ("airliner-g", 0, 3.2, 1),
             // Santa's sleigh and its nine reindeer (Tools~/christmas): never parked at the airport, only
-            // flown on a mission (your_plane). Drawn so a reindeer stands about as tall as a person, and
-            // Santa in his seat is the size he is on foot.
+            // flown on a mission (your_plane). Drawn small, to the town's scale: a reindeer a little
+            // shorter than a person, Santa in his seat as he'd sit.
             ("santa-sleigh", 0, SLEIGH_LENGTH, 0),
         };
         public static readonly string[] PLANES = PLANE_TABLE.Select(p => $"planes/{p.name}").ToArray();
@@ -60,7 +60,7 @@ namespace Porchlight.Explore
         /// <summary>Santa's sleigh behind his nine reindeer: a plane, flown on a mission (your_plane).</summary>
         public const string SLEIGH = "planes/santa-sleigh";
         /// <summary>How long the sleigh and its team are drawn (tiles), and how long the model is (its own units, as Tools~/christmas prints it).</summary>
-        public const double SLEIGH_LENGTH = 1.8, SLEIGH_MODEL_LENGTH = 6.065;
+        public const double SLEIGH_LENGTH = 1.3, SLEIGH_MODEL_LENGTH = 6.065;
         /// <summary>Tiles to the sleigh model's unit.</summary>
         public const double SLEIGH_SCALE = SLEIGH_LENGTH / SLEIGH_MODEL_LENGTH;
         /// <summary>

@@ -51,10 +51,10 @@ namespace Porchlight.App
         const double HOP_OUT = 0.42;
         /// <summary>
         /// The camera flying the sleigh (or any plane the story gives you): straight behind you, this far back and up
-        /// from the point it looks at (tiles), that ahead of you among the team; how quickly it swings round after
-        /// you as you turn (a rate).
+        /// from the point it looks at (tiles), the middle of the sleigh and its team as they're drawn; how quickly it
+        /// swings round after you as you turn (a rate).
         /// </summary>
-        const double CAM_BACK = 3.9, CAM_UP = 1.45, CAM_TURN = 5;
+        const double CAM_BACK = 2.3, CAM_UP = 0.75, CAM_TURN = 9;
         /// <summary>
         /// The camera going down a chimney with you: where it ends up, out over the street (how far round from
         /// straight out the front, how far up and back: radians, tiles); how long it watches the chimney once you're
@@ -63,6 +63,8 @@ namespace Porchlight.App
         /// </summary>
         const double SHOT_SIDE = 0.55, SHOT_ELEVATION = 0.38, SHOT_DISTANCE = 2.9, SHOT_HOLD = 0.9;
         const double HOP_SHOT_SIDE = 0.5, HOP_SHOT_ELEVATION = 0.42, HOP_SHOT_DISTANCE = 2.6;
+        /// <summary>Seen from further off than this (tiles), a ring keeps the size it has from here, so it's easy to spot across the town.</summary>
+        const double RING_SEEN_FROM = 28;
         /// <summary>A ring reached grows and fades over this long (seconds); a puff of soot and snow from a chimney lasts this long.</summary>
         const double RING_POP = 0.45, PUFF_TIME = 0.9;
         static readonly Func<double, double, double> Street = (x, y) => 0;
@@ -72,6 +74,8 @@ namespace Porchlight.App
         {
             public SkyRing? ring;
             public GameObject ringGo;
+            /// <summary>How far up or down it's bobbed (tiles).</summary>
+            public double bob;
             public Renderer ringGlow;
             /// <summary>Flown through since it was hung (and not yet heard by the story).</summary>
             public bool through;
@@ -174,6 +178,7 @@ namespace Porchlight.App
             view.FlyOverride = FlyOverride;
             view.Scripted = Scripted;
             view.PointerTarget = NextRing;
+            UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering += PlaceRings;
         }
 
         void DisposeSky()
@@ -186,6 +191,7 @@ namespace Porchlight.App
             foreach (var (go, _) in puffs) if (go != null) UnityEngine.Object.Destroy(go);
             puffs.Clear();
             if (view.PointerTarget == (Func<Vector3?>)NextRing) view.PointerTarget = null;
+            UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= PlaceRings;
             StopMoving();
             var rig = view.OwnCarView?.Sleigh;
             if (rig != null) rig.Ground = null;
@@ -852,9 +858,7 @@ namespace Porchlight.App
                 if (r.sky?.ringGlow != null)
                 {
                     Materials.SetGlow(r.sky.ringGlow, RingGold, glow);
-                    var t = r.sky.ringGo.transform;
-                    var ring = r.sky.ring.Value;
-                    t.localPosition = Coords.Map(ring.x, ring.y, ring.h + Math.Sin(Time.realtimeSinceStartupAsDouble * 1.4) * 0.12);
+                    r.sky.bob = Math.Sin(Time.realtimeSinceStartupAsDouble * 1.4) * 0.12;
                 }
         }
 
@@ -887,18 +891,26 @@ namespace Porchlight.App
             return (at, Coords.Map(a.x, a.y, a.z));
         }
 
-        /// <summary>What the flying camera looks at: just ahead of you among the team, a little over the sleigh (map x, y and height).</summary>
-        static Vector3? FlyingLook(Vehicle car)
+        /// <summary>
+        /// What the flying camera looks at (map x, y and height): the middle of the sleigh and its team, just as they're
+        /// drawn (so it's the middle of the view whatever they're doing); any other plane, a little over where it is.
+        /// </summary>
+        Vector3? FlyingLook(Vehicle car)
         {
             if (car == null) return null;
-            bool sleigh = Catalog.CARS[car.model] == Catalog.SLEIGH;
-            double ahead = sleigh ? ExploreView.SLEIGH_FOCUS : 0;
-            return new Vector3((float)(car.x + Math.Cos(car.heading) * ahead), (float)(car.y + Math.Sin(car.heading) * ahead), (float)(car.altitude + CarView.LIFT + 0.22));
+            var rig = view.OwnVehicle == car ? view.OwnCarView?.Sleigh : null;
+            if (rig != null)
+            {
+                var m = view.world.root.transform.InverseTransformPoint(rig.Middle);
+                return new Vector3(m.x, -m.z, m.y);
+            }
+            return new Vector3((float)car.x, (float)car.y, (float)(car.altitude + CarView.LIFT + 0.2));
         }
 
         /// <summary>
-        /// Flying the story's plane (and set down in it), one place for the camera only: straight behind you, a little
-        /// above, looking at the sleigh so it's in the middle of the view; swinging round after you as you turn.
+        /// Flying the story's plane (and set down in it), one place for the camera only: straight behind Santa, a
+        /// little above, looking at the middle of the sleigh and its team so they're in the middle of the view;
+        /// swinging round after you as you turn.
         /// </summary>
         (Vector3 at, Vector3 look)? FlyingCamera()
         {
@@ -916,6 +928,34 @@ namespace Porchlight.App
             double yaw = camYaw.Value;
             var at = Coords.Map(look.x - Math.Cos(yaw) * CAM_BACK, look.y - Math.Sin(yaw) * CAM_BACK, look.z + CAM_UP);
             return (at, Coords.Map(look.x, look.y, look.z));
+        }
+
+        /// <summary>
+        /// Each ring where it hangs, just before the camera draws the town: seen from afar it keeps the size it has
+        /// RING_SEEN_FROM away, and past the fog (or the far clip) it's drawn nearer along the same line of sight,
+        /// scaled to look the same, so it's never fogged, clipped or hidden away however far off it is.
+        /// </summary>
+        void PlaceRings(UnityEngine.Rendering.ScriptableRenderContext context, UnityEngine.Camera cam)
+        {
+            if (cam == null || cam != UnityEngine.Camera.main || view?.world == null) return;
+            var town = view.world.root.transform;
+            var eye = cam.transform.position;
+            foreach (var r in roles.Values)
+            {
+                var s = r.sky;
+                if (s?.ringGo == null || s.ring == null) continue;
+                var ring = s.ring.Value;
+                var at = town.TransformPoint(Coords.Map(ring.x, ring.y, ring.h + s.bob));
+                var ray = at - eye;
+                float d = ray.magnitude;
+                float limit = cam.farClipPlane * 0.85f;
+                if (RenderSettings.fog) limit = Mathf.Min(limit, RenderSettings.fogStartDistance * 0.9f);
+                limit = Mathf.Max(limit, cam.nearClipPlane * 4 + (float)ring.radius * 2);
+                float k = d > 1e-4f ? Mathf.Min(d, limit) / d : 1;
+                float grow = Mathf.Max(1, d / (float)RING_SEEN_FROM);
+                s.ringGo.transform.position = eye + ray * k;
+                s.ringGo.transform.localScale = Vector3.one * (float)ring.radius * k * grow;
+            }
         }
 
         /// <summary>A puff of soot and snow out of a chimney's top.</summary>
