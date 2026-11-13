@@ -6,10 +6,13 @@
 //      last time is applied now (Velopack then starts us again, on it).
 //   2. A copy of us goes off in the background to look for a newer release and
 //      download it (only the difference, where it can), for next time.
-//   3. The game: on Windows, started beside us; on macOS, in our place (exec),
+//   3. We wait a few seconds for it: a release it has downloaded by then is
+//      applied straight away and the app starts again on it, so opening the
+//      app once is enough to be on the newest release (not once to download
+//      and again to apply). A slow download carries on in the background, for
+//      the next start.
+//   4. The game: on Windows, started beside us; on macOS, in our place (exec),
 //      so the Dock shows the one app and it's the game.
-//
-// So an update lands when the player closes the game and opens it again.
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -22,29 +25,56 @@ static class Program
 {
     const string REPO = "https://github.com/joe307bad/porchlight";
     const string FETCH = "--fetch-update";
+    /// <summary>The fetch's exit code when it has downloaded a release that's waiting to be applied.</summary>
+    const int DOWNLOADED = 3;
+    /// <summary>How long a start waits for the fetch before playing anyway (a delta is a few seconds).</summary>
+    const int WAIT_MS = 12000;
 
     [STAThread]
     static int Main(string[] args)
     {
         VelopackApp.Build().Run();
         if (args.Length > 0 && args[0] == FETCH) return Fetch();
-        StartFetch();
+        var fetch = StartFetch();
+        if (fetch != null && fetch.WaitForExit(WAIT_MS) && fetch.ExitCode == DOWNLOADED) ApplyNow(args);
         return Play(args);
     }
 
-    /// <summary>The newest release, downloaded and waiting for the next start; nothing if there's none or we're not installed (run from a build folder).</summary>
+    static UpdateManager Updates()
+    {
+        // PORCHLIGHT_UPDATES: a folder or address of releases to use instead (for trying an update out).
+        string? other = Environment.GetEnvironmentVariable("PORCHLIGHT_UPDATES");
+        return string.IsNullOrEmpty(other) ? new UpdateManager(new GithubSource(REPO, null, false)) : new UpdateManager(other);
+    }
+
+    /// <summary>The release the fetch just downloaded, applied now: Velopack swaps it in and starts the app again (this process ends here).</summary>
+    static void ApplyNow(string[] args)
+    {
+        try
+        {
+            var updates = Updates();
+            var pending = updates.UpdatePendingRestart;
+            if (pending != null) updates.ApplyUpdatesAndRestart(pending, args);
+        }
+        catch (Exception e)
+        {
+            // It's still downloaded: VelopackApp applies it at the next start.
+            Console.Error.WriteLine("porchlight: couldn't apply the update now: " + e.Message);
+        }
+    }
+
+    /// <summary>The newest release, downloaded and waiting to be applied (exit code DOWNLOADED); nothing if there's none or we're not installed (run from a build folder).</summary>
     static int Fetch()
     {
         try
         {
-            // PORCHLIGHT_UPDATES: a folder or address of releases to use instead (for trying an update out).
-            string? other = Environment.GetEnvironmentVariable("PORCHLIGHT_UPDATES");
-            var updates = string.IsNullOrEmpty(other) ? new UpdateManager(new GithubSource(REPO, null, false)) : new UpdateManager(other);
+            var updates = Updates();
             if (!updates.IsInstalled) return 0;
             var newer = updates.CheckForUpdates();
             if (newer == null) return 0;
             updates.DownloadUpdates(newer);
-            Console.WriteLine($"porchlight: {newer.TargetFullRelease.Version} downloaded, for next time");
+            Console.WriteLine($"porchlight: {newer.TargetFullRelease.Version} downloaded");
+            return DOWNLOADED;
         }
         catch (Exception e)
         {
@@ -54,17 +84,18 @@ static class Program
         return 0;
     }
 
-    static void StartFetch()
+    static Process? StartFetch()
     {
         try
         {
             string? self = Environment.ProcessPath;
-            if (self == null) return;
-            Process.Start(new ProcessStartInfo(self, FETCH) { UseShellExecute = false, CreateNoWindow = true });
+            if (self == null) return null;
+            return Process.Start(new ProcessStartInfo(self, FETCH) { UseShellExecute = false, CreateNoWindow = true });
         }
         catch (Exception e)
         {
             Console.Error.WriteLine("porchlight: couldn't look for updates: " + e.Message);
+            return null;
         }
     }
 

@@ -21,12 +21,15 @@ the web version, signing in with Google and playing on the live server
   opens. In order, it:
   1. runs Velopack's startup, which applies an update downloaded last time and
      starts again on it;
-  2. sends a copy of itself off in the background to download the next release
-     (only what changed, where it can);
-  3. starts the game (macOS: in its own place, so there's one app in the Dock).
+  2. sends a copy of itself off to download the next release (only what
+     changed, where it can);
+  3. waits up to 12 seconds for it: a release downloaded by then is applied
+     straight away and the app starts again on it, so one open is enough to be
+     on the newest release;
+  4. starts the game (macOS: in its own place, so there's one app in the Dock).
 
-  So an update arrives while you play and is in place the next time you open
-  the app. Velopack's log is `~/Library/Logs/velopack_Porchlight.log` (macOS) or
+  A download slower than that carries on in the background while you play and
+  is in place the next time you open the app. Velopack's log is `~/Library/Logs/velopack_Porchlight.log` (macOS) or
   `%LocalAppData%\Porchlight\velopack.log` (Windows).
 - **Signing in** goes through the system browser:
   1. The game listens on a one-off port on 127.0.0.1.
