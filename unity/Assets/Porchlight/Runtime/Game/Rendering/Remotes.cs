@@ -40,6 +40,8 @@ namespace Porchlight.Rendering
         public string id;
         public string name;
         public double x, y, heading;
+        /// <summary>How high their car is (tiles): a plane in the air.</summary>
+        public double lift;
         public int car;
         public int riders;
     }
@@ -341,7 +343,7 @@ namespace Porchlight.Rendering
                 if (r.state.anim != Protocol.ANIM_DRIVE || r.state.car <= 0) continue;
                 int riders = 0;
                 foreach (var x in remotes.Values) if (x.state.anim == Protocol.ANIM_RIDE && x.state.ride == key) riders++;
-                o.Add(new RemoteDriver { key = key, id = r.state.id, name = r.state.name, x = r.walker.x, y = r.walker.y, heading = r.walker.heading, car = r.state.car, riders = riders });
+                o.Add(new RemoteDriver { key = key, id = r.state.id, name = r.state.name, x = r.walker.x, y = r.walker.y, heading = r.walker.heading, lift = r.walker.lift, car = r.state.car, riders = riders });
             }
             return o;
         }

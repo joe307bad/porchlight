@@ -837,25 +837,25 @@ namespace Porchlight.App
         /// <summary>Besides yours, cars the town's traffic stops for (a mission's).</summary>
         public readonly List<Vec2> Obstacles = new List<Vec2>();
 
-        /// <summary>Straight to just beside this spot (someone you've joined).</summary>
-        public void JumpBeside(Vec2 them)
+        /// <summary>Straight to just beside this spot (someone you've joined). `quiet`: the server isn't asked (you're moving rooms, and the new one's told where you are).</summary>
+        public void JumpBeside(Vec2 them, bool quiet = false)
         {
             if (player == null || world == null) return;
             const double GAP = 0.4;
             foreach (var (dx, dy) in new[] { (GAP, 0.0), (-GAP, 0.0), (0.0, GAP), (0.0, -GAP) })
             {
                 if (open.Length == 0 || !Player.Standable(them.x + dx, them.y + dy, open, world.model, world.solids, walkPaved)) continue;
-                Teleport(new Vec2(them.x + dx, them.y + dy));
+                Teleport(new Vec2(them.x + dx, them.y + dy), quiet);
                 return;
             }
-            Teleport(them);
+            Teleport(them, quiet);
         }
 
-        void Teleport(Vec2 at)
+        void Teleport(Vec2 at, bool quiet = false)
         {
             if (player == null || world == null) return;
             var to = StandableNear(at);
-            if (TeleportHook != null && TeleportHook(to.x, to.y)) return;
+            if (!quiet && TeleportHook != null && TeleportHook(to.x, to.y)) return;
             MoveTo(to.x, to.y);
         }
 
@@ -1747,9 +1747,15 @@ namespace Porchlight.App
             }
         }
 
+        /// <summary>Riding in a plane that's up in the air (higher than this, tiles): no getting out till it's down, as for its pilot.</summary>
+        const double RIDE_AIRBORNE = 0.05;
+
+        bool RidingAloft => riding != null && player != null && player.lift > RIDE_AIRBORNE;
+
         public bool ToggleCar()
         {
             bool was = InCar;
+            if (RidingAloft) return false;
             if (riding != null) LeaveRide();
             else if (driving != null) GetOut();
             else GetIn();
@@ -1918,6 +1924,8 @@ namespace Porchlight.App
             var spot = ExitBeside(car);
             p.x = spot.x;
             p.y = spot.y;
+            p.lift = 0;
+            p.rise = 0;
             p.Halt();
             p.speed = 0;
             held.Clear();
@@ -1961,6 +1969,9 @@ namespace Porchlight.App
             p.x = d.Value.x;
             p.y = d.Value.y;
             p.heading = d.Value.heading;
+            // Up with the plane: the camera (chase or overhead) looks from where you sit, not the ground under it.
+            p.lift = d.Value.lift;
+            p.rise = 0;
             p.Halt();
             p.speed = 0;
         }
@@ -2716,7 +2727,9 @@ namespace Porchlight.App
             {
                 string driverName = null;
                 if (remotes != null) foreach (var d in remotes.Drivers()) if (d.key == riding) driverName = d.name;
-                overlay.SetPrompt($"Riding with {driverName ?? "them"} · {(pad ? "B" : "G")} to get out");
+                overlay.SetPrompt(RidingAloft
+                    ? $"Flying with {driverName ?? "them"} · {Numbers.RoundInt(p.lift * 4)} m up · out once they land"
+                    : $"Riding with {driverName ?? "them"} · {(pad ? "B" : "G")} to get out");
             }
             else
             {
