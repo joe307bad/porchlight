@@ -2,11 +2,15 @@
 // own to fly (your_plane: Santa's sleigh, say), rings hung in the sky to fly
 // through (ring, @ring), the story taking the controls from you, gently, to
 // bring the plane down on a role's roof or in the street outside (land,
-// @landed), out of your seat on the roof, across to the chimney and down it,
-// and back up it to your seat (chimney, @chimney), and a Christmas tree in a
-// corner of the role's building to put a present under (tree, @gift). The
-// sums are Explore/Sleigh.cs's (SkyRing, Landing, ChimneyTrip); this puts the
-// plane and you where they say, and draws the ring, the chimney and the tree.
+// @landed), out of your seat on the roof (A: a jump out onto the roof), across
+// to the chimney and down it, the camera swinging round to watch from the
+// street, and back up it to your seat (chimney, @chimney), a hop out of your
+// seat onto the pavement (put_you "kerb" from the plane, A), and a Christmas
+// tree in a corner of the role's building to put a present under (tree,
+// @gift). The sums are Explore/Sleigh.cs's (SkyRing, Landing, RoofMap,
+// RoofStop, ChimneyTrip, Hop); this puts the plane and you where they say,
+// reads the roof off the building itself, and draws the ring, the chimney and
+// the tree.
 
 using System;
 using System.Collections.Generic;
@@ -25,8 +29,8 @@ namespace Porchlight.App
         /// <summary>How thick a ring's tube is (tiles).</summary>
         const double RING_TUBE = 0.13;
         static readonly Color RingGold = Coords.Hex(0xffc93a);
-        /// <summary>A chimney: how far back along the ridge from your seat (tiles), how wide, and how far over the roof its top stands.</summary>
-        const double CHIMNEY_BACK = 0.8, CHIMNEY_WIDE = 0.24, CHIMNEY_UP = 0.3;
+        /// <summary>How wide a chimney is (tiles), and how far down into the roof it goes.</summary>
+        const double CHIMNEY_WIDE = 0.18, CHIMNEY_ROOTS = 0.35;
         static readonly Color Brick = Coords.Hex(0x9a3b2b), Snow = Coords.Hex(0xf4f7fb);
         /// <summary>How tall a Christmas tree stands, and the present under it (tiles).</summary>
         const double TREE_HEIGHT = 0.62, GIFT_SIZE = 0.15;
@@ -34,10 +38,19 @@ namespace Porchlight.App
         const double GIFT_REACH = 0.8, TREE_STAND = 0.42;
         /// <summary>The landing curve keeps clear of the roofs it passes until it's this near its spot (tiles).</summary>
         const double LANDING_CLEAR = 1.6;
-        /// <summary>A plane set down in the street hovers this high (tiles): still up, so it lifts off on its own way when you fly on.</summary>
-        const double KERB_HOVER = 0.03;
-        /// <summary>The sleigh's runners settle this far down onto the ridge of a roof (tiles).</summary>
-        const double ROOF_SETTLE = 0.08;
+        /// <summary>A plane set down in the street is this high (tiles): its runners on the road, but still up, so it lifts off on its own way when you fly on.</summary>
+        const double KERB_HOVER = 0.002;
+        /// <summary>How finely a roof is read (tiles between samples).</summary>
+        const double ROOF_STEP = 0.08;
+        /// <summary>A hop out of your seat onto the pavement: how long it takes (seconds) and how high over the line it goes (tiles).</summary>
+        const double HOP_TIME = 0.6, HOP_HEIGHT = 0.18;
+        /// <summary>
+        /// The camera going down a chimney with you: how long it takes to swing round (seconds), and where it ends up,
+        /// out over the street (how far round from straight out the front, how far up and back: radians, tiles);
+        /// how long it watches the chimney once you're in it before you're inside by the tree.
+        /// </summary>
+        const double SHOT_TURN = 1.8, SHOT_SIDE = 0.55, SHOT_ELEVATION = 0.42, SHOT_DISTANCE = 3.2, SHOT_HOLD = 0.8;
+        static readonly Func<double, double, double> Street = (x, y) => 0;
 
         /// <summary>What a role has of the sky: its ring, where the story brought your plane down at it, its chimney and its tree.</summary>
         sealed class SkyStop
@@ -50,12 +63,13 @@ namespace Porchlight.App
             /// <summary>Where the story's bringing (or brought) your plane down here ("roof" or "kerb", null: not), and whether it's down.</summary>
             public string landAt;
             public bool landed;
-            /// <summary>Where you sit in the plane once it's down (map), and how high the roof under you is.</summary>
-            public Vec2 seat;
-            public double roof;
+            /// <summary>Where the plane is to stand once down (its middle, and its altitude).</summary>
+            public Vec2 at;
+            public double atHeight;
+            /// <summary>The roof as it is, and where the sleigh stands on it, Santa's seat, where he jumps out to, the chimney and how high its top is.</summary>
+            public RoofMap roofMap;
+            public RoofStop stop;
             public GameObject chimneyGo;
-            public Vec2 chimney;
-            public double rim;
             /// <summary>A trip down or up the chimney done, and not yet heard by the story.</summary>
             public bool chimneyDone;
             public GameObject treeGo, giftGo;
@@ -69,18 +83,53 @@ namespace Porchlight.App
         /// <summary>The story bringing your plane down, and where.</summary>
         Landing landing;
         Role landingFor;
-        /// <summary>Down, and to be held still while you read (until you fly on).</summary>
+        /// <summary>Down, and to be held still while you read (or until you jump out).</summary>
         bool parked;
-        /// <summary>Your trip down or up a chimney, at which role, and where it has you now.</summary>
+        /// <summary>
+        /// The jump out of your seat the story's waiting for you to make (A, or Enter): at which role, and whether
+        /// it's down the chimney or onto the pavement (where to, and facing which way).
+        /// </summary>
+        Role jumpFor;
+        bool jumpChimney;
+        Vec2 hopTo;
+        double hopFacing;
+        /// <summary>Your hop out onto the pavement, on its way.</summary>
+        Hop hop;
+        /// <summary>Your trip down or up a chimney, at which role, and where it has you now (or your hop).</summary>
         ChimneyTrip trip;
         Role tripFor;
         (Vec2 at, double floor, double lift, double heading, double pace, bool shown)? pose;
+        /// <summary>Down inside a chimney: how much longer the camera watches it before you're in by the tree (seconds).</summary>
+        double? inChimney;
+        /// <summary>The camera's move round the house while you're on its roof (null: the game's own camera).</summary>
+        Shot shot;
         /// <summary>Where your plane was last frame (for flying through a ring).</summary>
         double? lastX, lastY, lastH;
         static Material ringMaterial, brickMaterial, snowMaterial;
         /// <summary>Trees with their presents under them, left in the houses the story's moved on from (until the mission's over).</summary>
         readonly List<GameObject> leftBehind = new List<GameObject>();
         static Mesh ringMesh;
+
+        /// <summary>
+        /// A camera move (map terms): round a point that follows you, from one way, height and distance to another
+        /// over `turn` seconds, eased in and out.
+        /// </summary>
+        sealed class Shot
+        {
+            public double yaw0, elevation0, distance0, yaw1, elevation1, distance1, turn, time;
+            public Vec2 anchor;
+            public double anchorHeight;
+
+            /// <summary>How far round it is (0 to 1), eased.</summary>
+            public double K
+            {
+                get
+                {
+                    double k = Math.Max(0, Math.Min(1, time / Math.Max(1e-3, turn)));
+                    return k * k * (3 - 2 * k);
+                }
+            }
+        }
 
         /// <summary>How many rings you've flown through, landings made, chimney trips and presents left (the smoke run checks).</summary>
         public int RingsFlown { get; private set; }
@@ -91,6 +140,10 @@ namespace Porchlight.App
         public SkyRing? RingOf(string role) => roles.TryGetValue(role ?? "", out var r) ? r.sky?.ring : null;
         /// <summary>Whether the story has your plane's controls (the smoke run keeps its hands off).</summary>
         public bool IsLanding => landing != null;
+        /// <summary>Whether the story's waiting for you to jump out of your seat (the smoke run presses A).</summary>
+        public bool JumpWaiting => jumpFor != null;
+        /// <summary>Whether you're on your way out of your seat onto the pavement.</summary>
+        public bool Hopping => hop != null;
         /// <summary>Where you're to stand to put the present under the role's tree (the smoke run walks there).</summary>
         public Vec2? TreeStandOf(string role) => roles.TryGetValue(role ?? "", out var r) && r.sky?.treeGo != null ? r.sky.treeStand : (Vec2?)null;
 
@@ -105,14 +158,26 @@ namespace Porchlight.App
             foreach (var r in roles.Values) ClearSky(r);
             foreach (var go in leftBehind) if (go != null) UnityEngine.Object.Destroy(go);
             leftBehind.Clear();
+            StopMoving();
+            var rig = view.OwnCarView?.Sleigh;
+            if (rig != null) rig.Ground = null;
+            if (view.FlyOverride == (Func<Vehicle, double, bool>)FlyOverride) view.FlyOverride = null;
+            if (view.Scripted == (Func<(Vec2 at, double floor, double lift, double heading, double pace, bool shown)?>)Scripted) view.Scripted = null;
+        }
+
+        /// <summary>Whatever the story had your plane or you doing, stopped: a landing, a jump waited for, a hop or a chimney trip, the camera's move.</summary>
+        void StopMoving()
+        {
             landing = null;
             landingFor = null;
             trip = null;
             tripFor = null;
+            hop = null;
+            jumpFor = null;
             pose = null;
+            inChimney = null;
+            shot = null;
             parked = false;
-            if (view.FlyOverride == (Func<Vehicle, double, bool>)FlyOverride) view.FlyOverride = null;
-            if (view.Scripted == (Func<(Vec2 at, double floor, double lift, double heading, double pace, bool shown)?>)Scripted) view.Scripted = null;
         }
 
         /// <summary>A role's sky goes (place moved it on, or the mission's over): its ring, chimney and tree.</summary>
@@ -138,11 +203,14 @@ namespace Porchlight.App
                 landing = null;
                 landingFor = null;
             }
+            if (jumpFor == r) jumpFor = null;
             if (tripFor == r)
             {
                 trip = null;
                 tripFor = null;
                 pose = null;
+                inChimney = null;
+                shot = null;
             }
             r.sky = null;
         }
@@ -168,10 +236,7 @@ namespace Porchlight.App
             if (model < 0 || Catalog.KindOf(model) != VehicleKind.Plane) throw new Exception($"no such plane '{plane}' ({Catalog.SLEIGH}, planes/prop-small, ...)");
             if (height < 1 || height > 24) throw new Exception($"fly how high? {height} (1 to 24 tiles)");
             int had = view.CarModel >= 0 && Catalog.IsCar(view.CarModel) ? view.CarModel : -1;
-            landing = null;
-            trip = null;
-            pose = null;
-            parked = false;
+            StopMoving();
             if (!view.TakeFlight(model, height)) throw new Exception("you can't take off from here");
             carBefore ??= had;
             storyPlane = model;
@@ -202,42 +267,43 @@ namespace Porchlight.App
             var car = view.OwnVehicle;
             if (car == null || car.kind != VehicleKind.Plane || !view.DrivingMyCar) throw new Exception("you're not flying a plane (your_plane first)");
             if (at == "roof" && r.room < 0) throw new Exception($"'{role}' has no roof to land on");
-            double seatBack = Catalog.CARS[car.model] == Catalog.SLEIGH ? Catalog.SLEIGH_SEAT : 0;
+            bool sleigh = Catalog.CARS[car.model] == Catalog.SLEIGH;
+            double seatBack = sleigh ? Catalog.SLEIGH_SEAT : 0;
             r.sky ??= new SkyStop();
             var s = r.sky;
-            Vec2 seat;
+            Vec2 to;
             double heading, height;
             if (at == "roof")
             {
-                var box = RoofOf(r);
-                seat = new Vec2((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2);
-                // Along the ridge (the roof's longer way), the way you're coming in.
-                bool alongX = box.x1 - box.x0 >= box.y1 - box.y0;
-                heading = Toward(alongX ? 0 : Math.PI / 2, car, seat);
-                height = box.top - ROOF_SETTLE;
-                s.roof = box.top;
-                // The chimney: back along the ridge behind your seat, inside the roof's edges.
-                var f = new Vec2(Math.Cos(heading), Math.Sin(heading));
-                var c = new Vec2(seat.x - f.x * CHIMNEY_BACK, seat.y - f.y * CHIMNEY_BACK);
-                c = new Vec2(Math.Max(box.x0 + 0.25, Math.Min(box.x1 - 0.25, c.x)), Math.Max(box.y0 + 0.25, Math.Min(box.y1 - 0.25, c.y)));
-                s.chimney = c;
-                s.rim = box.top + CHIMNEY_UP;
+                // Read off the building itself: along its ridge, the runners resting on the roof under them.
+                var map = RoofMapOf(r);
+                var stop = RoofStop.Place(map, car.x, car.y, r.outward, seatBack, sleigh ? Catalog.SLEIGH_SEAT_HEIGHT : 0.2,
+                    sleigh ? Catalog.SLEIGH_RUNNER_FROM : 0, sleigh ? Catalog.SLEIGH_RUNNER_TO : car.halfLength,
+                    sleigh ? Catalog.SLEIGH_RUNNER_GAUGE : car.halfWidth * 0.5, sleigh ? Catalog.SLEIGH_RUNNER_LOW : 0, CarView.LIFT);
+                s.roofMap = map;
+                s.stop = stop;
+                to = stop.middle;
+                heading = stop.heading;
+                height = stop.altitude;
                 if (s.chimneyGo != null) UnityEngine.Object.Destroy(s.chimneyGo);
-                s.chimneyGo = DrawChimney(c, box.top, s.rim);
+                double under = map.At(stop.chimney.x, stop.chimney.y);
+                s.chimneyGo = DrawChimney(stop.chimney, double.IsNaN(under) ? stop.rim - RoofStop.CHIMNEY_UP : under, stop.rim);
             }
             else
             {
                 // In the street outside, along it: the role's parking spot if it has one, else the kerb's lane.
                 var spot = r.spot ?? SpotFor(r);
-                seat = spot != null ? new Vec2(spot.Value.x, spot.Value.y) : r.kerb;
+                var seat = spot != null ? new Vec2(spot.Value.x, spot.Value.y) : r.kerb;
                 heading = Toward(spot?.heading ?? DetMath.Atan2(r.outward.x, -r.outward.y), car, seat);
                 height = KERB_HOVER;
-                s.roof = 0;
+                to = new Vec2(seat.x + Math.Cos(heading) * seatBack, seat.y + Math.Sin(heading) * seatBack);
+                s.roofMap = null;
+                s.stop = null;
             }
             s.landAt = at;
             s.landed = false;
-            s.seat = seat;
-            var to = new Vec2(seat.x + Math.Cos(heading) * seatBack, seat.y + Math.Sin(heading) * seatBack);
+            s.at = to;
+            s.atHeight = height;
             landing = new Landing(car.x, car.y, car.altitude, car.heading, car.speed, to.x, to.y, height, heading);
             landingFor = r;
             parked = false;
@@ -273,24 +339,153 @@ namespace Porchlight.App
             return best ?? new Box { x0 = room.x0, y0 = room.y0, x1 = room.x1, y1 = room.y1, top = room.height + 0.6 };
         }
 
+        /// <summary>
+        /// The role's roof, as it is: straight down onto the building's own meshes (made solid for the moment, as the
+        /// fire's water lands on them) at every point of a grid over it. A building that can't be read (or anything
+        /// that isn't one) has a flat roof at the top of its box.
+        /// </summary>
+        RoofMap RoofMapOf(Role r)
+        {
+            var box = RoofOf(r);
+            var world = view.world;
+            double eaves = world.rooms[r.room].height * 0.75;
+            var solids = world.Solid(r.room);
+            var root = world.root.transform;
+            try
+            {
+                if (solids.Count > 0)
+                {
+                    var map = new RoofMap(box.x0, box.y0, box.x1, box.y1, ROOF_STEP, (x, y) =>
+                    {
+                        var from = root.TransformPoint(Coords.Map(x, y, box.top + 2));
+                        if (!Physics.Raycast(from, root.TransformDirection(Vector3.down), out var hit, (float)(box.top + 3), 1 << TownWorld.SOLID_LAYER, QueryTriggerInteraction.Ignore))
+                            return double.NaN;
+                        double h = root.InverseTransformPoint(hit.point).y;
+                        // A porch's floor or a step is no roof.
+                        return h < eaves ? double.NaN : h;
+                    });
+                    if (!double.IsNaN(map.Top)) return map;
+                }
+            }
+            finally
+            {
+                foreach (var go in solids) UnityEngine.Object.Destroy(go);
+            }
+            return new RoofMap(box.x0, box.y0, box.x1, box.y1, ROOF_STEP, (x, y) => box.top);
+        }
+
         public void Chimney(string role, string way)
         {
             var r = RoleOf(role);
             var s = r.sky;
             if (way != "down" && way != "up") throw new Exception($"chimney which way? '{way}' (down or up)");
-            if (s == null || s.landAt != "roof" || !s.landed) throw new Exception($"there's no chimney to climb at '{role}' (land(\"{role}\", \"roof\") first)");
+            if (s == null || s.landAt != "roof" || !s.landed || s.stop == null) throw new Exception($"there's no chimney to climb at '{role}' (land(\"{role}\", \"roof\") first)");
             if (trip != null) throw new Exception("you're already on your way up or down a chimney");
+            s.chimneyDone = false;
             if (way == "down")
             {
                 if (!view.DrivingMyCar) throw new Exception("down the chimney from where? (you're not in your seat on the roof)");
-                view.LeaveSeat();
-                parked = false;
+                // You jump out yourself (A): till then the sleigh's held where it is.
+                jumpFor = r;
+                jumpChimney = true;
+                parked = true;
+                return;
             }
-            else if (view.InCar) throw new Exception("up the chimney from where? (you're not down it)");
-            trip = new ChimneyTrip(way == "down", s.seat, s.roof, s.chimney, s.rim);
+            if (view.InCar) throw new Exception("up the chimney from where? (you're not down it)");
+            StartTrip(r, false);
+        }
+
+        void StartTrip(Role r, bool down)
+        {
+            var s = r.sky;
+            var st = s.stop;
+            trip = new ChimneyTrip(down, st.seat, st.seatHeight, st.jumpTo, st.chimney, st.rim, s.roofMap.At);
             tripFor = r;
-            s.chimneyDone = false;
             pose = trip.At(0);
+            inChimney = null;
+            // The camera swings round to watch from out over the street (coming back up, from there round behind the sleigh).
+            var street = Math.Atan2(r.outward.y, r.outward.x) + SHOT_SIDE * (Geo.Dot(new Vec2(st.chimney.x - st.seat.x, st.chimney.y - st.seat.y), new Vec2(-r.outward.y, r.outward.x)) >= 0 ? -1 : 1);
+            var anchor = AnchorOf(st.chimney, st.rim);
+            if (down)
+            {
+                var cam = view.CameraAt;
+                double ox = cam.x - anchor.x, oy = -cam.z - anchor.y, oh = cam.y - anchor.z;
+                double flat = Math.Max(1e-3, Numbers.Hypot(ox, oy));
+                shot = new Shot
+                {
+                    yaw0 = Math.Atan2(oy, ox),
+                    elevation0 = Math.Atan2(oh, flat),
+                    distance0 = Math.Max(1.5, Math.Min(10, Numbers.Hypot(flat, oh))),
+                    yaw1 = street,
+                    elevation1 = SHOT_ELEVATION,
+                    distance1 = SHOT_DISTANCE,
+                    turn = SHOT_TURN,
+                };
+            }
+            else
+            {
+                double behind = st.heading + Math.PI;
+                shot = new Shot
+                {
+                    yaw0 = street,
+                    elevation0 = SHOT_ELEVATION,
+                    distance0 = SHOT_DISTANCE,
+                    yaw1 = behind,
+                    elevation1 = 0.35,
+                    distance1 = 2.6,
+                    turn = trip.Duration,
+                };
+            }
+            shot.anchor = new Vec2(anchor.x, anchor.y);
+            shot.anchorHeight = anchor.z;
+        }
+
+        /// <summary>What the camera looks at on a roof: between the chimney's top and you (map x, y and height).</summary>
+        Vector3 AnchorOf(Vec2 chimney, double rim)
+        {
+            var at = pose?.at ?? chimney;
+            double h = pose != null ? pose.Value.floor + pose.Value.lift + 0.15 : rim;
+            return new Vector3((float)(chimney.x * 0.55 + at.x * 0.45), (float)(chimney.y * 0.55 + at.y * 0.45), (float)(rim * 0.55 + h * 0.45));
+        }
+
+        /// <summary>Out onto the pavement from the story's plane: once you press A, you hop out of your seat to `to`, facing `facing`.</summary>
+        void WaitToHopOut(Role r, Vec2 to, double facing)
+        {
+            jumpFor = r;
+            jumpChimney = false;
+            hopTo = to;
+            hopFacing = facing;
+            parked = true;
+        }
+
+        /// <summary>Out of your seat, if the story's waiting for you to jump (A, Enter or Space): true if you did.</summary>
+        bool TryJump()
+        {
+            var r = jumpFor;
+            if (r == null || !view.DrivingMyCar || view.InDialogue || landing != null) return false;
+            jumpFor = null;
+            parked = false;
+            if (jumpChimney)
+            {
+                if (r.sky?.stop == null) return false;
+                view.LeaveSeat();
+                StartTrip(r, true);
+                return true;
+            }
+            var car = view.OwnVehicle;
+            var seat = YourSeat();
+            double from = car.altitude + CarView.LIFT + (Catalog.CARS[car.model] == Catalog.SLEIGH ? Catalog.SLEIGH_SEAT_HEIGHT : 0.2);
+            view.LeaveSeat();
+            hop = new Hop(seat, from, hopTo, 0, HOP_HEIGHT, HOP_TIME, Street);
+            pose = hop.At(0);
+            return true;
+        }
+
+        /// <summary>What to press to jump out of your seat, if the story's waiting for you to.</summary>
+        string JumpPrompt(string key)
+        {
+            if (jumpFor == null || !view.DrivingMyCar || landing != null) return null;
+            return jumpChimney ? $"Press {key} to jump out of the sleigh and down the chimney" : $"Press {key} to hop out of the sleigh";
         }
 
         public void Tree(string role, string gift)
@@ -363,13 +558,13 @@ namespace Porchlight.App
 
         // Each frame.
 
-        /// <summary>The story bringing your plane down (true: it has it); down, it holds it still while you read.</summary>
+        /// <summary>The story bringing your plane down (true: it has it); down, it holds it still while you read, or till you jump out.</summary>
         bool FlyOverride(Vehicle car, double dt)
         {
             if (landing == null)
             {
                 if (!parked) return false;
-                if (!view.InDialogue)
+                if (!view.InDialogue && jumpFor == null)
                 {
                     parked = false;
                     return false;
@@ -430,17 +625,43 @@ namespace Porchlight.App
                 lastH = car.altitude;
             }
             else lastX = lastY = lastH = null;
+            // The sleigh down on a roof (or in the street): its reindeer stand on it.
+            var rig = view.OwnCarView?.Sleigh;
+            if (rig != null) rig.Ground = GroundUnder(car);
+            // Out onto the pavement.
+            if (hop != null)
+            {
+                pose = hop.Step(dt);
+                if (hop.Done)
+                {
+                    hop = null;
+                    pose = null;
+                    view.PutPlayer(hopTo, hopFacing);
+                }
+            }
             // Down or up a chimney.
             if (trip != null)
             {
-                pose = trip.Step(dt);
-                if (trip.Done)
+                if (shot != null)
+                {
+                    shot.time += dt;
+                    // The camera keeps you and the chimney in view as you go.
+                    var a = AnchorOf(tripFor?.sky?.stop?.chimney ?? shot.anchor, tripFor?.sky?.stop?.rim ?? shot.anchorHeight);
+                    double ease = Math.Min(1, dt * 4);
+                    shot.anchor = new Vec2(shot.anchor.x + (a.x - shot.anchor.x) * ease, shot.anchor.y + (a.y - shot.anchor.y) * ease);
+                    shot.anchorHeight += (a.z - shot.anchorHeight) * ease;
+                }
+                if (!trip.Done) pose = trip.Step(dt);
+                else if (trip.down && (inChimney ??= SHOT_HOLD) > 0) inChimney -= dt;
+                else
                 {
                     var r = tripFor;
                     bool down = trip.down;
                     trip = null;
                     tripFor = null;
                     pose = null;
+                    inChimney = null;
+                    shot = null;
                     ChimneyTrips++;
                     if (r?.sky != null)
                     {
@@ -470,6 +691,34 @@ namespace Porchlight.App
                     var ring = r.sky.ring.Value;
                     t.localPosition = Coords.Map(ring.x, ring.y, ring.h + Math.Sin(Time.realtimeSinceStartupAsDouble * 1.4) * 0.12);
                 }
+        }
+
+        /// <summary>What your plane's stood on, if it's down where the story set it (a roof, or the street): null in the air.</summary>
+        Func<double, double, double> GroundUnder(Vehicle car)
+        {
+            if (car == null) return null;
+            foreach (var r in roles.Values)
+            {
+                var s = r.sky;
+                if (s == null || !s.landed) continue;
+                if (Numbers.Hypot(car.x - s.at.x, car.y - s.at.y) > 0.05 || Math.Abs(car.altitude - s.atHeight) > 0.05) continue;
+                return s.landAt == "roof" && s.roofMap != null ? s.roofMap.At : Street;
+            }
+            return null;
+        }
+
+        /// <summary>The camera's move round the house as you go down (or come up) its chimney, while it's on.</summary>
+        (Vector3 at, Vector3 look)? SkyCamera()
+        {
+            var sh = shot;
+            if (sh == null) return null;
+            double k = sh.K;
+            double yaw = sh.yaw0 + Orbit.ShortestTurn(sh.yaw0, sh.yaw1) * k;
+            double elevation = sh.elevation0 + (sh.elevation1 - sh.elevation0) * k;
+            double distance = sh.distance0 + (sh.distance1 - sh.distance0) * k;
+            double flat = Math.Cos(elevation) * distance;
+            var at = Coords.Map(sh.anchor.x + Math.Cos(yaw) * flat, sh.anchor.y + Math.Sin(yaw) * flat, sh.anchorHeight + Math.Sin(elevation) * distance);
+            return (at, Coords.Map(sh.anchor.x, sh.anchor.y, sh.anchorHeight));
         }
 
         /// <summary>A tree waiting for its present, if the story is.</summary>
@@ -581,7 +830,7 @@ namespace Porchlight.App
             return m;
         }
 
-        /// <summary>A brick chimney through the roof (its top `rim` up), snow on its top.</summary>
+        /// <summary>A brick chimney through the roof (the roof `roof` up where it stands, its top `rim` up), snow on its top.</summary>
         GameObject DrawChimney(Vec2 at, double roof, double rim)
         {
             var go = new GameObject("mission chimney");
@@ -590,7 +839,7 @@ namespace Porchlight.App
             brickMaterial ??= Materials.Glowing(Brick);
             snowMaterial ??= Materials.Glowing(Snow);
             // Down into the roof's slope far enough to meet it, up past the ridge.
-            double bottom = roof - 0.55;
+            double bottom = roof - CHIMNEY_ROOTS;
             void Block(string name, double y0, double y1, double wide, Material mat)
             {
                 var b = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -602,8 +851,8 @@ namespace Porchlight.App
                 b.GetComponent<Renderer>().sharedMaterial = mat;
             }
             Block("stack", bottom, rim, CHIMNEY_WIDE, brickMaterial);
-            Block("rim", rim - 0.05, rim, CHIMNEY_WIDE + 0.05, brickMaterial);
-            Block("snow", rim, rim + 0.035, CHIMNEY_WIDE + 0.07, snowMaterial);
+            Block("rim", rim - 0.04, rim, CHIMNEY_WIDE + 0.04, brickMaterial);
+            Block("snow", rim, rim + 0.03, CHIMNEY_WIDE + 0.06, snowMaterial);
             return go;
         }
     }

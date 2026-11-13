@@ -73,6 +73,8 @@ Through the ring! The reindeer take the reins from here, circling down onto the 
 
 === down_chimney ===
 you: Ho ho ho! Down the chimney I go.
+// You jump out of the sleigh yourself (A, or Enter), and down you go.
+~ objective("Jump out of the sleigh and down the chimney")
 ~ chimney("home", "down")
 + [@chimney home] -> chimney_tree
 
@@ -98,8 +100,9 @@ Through the ring! The reindeer take the reins from here, swooping down into the 
 + [@landed home] -> out_of_sleigh
 
 === out_of_sleigh ===
+// Out onto the pavement: you hop out of the sleigh yourself (A, or Enter).
 ~ put_you("home", "kerb")
-No chimney on this one. In at the front door, quiet as a mouse!
+No chimney on this one. Hop out, and in at the front door, quiet as a mouse!
 ~ guide("home", "door", "the front door")
 ~ hint("always", "", "In at the front door")
 ~ objective("Go in at the front door of the house on {street}")

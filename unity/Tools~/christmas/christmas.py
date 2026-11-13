@@ -23,10 +23,16 @@
 #                       front, his nose aglow, then four pairs), reins and
 #                       traces to the sleigh. Each reindeer is a node of its
 #                       own ("reindeer-1" .. "reindeer-9"), its legs nodes
-#                       under it pivoting at the hip ("leg-fl" and so on),
-#                       and Santa ("santa") and the sack ("sack") too, so the
-#                       game can bob them as it flies (Rendering/Vehicles.cs,
-#                       Sleigh). Nose down +z once exported, as the planes'.
+#                       under it pivoting at the hip or shoulder ("leg-fl"
+#                       and so on: a muscled upper leg), each with its lower
+#                       leg under it pivoting at the knee or hock ("knee-fl":
+#                       cannon, fetlock tuft and hoof), and Santa ("santa")
+#                       and the sack ("sack") too, so the game can gallop and
+#                       bob them as it flies (Rendering/Vehicles.cs,
+#                       SleighRig). Nose down +z once exported, as the
+#                       planes'. It prints its measurements (how long, where
+#                       the seat and runners are), which Catalog.SLEIGH_*
+#                       are worked out from.
 #   props/christmas-tree a fir in a red pot, three tiers of branches hung
 #                       with baubles, and a gold star on top. The presents
 #                       mission stands one in each house you call at.
@@ -399,6 +405,10 @@ def write_skinned(path, parts, materials):
 
 # --- The sleigh and its reindeer -----------------------------------------------------------
 
+# How high a reindeer's hips and shoulders are over its hooves.
+HIP = 0.6
+
+
 def reindeer(P, name, at, rudolph=False):
     """A reindeer facing -x (Blender), its middle at `at`: body, neck, head, antlers, tail, harness and bell; four legs, each a node pivoting at its hip."""
     root = bpy.data.objects.new(name, None)
@@ -432,18 +442,41 @@ def reindeer(P, name, at, rudolph=False):
         obj("rudolph-nose", ball(1, 8, 6, scale=(0.045, 0.045, 0.045), at=(-0.56, 0, 0.94)), P["rudolph"], True, parent=root)
     else:
         obj(f"{name}-nose", ball(1, 8, 6, scale=(0.025, 0.03, 0.025), at=(-0.56, 0, 0.94)), P["hoof"], True, parent=root)
-    # Legs: thigh and shin down from the hip to the hoof, as their own nodes so they can gallop.
-    for code, x, y in (("fl", -0.22, 0.08), ("fr", -0.22, -0.08), ("bl", 0.22, 0.08), ("br", 0.22, -0.08)):
+    # Legs, each in two: the upper leg ("leg-fl" and so on, pivoting at the hip or shoulder: a muscled
+    # shoulder or haunch tapering to the joint) and under it the lower leg ("knee-fl", pivoting at the
+    # knee in front and the hock behind: a slim cannon, a pale tuft at the fetlock, a broad dark hoof),
+    # so the game can gallop them, folding the joints as each leg swings forward. The hoof's sole is at
+    # the reindeer's feet (z 0).
+    for code, x, y in (("fl", -0.22, 0.085), ("fr", -0.22, -0.085), ("bl", 0.21, 0.085), ("br", 0.21, -0.085)):
+        front = code[0] == "f"
+        hip_z = HIP
+        joint = V((-0.01, 0, -0.28)) if front else V((0.075, 0, -0.3))
+        foot = V((-0.02, 0, -(hip_z + joint.z))) if front else V((-0.06, 0, -(hip_z + joint.z)))
         leg = bpy.data.objects.new(f"leg-{code}", None)
         bpy.context.scene.collection.objects.link(leg)
         leg.parent = root
-        leg.location = (x, y, 0.58)
-        bm = merge(
-            tube((0, 0, 0.02), (0.02 if code[0] == "f" else -0.03, 0, -0.3), 0.045, 0.03, seg=6),
-            tube((0.02 if code[0] == "f" else -0.03, 0, -0.3), (0, 0, -0.52), 0.028, 0.022, seg=6),
-        )
-        obj(f"{name}-{code}-leg", bm, P["deer"], False, parent=leg)
-        obj(f"{name}-{code}-hoof", tube((0, 0, -0.52), (0, 0, -0.58), 0.03, 0.032, seg=6), P["hoof"], False, parent=leg)
+        leg.location = (x, y, hip_z)
+        if front:
+            upper = merge(
+                ball(1, 8, 6, scale=(0.085, 0.05, 0.11), at=(0.0, 0, 0.02)),
+                tube((0, 0, 0), joint, 0.052, 0.033, seg=8),
+                ball(1, 6, 5, scale=(0.034, 0.034, 0.034), at=joint),
+            )
+        else:
+            upper = merge(
+                ball(1, 8, 6, scale=(0.115, 0.06, 0.13), at=(0.01, 0, 0.0)),
+                tube((0, 0, 0), joint, 0.065, 0.034, seg=8),
+                ball(1, 6, 5, scale=(0.036, 0.034, 0.036), at=joint),
+            )
+        obj(f"{name}-{code}-leg", upper, P["deer"], True, parent=leg)
+        knee = bpy.data.objects.new(f"knee-{code}", None)
+        bpy.context.scene.collection.objects.link(knee)
+        knee.parent = leg
+        knee.location = joint
+        fetlock = foot * 0.8
+        obj(f"{name}-{code}-shin", tube((0, 0, 0), fetlock, 0.028, 0.021, seg=7), P["deer"], False, parent=knee)
+        obj(f"{name}-{code}-tuft", ring(0.026, 0.014, at=fetlock, seg=8), P["deer_light"], False, parent=knee)
+        obj(f"{name}-{code}-hoof", tube(fetlock + V((0, 0, 0.005)), foot, 0.026, 0.038, seg=7), P["hoof"], False, parent=knee)
     return root
 
 
@@ -496,6 +529,12 @@ def sack(P):
     return root
 
 
+# Where Santa sits (along the sleigh, and his seat's top), and the runners: how low, how far out to
+# each side, and from where to where along (Blender, nose to -x).
+SEAT_X, SEAT_TOP = 0.26, 0.71
+RUNNER_LOW, RUNNER_GAUGE, RUNNER_FRONT, RUNNER_BACK = 0.09, 0.3, -0.45, 0.85
+
+
 def build_sleigh(P):
     """The sleigh and its team, nose to -x in Blender (+z once exported, turned round for the game's planes)."""
     root = bpy.data.objects.new("santa-sleigh", None)
@@ -537,6 +576,8 @@ def build_sleigh(P):
     for d in deer:
         d.parent = root
         for leg in [c for c in d.children if c.type == "EMPTY"]:
+            for knee in [c for c in leg.children if c.type == "EMPTY"]:
+                join_children(knee, knee.name + "-mesh")
             join_children(leg, leg.name + "-mesh")
         join_children(d, d.name + "-body", keep={"rudolph-nose"})
     for s in (1, -1):
@@ -544,6 +585,23 @@ def build_sleigh(P):
         obj("rein", tube((-0.14, 0.13 * s, 0.77), (lead_x - 0.3, 0.02 * s, 0.82), 0.008, seg=4), P["rope"], False, parent=root)
     join_children(root, "sleigh")
     return root
+
+
+def measure(root):
+    """What the game's Catalog.SLEIGH_* constants are worked out from (model units, before it's scaled to a tile length)."""
+    bpy.context.view_layer.update()
+    lo, hi = V((1e9, 1e9, 1e9)), V((-1e9, -1e9, -1e9))
+    for ob in [root] + list(root.children_recursive):
+        if ob.type != "MESH":
+            continue
+        for v in ob.data.vertices:
+            w = ob.matrix_world @ v.co
+            lo = V((min(lo.x, w.x), min(lo.y, w.y), min(lo.z, w.z)))
+            hi = V((max(hi.x, w.x), max(hi.y, w.y), max(hi.z, w.z)))
+    middle = (lo.x + hi.x) / 2
+    print(f"sleigh: {hi.x - lo.x:.3f} long (nose {lo.x:.3f} to tail {hi.x:.3f}), {hi.z - lo.z:.3f} high from {lo.z:.3f}; "
+          f"the seat {SEAT_X - middle:.3f} behind the middle, its top {SEAT_TOP - lo.z:.3f} up; "
+          f"the runners {RUNNER_LOW - lo.z:.3f} up, {RUNNER_GAUGE:.3f} out to each side, from {RUNNER_FRONT - middle:.3f} to {RUNNER_BACK - middle:.3f} along")
 
 
 def join_children(parent, name, keep=()):
@@ -685,6 +743,7 @@ def main():
     MATS.clear()
     P = palette()
     root = build_sleigh(P)
+    measure(root)
     # Nose down Blender's -y, which the exporter makes glTF's +z (the cars' front).
     root.rotation_euler = (0, 0, math.pi / 2)
     bpy.context.view_layer.update()

@@ -1628,6 +1628,10 @@ namespace Porchlight.App
 
         /// <summary>Your car (null: none yet), and whether you're at its wheel.</summary>
         public Vehicle OwnVehicle => cars.Count > 0 ? cars[0].car : null;
+        /// <summary>How your own vehicle's drawn (a mission stands the sleigh's reindeer on a roof).</summary>
+        public CarView OwnCarView => cars.Count > 0 ? cars[0].view : null;
+        /// <summary>Where the camera is now (a mission's camera starts its move from there).</summary>
+        public Vector3 CameraAt => camera.transform.position;
         public bool DrivingMyCar => driving == 0;
 
         /// <summary>Could a car be here (on a road, its parking lanes, a driveway…)?</summary>
@@ -2757,6 +2761,8 @@ namespace Porchlight.App
                     c.view.SetLayer(through ? LayerMask.NameToLayer(Avatar.PLAYER_LAYER) : 0);
                 }
                 var f = c.car.Forward;
+                // Santa's in his sleigh's seat only while you are.
+                if (c.view.Sleigh != null) c.view.Sleigh.SantaAboard = i == driving;
                 c.view.Place(c.car.x, c.car.y, DetMath.Atan2(f.x, f.y), c.car.altitude, c.car.pitch, c.car.bank);
                 c.view.Lights(dusk);
             }
@@ -2788,7 +2794,7 @@ namespace Porchlight.App
             shownZoom += (zoomTarget - shownZoom) * (snap ? 1 : Math.Min(1, dt * (fixedView != null ? 5 : 10)));
             var target = fixedView?.focus
                 ?? (Attract ? new Vector3((float)world.model.center.x, 0.3f, (float)world.model.center.y)
-                : p != null ? new Vector3((float)p.x, 0.3f + (float)(InCar ? p.lift : p.floor), (float)p.y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
+                : p != null ? new Vector3((float)FocusOf(p).x, 0.3f + (float)(InCar ? p.lift : p.floor), (float)FocusOf(p).y) : new Vector3((float)world.model.spawn.x, 0.3f, (float)world.model.spawn.y));
             focusFollow.Update(target.x, target.y, target.z, dt, snap);
             focus = new Vector3((float)focusFollow.ax, (float)focusFollow.ay, (float)focusFollow.az);
             pitch += (pitchTarget - pitch) * (snap ? 1 : Math.Min(1, dt * 6));
@@ -2951,15 +2957,33 @@ namespace Porchlight.App
 
         double ViewYaw => mode == CameraMode.Close && room == null ? chaseYawNow : yaw;
 
+        /// <summary>
+        /// What the camera keeps in the middle of the view: you, or the vehicle you're at the controls of; Santa's
+        /// sleigh, the sleigh and the reindeer nearest it (its middle is out among the team, well ahead of Santa).
+        /// </summary>
+        Vec2 FocusOf(Player p)
+        {
+            if (driving == null) return new Vec2(p.x, p.y);
+            var car = cars[driving.Value].car;
+            if (Catalog.CARS[car.model] != Catalog.SLEIGH) return new Vec2(p.x, p.y);
+            var f = car.Forward;
+            return new Vec2(car.x - f.x * SLEIGH_FOCUS, car.y - f.y * SLEIGH_FOCUS);
+        }
+
+        /// <summary>The sleigh's camera looks this far behind its middle (tiles): between Santa's seat and the team.</summary>
+        const double SLEIGH_FOCUS = Catalog.SLEIGH_SEAT * 0.6;
+
         void PlaceChase(Player p, double dt)
         {
             double want = Orbit.ChaseYaw(p.heading) + chaseSwing;
             chaseYawNow += Orbit.ShortestTurn(chaseYawNow, want) * (snap ? 1 : Orbit.EaseBy(3.5, dt));
-            double wanted = chaseDistance * (InCar ? DRIVING_CHASE : 1);
+            // A plane's camera stands back by as much again as it's long, so all of it is in view.
+            var flown = driving != null ? cars[driving.Value].car : null;
+            double wanted = chaseDistance * (InCar ? DRIVING_CHASE : 1) + (flown != null && flown.kind == VehicleKind.Plane ? flown.halfLength : 0);
             shownChaseDistance += (wanted - shownChaseDistance) * (snap ? 1 : Orbit.EaseBy(8, dt));
             var o = Orbit.CameraOffset(chaseYawNow, pitch);
             double dist = shownChaseDistance;
-            var at = new Vec2(p.x, p.y);
+            var at = FocusOf(p);
             // Up with a plane in flight.
             double look = CHASE_LOOK_HEIGHT + (InCar ? p.lift : 0);
             // Walls between you and the camera pull it in (and so down). In a car past its everyday top speed
@@ -2975,9 +2999,9 @@ namespace Porchlight.App
             dist = Math.Min(chaseReach, shownChaseDistance);
             double flat = Numbers.Hypot(o.x, o.y);
             var ahead = new Vec2(-o.x / flat, -o.y / flat);
-            lookFollow.Update(p.x + ahead.x * CHASE_LOOK_AHEAD, look, p.y + ahead.y * CHASE_LOOK_AHEAD, dt, snap);
+            lookFollow.Update(at.x + ahead.x * CHASE_LOOK_AHEAD, look, at.y + ahead.y * CHASE_LOOK_AHEAD, dt, snap);
             chaseLook = WorldOf(lookFollow.ax, lookFollow.ay, lookFollow.az);
-            chasePos = WorldOf(p.x + o.x * dist, look + o.up * dist, p.y + o.y * dist);
+            chasePos = WorldOf(at.x + o.x * dist, look + o.up * dist, at.y + o.y * dist);
         }
 
         /// <summary>A mission has the camera (CameraOverride), for now.</summary>

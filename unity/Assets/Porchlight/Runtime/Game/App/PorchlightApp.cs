@@ -1384,9 +1384,10 @@ namespace Porchlight.App
         /// <summary>
         /// Deliver the presents, played through (PORCHLIGHT_SMOKE_SANTA: the story as the server compiles it): Santa in
         /// his sleigh high over the town, flown (Autopilot, steering for it) through the ring over each house; the story
-        /// taking the controls and bringing the sleigh down, on the roof at the first, third and fifth houses (down the
-        /// chimney to the tree, the present under it, back up to the seat) and in the street at the others (out onto the
-        /// pavement, in at the door to the tree, the present under it, back out and in with G); and at the end yourself
+        /// taking the controls and bringing the sleigh down, on the roof at the first, third and fifth houses (A to jump
+        /// out of the seat, down the chimney to the tree, the present under it, back up to the seat) and in the street at
+        /// the others (A to hop out onto the pavement, in at the door to the tree, the present under it, back out and in
+        /// with G); and at the end yourself
         /// again, the sleigh gone. True if it all happened, in order.
         /// </summary>
         async Task<bool> SmokeSanta(string story)
@@ -1459,15 +1460,22 @@ namespace Porchlight.App
                 int gifts = m.Gifts, trips = m.ChimneyTrips;
                 if (chimney)
                 {
-                    // Down the chimney and out by the tree, the present under it, back up to the seat.
+                    // A to jump out of the seat, down the chimney and out by the tree, the present under it, back up to the seat.
+                    ok = await Until(() => m.JumpWaiting, 8);
+                    Debug.Log($"smoke: santa: stop {stop}: waiting for the jump out={ok}, '{Objective()}'");
+                    if (!ok) break;
+                    ok = m.TryTalk() && !iso.InCar;
+                    Debug.Log($"smoke: santa: stop {stop}: A jumped out of the sleigh={ok}");
+                    if (!ok) break;
                     ok = await Until(() => m.ChimneyTrips > trips && Objective().StartsWith("Put a present"), 15);
                     Debug.Log($"smoke: santa: stop {stop}: down the chimney={ok}, in a room={iso.InRoom}, '{Objective()}'");
                     if (!ok) break;
                 }
                 else
                 {
-                    // Out onto the pavement, in at the door (to where you stand by the tree), the present under it.
-                    ok = await Until(() => Objective().StartsWith("Go in at"), 8);
+                    // A to hop out onto the pavement, in at the door (to where you stand by the tree), the present under it.
+                    ok = await Until(() => Objective().StartsWith("Go in at") && m.JumpWaiting, 8);
+                    ok = ok && m.TryTalk() && await Until(() => !iso.InCar && !m.Hopping, 5);
                     var stand = m.TreeStandOf("home");
                     Debug.Log($"smoke: santa: stop {stop}: out of the sleigh={ok && !iso.InCar}, the sleigh still {iso.OwnVehicle?.altitude:0.00} up");
                     if (!ok || stand == null) break;

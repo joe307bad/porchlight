@@ -36,6 +36,8 @@ namespace Porchlight.Rendering
         readonly List<Renderer> starboards = new List<Renderer>();
         /// <summary>Santa's sleigh: its reindeer, Santa and the sack, bobbing as it flies.</summary>
         readonly SleighRig sleigh;
+        /// <summary>Santa's sleigh's reindeer, Santa and the sack, if it's the sleigh (null for anything else).</summary>
+        public SleighRig Sleigh => sleigh;
 
         public CarView(ModelLibrary.Model model, Transform parent)
         {
@@ -46,7 +48,7 @@ namespace Porchlight.Rendering
             if (kind == VehicleKind.Boat) return;
             if (kind == VehicleKind.Plane && model.name == Catalog.SLEIGH)
             {
-                sleigh = new SleighRig(root);
+                sleigh = new SleighRig(root) { Space = parent };
                 return;
             }
             if (kind == VehicleKind.Plane)
@@ -136,46 +138,112 @@ namespace Porchlight.Rendering
 
     /// <summary>
     /// Santa's sleigh as it goes (Tools~/christmas made it with these as nodes of their own): each of the nine
-    /// reindeer bobbing in its own time, legs galloping while it's on the move; Santa bobbing gently in his
-    /// seat, swaying a little; the sack of toys rocking behind him; Rudolph's nose aglow.
+    /// reindeer galloping, a rotary gallop (the hind legs a beat apart, then the front ones half a stride on),
+    /// each leg folding at the knee (in front) or the hock (behind) as it swings forward, the body rocking and
+    /// rising through each stride, every reindeer a little out of step with the rest; down on a roof, those with
+    /// roof under them stand on it and only breathe, the rest paddle the air; Santa bobbing gently in his seat
+    /// (and gone from it while you're out of it); the sack rocking behind him; Rudolph's nose aglow.
     /// </summary>
     public sealed class SleighRig
     {
-        /// <summary>How far a reindeer bobs, Santa and the sack (model units, which the sleigh's drawn at about two thirds of a tile).</summary>
-        const float DEER_BOB = 0.07f, SANTA_BOB = 0.03f, SACK_BOB = 0.02f;
-        /// <summary>A gallop's stride: how often (per second) and how far each leg swings (degrees).</summary>
-        const float GALLOP = 2.2f, SWING = 28;
+        /// <summary>How far a reindeer rises through a stride and rocks (model units, degrees), and Santa and the sack bob.</summary>
+        const float DEER_RISE = 0.06f, DEER_ROCK = 6, SANTA_BOB = 0.025f, SACK_BOB = 0.02f;
+        /// <summary>Strides a second, galloping flat out and paddling the air standing still.</summary>
+        const float STRIDE = 1.9f, PADDLE = 0.9f;
+        /// <summary>How far each leg swings either way from the hip (degrees), and folds at the knee or hock as it comes forward.</summary>
+        const float SWING = 30, KNEE_FOLD = 70, HOCK_FOLD = 50;
         static readonly Color NoseRed = Coords.Hex(0xff2010);
         static Material noseMaterial;
 
-        readonly List<(Transform t, Vector3 rest, float phase)> deer = new List<(Transform, Vector3, float)>();
-        readonly List<(Transform t, Quaternion rest, float phase)> legs = new List<(Transform, Quaternion, float)>();
+        sealed class Leg
+        {
+            public Transform hip, knee;
+            public Quaternion hipRest, kneeRest;
+            /// <summary>Turned about these (their own), a positive angle swings the hoof forward.</summary>
+            public Vector3 hipAxis, kneeAxis;
+            public bool front;
+            /// <summary>Where in the stride it's furthest forward (a share of it).</summary>
+            public float phase;
+        }
+
+        sealed class Deer
+        {
+            public Transform t;
+            public Vector3 rest;
+            public Quaternion turn;
+            public Vector3 rockAxis;
+            /// <summary>How far out of step with the team it is (a share of a stride).</summary>
+            public float offset;
+            /// <summary>How far it's raised (or lowered) to stand on the roof under it (model units), eased; how much it's standing (0 galloping, 1 stood).</summary>
+            public float lift, stood;
+            public readonly List<Leg> legs = new List<Leg>();
+        }
+
+        readonly GameObject root;
+        readonly List<Deer> deer = new List<Deer>();
         readonly Transform santa, sack;
         readonly Vector3 santaRest, sackRest;
         readonly Quaternion santaTurn, sackTurn;
         readonly Renderer nose;
         double lastX, lastY, lastAltitude, lastTime = -1;
-        /// <summary>How much it's on the move (0 standing, 1 flying), eased.</summary>
-        float going;
+        /// <summary>How much it's on the move (0 standing, 1 flying), eased; how far through a stride the team is.</summary>
+        float going, stride;
+
+        /// <summary>
+        /// Down somewhere, how high the ground (or roof) is at a map point (NaN: none there, the air): the reindeer over
+        /// some stand on it. Null: in the air, they gallop. `Space` is the frame map points are in (Coords.Map's).
+        /// </summary>
+        public Func<double, double, double> Ground;
+        public Transform Space;
+
+        /// <summary>Santa in his seat (you, at the reins); not while you're out of it.</summary>
+        public bool SantaAboard
+        {
+            set
+            {
+                if (santa != null && santa.gameObject.activeSelf != value) santa.gameObject.SetActive(value);
+            }
+        }
 
         public SleighRig(GameObject root)
         {
+            this.root = root;
             var all = root.GetComponentsInChildren<Transform>(true);
+            // The model's own up and forward (its nose is down the holder's +z), in each part's own terms below.
+            Vector3 up = root.transform.up, forward = root.transform.forward;
             foreach (var t in all)
             {
                 string name = t.name;
-                // Each reindeer is "reindeer-1" .. "reindeer-9" (its body mesh and nose are under it, named on from that).
+                // Each reindeer is "reindeer-1" .. "reindeer-9" (its body mesh and nose under it, named on from that).
                 if (name.StartsWith("reindeer-") && int.TryParse(name.Substring("reindeer-".Length), out int k))
                 {
-                    deer.Add((t, t.localPosition, k * 0.83f));
-                    foreach (Transform leg in t)
+                    var d = new Deer { t = t, rest = t.localPosition, turn = t.localRotation, offset = ((k * 37) % 9) / 9f * 0.18f };
+                    // Nose up: turning forward towards up.
+                    d.rockAxis = Vector3.Cross(t.InverseTransformDirection(forward), t.InverseTransformDirection(up));
+                    foreach (Transform hip in t)
                     {
-                        if (!leg.name.StartsWith("leg-")) continue;
-                        // Front legs together, back legs half a stride on; each reindeer a little after the one ahead.
-                        bool front = leg.name.StartsWith("leg-f");
-                        bool left = leg.name.Length > 5 && leg.name[5] == 'l';
-                        legs.Add((leg, leg.localRotation, k * 0.83f + (front ? 0 : Mathf.PI) + (left ? 0.35f : 0)));
+                        if (!hip.name.StartsWith("leg-")) continue;
+                        bool front = hip.name.StartsWith("leg-f");
+                        bool left = hip.name.Length > 5 && hip.name[5] == 'l';
+                        Transform knee = null;
+                        foreach (Transform c in hip) if (c.name.StartsWith("knee-")) knee = c;
+                        var leg = new Leg
+                        {
+                            hip = hip,
+                            hipRest = hip.localRotation,
+                            knee = knee,
+                            kneeRest = knee != null ? knee.localRotation : Quaternion.identity,
+                            front = front,
+                            // The rotary gallop: left hind, right hind a beat on, then left fore and right fore half a stride after.
+                            phase = front ? (left ? 0.5f : 0.6f) : (left ? 0f : 0.1f),
+                        };
+                        // Down crossed with forward: about it, a positive turn swings what hangs down forward.
+                        leg.hipAxis = Vector3.Cross(hip.InverseTransformDirection(-up), hip.InverseTransformDirection(forward)).normalized;
+                        if (knee != null) leg.kneeAxis = Vector3.Cross(knee.InverseTransformDirection(-up), knee.InverseTransformDirection(forward)).normalized;
+                        d.legs.Add(leg);
                     }
+                    d.rockAxis.Normalize();
+                    deer.Add(d);
                 }
                 else if (name == "santa")
                 {
@@ -202,27 +270,63 @@ namespace Porchlight.Rendering
             }
         }
 
-        /// <summary>Pose it for now, where it is (map x, y and height): moving, they gallop; standing, they only breathe.</summary>
+        /// <summary>Pose it for now, where it is (map x, y and height): on the move, they gallop; down, they stand (or paddle the air).</summary>
         public void Animate(double x, double y, double altitude)
         {
             double now = Time.timeAsDouble;
+            float dt = 0;
             if (lastTime >= 0)
             {
-                double dt = Math.Max(1e-3, now - lastTime);
+                dt = (float)Math.Min(0.1, Math.Max(0, now - lastTime));
                 double moved = Math.Sqrt((x - lastX) * (x - lastX) + (y - lastY) * (y - lastY) + (altitude - lastAltitude) * (altitude - lastAltitude));
-                float target = moved / dt > 0.4 || altitude > 0.3 ? 1 : 0;
-                going += (target - going) * (float)Math.Min(1, dt * 2.5);
+                float target = dt > 0 && moved / dt > 0.3 ? 1 : 0;
+                going += (target - going) * Math.Min(1, dt * 2.5f);
             }
             lastX = x;
             lastY = y;
             lastAltitude = altitude;
             lastTime = now;
+            stride = (stride + dt * Mathf.Lerp(PADDLE, STRIDE, going)) % 1;
             float t = (float)now;
-            float bob = 0.35f + 0.65f * going;
-            foreach (var (tr, rest, phase) in deer)
-                tr.localPosition = rest + Vector3.up * (DEER_BOB * bob * Mathf.Abs(Mathf.Sin(t * GALLOP * Mathf.PI + phase)));
-            foreach (var (tr, rest, phase) in legs)
-                tr.localRotation = rest * Quaternion.AngleAxis(SWING * going * Mathf.Sin(t * GALLOP * 2 * Mathf.PI * 0.5f + phase), Vector3.forward);
+            bool down = Ground != null && Space != null && going < 0.5f;
+            foreach (var d in deer)
+            {
+                // Down, with roof under it: stand on it. Otherwise up in the air, galloping (or paddling, standing still).
+                float wantLift = 0, wantStood = 0;
+                if (down)
+                {
+                    var at = Space.InverseTransformPoint(d.t.parent.TransformPoint(d.rest));
+                    double g = Ground(at.x, -at.z);
+                    float scale = Math.Max(1e-4f, d.t.parent.lossyScale.y / Math.Max(1e-4f, Space.lossyScale.y));
+                    if (!double.IsNaN(g) && Math.Abs(g - at.y) < 0.6)
+                    {
+                        wantLift = (float)((g - at.y) / scale);
+                        wantStood = 1;
+                    }
+                }
+                float ease = Math.Min(1, dt * 4);
+                d.lift += (wantLift - d.lift) * ease;
+                d.stood += (wantStood - d.stood) * ease;
+                float gait = (1 - d.stood) * Mathf.Lerp(0.55f, 1, going);
+                float cycle = (stride + d.offset) * Mathf.PI * 2;
+                // Up through each stride (highest as the forelegs leave the ground), and rocking nose up and down with it.
+                float rise = DEER_RISE * gait * 0.5f * (1 - Mathf.Cos(cycle - 0.8f * Mathf.PI * 2));
+                float rock = DEER_ROCK * gait * Mathf.Sin(cycle - 0.3f * Mathf.PI * 2);
+                // Stood, it breathes.
+                float breathe = 0.006f * d.stood * Mathf.Sin(t * 1.6f + d.offset * 20);
+                d.t.localPosition = d.rest + Vector3.up * (d.lift + rise + breathe);
+                d.t.localRotation = d.turn * Quaternion.AngleAxis(rock, d.rockAxis);
+                foreach (var leg in d.legs)
+                {
+                    float psi = cycle - leg.phase * Mathf.PI * 2;
+                    // Furthest forward at its phase; folding at the joint as it swings forward, straight as it pushes back.
+                    float swing = SWING * gait * Mathf.Cos(psi) + (leg.front ? 4 : -4) * gait;
+                    float fold = gait * Mathf.Max(0, -Mathf.Sin(psi));
+                    leg.hip.localRotation = leg.hipRest * Quaternion.AngleAxis(swing, leg.hipAxis);
+                    if (leg.knee != null)
+                        leg.knee.localRotation = leg.kneeRest * Quaternion.AngleAxis(leg.front ? -KNEE_FOLD * fold : HOCK_FOLD * fold, leg.kneeAxis);
+                }
+            }
             if (santa != null)
             {
                 santa.localPosition = santaRest + Vector3.up * (SANTA_BOB * (0.5f + 0.5f * going) * Mathf.Sin(t * 2.1f));

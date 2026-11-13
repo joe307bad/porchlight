@@ -51,18 +51,29 @@ namespace Porchlight.Explore
             ("airliner-f", 0, 2.6, 1.5),
             ("airliner-g", 0, 3.2, 1),
             // Santa's sleigh and its nine reindeer (Tools~/christmas): never parked at the airport, only
-            // flown on a mission (your_plane).
-            ("santa-sleigh", 0, 4.0, 0),
+            // flown on a mission (your_plane). Drawn so a reindeer stands about as tall as a person, and
+            // Santa in his seat is the size he is on foot.
+            ("santa-sleigh", 0, SLEIGH_LENGTH, 0),
         };
         public static readonly string[] PLANES = PLANE_TABLE.Select(p => $"planes/{p.name}").ToArray();
 
         /// <summary>Santa's sleigh behind his nine reindeer: a plane, flown on a mission (your_plane).</summary>
         public const string SLEIGH = "planes/santa-sleigh";
+        /// <summary>How long the sleigh and its team are drawn (tiles), and how long the model is (its own units, as Tools~/christmas prints it).</summary>
+        public const double SLEIGH_LENGTH = 1.8, SLEIGH_MODEL_LENGTH = 6.065;
+        /// <summary>Tiles to the sleigh model's unit.</summary>
+        public const double SLEIGH_SCALE = SLEIGH_LENGTH / SLEIGH_MODEL_LENGTH;
         /// <summary>
         /// Where Santa sits in the sleigh: this far behind the middle of the model (the team runs out ahead of
-        /// him), and this high (tiles, as the sleigh's drawn: PLANE_TABLE's length).
+        /// him), and how high his seat's top is over the bottom of the model (tiles).
         /// </summary>
-        public const double SLEIGH_SEAT = 1.53, SLEIGH_SEAT_HEIGHT = 0.47;
+        public const double SLEIGH_SEAT = 2.432 * SLEIGH_SCALE, SLEIGH_SEAT_HEIGHT = 0.716 * SLEIGH_SCALE;
+        /// <summary>
+        /// The sleigh's runners (tiles): how high their undersides are over the bottom of the model (the
+        /// reindeer's hooves), how far out to each side, and from how far behind the middle to how far.
+        /// </summary>
+        public const double SLEIGH_RUNNER_LOW = 0.096 * SLEIGH_SCALE, SLEIGH_RUNNER_GAUGE = 0.3 * SLEIGH_SCALE,
+            SLEIGH_RUNNER_FROM = 1.722 * SLEIGH_SCALE, SLEIGH_RUNNER_TO = 3.022 * SLEIGH_SCALE;
 
         /// <summary>
         /// Every vehicle model, by index: the cars, then the boats and planes. The index

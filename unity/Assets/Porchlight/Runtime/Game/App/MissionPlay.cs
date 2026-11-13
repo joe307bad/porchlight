@@ -467,7 +467,7 @@ namespace Porchlight.App
             view.PromptOverride = Prompt;
             view.OnPadA = TryTalk;
             fight = new Firefight(view, library, input, rng, S);
-            view.CameraOverride = fight.Camera;
+            view.CameraOverride = Camera;
             StartSky();
             script = new MissionScript(story, this);
         }
@@ -511,8 +511,11 @@ namespace Porchlight.App
             view.InDialogue = false;
             if (view.PromptOverride == (Func<string>)Prompt) view.PromptOverride = null;
             if (view.OnPadA == (Func<bool>)TryTalk) view.OnPadA = null;
-            if (view.CameraOverride == (Func<(Vector3 at, Vector3 look)?>)fight.Camera) view.CameraOverride = null;
+            if (view.CameraOverride == (Func<(Vector3 at, Vector3 look)?>)Camera) view.CameraOverride = null;
         }
+
+        /// <summary>The mission's camera, when it has one: the move round a house as you go down its chimney, else up at the water turret.</summary>
+        (Vector3 at, Vector3 look)? Camera() => SkyCamera() ?? fight.Camera();
 
         // The story's building blocks (IMissionWorld).
 
@@ -1331,6 +1334,12 @@ namespace Porchlight.App
             var r = RoleOf(role);
             var to = WhereOf(at);
             if (to >= Where.Car) throw new Exception($"put you where? '{at}' (inside, door or kerb)");
+            // Out onto the pavement from the story's plane, set down in the street: you hop out of it yourself (A).
+            if (to == Where.Kerb && storyPlane >= 0 && view.OwnVehicle?.model == storyPlane && view.DrivingMyCar && landing == null)
+            {
+                WaitToHopOut(r, PointOf(r, to), DetMath.Atan2(r.outward.x, r.outward.y));
+                return;
+            }
             // Facing out, the way you'd go. The story's plane, set down where it brought it, stays there.
             parked = false;
             view.PutPlayer(PointOf(r, to), DetMath.Atan2(r.outward.x, r.outward.y), keepHeight: storyPlane >= 0 && view.OwnVehicle?.model == storyPlane);
@@ -1432,10 +1441,7 @@ namespace Porchlight.App
             if (storyPlane >= 0 && own != null && own.model == storyPlane)
             {
                 // The story's plane goes (you set down on the ground first), and your car's brought back beside you.
-                landing = null;
-                trip = null;
-                pose = null;
-                parked = false;
+                StopMoving();
                 view.DropCar();
                 if (carBefore.Value >= 0) view.SpawnCar(carBefore.Value);
             }
@@ -2199,6 +2205,7 @@ namespace Porchlight.App
         /// <summary>Talk to whoever's in reach (Enter, or the pad's A), else up to the turret if there's one: true if either.</summary>
         public bool TryTalk()
         {
+            if (TryJump()) return true;
             if (TryGift()) return true;
             var r = TalkTarget();
             if (r == null) return fight.TryMount();
@@ -2214,6 +2221,8 @@ namespace Porchlight.App
             if (fight.Manned) return fight.Prompt();
             var r = TalkTarget();
             if (r != null) return $"Press {(input.Connected ? "A" : "Enter")} to talk to {r.name}";
+            string jump = JumpPrompt(input.Connected ? "A" : "Enter");
+            if (jump != null) return jump;
             if (GiftTarget() != null) return $"Press {(input.Connected ? "A" : "Enter")} to put the present under the tree";
             foreach (var h in hints)
                 if (HintShows(h)) return h.text;
@@ -2254,6 +2263,7 @@ namespace Porchlight.App
         public bool OnKey(Key code)
         {
             bool ok = code == Key.Enter || code == Key.NumpadEnter || code == Key.Space;
+            if (script.Line == null && script.Choices.Count == 0 && ok && TryJump()) return true;
             if (script.Line == null && script.Choices.Count == 0) return fight.OnKey(code) || (code != Key.Space && ok && TryTalk());
             if (script.Line != null)
             {
