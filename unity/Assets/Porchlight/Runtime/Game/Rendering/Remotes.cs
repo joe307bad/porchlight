@@ -250,6 +250,9 @@ namespace Porchlight.Rendering
         /// <summary>Where cars aren't drawn on this screen (a race course you're running), or null: a driver there, car and tag, and anyone riding with them.</summary>
         public Func<double, double, bool> Hidden;
 
+        /// <summary>Everyone (on foot too) hidden on this screen: a mission's deserted night.</summary>
+        public bool HideAll;
+
         /// <summary>Pose everyone for this frame. `myCar`: where your car is, while you're driving.</summary>
         public void Update(double dt, Vec2? myCar, double dusk)
         {
@@ -283,7 +286,7 @@ namespace Porchlight.Rendering
                 w.heading += Interp.TurnBetween(w.heading, p.yaw);
                 bool driving = r.state.anim == Protocol.ANIM_DRIVE && r.state.car > 0;
                 bool riding = r.state.anim == Protocol.ANIM_RIDE;
-                r.avatar.Visible = !driving && !riding;
+                r.avatar.Visible = !driving && !riding && !HideAll;
                 if (r.avatar.Visible) r.avatar.Update(w, dt);
                 PlaceCar(r, driving);
                 double height = driving ? CAR_TAG_HEIGHT : riding ? CAR_TAG_HEIGHT + TAG_STACK * (seat.TryGetValue(key, out int st) ? st : 1) : TAG_HEIGHT;
@@ -296,7 +299,7 @@ namespace Porchlight.Rendering
                     r.tagText = label;
                     r.tag.Place(w.x, height + w.lift, w.y);
                 }
-                bool gone = driving && Hidden != null && Hidden(w.x, w.y);
+                bool gone = HideAll || driving && Hidden != null && Hidden(w.x, w.y);
                 if (r.car != null) r.car.Visible = !gone;
                 r.tag.Visible = !gone;
             }
@@ -310,7 +313,7 @@ namespace Porchlight.Rendering
                 r.walker.y = car.Value.y;
                 double height = CAR_TAG_HEIGHT + TAG_STACK * (seat.TryGetValue(key, out int st) ? st : 1);
                 r.tag.Place(car.Value.x, height + r.walker.lift, car.Value.y);
-                r.tag.Visible = Hidden == null || !Hidden(car.Value.x, car.Value.y);
+                r.tag.Visible = !HideAll && (Hidden == null || !Hidden(car.Value.x, car.Value.y));
             }
         }
 

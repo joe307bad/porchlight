@@ -775,6 +775,26 @@ namespace Porchlight.App
         /// </summary>
         public Course Closed;
 
+        /// <summary>
+        /// A mission's dead of night (Christmas Eve, say): night however the town's clock stands, and nobody else out
+        /// on the streets on this screen: no traffic, no townsfolk, no other players' cars or selves.
+        /// </summary>
+        public bool Deserted
+        {
+            get => deserted;
+            set
+            {
+                if (deserted == value) return;
+                deserted = value;
+                // Straight into the dark (out of it, the town's own night or day fades back in).
+                if (value) dusk = 1;
+            }
+        }
+        bool deserted;
+
+        /// <summary>No moving car (or other player) drawn here: a race's closed roads, or a deserted night.</summary>
+        bool Emptied => Closed != null || Deserted;
+
         static bool Anywhere(double x, double y) => true;
 
         /// <summary>You sprint faster (the `sprint` unlock).</summary>
@@ -1785,7 +1805,7 @@ namespace Porchlight.App
                 followers[i].Follow(BackAlong(Pedestrian.FOLLOW_GAP + FOLLOW_SPACING * i), you, p.speed, dt);
             // The nearest townsperson within reach stops to look at you (not while you auto-walk past).
             Pedestrian near = null;
-            if (!p.IsAuto && p.lift <= 0)
+            if (!p.IsAuto && p.lift <= 0 && !Deserted)
             {
                 double bestD = NOTICE;
                 foreach (var q in people)
@@ -1899,9 +1919,10 @@ namespace Porchlight.App
                 Consider(PickKind.Own, i, c.x + f.x * along, c.y + f.y * along);
             }
             for (int i = 0; i < world.parked.Count; i++) if (!takenParked.Contains(i)) Consider(PickKind.Parked, i, world.parked[i].x, world.parked[i].y);
-            int t = traffic?.Nearest(new Vec2(p.x, p.y), bestD) ?? -1;
+            // On a deserted night there's nobody else's car to get into (none's drawn).
+            int t = Deserted ? -1 : traffic?.Nearest(new Vec2(p.x, p.y), bestD) ?? -1;
             if (t >= 0) Consider(PickKind.Traffic, t, traffic.cars[t].x, traffic.cars[t].y);
-            if (remotes != null) foreach (var d in remotes.Drivers()) if (d.riders < Protocol.CAR_SEATS - 1) Consider(PickKind.Ride, -1, d.x, d.y, d);
+            if (remotes != null && !Deserted) foreach (var d in remotes.Drivers()) if (d.riders < Protocol.CAR_SEATS - 1) Consider(PickKind.Ride, -1, d.x, d.y, d);
             return best;
         }
 
@@ -2225,6 +2246,9 @@ namespace Porchlight.App
         public void SetNight(bool on) => night = on;
 
         public bool IsNight => night;
+
+        /// <summary>Night as it's shown: the town's, or a deserted mission's (Deserted).</summary>
+        bool Dark => night || Deserted;
 
         /// <summary>Night or day straight away, without the fade.</summary>
         public double Dusk => dusk;
@@ -2569,7 +2593,7 @@ namespace Porchlight.App
                 noticing?.Update(dt);
             }
             UpdateFind(dt);
-            dusk += ((night ? 1 : 0) - dusk) * Math.Min(1, dt * 2.5);
+            dusk += ((Dark ? 1 : 0) - dusk) * Math.Min(1, dt * 2.5);
             KeepInSight(dt);
         }
 
@@ -2781,15 +2805,19 @@ namespace Porchlight.App
             {
                 var q = people[k];
                 if (avatars[k] == null) continue;
-                avatars[k].Visible = !(followersAboard && q.following);
+                avatars[k].Visible = !(followersAboard && q.following) && !Deserted;
                 if (!avatars[k].Visible) continue;
                 avatars[k].Update(q, dt);
                 avatars[k].SetWaving(q.waving > 0);
             }
-            if (remotes != null) remotes.Hidden = Closed != null ? Anywhere : (Func<double, double, bool>)null;
+            if (remotes != null)
+            {
+                remotes.Hidden = Emptied ? Anywhere : (Func<double, double, bool>)null;
+                remotes.HideAll = Deserted;
+            }
             remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
             if (riding != null) FollowRide();
-            fleet?.Update(dusk, Closed != null ? Anywhere : (Func<double, double, bool>)null);
+            fleet?.Update(dusk, Emptied ? Anywhere : (Func<double, double, bool>)null);
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);
@@ -3239,7 +3267,7 @@ namespace Porchlight.App
             }
             LightNeighbours();
             sky.Overcast = weather?.Overcast ?? 0;
-            sky.Update(dusk, night, mode == CameraMode.Close || Overridden, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, roomLight);
+            sky.Update(dusk, Dark, mode == CameraMode.Close || Overridden, FOG_NEAR, FOG_FAR, WorldOf(focus.x, 0, focus.z), world.lamps, lampLevels, roomLight);
             // Televisions: a cold blue flicker in a few windows, each group to its own programme.
             for (int g = 0; g < world.screens.Count; g++)
             {

@@ -45,16 +45,19 @@ namespace Porchlight.App
         const double KERB_HOVER = 0.002;
         /// <summary>How far a plane set down in the street slides on its runners before it stops (tiles).</summary>
         const double KERB_SLIDE = 0.9;
+        /// <summary>A plane set down in the street is at least this far out from the kerb (tiles), off the pavement.</summary>
+        const double KERB_OUT = 0.3;
         /// <summary>How finely a roof is read (tiles between samples).</summary>
         const double ROOF_STEP = 0.08;
         /// <summary>A leap out of your seat onto the pavement lands this far out to the side of the sleigh (tiles).</summary>
         const double HOP_OUT = 0.42;
         /// <summary>
-        /// The camera flying the sleigh (or any plane the story gives you): straight behind you, this far back and up
-        /// from the point it looks at (tiles), the middle of the sleigh and its team as they're drawn; how quickly it
-        /// swings round after you as you turn (a rate).
+        /// The camera flying the sleigh (or any plane the story gives you), as a plane's chase camera: straight behind
+        /// and well above, this far back and up from the point it looks at (tiles), just over the middle of the sleigh
+        /// and its team (by CAM_LOOK_UP), so all of it is in view, a little below the middle of the screen; how quickly
+        /// it swings round after you as you turn (a rate).
         /// </summary>
-        const double CAM_BACK = 2.3, CAM_UP = 0.75, CAM_TURN = 9;
+        const double CAM_BACK = 3.1, CAM_UP = 1.45, CAM_LOOK_UP = 0.18, CAM_TURN = 6;
         /// <summary>
         /// The camera going down a chimney with you: where it ends up, out over the street (how far round from
         /// straight out the front, how far up and back: radians, tiles); how long it watches the chimney once you're
@@ -192,6 +195,7 @@ namespace Porchlight.App
             puffs.Clear();
             if (view.PointerTarget == (Func<Vector3?>)NextRing) view.PointerTarget = null;
             UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= PlaceRings;
+            view.Deserted = false;
             StopMoving();
             var rig = view.OwnCarView?.Sleigh;
             if (rig != null) rig.Ground = null;
@@ -275,6 +279,8 @@ namespace Porchlight.App
             carBefore ??= had;
             storyPlane = model;
             lastX = lastY = lastH = null;
+            // Santa's out on Christmas Eve: the dead of night, and everyone else in bed.
+            if (Catalog.CARS[model] == Catalog.SLEIGH) view.Deserted = true;
         }
 
         public void Ring(string role, double height, double size)
@@ -331,12 +337,12 @@ namespace Porchlight.App
             }
             else
             {
-                // In the street outside, along it: the role's parking spot if it has one, else the kerb's lane.
-                var spot = r.spot ?? SpotFor(r);
-                var seat = spot != null ? new Vec2(spot.Value.x, spot.Value.y) : r.kerb;
-                heading = Toward(spot?.heading ?? DetMath.Atan2(r.outward.x, -r.outward.y), car, seat);
+                // In the street right outside the front door, along it, the middle of the sleigh and its team just
+                // across the pavement from the door: never a parking spot round the corner or on the street behind.
+                var front = StreetOutside(r);
+                heading = Toward(DetMath.Atan2(r.outward.x, -r.outward.y), car, front);
                 height = KERB_HOVER;
-                to = seat;
+                to = new Vec2(front.x - Math.Cos(heading) * ahead, front.y - Math.Sin(heading) * ahead);
                 slide = KERB_SLIDE;
                 s.roofMap = null;
                 s.stop = null;
@@ -400,6 +406,17 @@ namespace Porchlight.App
         static bool SameBox(Box a, Box b) => a.x0 == b.x0 && a.y0 == b.y0 && a.x1 == b.x1 && a.y1 == b.y1 && a.top == b.top;
 
         /// <summary>Of a way along a line (a map heading) and its reverse, the one nearer the way from the plane to `to` (else its heading).</summary>
+        /// <summary>The road just out from the role's kerb, straight out from its front door (the first of it a plane could set down on).</summary>
+        Vec2 StreetOutside(Role r)
+        {
+            for (double k = KERB_OUT; k <= KERB_OUT + 1.2; k += 0.1)
+            {
+                var p = new Vec2(r.kerb.x + r.outward.x * k, r.kerb.y + r.outward.y * k);
+                if (view.CanDriveAt(p.x, p.y)) return p;
+            }
+            return new Vec2(r.kerb.x + r.outward.x * KERB_OUT, r.kerb.y + r.outward.y * KERB_OUT);
+        }
+
         static double Toward(double along, Vehicle car, Vec2 to)
         {
             double dx = to.x - car.x, dy = to.y - car.y;
@@ -892,19 +909,17 @@ namespace Porchlight.App
         }
 
         /// <summary>
-        /// What the flying camera looks at (map x, y and height): the middle of the sleigh and its team, just as they're
-        /// drawn (so it's the middle of the view whatever they're doing); any other plane, a little over where it is.
+        /// What the flying camera looks at (map x, y and height): just over the middle of the sleigh and its team
+        /// (SLEIGH_AHEAD out in front of Santa's seat, where the sleigh is), from where the sleigh is rather than
+        /// how it's drawn, so the camera's always the same way behind it; any other plane, just over where it is.
         /// </summary>
-        Vector3? FlyingLook(Vehicle car)
+        static Vector3? FlyingLook(Vehicle car)
         {
             if (car == null) return null;
-            var rig = view.OwnVehicle == car ? view.OwnCarView?.Sleigh : null;
-            if (rig != null)
-            {
-                var m = view.world.root.transform.InverseTransformPoint(rig.Middle);
-                return new Vector3(m.x, -m.z, m.y);
-            }
-            return new Vector3((float)car.x, (float)car.y, (float)(car.altitude + CarView.LIFT + 0.2));
+            bool sleigh = Catalog.CARS[car.model] == Catalog.SLEIGH;
+            double ahead = sleigh ? Catalog.SLEIGH_AHEAD : 0;
+            double up = car.altitude + CarView.LIFT + (sleigh ? Catalog.SLEIGH_SEAT_HEIGHT : 0.2) + CAM_LOOK_UP;
+            return new Vector3((float)(car.x + Math.Cos(car.heading) * ahead), (float)(car.y + Math.Sin(car.heading) * ahead), (float)up);
         }
 
         /// <summary>

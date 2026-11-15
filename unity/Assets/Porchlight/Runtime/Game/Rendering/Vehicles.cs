@@ -217,32 +217,8 @@ namespace Porchlight.Rendering
             }
         }
 
-        /// <summary>Where Santa is drawn, and the middle of everything drawn (the sleigh and its team: world space).</summary>
-        public Vector3 SantaAt => santa != null ? santa.position : root.transform.position;
-        public Vector3 Middle
-        {
-            get
-            {
-                Bounds? all = null;
-                foreach (var r in renderers)
-                {
-                    if (r == null || !r.enabled || !r.gameObject.activeInHierarchy) continue;
-                    if (all == null) all = r.bounds;
-                    else
-                    {
-                        var b = all.Value;
-                        b.Encapsulate(r.bounds);
-                        all = b;
-                    }
-                }
-                return all?.center ?? root.transform.position;
-            }
-        }
-        readonly Renderer[] renderers;
-
         public SleighRig(GameObject root)
         {
-            renderers = root.GetComponentsInChildren<Renderer>(true);
             this.root = root;
             var all = root.GetComponentsInChildren<Transform>(true);
             // The model's own up and forward (its nose is down the holder's +z), in each part's own terms below.
