@@ -864,6 +864,9 @@ namespace Porchlight.App
         /// </summary>
         public Func<Vehicle, double, bool> FlyOverride;
 
+        /// <summary>Whether you're steering or opening up the plane you're flying this frame (or the autopilot is): to fly off once a mission's set it down.</summary>
+        public bool FlyHeld { get; private set; }
+
         /// <summary>
         /// A mission moving you on foot itself (a leap onto a chimney and down it): where you are, how high what
         /// you're stood on is, how high off it you are, which way you face, how fast you're walking (for your
@@ -2508,6 +2511,7 @@ namespace Porchlight.App
             else if (p != null && driving != null)
             {
                 var car = cars[driving.Value].car;
+                FlyHeld = steering || Math.Abs(pad.rt) > 0.05 || Math.Abs(pad.lt) > 0.05 || turbo || Autopilot != null;
                 if (FlyOverride != null && FlyOverride(car, dt))
                 {
                 }

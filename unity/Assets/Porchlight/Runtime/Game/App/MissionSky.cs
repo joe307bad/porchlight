@@ -105,8 +105,12 @@ namespace Porchlight.App
         /// <summary>The story bringing your plane down, and where.</summary>
         Landing landing;
         Role landingFor;
-        /// <summary>Down, and to be held still while you read (or until you jump out).</summary>
+        /// <summary>Down, and held still: while you read, until you jump out, and until you fly off yourself.</summary>
         bool parked;
+        /// <summary>Flying off a roof (lower than planes may fly over it): how long it's been climbing away (seconds), or null.</summary>
+        double? climbing;
+        /// <summary>Flying off a roof: how quickly it rises to where it may fly (a rate), and how long it climbs at least (seconds).</summary>
+        const double CLIMB_RATE = 2.5, CLIMB_SOONEST = 0.5;
         /// <summary>
         /// The jump out of your seat the story's waiting for you to make (A, or Enter): at which role, and whether
         /// it's down the chimney or onto the pavement (where to, and facing which way).
@@ -196,6 +200,7 @@ namespace Porchlight.App
             if (view.PointerTarget == (Func<Vector3?>)NextRing) view.PointerTarget = null;
             UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= PlaceRings;
             view.Deserted = false;
+            climbing = null;
             StopMoving();
             var rig = view.OwnCarView?.Sleigh;
             if (rig != null) rig.Ground = null;
@@ -355,6 +360,7 @@ namespace Porchlight.App
             landing = new Landing(car.x, car.y, car.altitude, car.heading, car.speed, to.x, to.y, height, heading, slide, LandingFloor(car, own));
             landingFor = r;
             parked = false;
+            climbing = null;
         }
 
         /// <summary>
@@ -703,10 +709,18 @@ namespace Porchlight.App
         {
             if (landing == null)
             {
+                if (climbing != null) return ClimbOff(car, dt);
                 if (!parked) return false;
-                if (!view.InDialogue && jumpFor == null)
+                // Held where it's set down till you fly off yourself (not as soon as you've read the line, or it'd
+                // be away on its own, and jump up off a roof to the height planes fly over it in one frame).
+                if (!view.InDialogue && jumpFor == null && view.FlyHeld)
                 {
                     parked = false;
+                    if (car.altitude < view.FlyFloor(car.x, car.y) - 0.02)
+                    {
+                        climbing = 0;
+                        return ClimbOff(car, dt);
+                    }
                     return false;
                 }
                 car.speed = 0;
@@ -737,6 +751,33 @@ namespace Porchlight.App
             landing = null;
             landingFor = null;
             parked = true;
+            return true;
+        }
+
+        /// <summary>
+        /// Up and away off a roof: on along the ridge, picking up speed and rising smoothly to where planes may fly
+        /// there (and just ahead), nose up; then it's yours again.
+        /// </summary>
+        bool ClimbOff(Vehicle car, double dt)
+        {
+            climbing += dt;
+            var f = car.Forward;
+            car.speed += (Vehicle.TAKEOFF_SPEED - car.speed) * Math.Min(1, dt * 1.5);
+            car.x += f.x * car.speed * dt;
+            car.y += f.y * car.speed * dt;
+            double FloorAt(double x, double y)
+            {
+                double v = view.FlyFloor(x, y);
+                return double.IsInfinity(v) || double.IsNaN(v) ? car.altitude : v;
+            }
+            double floor = Math.Max(FloorAt(car.x, car.y), FloorAt(car.x + f.x * 0.8, car.y + f.y * 0.8));
+            double was = car.altitude;
+            car.altitude += (floor + 0.08 - car.altitude) * Math.Min(1, dt * CLIMB_RATE);
+            double rate = (car.altitude - was) / Math.Max(1e-3, dt);
+            car.pitch += (Math.Atan2(rate, Math.Max(1, car.speed)) * 0.25 - car.pitch) * Math.Min(1, dt * 3);
+            car.bank += (0 - car.bank) * Math.Min(1, dt * 3);
+            if (climbing < CLIMB_SOONEST || car.altitude < FloorAt(car.x, car.y) - 0.02) return true;
+            climbing = null;
             return true;
         }
 
