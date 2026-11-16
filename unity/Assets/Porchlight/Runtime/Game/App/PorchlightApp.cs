@@ -889,10 +889,12 @@ namespace Porchlight.App
                 return;
             }
             // Deliver the presents on its own (PORCHLIGHT_SMOKE_SANTA: its story as the server compiles it): quits 0 if it passed.
+            // (Or "server": fetched from the game server's /mp/missions, as the sidebar's Start does: the web build has no files.)
             var santa = Env("PORCHLIGHT_SMOKE_SANTA");
             if (!string.IsNullOrEmpty(santa))
             {
-                bool passed = await SmokeSanta(System.IO.File.ReadAllText(santa));
+                string story = santa == "server" ? await FetchStory("deliver-the-presents") : System.IO.File.ReadAllText(santa);
+                bool passed = story != null && await SmokeSanta(story);
                 Debug.Log("smoke: done");
                 Application.Quit(passed ? 0 : 1);
                 return;
@@ -1390,6 +1392,18 @@ namespace Porchlight.App
         /// with G); and at the end yourself
         /// again, the sleigh gone. True if it all happened, in order.
         /// </summary>
+        /// <summary>A mission's story as the game server compiles it (as the sidebar's Start gets it), or null.</summary>
+        Task<string> FetchStory(string id)
+        {
+            var done = new TaskCompletionSource<string>();
+            MissionCatalog.Get(platform, origin, id, (info, story, err) =>
+            {
+                if (err != null) Debug.Log($"smoke: couldn't get the story '{id}': {err}");
+                done.TrySetResult(story);
+            });
+            return done.Task;
+        }
+
         async Task<bool> SmokeSanta(string story)
         {
             const int STOPS = 5;
