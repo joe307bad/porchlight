@@ -210,6 +210,8 @@ namespace Porchlight.App
         /// <summary>Each follower after the first keeps this much further back.</summary>
         const double FOLLOW_SPACING = 0.55;
         Traffic traffic;
+        /// <summary>The traffic and the townsfolk crossing in front of it, stepped together (while running the town here).</summary>
+        Streetlife streetlife;
         Fleet fleet;
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
@@ -523,10 +525,15 @@ namespace Porchlight.App
             if (model.IsRoad)
             {
                 traffic = null;
+                streetlife = null;
                 basePeople = 0;
                 return;
             }
             traffic = new Traffic(world.layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
+            // Signals change by the wall clock, so everyone in a room sees the same lights.
+            traffic.clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            traffic.night = night;
+            streetlife = new Streetlife(world.layout, traffic, new Rng($"{model.seed}::crossings"));
             fleet = new Fleet(traffic, library, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
@@ -576,6 +583,7 @@ namespace Porchlight.App
             fleet?.Dispose();
             fleet = null;
             traffic = null;
+            streetlife = null;
             foreach (var a in avatars) a?.Dispose();
             unmade.Clear();
             avatars.Clear();
@@ -2600,14 +2608,19 @@ namespace Porchlight.App
             UpdateCompany(dt);
             if (authority)
             {
-                foreach (var q in people) if (!q.following) q.Update(dt);
                 // Traffic stops for you, everyone else and every car left at the kerb.
                 var obstacles = cars.Select(c => new Vec2(c.car.x, c.car.y)).ToList();
                 if (p != null && !InCar && room == null) obstacles.Add(new Vec2(p.x, p.y));
                 foreach (var o in others) obstacles.Add(PositionOf(o.key) ?? new Vec2(o.x, o.y));
                 obstacles.AddRange(Obstacles);
                 obstacles.AddRange(othersParkedAt.Values);
-                traffic?.Update(dt, obstacles);
+                if (streetlife != null)
+                {
+                    // The townsfolk stroll, waiting at the kerb for a gap; then the cars, stopping for them.
+                    traffic.night = night;
+                    streetlife.Step(dt, people, obstacles);
+                }
+                else foreach (var q in people) if (!q.following) q.Update(dt);
             }
             else if (traffic != null)
             {

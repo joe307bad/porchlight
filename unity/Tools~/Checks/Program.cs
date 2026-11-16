@@ -61,6 +61,7 @@ static class Program
         if (args.Length > 0 && args[0] == "sleigh") return SleighCheck.Run();
         if (args.Length > 2 && args[0] == "trace") return TrafficTrace.Run(int.Parse(args[1]), int.Parse(args[2]), args.Length > 3);
         if (args.Length > 0 && args[0] == "rules") return TrafficRulesCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 12);
+        if (args.Length > 0 && args[0] == "crossings") return CrosswalkCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 8);
         if (args.Length > 0 && args[0] == "roadsense") return RoadSenseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");

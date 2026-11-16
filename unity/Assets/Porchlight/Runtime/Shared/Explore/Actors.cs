@@ -252,6 +252,29 @@ namespace Porchlight.Explore
         readonly Rng rng;
         double pause;
         readonly double pace;
+        Func<Pedestrian, Vec2, Vec2, CrossingAnswer> guard;
+
+        /// <summary>How fast they stroll (tiles a second).</summary>
+        public double Pace => pace;
+
+        /// <summary>Asked before they step off the kerb (Crosswalks); null: they just go.</summary>
+        public Func<Pedestrian, Vec2, Vec2, CrossingAnswer> Guard
+        {
+            get => guard;
+            set
+            {
+                guard = value;
+                Guarded();
+            }
+        }
+
+        void Guarded() => walk.mayCross = guard == null ? null : (Func<Vec2, Vec2, CrossingAnswer>)((a, b) => guard(this, a, b));
+
+        /// <summary>Their way across a road, if they're on one or waiting at the kerb for one.</summary>
+        public (Vec2 from, Vec2 to)? CrossingLine => walk.CrossingLine;
+
+        /// <summary>Out on a road crossing (not waiting at the kerb).</summary>
+        public bool OnCrossing => walk.OnCrossing;
         double going;
         /// <summary>Someone they've stopped to look at (set each step by the view), or null.</summary>
         public Vec2? lookAt;
@@ -287,6 +310,7 @@ namespace Porchlight.Explore
         {
             if (net.paths.Count == 0) return;
             walk = SidewalkWalk.Join(net, rng, new Vec2(x, y));
+            Guarded();
             pause = 0;
             going = speed;
         }
@@ -305,7 +329,11 @@ namespace Porchlight.Explore
             following = false;
             waving = 0;
             lookAt = null;
-            if (net.paths.Count > 0) walk = SidewalkWalk.Join(net, rng, new Vec2(x, y));
+            if (net.paths.Count > 0)
+            {
+                walk = SidewalkWalk.Join(net, rng, new Vec2(x, y));
+                Guarded();
+            }
             heading = DetMath.Atan2(x - from.x, y - from.y);
             pause = 0.7;
             going = 0;

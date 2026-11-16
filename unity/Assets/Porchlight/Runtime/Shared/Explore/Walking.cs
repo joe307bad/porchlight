@@ -35,6 +35,9 @@ namespace Porchlight.Explore
         public bool joining;
     }
 
+    /// <summary>What a walker at the kerb is told (Crosswalks): go across, wait, or don't cross here at all.</summary>
+    public enum CrossingAnswer { Go, Wait, Never }
+
     public sealed class SidewalkWalk
     {
         /// <summary>Crossing the road costs about this many tiles of walking.</summary>
@@ -58,6 +61,13 @@ namespace Porchlight.Explore
 
         readonly SidewalkNetwork net;
         readonly Rng rng;
+        /// <summary>
+        /// Asked at the kerb before stepping across from `from` to `to` (Crosswalks): go, wait
+        /// here, or never (turn back). Null: always go.
+        /// </summary>
+        public Func<Vec2, Vec2, CrossingAnswer> mayCross;
+        /// <summary>The crossing under way has been let go (it's been asked and said go).</summary>
+        bool crossingLet;
         int path;
         double s;
         int dir;
@@ -370,6 +380,12 @@ namespace Porchlight.Explore
 
         public bool IsCrossing => crossing != null;
 
+        /// <summary>Under way across (let go, not waiting at the kerb).</summary>
+        public bool OnCrossing => crossing != null && (crossingLet || mayCross == null);
+
+        /// <summary>The crossing it's on or waiting at: from kerb to kerb.</summary>
+        public (Vec2 from, Vec2 to)? CrossingLine => crossing == null ? ((Vec2, Vec2)?)null : (crossing.from, crossing.to);
+
         public Vec2 Position()
         {
             if (crossing != null)
@@ -409,6 +425,22 @@ namespace Porchlight.Explore
             double left = distance;
             for (int guard = 0; left > 1e-9 && guard < 8; guard++)
             {
+                if (crossing != null && !crossingLet && mayCross != null)
+                {
+                    // At the kerb: across only when it's safe.
+                    var answer = mayCross(crossing.from, crossing.to);
+                    if (answer == CrossingAnswer.Wait) break;
+                    if (answer == CrossingAnswer.Never)
+                    {
+                        // Not here: back along the sidewalk from its end, or on along it from mid-block.
+                        crossing = null;
+                        var p0 = net.paths[path];
+                        if (s <= 1e-6 || s >= p0.Length - 1e-6) dir = -dir;
+                        Plan();
+                        break;
+                    }
+                    crossingLet = true;
+                }
                 if (crossing != null)
                 {
                     var c = crossing;
@@ -426,6 +458,7 @@ namespace Porchlight.Explore
                         s = c.then.s;
                         dir = c.then.dir;
                         crossing = null;
+                        crossingLet = false;
                         joining = false;
                     }
                     continue;
@@ -464,6 +497,8 @@ namespace Porchlight.Explore
                 var c = crossing;
                 var here = Position();
                 crossing = new Crossing { from = here, to = c.from, t = 0, then = new Spot { path = path, s = s, dir = -dir } };
+                // Back to the kerb it came from: no need to ask.
+                crossingLet = true;
             }
             else dir = -dir;
             Plan();

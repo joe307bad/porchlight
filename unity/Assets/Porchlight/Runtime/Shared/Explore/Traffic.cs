@@ -66,9 +66,12 @@ namespace Porchlight.Explore
         public double pace = 1, headway = 1;
         /// <summary>Where it's going (a node), or -1 wandering.</summary>
         public int dest = -1;
-        /// <summary>The walker crossing it last decided about, and whether it'll stop for them.</summary>
+        /// <summary>The crossing it last decided about stopping for a waiting walker at, whether it'll stop, and where that crossing is.</summary>
         public int yieldFor = -1;
         public bool yields;
+        public Vec2 yieldA, yieldB;
+        /// <summary>Seconds it's been held up by walkers (they never make it turn round).</summary>
+        public double walkerWait;
         /// <summary>Why it's held at its junction, if it is (for the checks and the traffic view).</summary>
         public string why;
     }
@@ -149,8 +152,6 @@ namespace Porchlight.Explore
         public double hour = 12;
         /// <summary>Crossings walkers have the right of way on now (Crosswalks): segments a car mustn't drive over.</summary>
         public List<(Vec2 a, Vec2 b)> closedCrossings = new List<(Vec2, Vec2)>();
-        /// <summary>Asked of each car as it nears a walker waiting to cross (Crosswalks): whether it stops for them.</summary>
-        public Func<TrafficCar, int, bool> stopsForWalker;
 
         // Each step: the cars on each road going each way, nearest the start first.
         readonly List<int>[] lanes;
@@ -487,6 +488,12 @@ namespace Porchlight.Explore
             double blocked = BlockedAhead(car, obstacles, null);
             if (blocked < double.PositiveInfinity) accel = Math.Min(accel, Idm(v, v0, blocked - CAR_LENGTH / 2 - 0.2, 0, T));
             double forWalkers = BlockedAhead(car, walkers, closedCrossings);
+            if (car.yields && car.yieldFor >= 0)
+            {
+                // Stopping to let a walker waiting at the kerb across.
+                var own = new List<(Vec2, Vec2)> { (car.yieldA, car.yieldB) };
+                forWalkers = Math.Min(forWalkers, BlockedAhead(car, null, own));
+            }
             if (forWalkers < double.PositiveInfinity) accel = Math.Min(accel, Idm(v, v0, forWalkers - CAR_LENGTH / 2 - 0.3, 0, T));
             accel = Math.Max(-EMERGENCY, accel);
             v = Math.Max(0, v + accel * dt);
@@ -498,6 +505,7 @@ namespace Porchlight.Explore
             if (InUTurn(car)) v = Math.Min(v, CRUISE * UTURN_SPEED);
             car.speed = v;
             car.wait = blocked < 2.4 && v < 0.2 ? car.wait + dt : 0;
+            car.walkerWait = forWalkers < 2.4 && v < 0.2 ? car.walkerWait + dt : 0;
             if (car.wait > settings.patience)
             {
                 car.dir = -car.dir;
@@ -894,6 +902,7 @@ namespace Porchlight.Explore
             int next = car.next != -1 ? car.next : PickNext(car, car.road, node);
             car.next = -1;
             car.yieldFor = -1;
+            car.yields = false;
             if (next == ROUND)
             {
                 // Halfway round the U-turn: on round it goes, back the way it came in the other lane.
@@ -1101,6 +1110,25 @@ namespace Porchlight.Explore
         }
 
         // ------------------------------------------------------------ for the rest of the game
+
+        /// <summary>How far along the way it'll drive (out to `range` tiles) the car first crosses segment ab, or infinity.</summary>
+        public double PathTo(TrafficCar car, Vec2 a, Vec2 b, double range)
+        {
+            if (car.taken || car.idle || car.loop >= 0) return double.PositiveInfinity;
+            var seg = new List<(Vec2, Vec2)> { (a, b) };
+            double done = car.dir == 1 ? car.s : lengths[car.road] - car.s;
+            var last = new Vec2(car.x, car.y);
+            for (double d = 0.25; d <= range + 1e-9; d += 0.25)
+            {
+                var p = PoseAt(car, done, d).at;
+                if (Geo.SegmentIntersection(last, p, a, b) != null) return d;
+                last = p;
+            }
+            return double.PositiveInfinity;
+        }
+
+        /// <summary>How hard braking (comfortably) a car needs to stop from speed v (tiles).</summary>
+        public static double StoppingDistance(double v) => v * v / (2 * BRAKE);
 
         public double LengthOf(int road) => lengths[road];
 
