@@ -28,6 +28,8 @@ namespace Porchlight.Explore
         struct Target
         {
             public double x, y, heading, speed;
+            /// <summary>A car the host has off the roads (fewer cars wanted): not drawn.</summary>
+            public bool idle;
         }
 
         Target[] cars = new Target[0];
@@ -46,6 +48,12 @@ namespace Porchlight.Explore
             for (int i = 0; i < list.Count; i++)
             {
                 var c = list[i];
+                if (c.idle)
+                {
+                    // Idle: every bit of the record set, which no car on the map can be.
+                    for (int k = 0; k < RECORD; k++) o[i * RECORD + k] = 0xff;
+                    continue;
+                }
                 Put(o, i * RECORD, c.x, c.y, c.heading, Math.Abs(c.speed));
             }
             return o;
@@ -90,6 +98,7 @@ namespace Porchlight.Explore
                     y = ((b[at + 2] << 8) | b[at + 3]) / SCALE,
                     heading = ((b[at + 4] << 8) | b[at + 5]) / 65536.0 * 2 * Math.PI,
                     speed = b[at + 6] / SPEED_SCALE,
+                    idle = b[at] == 0xff && b[at + 1] == 0xff && b[at + 2] == 0xff && b[at + 3] == 0xff && b[at + 6] == 0xff,
                 };
             }
             return o;
@@ -122,6 +131,8 @@ namespace Porchlight.Explore
             for (int i = 0; i < Math.Min(cars.Length, traffic.Count); i++)
             {
                 ref var t = ref cars[i];
+                traffic[i].idle = t.idle;
+                if (t.idle) continue;
                 // Cars face (cos h, sin h).
                 if (going)
                 {

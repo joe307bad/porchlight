@@ -53,6 +53,10 @@ namespace Porchlight.Explore
         public List<Vec2> points;
         /// <summary>Asphalt width (tiles).</summary>
         public double width;
+        /// <summary>What it's for, how fast it's driven (tiles a second) and its rank where roads meet (RoadSense).</summary>
+        public RoadClass cls;
+        public double speed;
+        public int priority;
     }
 
     public sealed class SidewalkPath
@@ -119,6 +123,8 @@ namespace Porchlight.Explore
         public List<BlockPlan> blocks;
         public List<ParkedCar> cars;
         public List<RoadStroke> roads;
+        /// <summary>The road graph's nodes (by id), with who goes first at each (RoadSense).</summary>
+        public List<RoadNode> nodes = new List<RoadNode>();
         public List<LayoutBridge> bridges;
         public SidewalkNetwork sidewalks;
         /// <summary>The cul-de-sacs' bulbs (Raster.Bulbs; each one's edge is its street's index in roads).</summary>
@@ -182,7 +188,9 @@ namespace Porchlight.Explore
         public static IEnumerable<string> BuildSteps(TownModel model, Action<IsoLayout> done)
         {
             var roads = new List<RoadStroke>();
-            foreach (var e in model.roads.edges)
+            // A road space laid out by hand hasn't been through RoadSense: class it here.
+            var graph = model.roads.classified ? model.roads : RoadSenseStage.Classify(model);
+            foreach (var e in graph.edges)
                 roads.Add(new RoadStroke
                 {
                     kind = e.kind,
@@ -190,6 +198,9 @@ namespace Porchlight.Explore
                     to = e.to,
                     points = Geo.Chaikin(PadCorners(e.points, CORNER_RADIUS), SMOOTHING_PASSES),
                     width = RoadWidth(e.kind, model),
+                    cls = e.cls,
+                    speed = e.speed,
+                    priority = e.priority,
                 });
             yield return "/roads";
             var bridges = FindBridges(model, roads);
@@ -200,6 +211,7 @@ namespace Porchlight.Explore
             layout.cars.AddRange(ParkCars(model, roads, layout.use));
             yield return "/parked";
             layout.roads = roads;
+            layout.nodes = graph.nodes;
             layout.bridges = bridges;
             layout.bulbs = Raster.Bulbs(model.roads.edges);
             foreach (var part in SidewalkNetworkOf(roads, layout.bulbs, Raster.BulbRadius(model.@params), n => layout.sidewalks = n)) yield return part;
