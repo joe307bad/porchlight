@@ -893,8 +893,8 @@ namespace Porchlight.App
             var santa = Env("PORCHLIGHT_SMOKE_SANTA");
             if (!string.IsNullOrEmpty(santa))
             {
-                string story = santa == "server" ? await FetchStory("deliver-the-presents") : System.IO.File.ReadAllText(santa);
-                bool passed = story != null && await SmokeSanta(story);
+                string santaStory = santa == "server" ? await FetchStory("deliver-the-presents") : System.IO.File.ReadAllText(santa);
+                bool passed = santaStory != null && await SmokeSanta(santaStory);
                 Debug.Log("smoke: done");
                 Application.Quit(passed ? 0 : 1);
                 return;
