@@ -1899,7 +1899,8 @@ namespace Porchlight.App
         Pick? CarInReach()
         {
             var p = player;
-            if (p == null || room != null) return null;
+            // Not while a mission has you on the move (leaping out of a seat, up on a chimney): no getting in mid-leap.
+            if (p == null || room != null || Scripted?.Invoke() != null) return null;
             Pick? best = null;
             double bestD = CAR_REACH;
             void Consider(PickKind kind, int i, double x, double y, RemoteDriver? driver = null)
