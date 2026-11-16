@@ -36,6 +36,7 @@ static class SleighCheck
         Rings(Expect);
         Landings(Expect);
         Chimneys(Expect);
+        Smoothness(Expect);
         Roofs(Expect);
         FlyThrough(Expect);
 
@@ -164,6 +165,62 @@ static class SleighCheck
             $"a Dubins way round to a spot behind it gets there, facing back ({back.Length:0.00} tiles)");
     }
 
+    /// <summary>
+    /// Stepped at 60 frames a second, a move never jumps: no frame moves you further than `most` tiles (along or up),
+    /// or turns you further than `turn` radians.
+    /// </summary>
+    static void Smooth(Action<bool, string> expect, string what, double duration, Func<double, WalkerPose> at, double most, double turn)
+    {
+        var last = at(0);
+        double worstMove = 0, worstUp = 0, worstTurn = 0;
+        for (double t = 1 / 60.0; t <= duration + 1e-9; t += 1 / 60.0)
+        {
+            var p = at(t);
+            worstMove = Math.Max(worstMove, Geo.Dist(p.at, last.at));
+            worstUp = Math.Max(worstUp, Math.Abs(p.Up - last.Up));
+            worstTurn = Math.Max(worstTurn, Math.Abs(Orbit.ShortestTurn(last.heading, p.heading)));
+            last = p;
+        }
+        expect(worstMove <= most && worstUp <= most && worstTurn <= turn,
+            $"{what}: smooth, frame to frame (at most {worstMove:0.000} along, {worstUp:0.000} up, {worstTurn:0.000} round)");
+    }
+
+    static void Smoothness(Action<bool, string> expect)
+    {
+        var seat = new Vec2(5, 5);
+        var chimney = new Vec2(5.4, 5.3);
+        // Facing along the ridge (a walker's heading), the chimney off to the side, the street the other way.
+        double seated = 0.2, perched = Math.PI + 0.4;
+        var down = new ChimneyTrip(true, seat, 1.85, chimney, 1.95, perched, seated);
+        var up = new ChimneyTrip(false, seat, 1.85, chimney, 1.95, perched, seated);
+        Smooth(expect, "down the chimney", down.Duration, down.At, 0.06, 0.13);
+        Smooth(expect, "up the chimney", up.Duration, up.At, 0.06, 0.13);
+        expect(Math.Abs(Orbit.ShortestTurn(down.At(0).heading, seated)) < 1e-9 && Math.Abs(Orbit.ShortestTurn(up.At(up.Duration).heading, seated)) < 1e-9,
+            "down the chimney starts, and up it ends, facing the sleigh's way in your seat");
+        var hop = new Hop(seat, 0.2, new Vec2(5.42, 5), new Vec2(5.9, 5.3), -1.2, (x, y) => 0, seated);
+        Smooth(expect, "out onto the pavement", hop.Duration, hop.At, 0.06, 0.13);
+        expect(Math.Abs(Orbit.ShortestTurn(hop.At(0).heading, seated)) < 1e-9 && Math.Abs(Orbit.ShortestTurn(hop.At(hop.Duration).heading, -1.2)) < 1e-9,
+            "out onto the pavement starts facing the sleigh's way and ends facing the house");
+        // A landing from a turn at speed: no frame jumps along, up or round.
+        var land = new Landing(0, 0, 6, 0.8, 4.5, 14, 9, 0.002, Math.PI, Landing.SLIDE);
+        double lx = 0, ly = 0, lh = 6, ld = 0.8, worst = 0, worstUp = 0, worstTurn = 0, worstBend = 0, lastBend = 0;
+        bool first = true;
+        for (int i = 0; i < 60 * 60 && !land.Done; i++)
+        {
+            var (x, y, h, d, _) = land.Step(1 / 60.0);
+            var (bend, _) = land.Shape();
+            worst = Math.Max(worst, Numbers.Hypot(x - lx, y - ly));
+            worstUp = Math.Max(worstUp, Math.Abs(h - lh));
+            worstTurn = Math.Max(worstTurn, Math.Abs(Orbit.ShortestTurn(ld, d)));
+            if (!first) worstBend = Math.Max(worstBend, Math.Abs(bend - lastBend));
+            first = false;
+            lastBend = bend;
+            (lx, ly, lh, ld) = (x, y, h, d);
+        }
+        expect(land.Done && worst < 0.09 && worstUp < 0.05 && worstTurn < 0.05 && worstBend < 0.05,
+            $"a landing is smooth, frame to frame (at most {worst:0.000} along, {worstUp:0.000} down, {worstTurn:0.000} round, its bank's turn {worstBend:0.000} a tile changing)");
+    }
+
     static void Chimneys(Action<bool, string> expect)
     {
         var seat = new Vec2(5, 5);
@@ -174,7 +231,8 @@ static class SleighCheck
         var s0 = down.At(0);
         expect(Geo.Dist(s0.at, seat) < 1e-9 && Math.Abs(s0.Up - seatHeight) < 1e-9 && s0.shown && s0.lift == 0, "down a chimney starts stood up in your seat, in sight");
         var onTop = down.At(down.OnTop + 0.01);
-        expect(Geo.Dist(onTop.at, chimney) < 1e-9 && Math.Abs(onTop.floor - rim) < 1e-9 && onTop.lift == 0 && Math.Abs(onTop.heading - perched) < 1e-9,
+        var turned = down.At(down.OnTop + ChimneyTrip.PERCH * ChimneyTrip.PERCH_TURN + 0.01);
+        expect(Geo.Dist(onTop.at, chimney) < 1e-9 && Math.Abs(onTop.floor - rim) < 1e-9 && onTop.lift == 0 && Math.Abs(Orbit.ShortestTurn(turned.heading, perched)) < 1e-9,
             "you leap out of your seat right onto the chimney's top, and stand on it turned to the street");
         double leapTop = 0, takeOff = 0, landing = 0;
         bool arc = true;

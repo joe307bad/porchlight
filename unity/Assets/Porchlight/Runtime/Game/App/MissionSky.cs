@@ -508,7 +508,9 @@ namespace Porchlight.App
             var st = s.stop;
             // On the chimney's top, turned to the street.
             double perched = DetMath.Atan2(r.outward.x, r.outward.y);
-            trip = new ChimneyTrip(down, st.seat, st.seatHeight, st.chimney, st.rim, perched);
+            var car0 = view.OwnVehicle;
+            double way = car0?.heading ?? st.heading;
+            trip = new ChimneyTrip(down, st.seat, st.seatHeight, st.chimney, st.rim, perched, DetMath.Atan2(Math.Cos(way), Math.Sin(way)));
             tripFor = r;
             pose = trip.At(0);
             inChimney = null;
@@ -596,7 +598,8 @@ namespace Porchlight.App
             if (!view.CanStandAt(landAt.x, landAt.y) || Geo.Dist(seat, hopTo) < HOP_OUT) landAt = hopTo;
             var look = FlyingLook(car);
             view.LeaveSeat();
-            hop = new Hop(seat, from, landAt, hopTo, hopFacing, Street);
+            // Turning in your seat from the sleigh's way (a walker's heading points along (sin, cos)).
+            hop = new Hop(seat, from, landAt, hopTo, hopFacing, Street, DetMath.Atan2(f.x, f.y));
             pose = hop.At(0);
             // The camera comes round behind you as you go, to look at the house over your shoulder.
             double behind = Math.Atan2(-Math.Cos(hopFacing), -Math.Sin(hopFacing)) + HOP_SHOT_SIDE * (Geo.Dot(side, new Vec2(Math.Sin(hopFacing), Math.Cos(hopFacing))) >= 0 ? 1 : -1);
@@ -701,19 +704,19 @@ namespace Porchlight.App
                 return true;
             }
             var (x, y, h, heading, speed) = landing.Step(dt);
-            double was = car.altitude;
             car.x = x;
             car.y = y;
             car.altitude = h;
             car.speed = speed;
-            double turn = Orbit.ShortestTurn(car.heading, heading);
             car.heading = heading;
             // Banked into its turns and nosed down a little as it descends, then level as it touches down (and sliding).
             // The sleigh hardly noses down at all: its team's out ahead, and would be in the roof.
-            double k = Math.Min(1, dt * 4);
+            // From the way's own shape (not frame-to-frame differences, which jitter), eased.
+            double k = Math.Min(1, dt * 3);
             bool sleigh = Catalog.CARS[car.model] == Catalog.SLEIGH;
-            double bankTo = landing.Down ? 0 : Math.Max(-0.45, Math.Min(0.45, turn / Math.Max(1e-3, dt) * 0.3));
-            double pitchTo = landing.Down ? 0 : DetMath.Atan2((h - was) / Math.Max(1e-3, dt), Math.Max(1, speed)) * (sleigh ? 0.25 : 1);
+            var (bend, climb) = landing.Shape();
+            double bankTo = landing.Down ? 0 : Math.Max(-0.45, Math.Min(0.45, bend * Math.Max(1, speed) * 0.3));
+            double pitchTo = landing.Down ? 0 : Math.Atan(climb) * (sleigh ? 0.25 : 1);
             car.bank += (bankTo - car.bank) * k;
             car.pitch += (pitchTo - car.pitch) * k;
             if (!landing.Done) return true;

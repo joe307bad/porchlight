@@ -2781,7 +2781,11 @@ namespace Porchlight.App
             var p = player;
             if (p != null && playerAvatar != null)
             {
-                playerAvatar.Visible = !InCar && !scriptHidden;
+                // Out of a seat (or up out of a chimney), facing just the way you are, not turning round from however
+                // you last faced on your feet.
+                bool shown = !InCar && !scriptHidden;
+                if (shown && !playerAvatar.Visible) playerAvatar.SnapYaw(p.heading);
+                playerAvatar.Visible = shown;
                 playerAvatar.Update(p, dt);
             }
             for (int i = 0; i < cars.Count; i++)
