@@ -615,15 +615,16 @@ namespace Porchlight.Explore
     /// <summary>
     /// Where someone is as the story moves them (a jump, a walk): map x, y, the height of the ground (or roof) under
     /// them, how high off it they are, which way they face (Walker's heading: along (sin, cos)), how fast they walk,
-    /// whether they're to be seen, and how fast they're going up (tiles a second; down is less than 0).
+    /// whether they're to be seen, how fast they're going up (tiles a second; down is less than 0), and how far
+    /// sat down they are (0 stood, 1 sat in a seat whose top is their floor).
     /// </summary>
     public struct WalkerPose
     {
         public Vec2 at;
-        public double floor, lift, heading, pace, rise;
+        public double floor, lift, heading, pace, rise, sit;
         public bool shown;
 
-        public WalkerPose(Vec2 at, double floor, double lift, double heading, double pace, bool shown, double rise)
+        public WalkerPose(Vec2 at, double floor, double lift, double heading, double pace, bool shown, double rise, double sit = 0)
         {
             this.at = at;
             this.floor = floor;
@@ -632,6 +633,7 @@ namespace Porchlight.Explore
             this.pace = pace;
             this.shown = shown;
             this.rise = rise;
+            this.sit = sit;
         }
 
         /// <summary>How high their feet are.</summary>
@@ -659,19 +661,26 @@ namespace Porchlight.Explore
             return from + Orbit.ShortestTurn(from, to) * k * k * (3 - 2 * k);
         }
 
+        /// <summary>Eased in and out from 0 to 1 as `k` goes from 0 to 1.</summary>
+        public static double Ease(double k)
+        {
+            k = Math.Max(0, Math.Min(1, k));
+            return k * k * (3 - 2 * k);
+        }
+
         /// <summary>A walker's heading from one point to another (or `otherwise`, if they're the same).</summary>
         public static double Facing(Vec2 from, Vec2 to, double otherwise) => Geo.Dist(from, to) < 1e-6 ? otherwise : DetMath.Atan2(to.x - from.x, to.y - from.y);
     }
 
     /// <summary>
-    /// Out of the sleigh's seat onto the pavement: a turn to face the way out, a leap up and out over its side in an
-    /// arc, down onto the pavement (knees bending: the landing), a moment's settle, a walk to where you're to stand,
-    /// and a turn to face the way you're to go.
+    /// Out of the sleigh's seat onto the pavement: standing up out of the seat, a turn to face the way out, a leap up
+    /// and out over its side in an arc, down onto the pavement (knees bending: the landing), a moment's settle, a walk
+    /// to where you're to stand, and a turn to face the way you're to go.
     /// </summary>
     public sealed class Hop
     {
-        /// <summary>How long the turn, the leap, the settle and the last turn take (seconds); how fast you walk (tiles a second).</summary>
-        public const double TURN = 0.45, LEAP = 0.7, SETTLE = 0.35, FACE = 0.45, WALK = 0.75;
+        /// <summary>How long standing up, the turn, the leap, the settle and the last turn take (seconds); how fast you walk (tiles a second).</summary>
+        public const double RISE = 0.6, TURN = 0.45, LEAP = 0.7, SETTLE = 0.35, FACE = 0.45, WALK = 0.75;
         /// <summary>How high over your seat the leap goes (tiles).</summary>
         public const double HEIGHT = 0.3;
 
@@ -697,7 +706,7 @@ namespace Porchlight.Explore
             walk = Geo.Dist(landAt, to) / WALK;
         }
 
-        public double Duration => TURN + LEAP + SETTLE + walk + FACE;
+        public double Duration => RISE + TURN + LEAP + SETTLE + walk + FACE;
 
         public bool Done => time >= Duration;
 
@@ -718,7 +727,9 @@ namespace Porchlight.Explore
             t = Math.Max(0, Math.Min(Duration, t));
             double out_ = Leap.Facing(from, landAt, facing);
             double on = Leap.Facing(landAt, to, out_);
-            if (t < TURN)
+            // Sat in your seat, standing up out of it (facing the sleigh's way).
+            if (t < RISE) return new WalkerPose(from, fromHeight, 0, double.IsNaN(seated) ? out_ : seated, 0, true, 0, 1 - Leap.Ease(t / RISE));
+            if ((t -= RISE) < TURN)
             {
                 // Up out of your seat, turning from the sleigh's way to the way out.
                 return new WalkerPose(from, fromHeight, 0, double.IsNaN(seated) ? out_ : Leap.Turn(seated, out_, t / TURN), 0, true, 0);
@@ -748,16 +759,20 @@ namespace Porchlight.Explore
     }
 
     /// <summary>
-    /// Down a chimney from your seat in the sleigh on the roof, or back up it to your seat: a turn towards the
-    /// chimney, a leap out of your seat in a high arc right onto its top (landing on it, knees bending), a moment
-    /// stood there turned to the street, then a little hop and down inside it feet first (out of sight once you're
-    /// in); or popping up out of it and all of that backwards, ending with the leap back into your seat. Where you
-    /// are as it goes (WalkerPose).
+    /// Down a chimney from your seat in the sleigh on the roof, or back up it to your seat: standing up out of the
+    /// seat, a turn towards the chimney, a little hop up onto the sleigh's side and a moment crouched there, a leap
+    /// off it in a high arc right onto the chimney's top (landing on it, knees bending), a moment stood there turned
+    /// to the street, then a little hop and down inside it feet first (out of sight once you're in); or popping up
+    /// out of it and all of that backwards, ending sat back down in your seat. Where you are as it goes (WalkerPose).
     /// </summary>
     public sealed class ChimneyTrip
     {
         /// <summary>How long the turn, the stand on top and the drop take; the leap, this long and as long again a tile across (seconds).</summary>
         public const double TURN = 0.5, PERCH = 0.8, DROP = 0.65, LEAP = 0.6, LEAP_PER_TILE = 0.3;
+        /// <summary>How long standing up out of the seat, the hop up onto the sleigh's side and the crouch there take (seconds).</summary>
+        public const double RISE = 0.6, STEP = 0.4, CROUCH = 0.2;
+        /// <summary>How far out from the seat the sleigh's side is (towards the chimney), how much higher, and how high the hop up onto it goes over that (tiles).</summary>
+        public static readonly double SIDE_OUT = Catalog.SLEIGH_RUNNER_GAUGE * 1.15, SIDE_UP = 0.13 * Catalog.SLEIGH_SCALE, STEP_HEIGHT = 0.05;
         /// <summary>How much of the stand on top goes on turning round to the street.</summary>
         public const double PERCH_TURN = 0.75;
         /// <summary>How high over the higher end the leap goes, and the hop before the drop (tiles); how far below the top you drop to.</summary>
@@ -766,8 +781,8 @@ namespace Porchlight.Explore
         public const double HIDDEN = 0.14;
 
         public readonly bool down;
-        readonly Vec2 seat, chimney;
-        readonly double seatHeight, rim, perched, leap, seated;
+        readonly Vec2 seat, chimney, side;
+        readonly double seatHeight, rim, perched, leap, seated, sideHeight;
         public double time;
 
         /// <summary>
@@ -784,13 +799,21 @@ namespace Porchlight.Explore
             this.chimney = chimney;
             this.rim = rim;
             this.perched = perched;
-            leap = LEAP + LEAP_PER_TILE * Geo.Dist(seat, chimney);
+            // The sleigh's side towards the chimney (not past it, however near it is).
+            double d = Geo.Dist(seat, chimney);
+            double out_ = Math.Min(SIDE_OUT, d * 0.4);
+            side = d < 1e-6 ? seat : new Vec2(seat.x + (chimney.x - seat.x) / d * out_, seat.y + (chimney.y - seat.y) / d * out_);
+            sideHeight = seatHeight + SIDE_UP;
+            leap = LEAP + LEAP_PER_TILE * Geo.Dist(side, chimney);
         }
 
-        public double Duration => TURN + leap + PERCH + DROP;
+        /// <summary>When you leap for the chimney (seconds in, going down): out of the seat and up on the sleigh's side.</summary>
+        public double LeapFrom => RISE + TURN + STEP + CROUCH;
+
+        public double Duration => LeapFrom + leap + PERCH + DROP;
 
         /// <summary>When you're on the chimney's top (seconds in): the leap's done.</summary>
-        public double OnTop => down ? TURN + leap : DROP;
+        public double OnTop => down ? LeapFrom + leap : DROP;
 
         public bool Done => time >= Duration;
 
@@ -809,14 +832,28 @@ namespace Porchlight.Explore
             double sign = down ? 1 : -1;
             double toChimney = Leap.Facing(seat, chimney, perched);
             double turn = down ? 0 : Math.PI;
-            // In your seat, turning from the sleigh's way to the leap's (coming back, the other way round).
-            if (s < TURN) return new WalkerPose(seat, seatHeight, 0, double.IsNaN(seated) ? toChimney + turn : Leap.Turn(seated, toChimney + turn, s / TURN), 0, true, 0);
-            if ((s -= TURN) < leap)
+            double way = double.IsNaN(seated) ? toChimney + turn : seated;
+            // Sat in your seat, standing up out of it (coming back, sitting back down).
+            if (s < RISE) return new WalkerPose(seat, seatHeight, 0, way, 0, true, 0, 1 - Leap.Ease(s / RISE));
+            // Stood in your seat, turning from the sleigh's way to the leap's (coming back, the other way round).
+            if ((s -= RISE) < TURN) return new WalkerPose(seat, seatHeight, 0, Leap.Turn(way, toChimney + turn, s / TURN), 0, true, 0);
+            // A little hop up onto the sleigh's side (coming back, down off it into the seat), and a crouch there.
+            if ((s -= TURN) < STEP)
+            {
+                double k = s / STEP;
+                var (up, rate) = Leap.At(seatHeight, sideHeight, Math.Max(seatHeight, sideHeight) + STEP_HEIGHT, k);
+                var at = new Vec2(seat.x + (side.x - seat.x) * k, seat.y + (side.y - seat.y) * k);
+                double floor = Math.Min(Math.Min(seatHeight, sideHeight), up);
+                return new WalkerPose(at, floor, up - floor, toChimney + turn, 0, true, sign * rate / STEP);
+            }
+            if ((s -= STEP) < CROUCH) return new WalkerPose(side, sideHeight, 0, toChimney + turn, 0, true, 0);
+            s -= CROUCH;
+            if (s < leap)
             {
                 double k = s / leap;
-                var (up, rate) = Leap.At(seatHeight, rim, Math.Max(seatHeight, rim) + LEAP_HEIGHT, k);
-                var at = new Vec2(seat.x + (chimney.x - seat.x) * k, seat.y + (chimney.y - seat.y) * k);
-                double floor = Math.Min(Math.Min(seatHeight, rim), up);
+                var (up, rate) = Leap.At(sideHeight, rim, Math.Max(sideHeight, rim) + LEAP_HEIGHT, k);
+                var at = new Vec2(side.x + (chimney.x - side.x) * k, side.y + (chimney.y - side.y) * k);
+                double floor = Math.Min(Math.Min(sideHeight, rim), up);
                 return new WalkerPose(at, floor, up - floor, toChimney + turn, 0, true, sign * rate / leap);
             }
             // On top, turning round to the street (coming back, from it to the leap's way).

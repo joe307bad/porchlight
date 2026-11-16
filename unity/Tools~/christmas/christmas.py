@@ -29,7 +29,8 @@
 #                       cannon, fetlock tuft and hoof), and Santa ("santa")
 #                       and the sack ("sack") too, so the game can gallop and
 #                       bob them as it flies (Rendering/Vehicles.cs,
-#                       SleighRig). Nose down +z once exported, as the
+#                       SleighRig); the traces and reins ("harness"), so it
+#                       can tip them with the team to stand it on a roof. Nose down +z once exported, as the
 #                       planes'. It prints its measurements (how long, where
 #                       the seat and runners are), which Catalog.SLEIGH_*
 #                       are worked out from.
@@ -532,6 +533,8 @@ def sack(P):
 # Where Santa sits (along the sleigh, and his seat's top), and the runners: how low, how far out to
 # each side, and from where to where along (Blender, nose to -x).
 SEAT_X, SEAT_TOP = 0.26, 0.71
+# Where the traces meet the sleigh's front: the team and its harness tip about here (SleighRig).
+HARNESS_PIVOT = (-0.55, 0.0, 0.5)
 RUNNER_LOW, RUNNER_GAUGE, RUNNER_FRONT, RUNNER_BACK = 0.09, 0.3, -0.45, 0.85
 
 
@@ -580,9 +583,18 @@ def build_sleigh(P):
                 join_children(knee, knee.name + "-mesh")
             join_children(leg, leg.name + "-mesh")
         join_children(d, d.name + "-body", keep={"rudolph-nose"})
+    # The traces and reins, a node of their own ("harness") pivoting where the traces meet the sleigh's front:
+    # the game tips the team (and them with it) about there to stand it on a roof, so they stay in harness.
+    harness = bpy.data.objects.new("harness", None)
+    bpy.context.scene.collection.objects.link(harness)
+    harness.parent = root
+    harness.location = HARNESS_PIVOT
     for s in (1, -1):
-        obj("trace", tube((-0.55, 0.22 * s, 0.5), (lead_x + 0.0, 0.0, 0.66), 0.012, seg=4), P["harness"], False, parent=root)
-        obj("rein", tube((-0.14, 0.13 * s, 0.77), (lead_x - 0.3, 0.02 * s, 0.82), 0.008, seg=4), P["rope"], False, parent=root)
+        obj("trace", tube((-0.55, 0.22 * s, 0.5), (lead_x + 0.0, 0.0, 0.66), 0.012, seg=4), P["harness"], False, parent=harness)
+        obj("rein", tube((-0.14, 0.13 * s, 0.77), (lead_x - 0.3, 0.02 * s, 0.82), 0.008, seg=4), P["rope"], False, parent=harness)
+    for c in harness.children:
+        c.location = V(c.location) - V(HARNESS_PIVOT)
+    join_children(harness, "harness-mesh")
     join_children(root, "sleigh")
     return root
 

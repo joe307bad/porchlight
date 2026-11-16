@@ -302,7 +302,7 @@ function standInTown(story: InstanceType<typeof Story>) {
     standing.add(role);
   });
   bind('unlock', (what: string) => {
-    oneOf('unlock', what, ['animals', 'firefighter', 'sprint', 'feast']);
+    oneOf('unlock', what, ['animals', 'firefighter', 'sprint', 'feast', 'christmas']);
     town.unlocked.push(what);
   });
   bind('your_car', (car: string) => {
@@ -542,6 +542,7 @@ test('deliver the presents flies Santa to five houses: down the chimney at every
   const mission = await new MissionStore(DEFAULT_MISSIONS_DIR).get('deliver-the-presents');
   assert.ok(mission?.story);
   assert.equal(mission.title, 'Deliver the Presents');
+  assert.equal(mission.unlocks, 'christmas');
   const story = new Story(mission.story);
   story.allowExternalFunctionFallbacks = false;
   const town = standInTown(story);
@@ -630,6 +631,8 @@ test('deliver the presents flies Santa to five houses: down the chimney at every
   assert.ok(town.log.filter((l) => l.startsWith('place(')).every((l) => l === 'place(home, house, , 10, 30, true)'));
   assert.ok(lines.includes("You're Santa! Your sleigh's high over the rooftops, nine reindeer in harness and Rudolph's nose lighting the way."), lines.join('\n'));
   assert.ok(lines.includes('Merry Christmas! The whole town wakes up to presents under the tree.'), lines.join('\n'));
+  // A tree with presents under it in most houses, for good.
+  assert.deepEqual(town.unlocked, ['christmas']);
 });
 
 /** Plays the marathon through against a stand-in town with these best times, and returns what it said. */

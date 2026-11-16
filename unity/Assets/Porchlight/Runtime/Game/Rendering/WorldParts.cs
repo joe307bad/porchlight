@@ -432,6 +432,38 @@ namespace Porchlight.Rendering
             }
         }
 
+        /// <summary>A Christmas tree with presents under it in most houses in every town built (Christmas), by room, and whether they're shown.</summary>
+        readonly Dictionary<int, GameObject> christmasTrees = new Dictionary<int, GameObject>();
+        static readonly List<GameObject> christmases = new List<GameObject>();
+        static bool christmassy;
+
+        /// <summary>Whether most houses have a Christmas tree with presents under it (the `christmas` unlock), in every town.</summary>
+        public static bool Christmassy
+        {
+            get => christmassy;
+            set
+            {
+                if (value == christmassy) return;
+                christmassy = value;
+                christmases.RemoveAll(c => c == null);
+                foreach (var c in christmases) c.SetActive(value && !c.name.EndsWith(" (moved over)"));
+            }
+        }
+
+        /// <summary>How many houses in the towns built have a Christmas tree (shown or not).</summary>
+        public static int ChristmasTrees => christmases.Count(c => c != null);
+
+        /// <summary>
+        /// A room's own Christmas tree (the unlock's) put away while `away` (a mission's standing one of its own there),
+        /// and back again after.
+        /// </summary>
+        public void ChristmasTreeAway(int room, bool away)
+        {
+            if (!christmasTrees.TryGetValue(room, out var c) || c == null) return;
+            c.name = away ? "christmas (moved over)" : "christmas";
+            c.SetActive(christmassy && !away);
+        }
+
         /// <summary>How many dining tables in the towns built have a feast laid (shown or not).</summary>
         public static int FeastTables => feasts.Count(f => f != null);
 
@@ -515,6 +547,18 @@ namespace Porchlight.Rendering
                     feasts.Add(feast);
                     feastTables[feast] = piece;
                     it.casters.AddRange(feast.GetComponentsInChildren<Renderer>(true));
+                }
+            }
+            // Most houses have a Christmas tree with presents under it, shown once it's been earned (Christmas).
+            if (room.style == HouseStyle.House && Christmas.HasTree(id))
+            {
+                var tree = Christmas.Stand(library, it.root.transform, room, plans[id], id * 7919 + 17);
+                if (tree != null)
+                {
+                    tree.SetActive(christmassy);
+                    christmases.Add(tree);
+                    christmasTrees[id] = tree;
+                    it.casters.AddRange(tree.GetComponentsInChildren<Renderer>(true));
                 }
             }
             interiors[id] = it;

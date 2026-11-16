@@ -37,8 +37,8 @@ namespace Porchlight.App
         static readonly Color Brick = Coords.Hex(0x9a3b2b), Snow = Coords.Hex(0xf4f7fb);
         /// <summary>How tall a Christmas tree stands, and the present under it (tiles).</summary>
         const double TREE_HEIGHT = 0.62, GIFT_SIZE = 0.15;
-        /// <summary>How near a tree you come to put the present under it (tiles), and where you stand to (out from it).</summary>
-        const double GIFT_REACH = 0.8, TREE_STAND = 0.42;
+        /// <summary>How near a tree you come to put the present under it (tiles).</summary>
+        const double GIFT_REACH = 0.8;
         /// <summary>A plane coming down keeps this far over the roofs it passes (tiles), and this far out from their walls.</summary>
         const double LANDING_CLEAR = 0.3, LANDING_MARGIN = 0.15;
         /// <summary>A plane set down in the street is this high (tiles): its runners on the road, but still up, so it lifts off on its own way when you fly on.</summary>
@@ -57,15 +57,14 @@ namespace Porchlight.App
         /// and its team (by CAM_LOOK_UP), so all of it is in view, a little below the middle of the screen; how quickly
         /// it swings round after you as you turn (a rate).
         /// </summary>
-        const double CAM_BACK = 2.2, CAM_UP = 0.95, CAM_LOOK_UP = 0.15, CAM_TURN = 7;
+        const double CAM_BACK = 2.9, CAM_UP = 1.25, CAM_LOOK_UP = 0.2, CAM_TURN = 7;
         /// <summary>
-        /// The camera going down a chimney with you: where it ends up, out over the street (how far round from
-        /// straight out the front, how far up and back: radians, tiles); how long it watches the chimney once you're
-        /// in it before you're inside by the tree (seconds). And hopping out onto the pavement: where it ends up,
-        /// behind you as you face the house.
+        /// The camera coming back up a chimney with you: where it starts, out over the street (how far round from
+        /// straight out the front, how far up and back: radians, tiles); how long, gone down one, you're in it before
+        /// you're inside by the tree (seconds). Jumping out (down a chimney, or onto the pavement), the camera's the
+        /// close one behind you (as V has it).
         /// </summary>
         const double SHOT_SIDE = 0.55, SHOT_ELEVATION = 0.38, SHOT_DISTANCE = 2.9, SHOT_HOLD = 0.9;
-        const double HOP_SHOT_SIDE = 0.5, HOP_SHOT_ELEVATION = 0.42, HOP_SHOT_DISTANCE = 2.6;
         /// <summary>Seen from further off than this (tiles), a ring keeps the size it has from here, so it's easy to spot across the town.</summary>
         const double RING_SEEN_FROM = 28;
         /// <summary>A ring reached grows and fades over this long (seconds); a puff of soot and snow from a chimney lasts this long.</summary>
@@ -201,6 +200,8 @@ namespace Porchlight.App
             UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= PlaceRings;
             view.Deserted = false;
             climbing = null;
+            foreach (int room in treesAway) view.world?.ChristmasTreeAway(room, false);
+            treesAway.Clear();
             StopMoving();
             var rig = view.OwnCarView?.Sleigh;
             if (rig != null) rig.Ground = null;
@@ -535,13 +536,9 @@ namespace Porchlight.App
             var top = new Vector3((float)st.chimney.x, (float)st.chimney.y, (float)(st.rim + 0.12));
             if (down)
             {
-                shot = From(view.CameraAt, FlyingLook(view.OwnVehicle));
-                shot.yaw1 = street;
-                shot.elevation1 = SHOT_ELEVATION;
-                shot.distance1 = SHOT_DISTANCE;
-                shot.anchor1 = top;
-                // Round by the time you're stood on top of it.
-                shot.turn = trip.OnTop + ChimneyTrip.PERCH * 0.5;
+                // Close behind you as you climb out and go (V's camera), easing in from behind the sleigh.
+                shot = null;
+                view.CenterBehind(DetMath.Atan2(Math.Cos(way), Math.Sin(way)));
             }
             else
             {
@@ -560,22 +557,6 @@ namespace Porchlight.App
                     turn = trip.Duration,
                 };
             }
-        }
-
-        /// <summary>A camera move starting just where the camera is (a scene position), looking at `anchor` (map terms; else straight on down).</summary>
-        static Shot From(Vector3 cam, Vector3? anchor)
-        {
-            var a = anchor ?? new Vector3(cam.x, -cam.z, cam.y - 1);
-            double ox = cam.x - a.x, oy = -cam.z - a.y, oh = cam.y - a.z;
-            double flat = Math.Max(1e-3, Numbers.Hypot(ox, oy));
-            return new Shot
-            {
-                yaw0 = Math.Atan2(oy, ox),
-                elevation0 = Math.Atan2(oh, flat),
-                distance0 = Math.Max(0.8, Numbers.Hypot(flat, oh)),
-                anchor0 = a,
-                anchor1 = a,
-            };
         }
 
         /// <summary>Out onto the pavement from the story's plane: once you press A, you hop out of your seat to `to`, facing `facing`.</summary>
@@ -611,19 +592,13 @@ namespace Porchlight.App
             if (Geo.Dot(side, new Vec2(hopTo.x - seat.x, hopTo.y - seat.y)) < 0) side = new Vec2(f.y, -f.x);
             var landAt = new Vec2(seat.x + side.x * HOP_OUT, seat.y + side.y * HOP_OUT);
             if (!view.CanStandAt(landAt.x, landAt.y) || Geo.Dist(seat, hopTo) < HOP_OUT) landAt = hopTo;
-            var look = FlyingLook(car);
             view.LeaveSeat();
             // Turning in your seat from the sleigh's way (a walker's heading points along (sin, cos)).
             hop = new Hop(seat, from, landAt, hopTo, hopFacing, Street, DetMath.Atan2(f.x, f.y));
             pose = hop.At(0);
-            // The camera comes round behind you as you go, to look at the house over your shoulder.
-            double behind = Math.Atan2(-Math.Cos(hopFacing), -Math.Sin(hopFacing)) + HOP_SHOT_SIDE * (Geo.Dot(side, new Vec2(Math.Sin(hopFacing), Math.Cos(hopFacing))) >= 0 ? 1 : -1);
-            shot = From(view.CameraAt, look);
-            shot.yaw1 = behind;
-            shot.elevation1 = HOP_SHOT_ELEVATION;
-            shot.distance1 = HOP_SHOT_DISTANCE;
-            shot.anchor1 = new Vector3((float)hopTo.x, (float)hopTo.y, 0.25f);
-            shot.turn = hop.Duration;
+            // Close behind you as you climb out and go (V's camera), easing in from behind the sleigh.
+            shot = null;
+            view.CenterBehind(DetMath.Atan2(f.x, f.y));
             return true;
         }
 
@@ -645,6 +620,8 @@ namespace Porchlight.App
             if (s.treeGo != null) UnityEngine.Object.Destroy(s.treeGo);
             if (s.giftGo != null) UnityEngine.Object.Destroy(s.giftGo);
             s.giftGo = null;
+            // The house's own tree (the `christmas` unlock's), out of the way of this one.
+            if (treesAway.Add(r.room)) view.world.ChristmasTreeAway(r.room, true);
             var (at, stand) = TreeSpot(r);
             s.tree = at;
             s.treeStand = stand;
@@ -659,47 +636,22 @@ namespace Porchlight.App
         /// Where a tree goes in the role's room, and where you stand to put a present under it: a corner clear of
         /// the furniture, its doors and whoever keeps it, the furthest from the door it can be.
         /// </summary>
+        /// <summary>Houses whose own tree (the `christmas` unlock's) is put away while the story's stands there.</summary>
+        readonly HashSet<int> treesAway = new HashSet<int>();
+
         (Vec2 at, Vec2 stand) TreeSpot(Role r)
         {
             var world = view.world;
             var room = world.rooms[r.room];
             var plan = r.room < world.plans.Count ? world.plans[r.room] : null;
-            var doors = Interiors.Doors(room);
-            var middle = new Vec2((room.x0 + room.x1) / 2, (room.y0 + room.y1) / 2);
-            Vec2? best = null, bestStand = null;
-            double bestScore = double.NegativeInfinity;
-            const double INSET = 0.3, STEP = 0.12;
-            for (double x = room.x0 + INSET; x <= room.x1 - INSET + 1e-9; x += STEP)
-                for (double y = room.y0 + INSET; y <= room.y1 - INSET + 1e-9; y += STEP)
-                {
-                    var p = new Vec2(x, y);
-                    double clear = 1;
-                    if (plan != null)
-                        foreach (var f in plan.furniture)
-                        {
-                            if (f.flat) continue;
-                            double dx = Math.Max(0, Math.Max(f.box.x0 - x, x - f.box.x1)), dy = Math.Max(0, Math.Max(f.box.y0 - y, y - f.box.y1));
-                            clear = Math.Min(clear, Numbers.Hypot(dx, dy));
-                        }
-                    if (clear < 0.2) continue;
-                    double fromDoor = doors.Count > 0 ? doors.Min(d => Geo.Dist(d.at, p)) : 3;
-                    if (fromDoor < 0.8) continue;
-                    if (plan?.keeper != null && Numbers.Hypot(plan.keeper.Value.x - x, plan.keeper.Value.y - y) < 0.45) continue;
-                    // Where you stand: out from it towards the middle of the room, somewhere you can.
-                    double md = Geo.Dist(p, middle);
-                    var toMiddle = md < 1e-6 ? new Vec2(0, 1) : new Vec2((middle.x - x) / md, (middle.y - y) / md);
-                    var stand = new Vec2(x + toMiddle.x * TREE_STAND, y + toMiddle.y * TREE_STAND);
-                    if (!view.CanStandAt(stand.x, stand.y)) continue;
-                    double score = Math.Min(clear, 0.5) * 2 + Math.Min(fromDoor, 3) + md * 0.5;
-                    if (score <= bestScore) continue;
-                    bestScore = score;
-                    best = p;
-                    bestStand = stand;
-                }
-            if (best != null) return (best.Value, bestStand.Value);
-            // Nowhere clear: just inside the door, to one side.
+            var found = ChristmasCorner.Find(room, plan, view.CanStandAt);
+            if (found != null) return found.Value;
+            // Nowhere clear: just inside the door, to one side, and never out through the walls of a small room.
             var inside = r.Inside;
-            return (new Vec2(inside.x - r.outward.x * 0.5, inside.y - r.outward.y * 0.5), inside);
+            var inner = Interiors.InnerRect(room);
+            double Within(double v, double lo, double hi) => lo > hi ? (lo + hi) / 2 : Math.Max(lo, Math.Min(hi, v));
+            var spot = new Vec2(Within(inside.x - r.outward.x * 0.5, inner.x0 + 0.2, inner.x1 - 0.2), Within(inside.y - r.outward.y * 0.5, inner.y0 + 0.2, inner.y1 - 0.2));
+            return (spot, inside);
         }
 
         // Each frame.

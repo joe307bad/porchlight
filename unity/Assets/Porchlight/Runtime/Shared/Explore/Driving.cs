@@ -90,6 +90,11 @@ namespace Porchlight.Explore
         const double STALL_SPEED = 3.4;
         const double CLIMB = 2.2;
         const double SINK = 1.1;
+        /// <summary>
+        /// Santa's sleigh: its turbo (shift, RT) takes it to 15.5 flat out (under the server's 18), and it dives
+        /// three times as fast as a plane sinks (faster still on turbo), to get down to a ring or a roof quickly.
+        /// </summary>
+        const double SLEIGH_BOOST = 2.1, SLEIGH_SINK = 3.3, SLEIGH_DIVE_BOOST = 1.6;
         /// <summary>How high a plane climbs to (tiles), well over the tallest towers (the server allows 24).</summary>
         public const double CRUISE_HEIGHT = 20;
         const double AIR_TURN = 1;
@@ -227,10 +232,12 @@ namespace Porchlight.Explore
         /// </summary>
         void Fly(double throttle, double steer, double dt, Func<double, double, bool> open, Func<double, double, double> floor, bool boost)
         {
-            double flatOut = PLANE_TOP * (boost ? PLANE_BOOST : 1);
-            double target = throttle < 0 ? STALL_SPEED : throttle > 0 || boost ? flatOut : Math.Min(flatOut, Math.Max(STALL_SPEED, speed));
+            bool sleigh = model >= 0 && model < Catalog.CARS.Length && Catalog.CARS[model] == Catalog.SLEIGH;
+            double flatOut = PLANE_TOP * (boost ? (sleigh ? SLEIGH_BOOST : PLANE_BOOST) : 1);
+            double sink = sleigh ? SLEIGH_SINK * (boost ? SLEIGH_DIVE_BOOST : 1) : SINK;
+            double target = throttle < 0 && !(sleigh && boost) ? STALL_SPEED : throttle > 0 || boost ? flatOut : Math.Min(flatOut, Math.Max(STALL_SPEED, speed));
             speed += Math.Max(-PLANE_SLOWING * dt, Math.Min(PLANE_ACCEL * (boost ? BOOST_ACCEL : 1) * dt, target - speed));
-            double climb = throttle > 0 ? (altitude < CRUISE_HEIGHT ? CLIMB : 0) : throttle < 0 ? -SINK : 0;
+            double climb = throttle > 0 ? (altitude < CRUISE_HEIGHT ? CLIMB : 0) : throttle < 0 ? -sink : 0;
             double h = heading + steer * AIR_TURN * dt;
             double nx = x + Math.Cos(h) * speed * dt;
             double ny = y + Math.Sin(h) * speed * dt;

@@ -1439,7 +1439,9 @@ namespace Porchlight.App
             var sleigh = iso.OwnVehicle;
             bool flying = sleigh != null && Catalog.CARS[sleigh.model] == Catalog.SLEIGH && sleigh.Airborne && iso.DrivingMyCar;
             bool santa = iso.LookOverride == Catalog.SANTA;
-            Debug.Log($"smoke: santa: in the sleigh={flying}, {sleigh?.altitude:0.0} up, looking like {iso.LookOverride}, error={m.script.Error}");
+            for (int i = 0; i < 3; i++) await Task.Yield();
+            bool seated = iso.SatInSeat;
+            Debug.Log($"smoke: santa: in the sleigh={flying}, {sleigh?.altitude:0.0} up, looking like {iso.LookOverride}, sat in its seat yourself={seated}, error={m.script.Error}");
             int stops = 0;
             bool roofs = true;
             for (int stop = 1; stop <= STOPS && flying; stop++)
@@ -1539,7 +1541,10 @@ namespace Porchlight.App
             finished.TryGetValue("deliver-the-presents", out int completed);
             string carNow = iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none";
             bool back = carNow != Catalog.SLEIGH && iso.LookOverride == null && !iso.InCar;
-            bool passed = flying && santa && roofs && back && stops == STOPS && m.script.Done && m.script.Error == null && completed == 1
+            for (int i = 0; i < 5; i++) await Task.Yield();
+            bool christmas = Unlocks.Contains("christmas") && TownWorld.Christmassy && TownWorld.ChristmasTrees > 0;
+            Debug.Log($"smoke: santa: christmas unlocked={Unlocks.Contains("christmas")}, trees shown={TownWorld.Christmassy} in {TownWorld.ChristmasTrees} houses");
+            bool passed = flying && seated && santa && roofs && back && christmas && stops == STOPS && m.script.Done && m.script.Error == null && completed == 1
                 && m.RingsFlown == STOPS && m.Landings == STOPS && m.Gifts == STOPS && m.ChimneyTrips == 6;
             Debug.Log($"smoke: santa: {(passed ? "PASS" : "FAIL")}: {stops} of {STOPS} houses, rings {m.RingsFlown}, landings {m.Landings} (roof and street heights right={roofs}), chimney trips {m.ChimneyTrips}, presents {m.Gifts}, mission complete={completed == 1} (error={m.script.Error ?? "none"}), your car {carBefore} before and {carNow} now, yourself again={back}");
             if (mission != null) EndMission(null);
@@ -2017,6 +2022,7 @@ namespace Porchlight.App
                 if (exploring) ZoomWithWheel();
                 iso.FastSprint = Unlocks.Contains("sprint");
                 TownWorld.Feasting = Unlocks.Contains("feast");
+                TownWorld.Christmassy = Unlocks.Contains("christmas");
                 iso.Update();
                 if (county != null)
                 {
@@ -3139,6 +3145,7 @@ namespace Porchlight.App
             if (what == "firefighter") overlay?.Notify("Unlocked for all your characters: the firefighter and the fire engine. Find them in the character and car boxes.");
             if (what == "sprint") overlay?.Notify("Unlocked for all your characters: a faster sprint. Hold Shift (or RT) to try it.");
             if (what == "feast") overlay?.Notify("Unlocked for all your characters: Thanksgiving dinner on every house's table. Look in through a window.");
+            if (what == "christmas") overlay?.Notify("Unlocked for all your characters: a Christmas tree with presents under it in most houses. Look in through a window.");
         }
 
         /// <summary>The car box: a grid of every car (the fire engine once it's unlocked), and the one picked is yours, brought right beside you (in place of any other).</summary>

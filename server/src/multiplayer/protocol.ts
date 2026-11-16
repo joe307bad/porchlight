@@ -81,8 +81,8 @@ export interface SpawnMessage {
   unlocks: string[];
 }
 
-/** What an account can unlock, for all its characters: `animals`, to look like one of the zoo's animals; `firefighter`, to look like the firefighter (and drive the fire engine); `sprint`, to sprint faster on foot; `feast`, Thanksgiving dinner on every house's dining table. */
-export const UNLOCKS = ['animals', 'firefighter', 'sprint', 'feast'];
+/** What an account can unlock, for all its characters: `animals`, to look like one of the zoo's animals; `firefighter`, to look like the firefighter (and drive the fire engine); `sprint`, to sprint faster on foot; `feast`, Thanksgiving dinner on every house's dining table; `christmas`, a Christmas tree with presents under it in most houses. */
+export const UNLOCKS = ['animals', 'firefighter', 'sprint', 'feast', 'christmas'];
 
 /** What each unlock is, for the Journal. */
 export const UNLOCK_NAMES: Record<string, string> = {
@@ -90,6 +90,7 @@ export const UNLOCK_NAMES: Record<string, string> = {
   firefighter: 'Play as the firefighter, and drive the fire engine',
   sprint: 'Sprint faster on foot',
   feast: "Thanksgiving dinner on every house's table",
+  christmas: 'A Christmas tree with presents in most houses',
 };
 
 /** The firefighter's look, which needs `firefighter`. */

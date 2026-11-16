@@ -19,7 +19,7 @@ static class MissionCheck
         static readonly string[] SETTINGS = { "talk_reach", "talk_reach_car", "park_reach", "park_speed", "park_angle", "car_reach", "walk_speed",
             "your_pace", "chase_speed", "chase_speed_car", "pull_up", "officer_speed", "officer_reach", "ring", "catch_reach", "catch_time",
             "douse_time", "water_speed", "aim_speed" };
-        static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint", "feast" };
+        static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint", "feast", "christmas" };
         static readonly string[] KINDS = { "", "house", "workshop", "shop", "office", "hall", "church", "zoo" };
         static readonly string[] COUNTDOWNS = { "always", "inside", "outside" };
         static readonly string[] PLACES = { "inside", "door", "kerb", "car", "bin", "back" };

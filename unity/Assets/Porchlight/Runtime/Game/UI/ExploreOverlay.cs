@@ -544,6 +544,9 @@ namespace Porchlight.UI
                 return;
             }
             pointerShown = true;
+            // Over everything else in the view: the map, the directions, the story's lines and the hints.
+            var over = pointer.parent;
+            if (over != null && over.IndexOf(pointer) != over.childCount - 1) pointer.BringToFront();
             pointerAt = at.Value;
             pointerAngle = angle;
             // Redrawn every frame: it moves as you turn, and pulses.

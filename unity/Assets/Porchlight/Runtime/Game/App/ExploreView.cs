@@ -1279,6 +1279,31 @@ namespace Porchlight.App
             else Find(best);
         }
 
+        /// <summary>
+        /// Driving Santa's sleigh as a person (not an animal), you're drawn sat in its seat: where (its seat's top) and
+        /// which way you face (a walker's heading). Null otherwise.
+        /// </summary>
+        /// <summary>Whether you're drawn sat in your sleigh's seat yourself (the smoke run checks).</summary>
+        public bool SatInSeat => SeatedIn() != null && playerAvatar != null && playerAvatar.Visible;
+
+        (Transform seat, double heading)? SeatedIn()
+        {
+            if (driving == null || playerAvatar == null || player == null || Catalog.IsAnimal(lookOverride ?? player.look)) return null;
+            var c = cars[driving.Value];
+            var seat = c.view.Sleigh?.Seat;
+            if (seat == null) return null;
+            var f = c.car.Forward;
+            return (seat, DetMath.Atan2(f.x, f.y));
+        }
+
+        /// <summary>The camera close behind you (V's camera), facing `heading` (a walker's) from now.</summary>
+        public void CenterBehind(double heading)
+        {
+            if (player == null) return;
+            player.heading = heading;
+            CenterBehind();
+        }
+
         /// <summary>The camera close behind you, at its usual distance, looking the way you face.</summary>
         public void CenterBehind()
         {
@@ -2492,9 +2517,10 @@ namespace Porchlight.App
             var p = player;
             // A mission moving you on foot; back on the ground (and in sight) once it's done.
             var scripted = p != null && driving == null && riding == null ? Scripted?.Invoke() : null;
-            if (p != null && scripted == null && (p.floor != 0 || scriptHidden))
+            if (p != null && scripted == null && (p.floor != 0 || p.sit != 0 || scriptHidden))
             {
                 p.floor = 0;
+                p.sit = 0;
                 scriptHidden = false;
             }
             steering = held.Count > 0 || pad.move.x != 0 || pad.move.y != 0;
@@ -2544,6 +2570,7 @@ namespace Porchlight.App
                 p.rise = s.rise;
                 p.heading = s.heading;
                 p.speed = s.pace;
+                p.sit = s.sit;
                 p.Halt();
                 scriptHidden = !s.shown;
             }
@@ -2784,7 +2811,9 @@ namespace Porchlight.App
             if (settling != null && !settling.MoveNext()) settling = null;
             UpdateWeather(dt);
             var p = player;
-            if (p != null && playerAvatar != null)
+            // Driving Santa's sleigh, you're sat in its seat yourself (once its cars are placed, below).
+            var seatedIn = SeatedIn();
+            if (p != null && playerAvatar != null && seatedIn == null)
             {
                 // Out of a seat (or up out of a chimney), facing just the way you are, not turning round from however
                 // you last faced on your feet.
@@ -2804,10 +2833,16 @@ namespace Porchlight.App
                     c.view.SetLayer(through ? LayerMask.NameToLayer(Avatar.PLAYER_LAYER) : 0);
                 }
                 var f = c.car.Forward;
-                // Santa's in his sleigh's seat only while you are.
-                if (c.view.Sleigh != null) c.view.Sleigh.SantaAboard = i == driving;
+                // Santa's in his sleigh's seat only while you are (its own Santa, unless you're sat there yourself).
+                if (c.view.Sleigh != null) c.view.Sleigh.SantaAboard = i == driving && seatedIn == null;
                 c.view.Place(c.car.x, c.car.y, DetMath.Atan2(f.x, f.y), c.car.altitude, c.car.pitch, c.car.bank);
                 c.view.Lights(dusk);
+            }
+            if (seatedIn != null && p != null)
+            {
+                if (!playerAvatar.Visible) playerAvatar.SnapYaw(seatedIn.Value.heading);
+                playerAvatar.Visible = true;
+                playerAvatar.Seated(seatedIn.Value.seat, seatedIn.Value.heading, p.scale, dt);
             }
             MakeAvatars(AVATARS_A_FRAME);
             for (int k = 0; k < people.Count; k++)
@@ -3039,8 +3074,8 @@ namespace Porchlight.App
             var o = Orbit.CameraOffset(chaseYawNow, pitch);
             double dist = shownChaseDistance;
             var at = FocusOf(p);
-            // Up with a plane in flight.
-            double look = CHASE_LOOK_HEIGHT + (InCar ? p.lift : 0);
+            // Up with a plane in flight; up on whatever a mission has you stood on (a roof, a chimney, a sleigh's seat).
+            double look = CHASE_LOOK_HEIGHT + (InCar ? p.lift : p.floor);
             // Walls between you and the camera pull it in (and so down). In a car past its everyday top speed
             // the buildings flash by too fast for that to be anything but a lurch, so it stays out where it is
             // (the car shows through them); otherwise a car's camera comes in quickly and drifts back out,

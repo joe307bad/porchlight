@@ -64,6 +64,16 @@ namespace Porchlight.Rendering
         double? lastHeading;
         double accel, turn, moveWeight, airWeight;
         bool visible = true;
+        /// <summary>Sat in a seat (SeatPose), or null with no seat to sit in (an animal, or a rig without the bones).</summary>
+        SeatPose seatPose;
+        bool noSeat;
+        /// <summary>
+        /// Where the root was last frame (a scene position), whether it was sat in a seat (Seated) then, and how far it's
+        /// still off where it should be (easing away): going from one to the other, it carries on from just where it was.
+        /// </summary>
+        Vector3? lastAt;
+        bool wasSeated;
+        Vector3 carry;
 
         Avatar(string name, Transform parent)
         {
@@ -129,6 +139,7 @@ namespace Porchlight.Rendering
                 if (visible == value) return;
                 visible = value;
                 root.SetActive(value);
+                if (!value) lastAt = null;
             }
         }
 
@@ -144,10 +155,14 @@ namespace Porchlight.Rendering
         public void Update(Walker w, double dt)
         {
             double k = Math.Max(1e-3, dt);
-            root.transform.localPosition = Coords.Map(w.x, w.y, FEET + w.floor + w.lift);
+            // Sat (or sitting down, or getting up) on a seat whose top is their floor: no lift for their feet's soles.
+            root.transform.localPosition = Coords.Map(w.x, w.y, (w.sit > 0 ? FEET * (1 - w.sit) : FEET) + w.floor + w.lift);
+            Carry(wasSeated, dt);
+            wasSeated = false;
             root.transform.localScale = Vector3.one * (float)w.scale;
             rootYaw += Orbit.ShortestTurn(rootYaw, w.heading) * Math.Min(1, dt * (12 + w.speed * 2));
             root.transform.localRotation = Coords.Yaw(rootYaw);
+            Sit(w.sit);
 
             double pace = w.speed / w.scale;
             accel = Ease(accel, (pace - lastSpeed) / k, 8, dt);
@@ -194,6 +209,77 @@ namespace Porchlight.Rendering
             double sy = 1 + stretch - squash;
             float side = (float)(1 / Math.Sqrt(sy));
             body.localScale = new Vector3(side, (float)sy, side);
+        }
+
+        /// <summary>How far sat down (0 stood, 1 sat): SeatPose, over the Animator.</summary>
+        void Sit(double sit)
+        {
+            if (creature != null || noSeat || (sit <= 0 && seatPose == null)) return;
+            if (seatPose == null)
+            {
+                seatPose = root.AddComponent<SeatPose>();
+                if (!seatPose.Bind(root.transform))
+                {
+                    UnityEngine.Object.Destroy(seatPose);
+                    seatPose = null;
+                    noSeat = true;
+                    return;
+                }
+            }
+            seatPose.weight = (float)Math.Max(0, Math.Min(1, sit));
+        }
+
+        /// <summary>
+        /// Just switched between sat in a seat and on their feet (`switched`): carry on from where they were, easing
+        /// over to where they should be, not jumping there. Then remember where they are.
+        /// </summary>
+        void Carry(bool switched, double dt)
+        {
+            var at = root.transform.position;
+            if (switched && lastAt != null)
+            {
+                carry = lastAt.Value - at;
+                if (carry.sqrMagnitude > 0.25f) carry = Vector3.zero;
+            }
+            carry *= (float)Math.Exp(-10 * dt);
+            if (carry.sqrMagnitude < 1e-10f) carry = Vector3.zero;
+            root.transform.position = at + carry;
+            lastAt = root.transform.position;
+        }
+
+        /// <summary>
+        /// Sat in a seat (its top, `seat`: a sleigh's, say) facing `heading` (a walker's), tipped as the seat is (a
+        /// sleigh banking into a turn), `scale` the size of an average townsperson: not walking, not in the air.
+        /// </summary>
+        public void Seated(Transform seat, double heading, double scale, double dt)
+        {
+            if (seat == null) return;
+            root.transform.position = seat.position;
+            Carry(!wasSeated, dt);
+            wasSeated = true;
+            root.transform.localScale = Vector3.one * (float)scale;
+            rootYaw = heading;
+            root.transform.localRotation = Coords.Yaw(heading);
+            var parent = root.transform.parent;
+            var level = parent != null ? parent.up : Vector3.up;
+            root.transform.rotation = Quaternion.FromToRotation(level, seat.up) * root.transform.rotation;
+            lastHeading = heading;
+            lastSpeed = 0;
+            accel = turn = moveWeight = airWeight = 0;
+            wasAir = false;
+            sinceLanding = sinceTakeoff = double.PositiveInfinity;
+            if (creature != null) creature.Update(0, false, (float)dt);
+            else
+            {
+                animator.SetFloat(Speed, 0);
+                animator.SetFloat(Cadence, 1);
+                animator.SetBool(Air, false);
+                animator.SetBool(Falling, false);
+            }
+            bodyX = bodyZ = 0;
+            body.localRotation = Quaternion.identity;
+            body.localScale = Vector3.one;
+            Sit(1);
         }
 
         ArmWave wave;

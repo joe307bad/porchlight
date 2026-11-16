@@ -229,18 +229,23 @@ static class SleighCheck
         var down = new ChimneyTrip(true, seat, seatHeight, chimney, rim, perched);
         var up = new ChimneyTrip(false, seat, seatHeight, chimney, rim, perched);
         var s0 = down.At(0);
-        expect(Geo.Dist(s0.at, seat) < 1e-9 && Math.Abs(s0.Up - seatHeight) < 1e-9 && s0.shown && s0.lift == 0, "down a chimney starts stood up in your seat, in sight");
+        expect(Geo.Dist(s0.at, seat) < 1e-9 && Math.Abs(s0.Up - seatHeight) < 1e-9 && s0.shown && s0.lift == 0 && s0.sit == 1, "down a chimney starts sat in your seat, in sight");
+        var stoodUp = down.At(ChimneyTrip.RISE + 0.01);
+        var onSide = down.At(down.LeapFrom - 0.01);
+        expect(stoodUp.sit == 0 && Geo.Dist(stoodUp.at, seat) < 1e-9, "you stand up out of the seat first");
+        expect(onSide.sit == 0 && onSide.lift == 0 && Math.Abs(onSide.floor - seatHeight - ChimneyTrip.SIDE_UP) < 1e-9 && Geo.Dist(onSide.at, seat) > 0.05 && Geo.Dist(onSide.at, chimney) < Geo.Dist(seat, chimney),
+            "then hop up onto the sleigh's side towards the chimney, ready to leap");
         var onTop = down.At(down.OnTop + 0.01);
         var turned = down.At(down.OnTop + ChimneyTrip.PERCH * ChimneyTrip.PERCH_TURN + 0.01);
         expect(Geo.Dist(onTop.at, chimney) < 1e-9 && Math.Abs(onTop.floor - rim) < 1e-9 && onTop.lift == 0 && Math.Abs(Orbit.ShortestTurn(turned.heading, perched)) < 1e-9,
             "you leap out of your seat right onto the chimney's top, and stand on it turned to the street");
         double leapTop = 0, takeOff = 0, landing = 0;
         bool arc = true;
-        for (double t = ChimneyTrip.TURN; t <= down.OnTop; t += 0.005)
+        for (double t = down.LeapFrom; t <= down.OnTop; t += 0.005)
         {
             var a = down.At(t);
             leapTop = Math.Max(leapTop, a.Up);
-            if (t < ChimneyTrip.TURN + 0.02) takeOff = Math.Max(takeOff, a.rise);
+            if (t < down.LeapFrom + 0.02) takeOff = Math.Max(takeOff, a.rise);
             if (t > down.OnTop - 0.02) landing = Math.Min(landing, a.rise);
             arc &= a.lift >= -1e-9 && a.shown;
         }
@@ -271,7 +276,7 @@ static class SleighCheck
         }
         expect(same, "back up the chimney is the trip down played backwards");
         var back = up.At(up.Duration);
-        expect(Geo.Dist(back.at, seat) < 1e-9 && Math.Abs(back.Up - seatHeight) < 1e-9 && back.shown, "ending with a leap back into your seat, in sight");
+        expect(Geo.Dist(back.at, seat) < 1e-9 && Math.Abs(back.Up - seatHeight) < 1e-9 && back.shown && back.sit == 1, "ending sat back down in your seat, in sight");
         expect(Math.Abs(Orbit.ShortestTurn(back.heading, DetMath.Atan2(seat.x - chimney.x, seat.y - chimney.y))) < 1e-9, "facing your seat as you leap back into it");
         var stepped = new ChimneyTrip(true, seat, seatHeight, chimney, rim, perched);
         int frames = 0;
@@ -287,9 +292,10 @@ static class SleighCheck
         double facing = 1.2;
         var hopOut = new Hop(seat, 0.27, landAt, to, facing, (x, y) => 0);
         double hopTop = 0;
-        for (double t = Hop.TURN; t <= Hop.TURN + Hop.LEAP; t += 0.005) hopTop = Math.Max(hopTop, hopOut.At(t).Up);
-        var landed = hopOut.At(Hop.TURN + Hop.LEAP + 0.01);
-        var walking = hopOut.At(Hop.TURN + Hop.LEAP + Hop.SETTLE + 0.1);
+        for (double t = Hop.RISE + Hop.TURN; t <= Hop.RISE + Hop.TURN + Hop.LEAP; t += 0.005) hopTop = Math.Max(hopTop, hopOut.At(t).Up);
+        var landed = hopOut.At(Hop.RISE + Hop.TURN + Hop.LEAP + 0.01);
+        var walking = hopOut.At(Hop.RISE + Hop.TURN + Hop.LEAP + Hop.SETTLE + 0.1);
+        expect(hopOut.At(0).sit == 1 && hopOut.At(Hop.RISE + 0.01).sit == 0 && landed.sit == 0, "hopping out: sat in the seat, you stand up out of it first");
         var stood = hopOut.At(hopOut.Duration);
         expect(hopTop > 0.27 + 0.2 && Geo.Dist(landed.at, landAt) < 1e-9 && landed.Up == 0, $"hopping out: up over the side ({hopTop:0.00}) and down on the pavement beside it");
         expect(walking.pace > 0 && Geo.Dist(stood.at, to) < 1e-9 && Math.Abs(stood.heading - facing) < 1e-9, "then walking on to where you're to stand, and turning to face the house");

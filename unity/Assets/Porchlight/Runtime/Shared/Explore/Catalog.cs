@@ -52,8 +52,8 @@ namespace Porchlight.Explore
             ("airliner-g", 0, 3.2, 1),
             // Santa's sleigh and its nine reindeer (Tools~/christmas): never parked at the airport, only
             // flown on a mission (your_plane). Drawn to the town's scale: the sleigh and its whole team
-            // about a car's length, a reindeer shorter than a person, Santa in his seat about the size
-            // he is on his feet when he hops out.
+            // a little longer than a car, a reindeer shorter than a person, and the sleigh's seat wide
+            // enough for Santa himself (you, the town's Santa, sit in it).
             ("santa-sleigh", 0, SLEIGH_LENGTH, 0),
         };
         public static readonly string[] PLANES = PLANE_TABLE.Select(p => $"planes/{p.name}").ToArray();
@@ -61,7 +61,7 @@ namespace Porchlight.Explore
         /// <summary>Santa's sleigh behind his nine reindeer: a plane, flown on a mission (your_plane).</summary>
         public const string SLEIGH = "planes/santa-sleigh";
         /// <summary>How long the sleigh and its team are drawn (tiles), and how long the model is (its own units, as Tools~/christmas prints it).</summary>
-        public const double SLEIGH_LENGTH = 1.2, SLEIGH_MODEL_LENGTH = 6.065;
+        public const double SLEIGH_LENGTH = 1.6, SLEIGH_MODEL_LENGTH = 6.065;
         /// <summary>Tiles to the sleigh model's unit.</summary>
         public const double SLEIGH_SCALE = SLEIGH_LENGTH / SLEIGH_MODEL_LENGTH;
         /// <summary>
@@ -184,9 +184,10 @@ namespace Porchlight.Explore
         /// to be one of the zoo's animals (the character menu offers them after the people);
         /// `firefighter`, to be the firefighter, and to have the fire engine in the car box;
         /// `sprint`, to sprint faster on foot (Marathon Runner); `feast`, Thanksgiving dinner on every
-        /// house's dining table (Turkey run).
+        /// house's dining table (Turkey run); `christmas`, a Christmas tree with presents under it in most
+        /// houses (Deliver the Presents).
         /// </summary>
-        public static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint", "feast" };
+        public static readonly string[] UNLOCKS = { "animals", "firefighter", "sprint", "feast", "christmas" };
 
         /// <summary>The car models the car box offers with these unlocks (indices into CARS): every car, the fire engine once unlocked.</summary>
         public static int[] GarageCars(ICollection<string> unlocks) =>

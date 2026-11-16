@@ -186,16 +186,25 @@ namespace Porchlight.Rendering
             public Vector3 rockAxis;
             /// <summary>How far out of step with the team it is (a share of a stride).</summary>
             public float offset;
-            /// <summary>How far it's raised (or lowered) to stand on the roof under it (model units), eased; how much it's standing (0 galloping, 1 stood).</summary>
-            public float lift, stood;
+            /// <summary>How much it's standing (0 galloping, 1 stood).</summary>
+            public float stood;
             public readonly List<Leg> legs = new List<Leg>();
         }
 
         readonly GameObject root;
         readonly List<Deer> deer = new List<Deer>();
-        readonly Transform santa, sack;
+        readonly Transform santa, sack, harness;
         readonly Vector3 santaRest, sackRest;
-        readonly Quaternion santaTurn, sackTurn;
+        readonly Quaternion santaTurn, sackTurn, harnessTurn;
+        /// <summary>
+        /// How far the whole team (and its harness) is tipped about where the traces meet the sleigh (radians, nose
+        /// up), eased, to stand it on the roof under it: all together, so none of them ever comes out of harness.
+        /// </summary>
+        float teamPitch;
+        /// <summary>The most the team tips either way (radians).</summary>
+        const float TEAM_TIP = 0.3f;
+        /// <summary>In the team's parent's own terms: the model's forward, and what a positive turn about tips its nose up.</summary>
+        readonly Vector3 teamForward = Vector3.forward, tipAxis = Vector3.right;
         readonly Renderer nose;
         double lastX, lastY, lastAltitude, lastTime = -1;
         /// <summary>How much it's on the move (0 standing, 1 flying), eased; how far through a stride the team is.</summary>
@@ -207,6 +216,9 @@ namespace Porchlight.Rendering
         /// </summary>
         public Func<double, double, double> Ground;
         public Transform Space;
+
+        /// <summary>The top of Santa's seat, facing the sleigh's way: where whoever drives it sits (Avatar.Seated).</summary>
+        public Transform Seat { get; }
 
         /// <summary>Santa in his seat (you, at the reins); not while you're out of it.</summary>
         public bool SantaAboard
@@ -262,6 +274,25 @@ namespace Porchlight.Rendering
                     santa = t;
                     santaRest = t.localPosition;
                     santaTurn = t.localRotation;
+                    // The seat's top: a little up and back from where the model's own Santa sits (Tools~/christmas:
+                    // SEAT_X, SEAT_TOP), facing as the sleigh does.
+                    var seat = new GameObject("seat").transform;
+                    seat.SetParent(t.parent, false);
+                    seat.localPosition = santaRest + new Vector3(0, 0.16f, -0.11f);
+                    seat.rotation = Quaternion.LookRotation(forward, up);
+                    Seat = seat;
+                }
+                else if (name == "harness")
+                {
+                    harness = t;
+                    harnessTurn = t.localRotation;
+                    if (t.parent != null)
+                    {
+                        teamForward = t.parent.InverseTransformDirection(forward).normalized;
+                        var localUp = t.parent.InverseTransformDirection(up).normalized;
+                        tipAxis = Vector3.Cross(teamForward, localUp).normalized;
+                        if (Vector3.Dot(Quaternion.AngleAxis(10, tipAxis) * teamForward, localUp) < 0) tipAxis = -tipAxis;
+                    }
                 }
                 else if (name == "sack")
                 {
@@ -301,23 +332,31 @@ namespace Porchlight.Rendering
             stride = (stride + dt * Mathf.Lerp(PADDLE, STRIDE, going)) % 1;
             float t = (float)now;
             bool down = Ground != null && Space != null && going < 0.5f;
-            foreach (var d in deer)
+            // Down: the team tipped as one about the harness's pivot (where the traces meet the sleigh) to fit the
+            // roof (or road) under the reindeer best, so they stand on it as near as they can, all still in harness.
+            var pivot = harness != null ? harness.localPosition : Vector3.zero;
+            float wantPitch = 0, wantStood = down ? 1 : 0;
+            if (down && deer.Count > 0)
             {
-                // Down, with roof under it: stand on it. Otherwise up in the air, galloping (or paddling, standing still).
-                float wantLift = 0, wantStood = 0;
-                if (down)
+                double sdl = 0, sdd = 0;
+                foreach (var d in deer)
                 {
                     var at = Space.InverseTransformPoint(d.t.parent.TransformPoint(d.rest));
                     double g = Ground(at.x, -at.z);
                     float scale = Math.Max(1e-4f, d.t.parent.lossyScale.y / Math.Max(1e-4f, Space.lossyScale.y));
-                    if (!double.IsNaN(g) && Math.Abs(g - at.y) < 0.6)
-                    {
-                        wantLift = (float)((g - at.y) / scale);
-                        wantStood = 1;
-                    }
+                    if (double.IsNaN(g) || Math.Abs(g - at.y) >= 0.6) continue;
+                    double along = Vector3.Dot(d.rest - pivot, teamForward), lift = (g - at.y) / scale;
+                    sdl += along * lift;
+                    sdd += along * along;
                 }
-                float ease = Math.Min(1, dt * 4);
-                d.lift += (wantLift - d.lift) * ease;
+                if (sdd > 1e-6) wantPitch = Mathf.Clamp((float)Math.Atan(sdl / sdd), -TEAM_TIP, TEAM_TIP);
+            }
+            float ease = Math.Min(1, dt * 4);
+            teamPitch += (wantPitch - teamPitch) * ease;
+            var tip = Quaternion.AngleAxis(teamPitch * Mathf.Rad2Deg, tipAxis);
+            if (harness != null) harness.localRotation = tip * harnessTurn;
+            foreach (var d in deer)
+            {
                 d.stood += (wantStood - d.stood) * ease;
                 float gait = (1 - d.stood) * Mathf.Lerp(0.55f, 1, going);
                 float cycle = (stride + d.offset) * Mathf.PI * 2;
@@ -326,8 +365,8 @@ namespace Porchlight.Rendering
                 float rock = DEER_ROCK * gait * Mathf.Sin(cycle - 0.3f * Mathf.PI * 2);
                 // Stood, it breathes.
                 float breathe = 0.006f * d.stood * Mathf.Sin(t * 1.6f + d.offset * 20);
-                d.t.localPosition = d.rest + Vector3.up * (d.lift + rise + breathe);
-                d.t.localRotation = d.turn * Quaternion.AngleAxis(rock, d.rockAxis);
+                d.t.localPosition = pivot + tip * (d.rest - pivot) + Vector3.up * (rise + breathe);
+                d.t.localRotation = tip * d.turn * Quaternion.AngleAxis(rock, d.rockAxis);
                 foreach (var leg in d.legs)
                 {
                     float psi = cycle - leg.phase * Mathf.PI * 2;

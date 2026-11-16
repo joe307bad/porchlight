@@ -104,7 +104,7 @@ namespace Porchlight.Missions
         /// in, from every side; called off, they go back to wait.
         /// </summary>
         void Standby(string role, int count, string car, string look);
-        /// <summary>Something the player keeps for finishing (Catalog.UNLOCKS: "animals", "firefighter", "sprint", "feast").</summary>
+        /// <summary>Something the player keeps for finishing (Catalog.UNLOCKS: "animals", "firefighter", "sprint", "feast", "christmas").</summary>
         void Unlock(string what);
         /// <summary>Your own car becomes a `car` (a model), and you're at its wheel; "" gives you back the one you had.</summary>
         void YourCar(string car);

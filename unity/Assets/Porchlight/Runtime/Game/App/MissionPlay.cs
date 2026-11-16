@@ -570,6 +570,16 @@ namespace Porchlight.App
                 found.Add((i, door, d < min ? min - d : d > max ? d - max : 0));
             }
             if (found.Count == 0) throw new Exception($"there's no {what} in this town");
+            // A house: one of the middling to bigger ones (not the smallest few, nor the very biggest), with room
+            // inside for what a story puts there (a Christmas tree, say), as long as the town has enough of them.
+            if (style == HouseStyle.House && found.Count >= 8)
+            {
+                double Area(int i) => (world.rooms[i].x1 - world.rooms[i].x0) * (world.rooms[i].y1 - world.rooms[i].y0);
+                var areas = found.Select(h => Area(h.room)).OrderBy(a => a).ToList();
+                double lo = areas[(int)(areas.Count * 0.35)], hi = areas[Math.Min(areas.Count - 1, (int)(areas.Count * 0.95))];
+                var middling = found.Where(h => Area(h.room) >= lo && Area(h.room) <= hi).ToList();
+                if (middling.Count >= 4) found = middling;
+            }
             var order = rng.Shuffle(found).OrderBy(h => h.miss).ToList();
             foreach (var h in order.Take(40))
             {

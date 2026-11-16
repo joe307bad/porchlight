@@ -22,6 +22,8 @@ namespace Porchlight.Explore
         public double rise;
         /// <summary>How high what they're stood on is (tiles): 0 on the ground, a roof's height up on one (a mission's doing).</summary>
         public double floor;
+        /// <summary>How far sat down they are (0 stood, 1 sat on a seat whose top is their floor: a mission's doing).</summary>
+        public double sit;
         public readonly string look;
         public double x;
         public double y;

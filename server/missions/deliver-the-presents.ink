@@ -1,5 +1,6 @@
 # title: Deliver the Presents
 # summary: It's Christmas Eve and you're Santa, high over the town in your sleigh behind nine reindeer. Fly through the golden ring over each house and the reindeer bring you down: onto the roof and down the chimney, or into the street and in at the front door, to leave a present under the tree. Five houses before morning!
+# unlocks: christmas
 
 // Everything this mission is lives in this file (see README.md in this
 // folder): you as Santa, the sleigh, the rings over each house, the reindeer
@@ -18,6 +19,7 @@ EXTERNAL tree(role, gift)
 EXTERNAL put_you(role, at)
 EXTERNAL guide(role, to, label)
 EXTERNAL dot(role, to)
+EXTERNAL unlock(what)
 
 CONST SANTA = "people/santa"
 CONST SLEIGH = "planes/santa-sleigh"
@@ -50,7 +52,7 @@ The sack's full of presents, and there are five houses on the list tonight. Ever
 ~ tree("home", PRESENT)
 ~ ring("home", RING_HEIGHT, RING_SIZE)
 ~ guide("home", "ring", "the ring over {street}")
-~ hint("always", "", "Fly through the golden ring, or just near it: follow the gold arrow at the edge of the screen. W climbs, S dives, A and D bank (on a pad: RT, LT and the stick)")
+~ hint("always", "", "Fly through the golden ring, or just near it: follow the gold arrow at the edge of the screen. W climbs, S dives, A and D bank, Shift for turbo (on a pad: RT, LT and the stick; A held for turbo)")
 ~ objective("Fly through the golden ring over {street} ({stop} of {STOPS})")
 + [@ring home] -> through
 
@@ -136,6 +138,7 @@ A present under the tree. Now tiptoe back out to the sleigh before anyone wakes!
 Five presents under five trees, and the sky's getting light. Back to the North Pole!
 ~ your_plane("", 0)
 ~ look("")
+~ unlock("christmas")
 Merry Christmas! The whole town wakes up to presents under the tree.
 -> END
 
@@ -165,4 +168,6 @@ Merry Christmas! The whole town wakes up to presents under the tree.
 === function guide(role, to, label) ===
 ~ return
 === function dot(role, to) ===
+~ return
+=== function unlock(what) ===
 ~ return
