@@ -63,6 +63,7 @@ namespace Porchlight.Gen
             new ZooStage(),
             new RoadsStage(),
             new StreetsStage(),
+            new RoadSenseStage(),
             new BlocksStage(),
             new LotsStage(),
             new BuildingsStage(),

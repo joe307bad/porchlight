@@ -30,6 +30,11 @@ namespace Porchlight.Model
         public double maxRoadSlope = 0.04;
         public double bridgeCost = 12;
         public double mainRoadWidth = 2;
+        /// <summary>
+        /// RoadSense's repairs (1): junctions too close together joined, short stubs dropped. Off (0)
+        /// for every town made before it, so none of them changes shape; new towns can turn it on.
+        /// </summary>
+        public double roadSense = 0;
         // streets
         public double roadDensity = 0.85;
         public double streetSegment = 5;
@@ -82,6 +87,7 @@ namespace Porchlight.Model
                 "maxRoadSlope" => maxRoadSlope,
                 "bridgeCost" => bridgeCost,
                 "mainRoadWidth" => mainRoadWidth,
+                "roadSense" => roadSense,
                 "roadDensity" => roadDensity,
                 "streetSegment" => streetSegment,
                 "streetSpacing" => streetSpacing,
@@ -121,6 +127,7 @@ namespace Porchlight.Model
                     case "maxRoadSlope": maxRoadSlope = value; break;
                     case "bridgeCost": bridgeCost = value; break;
                     case "mainRoadWidth": mainRoadWidth = value; break;
+                    case "roadSense": roadSense = value; break;
                     case "roadDensity": roadDensity = value; break;
                     case "streetSegment": streetSegment = value; break;
                     case "streetSpacing": streetSpacing = value; break;
@@ -204,6 +211,7 @@ namespace Porchlight.Model
             S("maxRoadSlope", "Max road slope", "Town & roads", 0.02, 0.1, 0.001),
             S("bridgeCost", "Bridge cost", "Town & roads", 2, 60, 1),
             S("mainRoadWidth", "Main road width", "Town & roads", 1, 3, 0.25),
+            S("roadSense", "Repair road network", "Town & roads", 0, 1, 1),
             S("roadDensity", "Street density", "Streets", 0, 1, 0.01),
             S("streetSegment", "Segment length", "Streets", 3, 10, 0.5),
             S("streetSpacing", "Side street spacing", "Streets", 5, 20, 1),
