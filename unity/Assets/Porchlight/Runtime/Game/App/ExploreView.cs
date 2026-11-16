@@ -3083,7 +3083,12 @@ namespace Porchlight.App
             var drivenCar = driving != null ? cars[driving.Value].car : null;
             bool flatOut = drivenCar != null && drivenCar.kind == VehicleKind.Car && Math.Abs(drivenCar.speed) > Vehicle.TOP_SPEED * 1.02;
             if (!flatOut)
-                foreach (var b in world.boxes) dist = Math.Min(dist, Math.Max(0.5, Orbit.RayBoxDistance(at, look, o, b) - 0.2));
+                foreach (var b in world.boxes)
+                {
+                    // Up on a building (a mission has you on its roof): it's under you, not between you and the camera.
+                    if (!InCar && p.floor > 0 && at.x > b.x0 && at.x < b.x1 && at.y > b.y0 && at.y < b.y1) continue;
+                    dist = Math.Min(dist, Math.Max(0.5, Orbit.RayBoxDistance(at, look, o, b) - 0.2));
+                }
             if (snap || !InCar || chaseReach > shownChaseDistance) chaseReach = dist;
             else chaseReach += (dist - chaseReach) * Orbit.EaseBy(dist < chaseReach ? 10 : 2.5, dt);
             dist = Math.Min(chaseReach, shownChaseDistance);
