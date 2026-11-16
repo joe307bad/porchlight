@@ -328,6 +328,7 @@ namespace Porchlight.App
                 heading = stop.heading;
                 to = new Vec2(stop.middle.x - Math.Cos(heading) * ahead, stop.middle.y - Math.Sin(heading) * ahead);
                 height = stop.altitude;
+                RoofNote += $"; to {stop.altitude:0.00} up, the seat {stop.seatHeight:0.00} up";
                 // Touching down on the roof itself and sliding along its ridge to a stop: as far back as the roof goes under the back of it.
                 slide = RoofSlide(map, to, heading, tail, stop.altitude + CarView.LIFT + (sleigh ? Catalog.SLEIGH_RUNNER_LOW : 0));
                 own = RoofOf(r);
@@ -471,15 +472,23 @@ namespace Porchlight.App
                         // A porch's floor or a step is no roof.
                         return h < eaves ? double.NaN : h;
                     });
-                    if (!double.IsNaN(map.Top)) return map;
+                    if (!double.IsNaN(map.Top))
+                    {
+                        RoofNote = $"the roof read off its meshes, {solids.Count} of them: top {map.Top:0.00} (its box {box.top:0.00}, eaves {eaves:0.00})";
+                        return map;
+                    }
                 }
             }
             finally
             {
                 foreach (var go in solids) UnityEngine.Object.Destroy(go);
             }
+            RoofNote = $"the roof from its box, {solids.Count} meshes hit nothing: top {box.top:0.00}";
             return new RoofMap(box.x0, box.y0, box.x1, box.y1, ROOF_STEP, (x, y) => box.top);
         }
+
+        /// <summary>How the last roof landed on was read (the smoke run logs it).</summary>
+        public string RoofNote { get; private set; }
 
         public void Chimney(string role, string way)
         {

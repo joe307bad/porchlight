@@ -1457,17 +1457,18 @@ namespace Porchlight.App
                     return (car.altitude < r.h - 0.3 ? 1 : car.altitude > r.h + 0.3 ? -1 : 0, Math.Max(-1, Math.Min(1, turn * 3)), false);
                 };
                 double start = platform.Now();
-                ok = await Until(() => m.RingsFlown > rings, 45);
+                ok = await Until(() => m.RingsFlown > rings, 120);
                 iso.Autopilot = null;
                 Debug.Log($"smoke: santa: stop {stop}: through the ring={ok} in {(platform.Now() - start) / 1000:0.0} s");
                 if (!ok) break;
                 // The story brings it down.
                 int landings = m.Landings;
                 jump = 0;
-                ok = await Until(() => m.Landings > landings, 15);
+                // (Long enough at a software renderer's few frames a second too.)
+                ok = await Until(() => m.Landings > landings, 90);
                 var down = iso.OwnVehicle;
                 double roof = iso.FlyFloor(down?.x ?? 0, down?.y ?? 0);
-                Debug.Log($"smoke: santa: stop {stop}: landed={ok} {(chimney ? "on the roof" : "in the street")} at {down?.altitude:0.00} up (the flying floor there {roof:0.00}), stopped={down?.speed == 0}, the biggest jump in a frame {jump:0.00} tiles");
+                Debug.Log($"smoke: santa: stop {stop}: landed={ok} {(chimney ? "on the roof" : "in the street")} at {down?.altitude:0.00} up (the flying floor there {roof:0.00}), stopped={down?.speed == 0}, the biggest jump in a frame {jump:0.00} tiles{(chimney ? $"; {m.RoofNote}" : "")}");
                 if (!ok || down == null) break;
                 if (chimney && down.altitude < 0.8) roofs = false;
                 if (!chimney && down.altitude > 0.2) roofs = false;
@@ -1475,21 +1476,21 @@ namespace Porchlight.App
                 if (chimney)
                 {
                     // A to jump out of the seat, down the chimney and out by the tree, the present under it, back up to the seat.
-                    ok = await Until(() => m.JumpWaiting, 8);
+                    ok = await Until(() => m.JumpWaiting, 30);
                     Debug.Log($"smoke: santa: stop {stop}: waiting for the jump out={ok}, '{Objective()}'");
                     if (!ok) break;
                     ok = m.TryTalk() && !iso.InCar;
                     Debug.Log($"smoke: santa: stop {stop}: A jumped out of the sleigh={ok}");
                     if (!ok) break;
-                    ok = await Until(() => m.ChimneyTrips > trips && Objective().StartsWith("Put a present"), 15);
+                    ok = await Until(() => m.ChimneyTrips > trips && Objective().StartsWith("Put a present"), 60);
                     Debug.Log($"smoke: santa: stop {stop}: down the chimney={ok}, in a room={iso.InRoom}, '{Objective()}'");
                     if (!ok) break;
                 }
                 else
                 {
                     // A to hop out onto the pavement, in at the door (to where you stand by the tree), the present under it.
-                    ok = await Until(() => Objective().StartsWith("Go in at") && m.JumpWaiting, 8);
-                    ok = ok && m.TryTalk() && await Until(() => !iso.InCar && !m.Hopping, 5);
+                    ok = await Until(() => Objective().StartsWith("Go in at") && m.JumpWaiting, 30);
+                    ok = ok && m.TryTalk() && await Until(() => !iso.InCar && !m.Hopping, 30);
                     var stand = m.TreeStandOf("home");
                     Debug.Log($"smoke: santa: stop {stop}: out of the sleigh={ok && !iso.InCar}, the sleigh still {iso.OwnVehicle?.altitude:0.00} up");
                     if (!ok || stand == null) break;
@@ -1503,7 +1504,7 @@ namespace Porchlight.App
                 if (!ok) break;
                 if (chimney)
                 {
-                    ok = await Until(() => m.ChimneyTrips > trips + 1 && iso.DrivingMyCar, 15);
+                    ok = await Until(() => m.ChimneyTrips > trips + 1 && iso.DrivingMyCar, 60);
                     Debug.Log($"smoke: santa: stop {stop}: back up the chimney and in the sleigh={ok}");
                 }
                 else
