@@ -1410,8 +1410,9 @@ namespace Porchlight.App
             string carBefore = iso.CarModel >= 0 ? Catalog.CARS[iso.CarModel] : "none";
             var m = mission = new MissionPlay("deliver-the-presents", "Deliver the Presents", story, iso, ModelLibrary.Instance, input) { OnUnlock = Unlock };
             string Objective() => mission?.CurrentObjective ?? "(no mission)";
-            // The biggest jump the sleigh made in a frame while the story had its controls (tiles), and in which landing.
-            double jump = 0;
+            // The fastest the sleigh went between frames while the story had its controls (tiles a second): a jump shows
+            // as a burst of speed, whatever the frame rate.
+            double jump = 0, lastAt = 0;
             Vec2? last = null;
             async Task<bool> Until(Func<bool> met, double seconds)
             {
@@ -1423,8 +1424,10 @@ namespace Porchlight.App
                     if (m.IsLanding && car != null)
                     {
                         var at = new Vec2(car.x, car.y);
-                        if (last != null) jump = Math.Max(jump, Geo.Dist(at, last.Value));
+                        double now = platform.Now();
+                        if (last != null && now - lastAt > 1) jump = Math.Max(jump, Geo.Dist(at, last.Value) / ((now - lastAt) / 1000));
                         last = at;
+                        lastAt = now;
                     }
                     else last = null;
                     if (met()) return true;
@@ -1468,7 +1471,7 @@ namespace Porchlight.App
                 ok = await Until(() => m.Landings > landings, 90);
                 var down = iso.OwnVehicle;
                 double roof = iso.FlyFloor(down?.x ?? 0, down?.y ?? 0);
-                Debug.Log($"smoke: santa: stop {stop}: landed={ok} {(chimney ? "on the roof" : "in the street")} at {down?.altitude:0.00} up (the flying floor there {roof:0.00}), stopped={down?.speed == 0}, the biggest jump in a frame {jump:0.00} tiles{(chimney ? $"; {m.RoofNote}" : "")}");
+                Debug.Log($"smoke: santa: stop {stop}: landed={ok} {(chimney ? "on the roof" : "in the street")} at {down?.altitude:0.00} up (the flying floor there {roof:0.00}), stopped={down?.speed == 0}, at most {jump:0.0} tiles a second{(chimney ? $"; {m.RoofNote}" : "")}");
                 if (!ok || down == null) break;
                 if (chimney && down.altitude < 0.8) roofs = false;
                 if (!chimney && down.altitude > 0.2) roofs = false;
@@ -1479,6 +1482,8 @@ namespace Porchlight.App
                     ok = await Until(() => m.JumpWaiting, 30);
                     Debug.Log($"smoke: santa: stop {stop}: waiting for the jump out={ok}, '{Objective()}'");
                     if (!ok) break;
+                    // A frame for the line just read to be off the screen, as it is by the time anyone presses A.
+                    await Until(() => !iso.InDialogue, 5);
                     ok = m.TryTalk() && !iso.InCar;
                     Debug.Log($"smoke: santa: stop {stop}: A jumped out of the sleigh={ok}");
                     if (!ok) break;
@@ -1490,6 +1495,7 @@ namespace Porchlight.App
                 {
                     // A to hop out onto the pavement, in at the door (to where you stand by the tree), the present under it.
                     ok = await Until(() => Objective().StartsWith("Go in at") && m.JumpWaiting, 30);
+                    ok = ok && await Until(() => !iso.InDialogue, 5);
                     ok = ok && m.TryTalk() && await Until(() => !iso.InCar && !m.Hopping, 30);
                     var stand = m.TreeStandOf("home");
                     Debug.Log($"smoke: santa: stop {stop}: out of the sleigh={ok && !iso.InCar}, the sleigh still {iso.OwnVehicle?.altitude:0.00} up");
