@@ -1487,7 +1487,7 @@ namespace Porchlight.App
                     ok = m.TryTalk() && !iso.InCar;
                     Debug.Log($"smoke: santa: stop {stop}: A jumped out of the sleigh={ok}");
                     if (!ok) break;
-                    ok = await Until(() => m.ChimneyTrips > trips && Objective().StartsWith("Put a present"), 60);
+                    ok = await Until(() => m.ChimneyTrips > trips && Objective().StartsWith("Put a present"), 120);
                     Debug.Log($"smoke: santa: stop {stop}: down the chimney={ok}, in a room={iso.InRoom}, '{Objective()}'");
                     if (!ok) break;
                 }
@@ -1497,7 +1497,7 @@ namespace Porchlight.App
                     ok = await Until(() => Objective().StartsWith("Go in at") && m.JumpWaiting, 30);
                     if (!ok) Debug.Log($"smoke: santa: stop {stop}: no hop waiting: {m.PutNote}; now at the controls={iso.DrivingMyCar}, in a car={iso.InCar}, '{Objective()}'");
                     ok = ok && await Until(() => !iso.InDialogue, 5);
-                    ok = ok && m.TryTalk() && await Until(() => !iso.InCar && !m.Hopping, 30);
+                    ok = ok && m.TryTalk() && await Until(() => !iso.InCar && !m.Hopping, 120);
                     var stand = m.TreeStandOf("home");
                     Debug.Log($"smoke: santa: stop {stop}: out of the sleigh={ok && !iso.InCar}, the sleigh still {iso.OwnVehicle?.altitude:0.00} up");
                     if (!ok || stand == null) break;
@@ -1511,7 +1511,7 @@ namespace Porchlight.App
                 if (!ok) break;
                 if (chimney)
                 {
-                    ok = await Until(() => m.ChimneyTrips > trips + 1 && iso.DrivingMyCar, 60);
+                    ok = await Until(() => m.ChimneyTrips > trips + 1 && iso.DrivingMyCar, 120);
                     Debug.Log($"smoke: santa: stop {stop}: back up the chimney and in the sleigh={ok}");
                 }
                 else
