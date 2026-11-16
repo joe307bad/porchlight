@@ -15,7 +15,8 @@ import { and, asc, count, eq, lt, inArray, isNull, ne, notInArray, or, sql } fro
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
-import { accountUnlocks, characterState, characters, homes, missionCompletions, missionRecords, players, sessions, towns } from './tables.ts';
+import { accountUnlocks, characterState, characters, homes, missionCompletions, missionRecords, players, sessions, townTraffic, towns } from './tables.ts';
+import { cleanTraffic, emptyTraffic, type TrafficSettings } from './traffic.ts';
 
 export interface Account {
   id: string;
@@ -217,6 +218,12 @@ export interface Persistence {
   claimHome(accountId: string, characterId: string, x: number, y: number): Promise<void>;
   openSession(characterId: string, roomId: string): Promise<string>;
   closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number): Promise<void>;
+  /** Whether the account may change the town's traffic: it made the town (or it's their own stretch of the county). */
+  mayEditTraffic(accountId: string, townKey: string): Promise<boolean>;
+  /** The town's traffic settings (none changed: version 0). */
+  traffic(townKey: string): Promise<TrafficSettings>;
+  /** Keep new settings made from version `base`; false if they've moved on from it since. */
+  saveTraffic(townKey: string, base: number, settings: TrafficSettings): Promise<boolean>;
   close(): Promise<void>;
 }
 
@@ -472,6 +479,31 @@ export class PgPersistence implements Persistence {
   private async visibleTown(db: Pick<NodePgDatabase, 'select'>, accountId: string, townId: string): Promise<void> {
     const [town] = await db.select({ createdBy: towns.createdBy }).from(towns).where(eq(towns.id, townId));
     if (!town || (town.createdBy !== null && town.createdBy !== accountId)) throw noSuchTown();
+  }
+
+  async mayEditTraffic(accountId: string, townKey: string): Promise<boolean> {
+    if (townKey.startsWith(`${NORTH}:`)) return townKey === `${NORTH}:${accountId}`;
+    const [town] = await this.db.select({ createdBy: towns.createdBy }).from(towns).where(eq(towns.key, townKey));
+    return !!town && town.createdBy === accountId;
+  }
+
+  async traffic(townKey: string): Promise<TrafficSettings> {
+    const [row] = await this.db.select({ config: townTraffic.config, version: townTraffic.version }).from(townTraffic).where(eq(townTraffic.townKey, townKey));
+    if (!row) return emptyTraffic();
+    return { ...cleanTraffic(row.config), version: row.version };
+  }
+
+  async saveTraffic(townKey: string, base: number, settings: TrafficSettings): Promise<boolean> {
+    if (base === 0) {
+      const made = await this.db.insert(townTraffic).values({ townKey, config: settings, version: settings.version }).onConflictDoNothing().returning({ k: townTraffic.townKey });
+      if (made.length > 0) return true;
+    }
+    const done = await this.db
+      .update(townTraffic)
+      .set({ config: settings, version: settings.version, updatedAt: sql`now()` })
+      .where(and(eq(townTraffic.townKey, townKey), eq(townTraffic.version, base)))
+      .returning({ k: townTraffic.townKey });
+    return done.length > 0;
   }
 
   async ownTownKey(accountId: string, townId: string): Promise<string> {
@@ -852,6 +884,27 @@ export class MemoryPersistence implements Persistence {
   private visibleTown(accountId: string, townId: string): void {
     const town = this.towns.get(townId);
     if (!town || (town.createdBy !== null && town.createdBy !== accountId)) throw noSuchTown();
+  }
+
+  readonly trafficByTown = new Map<string, TrafficSettings>();
+
+  async mayEditTraffic(accountId: string, townKey: string): Promise<boolean> {
+    this.check();
+    if (townKey.startsWith(`${NORTH}:`)) return townKey === `${NORTH}:${accountId}`;
+    const town = [...this.towns.values()].find((t) => t.key === townKey);
+    return !!town && town.createdBy === accountId;
+  }
+
+  async traffic(townKey: string): Promise<TrafficSettings> {
+    this.check();
+    return structuredClone(this.trafficByTown.get(townKey) ?? emptyTraffic());
+  }
+
+  async saveTraffic(townKey: string, base: number, settings: TrafficSettings): Promise<boolean> {
+    this.check();
+    if ((this.trafficByTown.get(townKey)?.version ?? 0) !== base) return false;
+    this.trafficByTown.set(townKey, structuredClone(settings));
+    return true;
   }
 
   async ownTownKey(accountId: string, townId: string): Promise<string> {

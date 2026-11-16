@@ -163,3 +163,15 @@ export const missionRecords = pgTable(
   },
   (t) => [primaryKey({ columns: [t.townKey, t.missionId, t.playerId] }), index('mission_records_board').on(t.townKey, t.missionId, t.seconds)],
 );
+
+/**
+ * A town's traffic settings (traffic.ts; the game's TrafficConfig), by its key: only
+ * what's been changed from what the generator decided. `version` goes up by one with
+ * each edit, so an edit made against an old version can be refused.
+ */
+export const townTraffic = pgTable('town_traffic', {
+  townKey: text('town_key').primaryKey(),
+  config: jsonb('config').notNull(),
+  version: integer('version').notNull().default(0),
+  updatedAt: at('updated_at').notNull().defaultNow(),
+});

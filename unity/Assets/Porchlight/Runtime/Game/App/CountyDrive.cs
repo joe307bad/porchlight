@@ -1014,6 +1014,8 @@ namespace Porchlight.App
 
         public void SetTownNight(bool on) => view.SetTownNight(on);
 
+        public void ApplyTraffic(string config, bool? mayEdit, string refused) => view.ApplyTraffic(config, mayEdit, refused);
+
         public void SyncParked(List<RemoteParked> cars, string me)
         {
             var o = Shift;

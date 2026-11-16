@@ -52,6 +52,11 @@ namespace Porchlight.App
         /// <summary>The room's list of the town's cars someone has got into ("p3,t12").</summary>
         void SetTaken(string list);
         void SetTownNight(bool on);
+        /// <summary>
+        /// The town's traffic settings (TrafficConfig's JSON), whether you may change them (null: as
+        /// before), and why a change of yours wasn't made (null: it wasn't refused).
+        /// </summary>
+        void ApplyTraffic(string config, bool? mayEdit, string refused);
         void SyncParked(List<RemoteParked> cars, string me);
         /// <summary>Your own car, if it's parked.</summary>
         ParkedState OwnCar();
@@ -272,6 +277,36 @@ namespace Porchlight.App
         /// <summary>Night or day, for everyone in the town.</summary>
         public void SetNight(bool on) => room?.Send(Protocol.MSG_NIGHT, new Dictionary<string, object> { ["on"] = on });
 
+        /// <summary>Change the town's traffic settings (only its maker may): `ops` as server/src/multiplayer/traffic.ts has them, made against `baseVersion`.</summary>
+        public void SendTrafficPatch(int baseVersion, List<object> ops) =>
+            room?.Send(Protocol.MSG_TRAFFIC_PATCH, new Dictionary<string, object> { ["baseVersion"] = baseVersion, ["ops"] = ops });
+
+        /// <summary>A decoded message as plain JSON values: every number a double.</summary>
+        static object Plain(object v)
+        {
+            switch (v)
+            {
+                case null:
+                case string _:
+                case bool _:
+                    return v;
+                case Dictionary<string, object> d:
+                {
+                    var o = new Dictionary<string, object>();
+                    foreach (var kv in d) o[kv.Key] = Plain(kv.Value);
+                    return o;
+                }
+                case List<object> l:
+                {
+                    var o = new List<object>();
+                    foreach (var x in l) o.Add(Plain(x));
+                    return o;
+                }
+                default:
+                    return MsgPack.Num(v);
+            }
+        }
+
         /// <summary>One of the town's cars is yours now ("p3", "t12"): off the street for everyone.</summary>
         public void Take(string car) => room?.Send(Protocol.MSG_TAKE, new Dictionary<string, object> { ["car"] = car });
 
@@ -389,6 +424,17 @@ namespace Porchlight.App
                     if (e is List<object> dot && dot.Count >= 3 && dot[0] is string key && key != r.sessionId)
                         list.Add(new OtherPlayer { key = key, name = dot.Count > 3 ? dot[3] as string ?? "" : "", id = dot.Count > 4 ? dot[4] as string : null, x = MsgPack.Num(dot[1]), y = MsgPack.Num(dot[2]) });
                 host.SetOthers(list);
+            });
+            r.OnMessage(Protocol.MSG_TRAFFIC_CONFIG, m =>
+            {
+                if (!(m is Dictionary<string, object> d) || !d.TryGetValue("config", out var c)) return;
+                bool? may = d.TryGetValue("mayEdit", out var e) && e is bool b ? b : (bool?)null;
+                host.ApplyTraffic(Json.Serialize(Plain(c)), may, null);
+            });
+            r.OnMessage(Protocol.MSG_TRAFFIC_REFUSED, m =>
+            {
+                if (!(m is Dictionary<string, object> d) || !d.TryGetValue("config", out var c)) return;
+                host.ApplyTraffic(Json.Serialize(Plain(c)), null, d.TryGetValue("reason", out var why) ? why as string ?? "" : "");
             });
             r.OnMessage(Protocol.MSG_WORLD, m =>
             {

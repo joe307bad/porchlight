@@ -29,6 +29,12 @@ namespace Porchlight.Net
         public const string MSG_DOTS = "dots";
         /// <summary>{ unlocks }: another of the account's characters earned something.</summary>
         public const string MSG_UNLOCKS = "unlocks";
+        /// <summary>{ baseVersion, ops }: the town's maker changing its traffic settings (server/src/multiplayer/traffic.ts).</summary>
+        public const string MSG_TRAFFIC_PATCH = "traffic:patch";
+        /// <summary>{ config, mayEdit? }: the town's traffic settings, on joining and after every change.</summary>
+        public const string MSG_TRAFFIC_CONFIG = "traffic:config";
+        /// <summary>{ reason, config }: a traffic patch not made, and the settings as they are.</summary>
+        public const string MSG_TRAFFIC_REFUSED = "traffic:refused";
 
         public const int CLOSE_SIGNED_IN_ELSEWHERE = 4100;
         public const int CLOSE_KICKED = 4101;

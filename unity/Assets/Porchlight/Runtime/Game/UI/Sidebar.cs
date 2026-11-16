@@ -3,7 +3,8 @@
 // sections, one open at a time: Directions (the account's houses: tick one to
 // be shown the way there, across the county if need be), Controls (every
 // controller button and key), Players (who else is in the town: tick one to be
-// shown the way to them), Missions (from the server; Refresh fetches them again) and Map
+// shown the way to them), Missions (from the server; Refresh fetches them again), Traffic
+// (while exploring: the town's traffic settings; TrafficPanel) and Map
 // settings (a slider for every generator setting, the handful most people want
 // first). The open section's heading stays pinned at the top as you scroll
 // through it, so it can always be closed.
@@ -149,6 +150,8 @@ namespace Porchlight.UI
         readonly VisualElement pinned;
         readonly Label pinnedLabel;
         readonly VisualElement playersList;
+        readonly TrafficPanel traffic = new TrafficPanel();
+        readonly VisualElement trafficSection;
         readonly VisualElement top;
         readonly Label playingName, playingDetail;
         readonly VisualElement links;
@@ -273,6 +276,9 @@ namespace Porchlight.UI
             body.Add(Section("Controls", controls));
             body.Add(Section("Players", playersList));
             body.Add(Section("Missions", missions));
+            trafficSection = Section("Traffic", traffic.root);
+            trafficSection.style.display = DisplayStyle.None;
+            body.Add(trafficSection);
             body.Add(Section("Biomes", BuildBiomes(h)));
             settingsSection = Section("Map settings", settings);
             body.Add(settingsSection);
@@ -811,9 +817,13 @@ namespace Porchlight.UI
             SyncExploreButton(loading);
         }
 
+        /// <summary>The Traffic section (while exploring): the town's traffic settings, and changing them.</summary>
+        public void SetTraffic(TrafficView view) => traffic.Show(view);
+
         public void SetExploring(bool on)
         {
             exploring = on;
+            trafficSection.style.display = on ? DisplayStyle.Flex : DisplayStyle.None;
             if (!on) SetPlayers(new List<(string, string, string)>(), null, onFind);
             SyncExploreButton(false);
         }
