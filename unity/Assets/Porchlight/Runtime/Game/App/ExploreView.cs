@@ -213,6 +213,7 @@ namespace Porchlight.App
         /// <summary>The traffic and the townsfolk crossing in front of it, stepped together (while running the town here).</summary>
         Streetlife streetlife;
         Fleet fleet;
+        Signals signals;
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
         double chaseSwing;
@@ -409,6 +410,8 @@ namespace Porchlight.App
             remotes?.Clear();
             world?.Dispose();
             fleet?.Dispose();
+            signals?.Dispose();
+            signals = null;
             foreach (var a in avatars) a?.Dispose();
             unmade.Clear();
             playerAvatar?.Dispose();
@@ -535,6 +538,7 @@ namespace Porchlight.App
             traffic.night = night;
             streetlife = new Streetlife(world.layout, traffic, new Rng($"{model.seed}::crossings"));
             fleet = new Fleet(traffic, library, world.root.transform);
+            signals = new Signals(traffic, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
@@ -581,6 +585,8 @@ namespace Porchlight.App
             settling = null;
             remotes?.Clear();
             fleet?.Dispose();
+            signals?.Dispose();
+            signals = null;
             fleet = null;
             traffic = null;
             streetlife = null;
@@ -2875,6 +2881,8 @@ namespace Porchlight.App
             remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
             if (riding != null) FollowRide();
             fleet?.Update(dusk, Emptied ? Anywhere : (Func<double, double, bool>)null);
+            if (traffic != null) traffic.night = night;
+            signals?.Update();
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);

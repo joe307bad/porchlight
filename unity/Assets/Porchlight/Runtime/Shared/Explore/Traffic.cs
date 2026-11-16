@@ -1127,6 +1127,17 @@ namespace Porchlight.Explore
             return double.PositiveInfinity;
         }
 
+        /// <summary>
+        /// Where cars coming into a junction by `leg` stop: the middle of their lane at the stop line,
+        /// the way they drive, and the lane's width (for drawing the stop bar and the signal head).
+        /// </summary>
+        public (Vec2 at, Vec2 along, double width) StopLine(JunctionLeg leg)
+        {
+            int dir = leg.InDir;
+            var (p, along) = Lane(leg.road, dir, dir, lengths[leg.road] - StopBack(leg.road));
+            return (p, along, roads[leg.road].width / 2);
+        }
+
         /// <summary>How hard braking (comfortably) a car needs to stop from speed v (tiles).</summary>
         public static double StoppingDistance(double v) => v * v / (2 * BRAKE);
 
