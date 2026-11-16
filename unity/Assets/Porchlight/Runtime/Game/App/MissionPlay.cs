@@ -1335,6 +1335,7 @@ namespace Porchlight.App
             var to = WhereOf(at);
             if (to >= Where.Car) throw new Exception($"put you where? '{at}' (inside, door or kerb)");
             // Out onto the pavement from the story's plane, set down in the street: you hop out of it yourself (A).
+            PutNote = $"put_you {at}: the story's plane {storyPlane}, yours {view.OwnVehicle?.model}, at its controls={view.DrivingMyCar}, in a car={view.InCar}, landing={landing != null}";
             if (to == Where.Kerb && storyPlane >= 0 && view.OwnVehicle?.model == storyPlane && view.DrivingMyCar && landing == null)
             {
                 // Facing the house: in at its front door's next.
@@ -1345,6 +1346,9 @@ namespace Porchlight.App
             parked = false;
             view.PutPlayer(PointOf(r, to), DetMath.Atan2(r.outward.x, r.outward.y), keepHeight: storyPlane >= 0 && view.OwnVehicle?.model == storyPlane);
         }
+
+        /// <summary>What put_you last found (the smoke run logs it).</summary>
+        public string PutNote { get; private set; }
 
         public string Chase(string role, string name, int count, string car, string look)
         {

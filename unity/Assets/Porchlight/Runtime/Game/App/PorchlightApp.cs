@@ -1495,6 +1495,7 @@ namespace Porchlight.App
                 {
                     // A to hop out onto the pavement, in at the door (to where you stand by the tree), the present under it.
                     ok = await Until(() => Objective().StartsWith("Go in at") && m.JumpWaiting, 30);
+                    if (!ok) Debug.Log($"smoke: santa: stop {stop}: no hop waiting: {m.PutNote}; now at the controls={iso.DrivingMyCar}, in a car={iso.InCar}, '{Objective()}'");
                     ok = ok && await Until(() => !iso.InDialogue, 5);
                     ok = ok && m.TryTalk() && await Until(() => !iso.InCar && !m.Hopping, 30);
                     var stand = m.TreeStandOf("home");
