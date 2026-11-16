@@ -22,7 +22,7 @@ namespace Porchlight.Rendering
             public Junction junction;
             public int leg;
             public Renderer red, yellow, green;
-            public Lamp shown;
+            public Porchlight.Explore.Lamp shown;
             public bool lit;
         }
 
@@ -57,7 +57,7 @@ namespace Porchlight.Rendering
                     Shape(PrimitiveType.Cube, post, new Vector3(0, POLE + HEAD * 1.6f, 0), new Vector3(HEAD, HEAD * 3.4f, HEAD), pole);
                     // Its lamps on the side facing the cars coming.
                     var face = new Vector3((float)-along.x, 0, (float)along.y) * (HEAD / 2);
-                    var h = new Head { junction = j, leg = leg, shown = Lamp.Off };
+                    var h = new Head { junction = j, leg = leg, shown = Porchlight.Explore.Lamp.Off };
                     h.red = Shape(PrimitiveType.Sphere, post, face + new Vector3(0, POLE + HEAD * 2.7f, 0), Vector3.one * BULB, red, false).GetComponent<Renderer>();
                     h.yellow = Shape(PrimitiveType.Sphere, post, face + new Vector3(0, POLE + HEAD * 1.6f, 0), Vector3.one * BULB, yellow, false).GetComponent<Renderer>();
                     h.green = Shape(PrimitiveType.Sphere, post, face + new Vector3(0, POLE + HEAD * 0.5f, 0), Vector3.one * BULB, green, false).GetComponent<Renderer>();
@@ -98,13 +98,13 @@ namespace Porchlight.Rendering
             {
                 var h = heads[i];
                 var lamp = h.junction.HeadLight(h.leg, now, traffic.night);
-                bool lit = lamp != Lamp.FlashRed && lamp != Lamp.FlashYellow || flash;
+                bool lit = lamp != Porchlight.Explore.Lamp.FlashRed && lamp != Porchlight.Explore.Lamp.FlashYellow || flash;
                 if (lamp == h.shown && lit == h.lit) continue;
                 h.shown = lamp;
                 h.lit = lit;
-                bool r = lamp == Lamp.Red || (lamp == Lamp.FlashRed && lit);
-                bool y = lamp == Lamp.Yellow || (lamp == Lamp.FlashYellow && lit);
-                bool g = lamp == Lamp.Green || lamp == Lamp.Permitted;
+                bool r = lamp == Porchlight.Explore.Lamp.Red || (lamp == Porchlight.Explore.Lamp.FlashRed && lit);
+                bool y = lamp == Porchlight.Explore.Lamp.Yellow || (lamp == Porchlight.Explore.Lamp.FlashYellow && lit);
+                bool g = lamp == Porchlight.Explore.Lamp.Green || lamp == Porchlight.Explore.Lamp.Permitted;
                 Materials.SetGlow(h.red, RED, r ? GLOW : 0);
                 Materials.SetGlow(h.yellow, YELLOW, y ? GLOW : 0);
                 Materials.SetGlow(h.green, GREEN, g ? GLOW : 0);
