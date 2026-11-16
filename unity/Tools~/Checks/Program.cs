@@ -20,6 +20,9 @@
 //   dotnet run --project "unity/Tools~/Checks" -- steering          # your own steering: a tap a nudge, a held turn full, straight easy to hold (SteeringCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- rules [count]     # the traffic minds the junctions: no foes in a box together, no jams, the same twice (TrafficRulesCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- roadsense [count] # RoadSense repairs and classes the roads: a fixed point, fewer defects (RoadSenseCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- crossings [count] # walkers wait at the kerb for a gap, cars stop for them, nobody waits forever (CrosswalkCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- settings [count]  # traffic settings: edits round-trip, closures (and the marathon's) kept (TrafficSettingsCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- trace <i> <car> [busy] [from] [to] # one car's view of its junction in a rules town (TrafficTrace.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- where             # the line under your name says where you are now (WhereCheck.cs)
 
 using System;
@@ -59,7 +62,7 @@ static class Program
         if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();
         if (args.Length > 0 && args[0] == "steering") return SteeringCheck.Run();
         if (args.Length > 0 && args[0] == "sleigh") return SleighCheck.Run();
-        if (args.Length > 2 && args[0] == "trace") return TrafficTrace.Run(int.Parse(args[1]), int.Parse(args[2]), args.Length > 3);
+        if (args.Length > 2 && args[0] == "trace") return TrafficTrace.Run(int.Parse(args[1]), int.Parse(args[2]), args.Length > 3 && args[3] == "busy", args.Length > 4 ? double.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture) : 0, args.Length > 5 ? double.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture) : 120);
         if (args.Length > 0 && args[0] == "rules") return TrafficRulesCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 12);
         if (args.Length > 0 && args[0] == "crossings") return CrosswalkCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 8);
         if (args.Length > 0 && args[0] == "settings") return TrafficSettingsCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 8);

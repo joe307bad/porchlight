@@ -1,5 +1,6 @@
-// Debugging aid: one car's view of its junction over time.
-//   dotnet run --project "unity/Tools~/Checks" -- trace <i> <car> [busy]
+// Debugging aid: one car's view of its junction over time, in a `rules` town
+// (and preset), from `from` to `to` seconds in (all two minutes by default).
+//   dotnet run --project "unity/Tools~/Checks" -- trace <i> <car> [busy] [from] [to]
 using System;
 using Porchlight.Core;
 using Porchlight.Explore;
@@ -8,7 +9,7 @@ using Porchlight.Model;
 
 static class TrafficTrace
 {
-    public static int Run(int i, int k, bool busy)
+    public static int Run(int i, int k, bool busy, double from = 0, double to = 120)
     {
         string seed = $"rules-{i}";
         var p = GenParams.Normalize(new GenParams { width = 96 + (i % 3) * 32, height = 96 + ((i / 3) % 3) * 32, roadDensity = 0.7 + (i % 4) * 0.1, roadSense = i % 2 });
@@ -19,7 +20,7 @@ static class TrafficTrace
         for (double t = 0; t < 120; t += 0.05)
         {
             traffic.Update(0.05, null);
-            if (t < 40 || t > 43.1) continue;
+            if (t < from || t > to) continue;
             var (done, rest) = traffic.Along(c);
             string lane = "";
             if (c.next >= 0)

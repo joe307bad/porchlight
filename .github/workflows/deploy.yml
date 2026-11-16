@@ -64,6 +64,14 @@ jobs:
       # The presents mission's flying: through the rings, the story's landings, down the chimneys and back.
       - name: Game — the sleigh flies through its rings, lands where it's sent, and down the chimney and back
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- sleigh
+      # The traffic: the road network repaired and classed, junctions minded, walkers waiting for a gap,
+      # and the town's traffic settings doing what they say.
+      - name: Game — roads repaired, junctions minded, walkers across, closures kept
+        run: |
+          dotnet run --project "unity/Tools~/Checks" -c Release -- roadsense 40
+          dotnet run --project "unity/Tools~/Checks" -c Release -- rules 12
+          dotnet run --project "unity/Tools~/Checks" -c Release -- crossings 12
+          dotnet run --project "unity/Tools~/Checks" -c Release -- settings 12
 
       # Unity's import cache, reused only for the exact same sources. No
       # restore-keys fallback: opening the project on a Library left by older

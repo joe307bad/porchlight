@@ -82,6 +82,17 @@ static class TrafficSettingsCheck
         for (int r = 0; r < on.Length; r++)
             if (layout.roads[r].kind == RoadKind.Street && traffic.Driven(r) && (busiest < 0 || on[r] > on[busiest])) busiest = r;
         if (busiest < 0) return null;
+        // A marathon's course, closed as an event: every road of it.
+        var course = Course.Longest(layout.roads, 112, 112);
+        if (course != null)
+        {
+            var race = new TrafficConfig();
+            race.events.Add(TrafficEdits.CourseClosure(layout, course, traffic.Now, traffic.Now + 1000));
+            var during = ResolvedTraffic.Resolve(race, layout, traffic.Now);
+            foreach (int r in course.roads) if (!during.closed[r]) return $"the marathon's road {r} isn't closed";
+            var after = ResolvedTraffic.Resolve(race, layout, traffic.Now + 2000);
+            foreach (int r in course.roads) if (after.closed[r]) return $"the marathon's road {r} still closed after it";
+        }
         string key = TrafficKeys.Road(layout, busiest);
         var config = new TrafficConfig();
         long now = traffic.Now;

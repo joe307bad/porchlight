@@ -26,7 +26,7 @@ static class TrafficRulesCheck
     public static int Run(int count)
     {
         int failed = 0;
-        long junctions = 0, signals = 0, boxes = 0, held = 0;
+        long junctions = 0, signals = 0, boxes = 0, held = 0, trips = 0;
         double flow = 0;
         int runs = 0;
         for (int i = 0; i < count; i++)
@@ -40,7 +40,7 @@ static class TrafficRulesCheck
             {
                 var config = new TrafficConfig { preset = busy ? TrafficConfig.BUSY : TrafficConfig.AUTO };
                 var settings = ResolvedTraffic.Resolve(config, layout, 0);
-                string err = RunOnce(seed, layout, settings, ref junctions, ref signals, ref boxes, ref held, ref flow, out string replay);
+                string err = RunOnce(seed, layout, settings, ref junctions, ref signals, ref boxes, ref held, ref flow, ref trips, out string replay);
                 runs++;
                 if (err != null)
                 {
@@ -54,7 +54,7 @@ static class TrafficRulesCheck
                 }
             }
         }
-        Console.WriteLine($"{runs - failed}/{runs} runs ok: {junctions} junctions ({signals} signals); {boxes} cars let through junctions; longest held at a junction {held / 10.0:0.0} s; cars moving at {flow / Math.Max(1, runs) * 100:0}% of their free speed on average");
+        Console.WriteLine($"{runs - failed}/{runs} runs ok: {junctions} junctions ({signals} signals); {boxes} cars let through junctions; longest held at a junction {held / 10.0:0.0} s; cars moving at {flow / Math.Max(1, runs) * 100:0}% of their free speed on average; {trips} trips driven to the end");
         return failed == 0 ? 0 : 1;
     }
 
@@ -103,7 +103,7 @@ static class TrafficRulesCheck
         return sb.ToString() + "\n   ";
     }
 
-    static string RunOnce(string seed, IsoLayout layout, ResolvedTraffic settings, ref long junctions, ref long signals, ref long boxes, ref long longestHeld, ref double flowSum, out string replay)
+    static string RunOnce(string seed, IsoLayout layout, ResolvedTraffic settings, ref long junctions, ref long signals, ref long boxes, ref long longestHeld, ref double flowSum, ref long trips, out string replay)
     {
         replay = null;
         var traffic = new Traffic(layout, new Rng(seed + "::traffic"), r => 0, settings);
@@ -187,6 +187,7 @@ static class TrafficRulesCheck
             if (t > 10) { flow += traffic.Flow(); samples++; }
         }
         flowSum += samples > 0 ? flow / samples : 1;
+        trips += traffic.Metrics().trips;
         int moving = 0, all = 0;
         for (int k = 0; k < cars.Count; k++)
         {

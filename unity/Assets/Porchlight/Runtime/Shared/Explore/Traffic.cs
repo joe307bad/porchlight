@@ -76,6 +76,15 @@ namespace Porchlight.Explore
         public string why;
     }
 
+    public struct TrafficMetrics
+    {
+        public int cars, held, trips, busiest;
+        public double flow, longestHeld, congestion;
+
+        public override string ToString() =>
+            $"{cars} cars moving at {Math.Round(flow * 100)}% of their free speed; {held} held at junctions (longest {longestHeld:0} s); {trips} trips done";
+    }
+
     public sealed class Traffic
     {
         /// <summary>Cruising speed before RoadSense gave roads their own (tiles/s, about 35 km/h): turns and U-turns go at shares of it.</summary>
@@ -1166,6 +1175,33 @@ namespace Porchlight.Explore
         /// <summary>How busy each road is now: cars on it for each car it holds bumper to bumper at its speed (0 empty, 1 full).</summary>
         public double Congestion(int road) => router.Congestion(road);
 
+        /// <summary>
+        /// The traffic's scorecard: cars on the roads, how freely they're moving (Flow), how many are
+        /// held at a junction and the longest held (s), trips driven to the end so far, and the
+        /// busiest road (most congested) and how busy.
+        /// </summary>
+        public TrafficMetrics Metrics()
+        {
+            var m = new TrafficMetrics { flow = Flow(), trips = router.trips, busiest = -1 };
+            foreach (var c in cars)
+            {
+                if (c.taken || c.idle || c.loop >= 0) continue;
+                m.cars++;
+                if (c.held > 1) m.held++;
+                m.longestHeld = Math.Max(m.longestHeld, c.held);
+            }
+            for (int r = 0; r < roads.Count; r++)
+            {
+                double g = router.Congestion(r);
+                if (g > m.congestion)
+                {
+                    m.congestion = g;
+                    m.busiest = r;
+                }
+            }
+            return m;
+        }
+
         /// <summary>Moved on its own road, how fast each car goes against how fast it could (1: all free-flowing).</summary>
         public double Flow()
         {
@@ -1267,9 +1303,14 @@ namespace Porchlight.Explore
                 return list.Count == 0 ? -1 : t.rng.Pick(list);
             }
 
+            /// <summary>Trips driven to the end.</summary>
+            public int trips;
+
             public void Arrived(TrafficCar car, int node)
             {
-                if (node == car.dest) car.dest = -1;
+                if (node != car.dest) return;
+                car.dest = -1;
+                trips++;
             }
 
             /// <summary>Of `options` at `node`, the road on the quickest way to the car's destination (-1: no way, or no destination).</summary>

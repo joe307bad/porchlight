@@ -37,11 +37,14 @@ namespace Porchlight.UI
         public int roadOneWay;
         public double roadSpeed = 1;
         public Action<List<object>> patch;
+        /// <summary>How the traffic's doing (Traffic.Metrics), shown as it changes.</summary>
+        public string scorecard;
     }
 
     public sealed class TrafficPanel
     {
         public readonly VisualElement root = new VisualElement();
+        readonly Label score = El.Text("", "help-text");
         string shown;
         Action<List<object>> patch;
 
@@ -50,6 +53,8 @@ namespace Porchlight.UI
         public void Show(TrafficView v)
         {
             patch = v?.patch;
+            // Updated in place: rebuilding the section for it would drop a slider being dragged.
+            score.text = v?.scorecard ?? "";
             string sig = v == null ? "-" : string.Join("|", v.config.ToJson(), v.canEdit, v.online, v.refused, string.Join(";", v.warnings), v.junctionKey, v.junctionLabel, v.roadKey, v.roadLabel);
             if (sig == shown) return;
             shown = sig;
@@ -60,6 +65,7 @@ namespace Porchlight.UI
                 return;
             }
             var c = v.config;
+            root.Add(score);
             root.Add(El.Text(v.canEdit
                 ? (v.online ? "You made this town: changes here are for everyone in it." : "Playing alone: changes here are just for now.")
                 : "Only whoever made the town can change its traffic.", "help-text"));

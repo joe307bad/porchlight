@@ -793,7 +793,19 @@ namespace Porchlight.App
         /// or driven by another player) is drawn on this screen, anywhere, so none appears or vanishes
         /// at the ribbon. They're still there for everyone else, and never hit anyone on foot.
         /// </summary>
-        public Course Closed;
+        public Course Closed
+        {
+            get => closed;
+            set
+            {
+                if (closed == value) return;
+                closed = value;
+                // The course's roads are closed to the traffic too, while it's run.
+                ResolveTraffic();
+            }
+        }
+
+        Course closed;
 
         /// <summary>
         /// A mission's dead of night (Christmas Eve, say): night however the town's clock stands, and nobody else out
@@ -1124,6 +1136,8 @@ namespace Porchlight.App
                 canEdit = !online || MayEditTraffic,
                 refused = TrafficRefused,
                 patch = PatchTraffic,
+                // Only where the traffic's run (alone, or the room's host): everyone else just follows it.
+                scorecard = authority ? traffic.Metrics().ToString() : null,
             };
             if (TrafficResolved != null) v.warnings.AddRange(TrafficResolved.warnings);
             var here = PlayerPosition;
@@ -1182,10 +1196,33 @@ namespace Porchlight.App
             return v;
         }
 
+        string activeEvents = "";
+
+        /// <summary>A timed closure starting or ending: the settings worked out again.</summary>
+        void TrafficEventsBeginOrEnd()
+        {
+            if (TrafficSettings.events.Count == 0 && activeEvents.Length == 0) return;
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var on = new System.Text.StringBuilder();
+            foreach (var e in TrafficSettings.events) if (e.from <= now && now < e.until) on.Append(e.name).Append('|');
+            string active = on.ToString();
+            if (active == activeEvents) return;
+            activeEvents = active;
+            ResolveTraffic();
+        }
+
         void ResolveTraffic()
         {
             if (world == null) return;
-            TrafficResolved = ResolvedTraffic.Resolve(TrafficSettings, world.layout, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var settings = TrafficSettings;
+            if (closed != null)
+            {
+                // A race on: its course closed, for as long as it's run (here only: it's this screen's race).
+                settings = settings.Clone();
+                settings.events.Add(TrafficEdits.CourseClosure(world.layout, closed, now - 1000, now + 24 * 3600 * 1000L));
+            }
+            TrafficResolved = ResolvedTraffic.Resolve(settings, world.layout, now);
             traffic?.Apply(TrafficResolved);
         }
 
@@ -3008,6 +3045,7 @@ namespace Porchlight.App
             if (riding != null) FollowRide();
             fleet?.Update(dusk, Emptied ? Anywhere : (Func<double, double, bool>)null);
             if (traffic != null) traffic.night = night;
+            TrafficEventsBeginOrEnd();
             signals?.Update();
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;

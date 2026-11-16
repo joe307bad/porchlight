@@ -49,6 +49,19 @@ namespace Porchlight.Explore
         public static Dictionary<string, object> Closure(string name, IEnumerable<string> roads, long from, long until) =>
             new Dictionary<string, object> { ["op"] = "event", ["name"] = name, ["kind"] = "closure", ["roads"] = new List<object>(roads), ["from"] = (double)from, ["until"] = (double)until };
 
+        /// <summary>A race course's roads closed (the marathon) from `from` until `until`, as an event.</summary>
+        public static TrafficEvent CourseClosure(IsoLayout layout, Course course, long from, long until)
+        {
+            var e = new TrafficEvent { name = "Marathon", kind = "closure", from = from, until = until };
+            foreach (int r in course.roads)
+            {
+                if (r < 0 || r >= layout.roads.Count) continue;
+                string key = TrafficKeys.Road(layout, r);
+                if (!e.roads.Contains(key)) e.roads.Add(key);
+            }
+            return e;
+        }
+
         public static Dictionary<string, object> RemoveEvent(string name) => new Dictionary<string, object> { ["op"] = "event", ["name"] = name, ["remove"] = true };
 
         public static Dictionary<string, object> Reset() => new Dictionary<string, object> { ["op"] = "reset" };
