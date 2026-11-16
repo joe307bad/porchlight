@@ -299,11 +299,55 @@ static class SleighCheck
     }
 
     /// <summary>The sleigh flown at a ring by the game's own flying, steering for it: it goes through.</summary>
+    /// <summary>
+    /// The sleigh's model as the game reads it: its root not turned, scaled or moved (the game measures a model in its
+    /// root's own terms but draws it with the root's turn: a turned root comes out sized by its width, many times too
+    /// big, and shoved off to the side), and nose to tail down glTF's z.
+    /// </summary>
+    static void ModelFile(Action<bool, string> expect)
+    {
+        string dir = AppContext.BaseDirectory;
+        string path = null;
+        for (var d = new System.IO.DirectoryInfo(dir); d != null && path == null; d = d.Parent)
+        {
+            var p = System.IO.Path.Combine(d.FullName, "Assets", "Porchlight", "Models", "planes", "santa-sleigh.glb");
+            if (System.IO.File.Exists(p)) path = p;
+            var q = System.IO.Path.Combine(d.FullName, "unity", "Assets", "Porchlight", "Models", "planes", "santa-sleigh.glb");
+            if (path == null && System.IO.File.Exists(q)) path = q;
+        }
+        expect(path != null, "the sleigh's model is there");
+        if (path == null) return;
+        var bytes = System.IO.File.ReadAllBytes(path);
+        int length = BitConverter.ToInt32(bytes, 12);
+        var doc = System.Text.Json.JsonDocument.Parse(new ReadOnlyMemory<byte>(bytes, 20, length));
+        var nodes = doc.RootElement.GetProperty("nodes");
+        var scene = doc.RootElement.GetProperty("scenes")[0].GetProperty("nodes");
+        bool plain = scene.GetArrayLength() == 1;
+        foreach (var i in scene.EnumerateArray())
+        {
+            var root = nodes[i.GetInt32()];
+            foreach (var k in new[] { "rotation", "scale", "matrix", "translation" })
+                if (root.TryGetProperty(k, out _)) plain = false;
+        }
+        expect(plain, "the sleigh's model has one root, not turned, scaled or moved");
+        // Its reindeer out in front (+z), the sack behind.
+        double front = double.NegativeInfinity, back = double.PositiveInfinity;
+        foreach (var n in nodes.EnumerateArray())
+        {
+            if (!n.TryGetProperty("name", out var name) || !n.TryGetProperty("translation", out var t)) continue;
+            string s = name.GetString();
+            if (s == "reindeer-1") front = t[2].GetDouble();
+            if (s == "sack") back = t[2].GetDouble();
+        }
+        expect(front > 3 && back < 0.5, $"the sleigh's model faces down +z, its team out in front (lead reindeer at z {front:0.00}, the sack at {back:0.00})");
+    }
+
     static void FlyThrough(Action<bool, string> expect)
     {
         int model = Array.IndexOf(Catalog.CARS, Catalog.SLEIGH);
         expect(model >= 0 && Catalog.KindOf(model) == VehicleKind.Plane, "the sleigh is a plane");
         expect(Catalog.PlaneLength(Catalog.SLEIGH) > 0 && Catalog.SLEIGH_SEAT < Catalog.PlaneLength(Catalog.SLEIGH) / 2, "Santa sits in the sleigh, behind its middle and in front of its end");
+        ModelFile(expect);
         var rngPick = new Rng("sleigh::pick");
         bool never = true;
         for (int i = 0; i < 2000; i++) never &= Catalog.PickPlaneModel(rngPick) != model;

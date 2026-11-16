@@ -744,15 +744,21 @@ def main():
     P = palette()
     root = build_sleigh(P)
     measure(root)
-    # Nose down Blender's -y, which the exporter makes glTF's +z (the cars' front).
-    root.rotation_euler = (0, 0, math.pi / 2)
+    # Nose down Blender's -y, which the exporter makes glTF's +z (the cars' front): each part turned so, not the
+    # root (the game measures a model in its root's own terms and draws it with the root's turn, so a turned root
+    # comes out sized by its width and shoved off to the side).
+    turn = mathutils.Matrix.Rotation(math.pi / 2, 4, "Z")
+    kept = [(c, c.matrix_world.copy()) for c in root.children]
+    for c, m in kept:
+        c.matrix_world = turn @ m
     bpy.context.view_layer.update()
     bpy.ops.object.select_all(action="DESELECT")
     out = os.path.join(MODELS, "planes", "santa-sleigh.glb")
     bpy.ops.export_scene.gltf(filepath=out, export_format="GLB", export_apply=True, export_yup=True,
                               export_animations=False, export_lights=False, export_cameras=False)
     print(f"wrote {out}")
-    root.rotation_euler = (0, 0, 0)
+    for c, m in kept:
+        c.matrix_world = m
     bpy.context.view_layer.update()
     if previews:
         preview(os.path.join(previews, "sleigh.png"), (-1.8, 0, 0.6), 9.5, 3.5, yaw=-130, lens=40)

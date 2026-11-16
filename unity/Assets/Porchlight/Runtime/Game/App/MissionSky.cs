@@ -57,7 +57,7 @@ namespace Porchlight.App
         /// and its team (by CAM_LOOK_UP), so all of it is in view, a little below the middle of the screen; how quickly
         /// it swings round after you as you turn (a rate).
         /// </summary>
-        const double CAM_BACK = 3.1, CAM_UP = 1.45, CAM_LOOK_UP = 0.18, CAM_TURN = 6;
+        const double CAM_BACK = 2.7, CAM_UP = 1.15, CAM_LOOK_UP = 0.15, CAM_TURN = 7;
         /// <summary>
         /// The camera going down a chimney with you: where it ends up, out over the street (how far round from
         /// straight out the front, how far up and back: radians, tiles); how long it watches the chimney once you're
