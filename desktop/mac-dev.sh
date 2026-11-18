@@ -47,9 +47,18 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 [ "$(uname)" = Darwin ] || die "this is for a Mac (it builds the macOS app)."
 
+# Files the tools write over, never anyone's own changes: the scene and renderer the project's
+# setup makes afresh on every build (and on opening the editor), and the lock files npm install rewrites.
+GENERATED=(unity/Assets/Porchlight/Scenes/Boot.unity unity/Assets/Porchlight/Settings/Renderer.asset manage/package-lock.json server/package-lock.json)
+
 # 1. The latest main.
 if [ "$PULL" = 1 ]; then
   cd "$ROOT"
+  changed="$(git diff --name-only -- "${GENERATED[@]}")"
+  if [ -n "$changed" ]; then
+    git checkout -- $changed
+    echo "(put back what the tools had written over: $(echo $changed))"
+  fi
   if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
     git status --short --untracked-files=no
     die "the checkout has changes of its own (above): commit or stash them, or run with --no-pull to build it as it is."

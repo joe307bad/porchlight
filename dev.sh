@@ -50,7 +50,7 @@ UNITY="${UNITY:-/Applications/Unity/Hub/Editor/$(sed -n 's/^m_EditorVersion: //p
 
 if [ ! -d "$ROOT/server/node_modules" ]; then
   echo "Installing server dependencies..."
-  npm --prefix "$ROOT/server" install
+  npm --prefix "$ROOT/server" ci
 fi
 
 # Rebuild when there's no build, when asked, or when the project has changed since the last one.
@@ -64,7 +64,7 @@ stale() {
 MANAGE="$ROOT/unity/Assets/StreamingAssets/manage/index.html"
 if [ ! -d "$ROOT/manage/node_modules" ]; then
   echo "Installing Manage's dependencies..."
-  npm --prefix "$ROOT/manage" install
+  npm --prefix "$ROOT/manage" ci
 fi
 if [ ! -f "$MANAGE" ] || [ -n "$(find "$ROOT/manage/src" "$ROOT/manage/index.html" "$ROOT/manage/package.json" -newer "$MANAGE" -print -quit)" ]; then
   echo "Building Manage Porchlight..."
