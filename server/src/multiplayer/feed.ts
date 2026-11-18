@@ -136,7 +136,7 @@ function pack(room: CityRoom, now: number): Packed {
   const list = [...room.watchPlayers()];
   const index = new Map(list.map((p, i) => [p.sessionId, i]));
   const world = room.world;
-  const age = world ? Math.min(NO_WORLD, now - world.at) : NO_WORLD;
+  const age = world ? Math.max(0, Math.min(NO_WORLD, now - world.at)) : NO_WORLD;
   const cars = world && age < NO_WORLD ? world.cars : null;
   const people = world && age < NO_WORLD ? world.people : null;
   const carBytes = cars ? cars.byteLength - (cars.byteLength % 7) : 0;
@@ -172,7 +172,12 @@ export interface FeedSink {
   cork(): void;
   uncork(): void;
   end(): void;
+  /** Closes the connection now, whatever it still holds (an HTTP response has it). */
+  destroy?(): void;
 }
+
+/** A viewer whose connection hasn't taken a frame for this long (ms) is let go: it's gone, whatever's in between didn't say. */
+export const STUCK_MS = 30_000;
 
 interface Viewer {
   account: string;
@@ -184,6 +189,8 @@ interface Viewer {
   looking: boolean;
   /** What the last rooms frame it was sent said. */
   sentSig: string;
+  /** Since when its connection hasn't taken a frame (0: it has). */
+  stuckSince: number;
 }
 
 /** A frame's first bytes: its length (of what follows them) and its type. */
@@ -281,7 +288,7 @@ export class TrafficFeed {
    * if not given, its account's county, looked up. The function returned stops it.
    */
   watch(account: string, res: FeedSink, origins?: Map<string, { x: number; y: number }>): () => void {
-    const viewer: Viewer = { account, res, origins: origins ?? null, names: new Map(), countyAt: origins ? Infinity : 0, looking: false, sentSig: '' };
+    const viewer: Viewer = { account, res, origins: origins ?? null, names: new Map(), countyAt: origins ? Infinity : 0, looking: false, sentSig: '', stuckSince: 0 };
     this.viewers.add(viewer);
     if (!origins) this.lookUp(viewer);
     this.start();
@@ -368,8 +375,18 @@ export class TrafficFeed {
       // Its socket hasn't taken the last frame yet: skip this one, rather than queue it.
       if (viewer.res.writableNeedDrain) {
         this.stats.skipped++;
+        if (!viewer.stuckSince) viewer.stuckSince = now;
+        else if (now - viewer.stuckSince > STUCK_MS) {
+          // Nobody's reading: a closed tab whose proxy never said so. It mustn't hold a place.
+          this.viewers.delete(viewer);
+          this.log(`traffic feed: let go of a viewer that took nothing for ${Math.round((now - viewer.stuckSince) / 1000)} s`);
+          if (viewer.res.destroy) viewer.res.destroy();
+          else viewer.res.end();
+          if (this.viewers.size === 0) this.stop();
+        }
         continue;
       }
+      viewer.stuckSince = 0;
       if (!packed) {
         packed = true;
         for (const room of this.rooms()) {

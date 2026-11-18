@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { FEED_MS, TrafficFeed, type FeedSink } from '../src/multiplayer/feed.ts';
+import { FEED_MS, STUCK_MS, TrafficFeed, type FeedSink } from '../src/multiplayer/feed.ts';
 import type { CityRoom, WatchedPlayer } from '../src/multiplayer/CityRoom.ts';
 import { WORLD_MAX_BYTES } from '../src/multiplayer/protocol.ts';
 
@@ -136,4 +136,32 @@ test("a viewer that can't keep up misses frames, rather than having them pile up
   assert.ok(lines.some((l) => l.startsWith('traffic feed: slow tick')), lines.join('\n'));
   for (const stop of stops) stop();
   assert.ok(lines.some((l) => /traffic feed: 0 viewer\(s\) \(none now\), \d+ ticks, avg/.test(l)), 'a last report once nobody is watching');
+});
+
+test("a viewer that takes nothing for a long while is let go (a closed tab a proxy never said was closed)", () => {
+  const towns = [town(0, 3)];
+  let clock = Date.now();
+  const feed = new TrafficFeed({} as never, () => towns, () => clock);
+  const lines: string[] = [];
+  feed.log = (l) => lines.push(l);
+  const gone = new Sink();
+  gone.writableNeedDrain = true;
+  let destroyed = false;
+  (gone as unknown as { destroy(): void }).destroy = () => (destroyed = true);
+  const slow = new Sink();
+  const stops = [feed.watch('a', gone, county(towns)), feed.watch('a', slow, county(towns))];
+  feed.tick();
+  // A slow reader that catches up within the time is kept.
+  slow.writableNeedDrain = true;
+  clock += STUCK_MS - 1000;
+  feed.tick();
+  slow.writableNeedDrain = false;
+  feed.tick();
+  assert.equal(feed.viewerCount, 2);
+  clock += 2000;
+  feed.tick();
+  assert.equal(feed.viewerCount, 1, 'the one taking nothing all along is gone');
+  assert.ok(destroyed, 'its connection closed');
+  assert.ok(lines.some((l) => l.includes('let go of a viewer')), lines.join('\n'));
+  for (const stop of stops) stop();
 });

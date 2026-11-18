@@ -57,7 +57,12 @@ function proxy(req, res) {
     res.writeHead(up.statusCode ?? 502, up.headers);
     up.pipe(res);
   });
+  // The browser went (a closed tab, the feed with it): close this end too, so the server knows.
+  res.on('close', () => {
+    if (!res.writableFinished) out.destroy();
+  });
   out.on('error', () => {
+    if (res.headersSent || res.destroyed) return res.destroy();
     res.writeHead(502, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: `Nothing is answering on :${upstreamOf(req.url ?? '').port}.` }));
   });
