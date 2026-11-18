@@ -210,10 +210,7 @@ namespace Porchlight.App
         /// <summary>Each follower after the first keeps this much further back.</summary>
         const double FOLLOW_SPACING = 0.55;
         Traffic traffic;
-        /// <summary>The traffic and the townsfolk crossing in front of it, stepped together (while running the town here).</summary>
-        Streetlife streetlife;
         Fleet fleet;
-        Signals signals;
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
         double chaseSwing;
@@ -410,8 +407,6 @@ namespace Porchlight.App
             remotes?.Clear();
             world?.Dispose();
             fleet?.Dispose();
-            signals?.Dispose();
-            signals = null;
             foreach (var a in avatars) a?.Dispose();
             unmade.Clear();
             playerAvatar?.Dispose();
@@ -528,19 +523,11 @@ namespace Porchlight.App
             if (model.IsRoad)
             {
                 traffic = null;
-                streetlife = null;
                 basePeople = 0;
                 return;
             }
             traffic = new Traffic(world.layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
-            // Signals change by the wall clock, so everyone in a room sees the same lights.
-            traffic.clock = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            // The town's settings, if the room's sent them already.
-            ResolveTraffic();
-            traffic.night = night;
-            streetlife = new Streetlife(world.layout, traffic, new Rng($"{model.seed}::crossings"));
             fleet = new Fleet(traffic, library, world.root.transform);
-            signals = new Signals(traffic, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
@@ -587,15 +574,8 @@ namespace Porchlight.App
             settling = null;
             remotes?.Clear();
             fleet?.Dispose();
-            signals?.Dispose();
-            signals = null;
             fleet = null;
             traffic = null;
-            streetlife = null;
-            TrafficSettings = new TrafficConfig();
-            TrafficResolved = null;
-            MayEditTraffic = false;
-            TrafficRefused = null;
             foreach (var a in avatars) a?.Dispose();
             unmade.Clear();
             avatars.Clear();
@@ -793,19 +773,7 @@ namespace Porchlight.App
         /// or driven by another player) is drawn on this screen, anywhere, so none appears or vanishes
         /// at the ribbon. They're still there for everyone else, and never hit anyone on foot.
         /// </summary>
-        public Course Closed
-        {
-            get => closed;
-            set
-            {
-                if (closed == value) return;
-                closed = value;
-                // The course's roads are closed to the traffic too, while it's run.
-                ResolveTraffic();
-            }
-        }
-
-        Course closed;
+        public Course Closed;
 
         /// <summary>
         /// A mission's dead of night (Christmas Eve, say): night however the town's clock stands, and nobody else out
@@ -1079,151 +1047,6 @@ namespace Porchlight.App
             var looks = new List<string>();
             for (int i = basePeople; i < people.Count; i++) looks.Add(people[i].look);
             return new WorldState { cars = WorldSync.EncodeCars(traffic.cars), people = WorldSync.EncodePeople(people), looks = looks };
-        }
-
-        /// <summary>The town's traffic settings as the room has them (what the generator decided, until someone changes them).</summary>
-        public TrafficConfig TrafficSettings { get; private set; } = new TrafficConfig();
-        /// <summary>Those settings worked out for this town: per junction and road, with what no longer matches.</summary>
-        public ResolvedTraffic TrafficResolved { get; private set; }
-        /// <summary>Whether you may change them (you made the town).</summary>
-        public bool MayEditTraffic { get; private set; }
-        /// <summary>Why your last change to them wasn't made, or null.</summary>
-        public string TrafficRefused { get; private set; }
-        /// <summary>The traffic settings changed (from the room, or refused).</summary>
-        public Action OnTrafficChange;
-        /// <summary>Whether we're in a room (then the town's traffic settings are the room's), and sending a change to them there (made against this version, these operations: server traffic.ts).</summary>
-        public Func<bool> TrafficOnline;
-        public Action<int, List<object>> OnTrafficPatch;
-
-        /// <summary>The town's traffic settings from the room (TrafficConfig's JSON).</summary>
-        public void ApplyTraffic(string config, bool? mayEdit, string refused)
-        {
-            TrafficSettings = TrafficConfig.Parse(config);
-            if (mayEdit != null) MayEditTraffic = mayEdit.Value;
-            TrafficRefused = refused;
-            ResolveTraffic();
-            OnTrafficChange?.Invoke();
-        }
-
-        /// <summary>Change the town's traffic settings, if you may (online: the room says when it's done; alone: at once).</summary>
-        public void PatchTraffic(List<object> ops)
-        {
-            // Online, only the town's maker may, and the room says when it's done.
-            if (TrafficOnline != null && TrafficOnline())
-            {
-                if (MayEditTraffic) OnTrafficPatch?.Invoke(TrafficSettings.version, ops);
-                return;
-            }
-            // Playing alone: the settings are only ever here.
-            var next = TrafficSettings.Clone();
-            foreach (var op in ops) TrafficEdits.Apply(next, op as Dictionary<string, object>);
-            next.version++;
-            TrafficSettings = next;
-            TrafficRefused = null;
-            ResolveTraffic();
-            OnTrafficChange?.Invoke();
-        }
-
-        /// <summary>The sidebar's Traffic section: the settings, and the junction and street you're at.</summary>
-        public Porchlight.UI.TrafficView TrafficPanelView()
-        {
-            if (traffic == null || world == null) return null;
-            bool online = TrafficOnline != null && TrafficOnline();
-            var v = new Porchlight.UI.TrafficView
-            {
-                config = TrafficSettings,
-                online = online,
-                canEdit = !online || MayEditTraffic,
-                refused = TrafficRefused,
-                patch = PatchTraffic,
-                // Only where the traffic's run (alone, or the room's host): everyone else just follows it.
-                scorecard = authority ? traffic.Metrics().ToString() : null,
-            };
-            if (TrafficResolved != null) v.warnings.AddRange(TrafficResolved.warnings);
-            var here = PlayerPosition;
-            if (here == null) return v;
-            var layout = world.layout;
-            // The junction nearest, within a few tiles.
-            Junction near = null;
-            double best = 5;
-            foreach (var j in traffic.junctions)
-            {
-                if (j == null) continue;
-                double d = Geo.Dist(j.at, here.Value);
-                if (d < best)
-                {
-                    best = d;
-                    near = j;
-                }
-            }
-            if (near != null)
-            {
-                v.junctionKey = TrafficKeys.Junction(near.at);
-                var o = TrafficSettings.Junction(v.junctionKey);
-                v.junctionOverride = o?.control;
-                v.junctionCrossings = o?.crossings ?? true;
-                v.junctionLabel = $"{near.legs.Count} roads meet: {Porchlight.UI.TrafficPanel.Describe(near.control)}{(o?.control != null ? " (changed)" : "")}{(o != null && !o.crossings ? ", no crossings" : "")}";
-            }
-            // The street you're on.
-            int road = -1;
-            best = double.PositiveInfinity;
-            for (int r = 0; r < layout.roads.Count; r++)
-            {
-                if (layout.roads[r].kind == RoadKind.Path || !traffic.Driven(r)) continue;
-                var pts = layout.roads[r].points;
-                for (int k = 0; k + 1 < pts.Count; k++)
-                {
-                    double d = Geo.DistToSegment(here.Value, pts[k], pts[k + 1]);
-                    if (d < best && d < layout.roads[r].width / 2 + 1.5)
-                    {
-                        best = d;
-                        road = r;
-                    }
-                }
-            }
-            if (road >= 0)
-            {
-                v.roadKey = TrafficKeys.Road(layout, road);
-                var o = TrafficSettings.Road(v.roadKey);
-                v.roadClosed = o?.closed ?? false;
-                v.roadOneWay = o?.oneWay ?? 0;
-                v.roadSpeed = o?.speed ?? 1;
-                var rs = layout.roads[road];
-                string kind = rs.cls == RoadClass.Arterial ? "main road" : rs.cls == RoadClass.Collector ? "through street" : rs.cls == RoadClass.CulDeSac ? "cul-de-sac" : "local street";
-                v.roadLabel = $"A {kind}, {Math.Round(Units.ToKmh(rs.speed * v.roadSpeed))} km/h"
-                    + (v.roadClosed ? ", closed" : "") + (v.roadOneWay != 0 ? ", one way" : "");
-            }
-            return v;
-        }
-
-        string activeEvents = "";
-
-        /// <summary>A timed closure starting or ending: the settings worked out again.</summary>
-        void TrafficEventsBeginOrEnd()
-        {
-            if (TrafficSettings.events.Count == 0 && activeEvents.Length == 0) return;
-            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var on = new System.Text.StringBuilder();
-            foreach (var e in TrafficSettings.events) if (e.from <= now && now < e.until) on.Append(e.name).Append('|');
-            string active = on.ToString();
-            if (active == activeEvents) return;
-            activeEvents = active;
-            ResolveTraffic();
-        }
-
-        void ResolveTraffic()
-        {
-            if (world == null) return;
-            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var settings = TrafficSettings;
-            if (closed != null)
-            {
-                // A race on: its course closed, for as long as it's run (here only: it's this screen's race).
-                settings = settings.Clone();
-                settings.events.Add(TrafficEdits.CourseClosure(world.layout, closed, now - 1000, now + 24 * 3600 * 1000L));
-            }
-            TrafficResolved = ResolvedTraffic.Resolve(settings, world.layout, now);
-            traffic?.Apply(TrafficResolved);
         }
 
         /// <summary>The host's traffic and townsfolk.</summary>
@@ -2777,19 +2600,14 @@ namespace Porchlight.App
             UpdateCompany(dt);
             if (authority)
             {
+                foreach (var q in people) if (!q.following) q.Update(dt);
                 // Traffic stops for you, everyone else and every car left at the kerb.
                 var obstacles = cars.Select(c => new Vec2(c.car.x, c.car.y)).ToList();
                 if (p != null && !InCar && room == null) obstacles.Add(new Vec2(p.x, p.y));
                 foreach (var o in others) obstacles.Add(PositionOf(o.key) ?? new Vec2(o.x, o.y));
                 obstacles.AddRange(Obstacles);
                 obstacles.AddRange(othersParkedAt.Values);
-                if (streetlife != null)
-                {
-                    // The townsfolk stroll, waiting at the kerb for a gap; then the cars, stopping for them.
-                    traffic.night = night;
-                    streetlife.Step(dt, people, obstacles);
-                }
-                else foreach (var q in people) if (!q.following) q.Update(dt);
+                traffic?.Update(dt, obstacles);
             }
             else if (traffic != null)
             {
@@ -3044,9 +2862,6 @@ namespace Porchlight.App
             remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
             if (riding != null) FollowRide();
             fleet?.Update(dusk, Emptied ? Anywhere : (Func<double, double, bool>)null);
-            if (traffic != null) traffic.night = night;
-            TrafficEventsBeginOrEnd();
-            signals?.Update();
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);

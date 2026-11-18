@@ -17,15 +17,12 @@ export const MSG_CAR = 'car'; // ParkedCarMessage: where their own car is parked
 export const MSG_WORLD = 'world'; // the host's traffic and townsfolk (WorldMessage), about 10 a second
 export const MSG_UNLOCK = 'unlock'; // { what }: earned; one of UNLOCKS, kept with the account
 export const MSG_MISSION_DONE = 'mission_done'; // { id }: a mission played to its end
-export const MSG_TRAFFIC_PATCH = 'traffic:patch'; // TrafficPatchMessage: the town's maker changing its traffic settings
 
 /** Server → client. */
 export const MSG_SPAWN = 'spawn'; // SpawnMessage, once after joining
 export const MSG_CORRECT = 'correct'; // CorrectMessage: snap here
 export const MSG_DOTS = 'dots'; // DotsMessage, once a second: everyone in the room, for the minimap
 export const MSG_UNLOCKS = 'unlocks'; // { unlocks }: another of the account's characters earned something
-export const MSG_TRAFFIC_CONFIG = 'traffic:config'; // TrafficConfigMessage: the town's traffic settings, on joining and to everyone after each change
-export const MSG_TRAFFIC_REFUSED = 'traffic:refused'; // TrafficRefusedMessage: a patch not made, and the settings as they are
 // MSG_WORLD, passed on from the host to everyone else as it comes.
 
 /** Close codes (4000 is a consented leave; 4001-4010 are Colyseus's own). */
@@ -147,23 +144,3 @@ export const HOST_SILENT_MS = 3_000;
  */
 export const quantizeYaw = (yaw: number): number => Math.round((yaw / (2 * Math.PI)) * 65536) & 0xffff;
 export const yawFromWire = (q: number): number => (q / 65536) * 2 * Math.PI;
-
-/** Change the town's traffic settings (traffic.ts), made against the settings at version `baseVersion`. */
-export interface TrafficPatchMessage {
-  baseVersion: number;
-  ops: unknown[];
-}
-
-export interface TrafficConfigMessage {
-  config: unknown;
-  /** Whether you may change them (you made the town). Only sent to you, on joining. */
-  mayEdit?: boolean;
-}
-
-export interface TrafficRefusedMessage {
-  reason: string;
-  config: unknown;
-}
-
-/** Traffic patches a second, from any one person. */
-export const TRAFFIC_PATCHES_PER_SECOND = 4;

@@ -18,11 +18,6 @@
 //   dotnet run --project "unity/Tools~/Checks" -- ride              # riding in someone's car over a town line, on the web and on desktop (RideCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- ways              # one way shown at a time: a spot on the map is instead of following someone or a trip (WayCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- steering          # your own steering: a tap a nudge, a held turn full, straight easy to hold (SteeringCheck.cs)
-//   dotnet run --project "unity/Tools~/Checks" -- rules [count]     # the traffic minds the junctions: no foes in a box together, no jams, the same twice (TrafficRulesCheck.cs)
-//   dotnet run --project "unity/Tools~/Checks" -- roadsense [count] # RoadSense repairs and classes the roads: a fixed point, fewer defects (RoadSenseCheck.cs)
-//   dotnet run --project "unity/Tools~/Checks" -- crossings [count] # walkers wait at the kerb for a gap, cars stop for them, nobody waits forever (CrosswalkCheck.cs)
-//   dotnet run --project "unity/Tools~/Checks" -- settings [count]  # traffic settings: edits round-trip, closures (and the marathon's) kept (TrafficSettingsCheck.cs)
-//   dotnet run --project "unity/Tools~/Checks" -- trace <i> <car> [busy] [from] [to] # one car's view of its junction in a rules town (TrafficTrace.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- where             # the line under your name says where you are now (WhereCheck.cs)
 
 using System;
@@ -62,11 +57,6 @@ static class Program
         if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();
         if (args.Length > 0 && args[0] == "steering") return SteeringCheck.Run();
         if (args.Length > 0 && args[0] == "sleigh") return SleighCheck.Run();
-        if (args.Length > 2 && args[0] == "trace") return TrafficTrace.Run(int.Parse(args[1]), int.Parse(args[2]), args.Length > 3 && args[3] == "busy", args.Length > 4 ? double.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture) : 0, args.Length > 5 ? double.Parse(args[5], System.Globalization.CultureInfo.InvariantCulture) : 120);
-        if (args.Length > 0 && args[0] == "rules") return TrafficRulesCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 12);
-        if (args.Length > 0 && args[0] == "crossings") return CrosswalkCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 8);
-        if (args.Length > 0 && args[0] == "settings") return TrafficSettingsCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 8);
-        if (args.Length > 0 && args[0] == "roadsense") return RoadSenseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
         return 2;
@@ -469,7 +459,7 @@ static class Program
                 if (t < 1 || (c.next != Porchlight.Explore.Traffic.ROUND && c.prev != Porchlight.Explore.Traffic.ROUND)) continue;
                 double turn = Math.Abs(Porchlight.Explore.Orbit.ShortestTurn(heading, c.heading)) / DT;
                 double slip = Math.Abs(-(c.x - x) * Math.Sin(c.heading) + (c.y - y) * Math.Cos(c.heading)) / DT;
-                if (turn > MAX_TURN) return $"car {k} swung round at {turn:0.0} rad/s turning round at ({c.x:0.0}, {c.y:0.0}) v {c.speed:0.00} next {c.next} prev {c.prev} road {c.road} len {traffic.LengthOf(c.road):0.0} s {c.s:0.00} dir {c.dir} t {t:0.00}";
+                if (turn > MAX_TURN) return $"car {k} swung round at {turn:0.0} rad/s turning round at ({c.x:0.0}, {c.y:0.0})";
                 if (slip > MAX_SLIP) return $"car {k} slid sideways at {slip:0.0} tiles/s turning round at ({c.x:0.0}, {c.y:0.0})";
             }
         }
@@ -491,16 +481,12 @@ static class Program
         sync.Receive(Porchlight.Explore.WorldSync.EncodeCars(traffic.cars), Porchlight.Explore.WorldSync.EncodePeople(people));
         sync.Step(0.2, copy.cars, others); // a full catch-up, carrying on 0.2 s at speed
         for (int k = 0; k < traffic.cars.Count; k++)
-        {
-            // The copy carries on 0.2 s at the car's speed past where the host has it (arterials are driven at 50 km/h, 3.5 tiles/s).
-            double slack = 0.25 + 0.2 * Math.Abs(traffic.cars[k].speed);
-            if (Math.Abs(traffic.cars[k].x - copy.cars[k].x) > slack || Math.Abs(traffic.cars[k].y - copy.cars[k].y) > slack) return $"traffic car {k} not followed";
-        }
+            if (Math.Abs(traffic.cars[k].x - copy.cars[k].x) > 0.6 || Math.Abs(traffic.cars[k].y - copy.cars[k].y) > 0.6) return $"traffic car {k} not followed";
         for (int k = 0; k < people.Count; k++)
             if (Math.Abs(people[k].x - others[k].x) > 0.4) return $"person {k} not followed";
         foreach (var c in copy.cars) copy.Adopt(c);
         for (int k = 0; k < 40; k++) copy.Update(0.05, null);
-        foreach (var c in copy.cars) if (!c.idle && (double.IsNaN(c.x) || c.x < 0 || c.x > model.width)) return "adopted traffic went astray";
+        foreach (var c in copy.cars) if (double.IsNaN(c.x) || c.x < 0 || c.x > model.width) return "adopted traffic went astray";
         // Sidewalks run clean: none crosses itself (a loop on the inside of a bend).
         foreach (var path in layout.sidewalks.paths)
             for (int i = 0; i + 1 < path.points.Count; i++)

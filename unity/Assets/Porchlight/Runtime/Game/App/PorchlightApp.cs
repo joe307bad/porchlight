@@ -2185,9 +2185,6 @@ namespace Porchlight.App
         {
             overlay = new ExploreOverlay(isoHost) { Dpr = dpr };
             iso = new ExploreView(camera3d, ModelLibrary.Instance, overlay, input);
-            // Online, the town's traffic settings are the room's.
-            iso.TrafficOnline = () => net != null && net.Online;
-            iso.OnTrafficPatch = (version, ops) => net?.SendTrafficPatch(version, ops);
             iso.SetWeather(raining, snowing);
             iso.OnTake = car => net?.Take(car);
             // A car you're riding in that's out of sight is only gone once you're in a room and not waiting on the space ahead.
@@ -3226,7 +3223,6 @@ namespace Porchlight.App
                 OfferJoins();
             }
             sidebar.SetPlayers(list, findingKey, Follow);
-            sidebar.SetTraffic(iso.TrafficPanelView());
         }
 
         void ToggleAutoWalk()

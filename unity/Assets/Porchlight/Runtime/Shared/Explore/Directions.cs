@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using Porchlight.Core;
-using Porchlight.Model;
 
 namespace Porchlight.Explore
 {
@@ -22,7 +21,7 @@ namespace Porchlight.Explore
     public static class Directions
     {
         /// <summary>About how many metres one tile is.</summary>
-        public const double METRES_PER_TILE = Units.METRES_PER_TILE;
+        public const double METRES_PER_TILE = 4;
 
         enum Via { Start, Link, Cross }
 

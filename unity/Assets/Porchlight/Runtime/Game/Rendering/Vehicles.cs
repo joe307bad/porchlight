@@ -414,7 +414,7 @@ namespace Porchlight.Rendering
             {
                 var c = traffic.cars[i];
                 var v = views[i];
-                v.Visible = !c.taken && !c.idle && (hidden == null || !hidden(c.x, c.y));
+                v.Visible = !c.taken && (hidden == null || !hidden(c.x, c.y));
                 if (!v.Visible) continue;
                 v.Place(c.x, c.y, CarView.RotOf(c.heading));
                 v.Lights(dusk);

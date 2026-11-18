@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence, STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_TRAFFIC_CONFIG, MSG_TRAFFIC_PATCH, MSG_TRAFFIC_REFUSED, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -561,56 +561,4 @@ test('following someone from town to town: the roll call names their character, 
   assert.equal((await fetch(`${base}/mp/players/${leader.id}`)).status, 401);
   await a2.leave();
   await b.leave();
-});
-
-test("traffic: the town's maker changes it for everyone; nobody else can, nor from an old version", async () => {
-  const made = (await api('planner', 'POST', '/mp/towns', { name: 'Gridlock' })).json;
-  const me = (await api('planner', 'POST', '/mp/characters', { name: 'Planner' })).json;
-  const other = (await api('planner', 'POST', '/mp/characters', { name: 'Passenger' })).json;
-  const here = { town: made.key, width: 128, height: 128 };
-  const configs: any[] = [];
-  const refused: any[] = [];
-  const room = await client('planner').joinOrCreate('city', { ...here, character: me.id });
-  room.onMessage(MSG_TRAFFIC_CONFIG, (m) => configs.push(m));
-  room.onMessage(MSG_TRAFFIC_REFUSED, (m) => refused.push(m));
-  room.onMessage(MSG_SPAWN, () => {});
-  await until('the settings on joining', () => configs.length === 1);
-  assert.equal(configs[0].mayEdit, true);
-  assert.equal(configs[0].config.version, 0);
-  const seen: any[] = [];
-  const watcher = await client('planner').joinOrCreate('city', { ...here, character: other.id });
-  watcher.onMessage(MSG_TRAFFIC_CONFIG, (m) => seen.push(m));
-  watcher.onMessage(MSG_SPAWN, () => {});
-  await until('the watcher joining', () => seen.length === 1);
-
-  room.send(MSG_TRAFFIC_PATCH, { baseVersion: 0, ops: [{ op: 'junction', key: 'j40_40', control: 'Stop' }] });
-  await until('the change going out', () => configs.length === 2 && seen.length === 2);
-  assert.equal(seen[1].config.version, 1);
-  assert.deepEqual(seen[1].config.junctions, [{ key: 'j40_40', control: 'Stop' }]);
-  assert.equal((await persistence.traffic(made.key)).version, 1);
-
-  // Made against version 0 again: refused, with the settings as they are.
-  room.send(MSG_TRAFFIC_PATCH, { baseVersion: 0, ops: [{ op: 'preset', value: 'busy' }] });
-  // Out of bounds: refused.
-  room.send(MSG_TRAFFIC_PATCH, { baseVersion: 1, ops: [{ op: 'global', key: 'density', value: 50 }] });
-  await until('both refused', () => refused.length === 2);
-  assert.equal(refused[0].config.version, 1);
-  assert.equal((await persistence.traffic(made.key)).preset, 'auto');
-  await room.leave();
-  await watcher.leave();
-
-  // In a town that comes with the game, nobody may.
-  const visitor = (await api('visitor', 'POST', '/mp/characters', { name: 'Visitor' })).json;
-  const theirs: any[] = [];
-  const no: any[] = [];
-  const shared = await client('visitor').joinOrCreate('city', { ...town, town: 'seed=traffic-shared', character: visitor.id });
-  shared.onMessage(MSG_TRAFFIC_CONFIG, (m) => theirs.push(m));
-  shared.onMessage(MSG_TRAFFIC_REFUSED, (m) => no.push(m));
-  shared.onMessage(MSG_SPAWN, () => {});
-  await until('the settings', () => theirs.length === 1);
-  assert.equal(theirs[0].mayEdit, false);
-  shared.send(MSG_TRAFFIC_PATCH, { baseVersion: 0, ops: [{ op: 'preset', value: 'busy' }] });
-  await until('refused', () => no.length === 1);
-  assert.match(no[0].reason, /whoever made the town/);
-  await shared.leave();
 });

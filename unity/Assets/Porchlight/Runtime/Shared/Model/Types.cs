@@ -40,19 +40,6 @@ namespace Porchlight.Model
 
     public enum RoadKind { Main, Street, Path }
 
-    /// <summary>
-    /// What a road is for (RoadSense), as against how wide it is (RoadKind): an arterial carries
-    /// traffic between the gates and the centre, a collector gathers it from the streets, a local
-    /// street serves the houses on it, and a cul-de-sac only the houses beyond it.
-    /// </summary>
-    public enum RoadClass { Local, Collector, Arterial, CulDeSac }
-
-    /// <summary>
-    /// Who goes first where roads meet (RoadSense picks one for each junction; a town's traffic
-    /// settings can change it): one list for the generator, the traffic and the settings alike.
-    /// </summary>
-    public enum JunctionControl { None, DeadEnd, Gate, Priority, Stop, AllWayStop, RightBeforeLeft, Signal, Roundabout }
-
     public enum Facing { N = 0, E = 1, S = 2, W = 3 }
 
     public enum BuildingKind { House, Shop, Workshop, Church, Hall }
@@ -92,12 +79,6 @@ namespace Porchlight.Model
     {
         public int id;
         public Vec2 at;
-        /// <summary>Who goes first here (RoadSense).</summary>
-        public JunctionControl control;
-        /// <summary>The roads (edge ids) that give way here, under Priority or Stop: the rest have right of way.</summary>
-        public List<int> minor;
-        /// <summary>A roundabout would fit here (four or five even arterial legs and room round about): noted, not yet built.</summary>
-        public bool roundabout;
     }
 
     public sealed class RoadEdge
@@ -108,24 +89,14 @@ namespace Porchlight.Model
         public RoadKind kind;
         /// <summary>Polyline from `from` to `to`, endpoints included.</summary>
         public List<Vec2> points;
-        /// <summary>What it's for (RoadSense).</summary>
-        public RoadClass cls;
-        /// <summary>How fast traffic drives it, tiles a second (RoadSense, by class).</summary>
-        public double speed;
-        /// <summary>Lanes each way (always 1 so far).</summary>
-        public int lanesFwd = 1, lanesBack = 1;
-        /// <summary>Its rank where roads meet: the higher, the more it has right of way (RoadSense).</summary>
-        public int priority;
 
-        public RoadEdge Clone() => new RoadEdge { id = id, from = from, to = to, kind = kind, points = points, cls = cls, speed = speed, lanesFwd = lanesFwd, lanesBack = lanesBack, priority = priority };
+        public RoadEdge Clone() => new RoadEdge { id = id, from = from, to = to, kind = kind, points = points };
     }
 
     public sealed class RoadGraph
     {
         public List<RoadNode> nodes = new List<RoadNode>();
         public List<RoadEdge> edges = new List<RoadEdge>();
-        /// <summary>RoadSense has classed its roads and junctions (a road space built by hand hasn't, till Layout asks).</summary>
-        public bool classified;
     }
 
     public sealed class Bridge

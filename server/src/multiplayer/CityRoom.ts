@@ -43,9 +43,6 @@ import {
   MSG_SPAWN,
   MSG_TAKE,
   MSG_TELEPORT,
-  MSG_TRAFFIC_CONFIG,
-  MSG_TRAFFIC_PATCH,
-  MSG_TRAFFIC_REFUSED,
   MSG_UNLOCK,
   MSG_UNLOCKS,
   MSG_WORLD,
@@ -60,11 +57,7 @@ import {
   type DotsMessage,
   type MoveMessage,
   type SpawnMessage,
-  TRAFFIC_PATCHES_PER_SECOND,
-  type TrafficConfigMessage,
-  type TrafficRefusedMessage,
 } from './protocol.ts';
-import { applyTrafficPatch, emptyTraffic, type TrafficSettings } from './traffic.ts';
 import { CityState, ParkedCar, Player } from './schema.ts';
 
 /** The room's housekeeping tick (idle players, who sees whom). Moves don't wait for it. */
@@ -228,41 +221,6 @@ export class CityRoom extends Room<{ state: CityState }> {
     return deps;
   }
 
-  /** The town's traffic settings, as everyone in the room has them. */
-  traffic: TrafficSettings = emptyTraffic();
-  /** Traffic patches are made one at a time, in the order they came. */
-  private trafficQueue: Promise<void> = Promise.resolve();
-  private readonly trafficRate = new Map<string, RateLimit>();
-
-  /** The town's traffic settings, from the database (as they come with the town, if that fails). */
-  async loadTraffic(): Promise<void> {
-    try {
-      this.traffic = await this.deps.persistence.traffic(this.town);
-    } catch (err) {
-      console.error(`city: couldn't load ${this.town}'s traffic:`, (err as Error).message);
-    }
-  }
-
-  /** A patch to the town's traffic from `client`: made, kept and sent to everyone, or refused (and they get the settings as they are). */
-  private async patchTraffic(client: Client, accountId: string, base: number, ops: unknown[]): Promise<void> {
-    const refuse = (reason: string) => client.send(MSG_TRAFFIC_REFUSED, { reason, config: this.traffic } satisfies TrafficRefusedMessage);
-    try {
-      if (!(await this.deps.persistence.mayEditTraffic(accountId, this.town))) return refuse('Only whoever made the town can change its traffic.');
-      if (base !== this.traffic.version) return refuse('The traffic was changed meanwhile.');
-      const next = applyTrafficPatch(this.traffic, ops);
-      if (typeof next === 'string') return refuse(next);
-      if (!(await this.deps.persistence.saveTraffic(this.town, base, next))) {
-        await this.loadTraffic();
-        return refuse('The traffic was changed meanwhile.');
-      }
-      this.traffic = next;
-      this.broadcast(MSG_TRAFFIC_CONFIG, { config: next } satisfies TrafficConfigMessage);
-    } catch (err) {
-      console.error(`city: couldn't change ${this.town}'s traffic:`, (err as Error).message);
-      refuse("Couldn't keep that change. Try again in a moment.");
-    }
-  }
-
   /** The account whose part of the county this room's in (null: the public part, or no county). */
   countyAccount: string | null = null;
 
@@ -298,7 +256,6 @@ export class CityRoom extends Room<{ state: CityState }> {
     this.bounds = { width, height };
     rooms.add(this);
     await this.loadCounty();
-    await this.loadTraffic();
     this.state = new CityState();
     this.state.night = night;
     this.state.taken = '';
@@ -380,17 +337,6 @@ export class CityRoom extends Room<{ state: CityState }> {
       car.z = c.z;
       car.yaw = quantizeYaw(m.yaw);
       if (!this.state.cars.has(client.sessionId)) this.state.cars.set(client.sessionId, car);
-    });
-    this.onMessage(MSG_TRAFFIC_PATCH, (client, raw: unknown) => {
-      const rt = this.admit(client);
-      const m = raw as { baseVersion?: unknown; ops?: unknown } | null;
-      if (!rt || typeof m?.baseVersion !== 'number' || !Number.isInteger(m.baseVersion) || m.baseVersion < 0 || !Array.isArray(m.ops)) return;
-      let rate = this.trafficRate.get(client.sessionId);
-      if (!rate) this.trafficRate.set(client.sessionId, (rate = new RateLimit(TRAFFIC_PATCHES_PER_SECOND)));
-      if (rate.hit(Date.now()) !== 'ok') return;
-      const base = m.baseVersion;
-      const ops = m.ops;
-      this.trafficQueue = this.trafficQueue.then(() => this.patchTraffic(client, rt.accountId, base, ops));
     });
     this.onMessage(MSG_WORLD, (client, raw: unknown) => {
       const rt = this.admit(client);
@@ -498,8 +444,6 @@ export class CityRoom extends Room<{ state: CityState }> {
       // Nobody sees them (and they're on no one's minimap) until their first
       // move says where they are: the client checks the spot against the town.
       client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
-      const mayEdit = await d.persistence.mayEditTraffic(auth.accountId, this.town).catch(() => false);
-      client.send(MSG_TRAFFIC_CONFIG, { config: this.traffic, mayEdit } satisfies TrafficConfigMessage);
     } catch (err) {
       if (online.get(auth.characterId)?.sessionId === client.sessionId) online.delete(auth.characterId);
       this.state.players.delete(client.sessionId);
@@ -814,7 +758,6 @@ export class CityRoom extends Room<{ state: CityState }> {
     this.state.players.delete(rt.sessionId);
     this.state.cars.delete(rt.sessionId);
     this.runtime.delete(rt.sessionId);
-    this.trafficRate.delete(rt.sessionId);
   }
 
   /** Tick time, logged every minute while anyone's here. */
