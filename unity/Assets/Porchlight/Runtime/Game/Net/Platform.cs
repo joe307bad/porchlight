@@ -334,6 +334,17 @@ namespace Porchlight.App
 #endif
         }
 
+        /// <summary>Manage Porchlight in a frame over the game (the web build); false where there's no frame for it (the desktop app).</summary>
+        public bool ShowManage(string path)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            PL_ShowManage(path);
+            return true;
+#else
+            return false;
+#endif
+        }
+
         public void PostForm(string url)
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -423,6 +434,7 @@ namespace Porchlight.App
         [DllImport("__Internal")] static extern void PL_Navigate(string url);
         [DllImport("__Internal")] static extern void PL_PostForm(string url);
         [DllImport("__Internal")] static extern int PL_OpenTab(string url);
+        [DllImport("__Internal")] static extern void PL_ShowManage(string url);
         [DllImport("__Internal")] static extern string PL_StorageGet(int session, string key);
         [DllImport("__Internal")] static extern void PL_StorageSet(int session, string key, string value);
         [DllImport("__Internal")] static extern void PL_Download(IntPtr ptr, int length, string name, string type);

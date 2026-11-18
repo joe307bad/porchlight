@@ -736,8 +736,10 @@ namespace Porchlight.UI
             if (onSignOut != null) links.Add(El.Link("Sign out", onSignOut));
             if (onManage != null)
             {
-                var manage = El.Link("Manage \u2197", onManage);
-                manage.tooltip = "Manage Porchlight: every car, townsperson and player in the county, live (opens in your browser)";
+                // On the web it opens over the game; the desktop app's opens in the browser (\u2197).
+                bool inGame = UnityEngine.Application.platform == UnityEngine.RuntimePlatform.WebGLPlayer;
+                var manage = El.Link(inGame ? "Manage" : "Manage \u2197", onManage);
+                manage.tooltip = "Manage Porchlight: every car, townsperson and player in the county, live" + (inGame ? "" : " (opens in your browser)");
                 links.Add(manage);
             }
             if (onSettings != null) links.Add(El.Link("Settings", onSettings));

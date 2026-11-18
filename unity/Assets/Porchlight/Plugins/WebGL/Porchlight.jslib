@@ -122,6 +122,37 @@ mergeInto(LibraryManager.library, {
     return 1;
   },
 
+  // Manage Porchlight inside the game: its page in a frame over the game, which carries
+  // on underneath. The page asks for it to close (its "Back to the game", or Escape),
+  // and the keys go back to the game.
+  PL_ShowManage: function (urlPtr) {
+    var url = UTF8ToString(urlPtr);
+    var shown = document.getElementById('pl-manage');
+    if (shown) {
+      shown.querySelector('iframe').focus();
+      return;
+    }
+    var frame = document.createElement('div');
+    frame.id = 'pl-manage';
+    frame.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#0b0f14;';
+    var iframe = document.createElement('iframe');
+    iframe.src = url;
+    iframe.title = 'Manage Porchlight';
+    iframe.style.cssText = 'border:0;width:100%;height:100%;display:block;';
+    frame.appendChild(iframe);
+    function close(e) {
+      if (e.source !== iframe.contentWindow || e.origin !== location.origin) return;
+      if (!e.data || e.data.porchlight !== 'manage-close') return;
+      window.removeEventListener('message', close);
+      frame.remove();
+      var canvas = document.querySelector('canvas');
+      if (canvas) canvas.focus();
+    }
+    window.addEventListener('message', close);
+    document.body.appendChild(frame);
+    iframe.focus();
+  },
+
   PL_PostForm: function (urlPtr) {
     var form = document.createElement('form');
     form.method = 'POST';

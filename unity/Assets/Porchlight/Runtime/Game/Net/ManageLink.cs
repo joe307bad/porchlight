@@ -2,8 +2,9 @@
 // into StreamingAssets/manage, so every build of the game carries it), for
 // now its traffic view: every car, townsperson and player in the county, live.
 //
-// On the web it's the site's own page, /manage/, opened in a new tab: Caddy
-// serves it from the game's build, and it signs in with the same cookie.
+// On the web it's the site's own page, /manage/, in a frame over the game (which
+// carries on underneath) until its "Back to the game": Caddy serves it from the
+// game's build, and it's signed in with the same cookie.
 //
 // The desktop app has no browser cookies to share, so it serves the page
 // itself (ManageHost): on a one-off port on 127.0.0.1, the files from its
@@ -33,7 +34,7 @@ namespace Porchlight.App
         {
             var p = Platform.Instance;
 #if UNITY_WEBGL && !UNITY_EDITOR
-            if (!p.OpenTab(PATH)) Debug.LogWarning("porchlight: the browser didn't open Manage (a pop-up blocker?)");
+            p.ShowManage(PATH);
 #else
             string cookie = Platform.Cookie;
             if (cookie == null)

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { county, inDesktopApp, me, signInUrl, type CountyMap, type Me } from './api.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
+import { backToGame, embedded } from './embed.ts';
 import { DEFAULT_LAYERS, MapRenderer, type Hover, type Layers } from './render.ts';
 import { World } from './world.ts';
 
@@ -147,6 +148,11 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
           </div>
         )}
         <div className="map-buttons">
+          {embedded && (
+            <button className="btn btn-primary" onClick={backToGame} title="Back to the game (Esc)">
+              ← Back to the game
+            </button>
+          )}
           <button className="btn" onClick={() => { follow(null); renderer?.fitAll(); }} title="The whole county">
             Whole county
           </button>
