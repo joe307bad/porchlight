@@ -164,6 +164,28 @@ export const playingIn = (town: string): number => [...online.values()].filter((
 let night = false;
 /** The rooms open in this process (to tell them all when night falls, or someone's county changes). */
 const rooms = new Set<CityRoom>();
+
+/** The rooms open in this process (the traffic feed reads them: feed.ts). */
+export const openRooms = (): Iterable<CityRoom> => rooms;
+
+/** Each room's number in the traffic feed, never reused while this process runs. */
+let nextWatchId = 1;
+
+/** A player as the traffic feed sees them. */
+export interface WatchedPlayer {
+  sessionId: string;
+  characterId: string;
+  name: string;
+  look: string;
+  x: number;
+  y: number;
+  z: number;
+  rotY: number;
+  anim: number;
+  car: number;
+  /** A passenger: the driver's session id; otherwise ''. */
+  ride: string;
+}
 /** How far past its ground (tiles) a room still takes a move: the moment between crossing over and joining the next room. */
 const TERRITORY_SLACK = 16;
 
@@ -200,6 +222,10 @@ export class CityRoom extends Room<{ state: CityState }> {
   maxMessagesPerSecond = 200;
 
   town = '';
+  /** The room's number in the traffic feed (feed.ts). */
+  readonly watchId = nextWatchId++;
+  /** The host's latest traffic and townsfolk, as the game packed them (WorldSync.cs), and when it came (ms). */
+  world: { cars: Uint8Array; people: Uint8Array; at: number } | null = null;
   bounds: Bounds = { width: 0, height: 0 };
   private readonly runtime = new Map<string, PlayerRuntime>();
   private readonly interest = new Interest();
@@ -347,6 +373,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       if (cars < 0 || people < 0 || cars + people > WORLD_MAX_BYTES || !Array.isArray(m?.looks) || m.looks.length > 256) return;
       if (rt.worldRate.hit(Date.now()) !== 'ok') return;
       this.hostHeardAt = Date.now();
+      this.world = { cars: m.cars as Uint8Array, people: m.people as Uint8Array, at: this.hostHeardAt };
       this.broadcast(MSG_WORLD, { cars: m.cars, people: m.people, looks: m.looks.filter((l) => typeof l === 'string' && l.length < 64) }, { except: client });
     });
 
@@ -520,6 +547,15 @@ export class CityRoom extends Room<{ state: CityState }> {
     const rt = this.runtime.get(sessionId);
     if (!rt || rt.finished || !rt.track.anchored) return null;
     return { x: Math.round(rt.player.x * 10) / 10, z: Math.round(rt.player.z * 10) / 10, name: rt.player.name };
+  }
+
+  /** Everyone playing here right now (for the traffic feed), in the order they joined. */
+  *watchPlayers(): Generator<WatchedPlayer> {
+    for (const rt of this.runtime.values()) {
+      if (rt.finished || !rt.track.anchored) continue;
+      const p = rt.player;
+      yield { sessionId: rt.sessionId, characterId: rt.characterId, name: p.name, look: p.appearance, x: p.x, y: p.y, z: p.z, rotY: p.rotY, anim: p.anim, car: p.car, ride: p.ride };
+    }
   }
 
   /** Someone else has taken this character: save, sign off and close this session. */

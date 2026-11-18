@@ -1,0 +1,753 @@
+// The map, drawn on a canvas. Its still parts (the towns' ground and streets,
+// the highways) are built once into Path2Ds in the county's frame and drawn
+// into a cached canvas only when the view moves; each animation frame draws
+// that, then everything moving, batched by colour into one path a colour, and
+// only what's in view. Pan by dragging, zoom with the wheel or a pinch.
+
+import type { CountyMap } from './api.ts';
+import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
+
+export interface Layers {
+  roads: boolean;
+  cars: boolean;
+  people: boolean;
+  players: boolean;
+  names: boolean;
+  reach: boolean;
+  trails: boolean;
+}
+
+export const DEFAULT_LAYERS: Layers = { roads: true, cars: true, people: true, players: true, names: true, reach: true, trails: false };
+
+/** Car colours by speed (tiles a second): stopped, crawling, moving, fast. */
+export const SPEEDS = [
+  { under: STOPPED, color: '#ff4d4f', label: 'Stopped' },
+  { under: 1.5, color: '#ffb02e', label: 'Crawling' },
+  { under: 4, color: '#3ddc84', label: 'Moving' },
+  { under: Infinity, color: '#38bdf8', label: 'Fast' },
+];
+export const PERSON = '#e9e4ff';
+const PERSON_PX = pixel(PERSON, 0.9);
+const PERSON_DIM_PX = pixel(PERSON, 0.35);
+const SPEED_PX = SPEEDS.map((s) => pixel(s.color, 1));
+const SPEED_DIM_PX = SPEEDS.map((s) => pixel(s.color, 0.45));
+
+/** Pixels a tile from which cars are drawn their true shape (further out, as dots). */
+const SHAPED = 4;
+
+/** A colour (#rrggbb) and opacity as one pixel of an ImageData, as a little-endian Uint32Array holds it. */
+function pixel(hex: string, alpha: number): number {
+  const n = parseInt(hex.slice(1), 16);
+  return ((Math.round(alpha * 255) << 24) | ((n & 0xff) << 16) | (n & 0xff00) | ((n >> 16) & 0xff)) >>> 0;
+}
+
+/** Which of SPEEDS a car's speed is. */
+function speedBand(s: number): number {
+  for (let b = 0; b < SPEEDS.length - 1; b++) if (s < SPEEDS[b].under) return b;
+  return SPEEDS.length - 1;
+}
+
+const MIN_SCALE = 0.15;
+const MAX_SCALE = 40;
+/** One tile is about 4 m: tiles a second to km/h. */
+export const KMH = 14.4;
+
+export interface Hover {
+  x: number;
+  y: number;
+  text: string;
+}
+
+interface Camera {
+  cx: number;
+  cy: number;
+  /** Pixels (CSS) a tile. */
+  scale: number;
+}
+
+interface StreetPaths {
+  /** By kind (0 main, 1 street, 2 path), then by width. */
+  streets: { kind: number; width: number; path: Path2D }[];
+  highways: Path2D;
+  towns: { name: string; x0: number; y0: number; width: number; height: number; private: boolean }[];
+  spaces: Path2D;
+  bounds: { x0: number; y0: number; x1: number; y1: number };
+}
+
+function buildPaths(map: CountyMap): StreetPaths {
+  const byKey = new Map<string, { kind: number; width: number; path: Path2D }>();
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const grow = (x: number, y: number) => {
+    x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+    x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+  };
+  for (const t of map.towns) {
+    grow(t.x0, t.y0);
+    grow(t.x0 + t.width, t.y0 + t.height);
+    for (const r of t.roads ?? []) {
+      const kind = r[0];
+      const width = Math.max(0.5, Math.round(r[1] * 2) / 2);
+      const k = `${kind}:${width}`;
+      let s = byKey.get(k);
+      if (!s) byKey.set(k, (s = { kind, width, path: new Path2D() }));
+      s.path.moveTo(t.x0 + r[2], t.y0 + r[3]);
+      for (let i = 4; i + 1 < r.length; i += 2) s.path.lineTo(t.x0 + r[i], t.y0 + r[i + 1]);
+    }
+  }
+  const highways = new Path2D();
+  for (const h of map.highways) {
+    highways.moveTo(h[0], h[1]);
+    grow(h[0], h[1]);
+    for (let i = 2; i + 1 < h.length; i += 2) {
+      highways.lineTo(h[i], h[i + 1]);
+      grow(h[i], h[i + 1]);
+    }
+  }
+  const spaces = new Path2D();
+  for (const s of map.spaces) spaces.rect(s.x0, s.y0, s.width, s.height);
+  // Paths under streets, streets under main roads.
+  const streets = [...byKey.values()].sort((a, b) => b.kind - a.kind || a.width - b.width);
+  return { streets, highways, towns: map.towns, spaces, bounds: { x0, y0, x1, y1 } };
+}
+
+export class MapRenderer {
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly still = document.createElement('canvas');
+  private readonly trail = document.createElement('canvas');
+  private stillKey = '';
+  private paths: StreetPaths;
+  private cam: Camera = { cx: 0, cy: 0, scale: 1 };
+  private width = 0;
+  private height = 0;
+  private dpr = 1;
+  private raf = 0;
+  private following: string | null = null;
+  private selected: string | null = null;
+  private readonly pointers = new Map<number, { x: number; y: number }>();
+  private dragged = false;
+  private pinch: { d: number; scale: number } | null = null;
+  private readonly resize: ResizeObserver;
+  private lastHover = 0;
+  layers: Layers = { ...DEFAULT_LAYERS };
+  /** Drawn frames a second, for the panel. */
+  fps = 0;
+  private fpsCount = 0;
+  private fpsAt = 0;
+  onSelect: (sid: string | null) => void = () => {};
+  onFollowEnd: () => void = () => {};
+  onHover: (h: Hover | null) => void = () => {};
+
+  private readonly canvas: HTMLCanvasElement;
+  private readonly world: World;
+
+  /** `loop` false: no animation loop of its own, frameAt() draws (the stress test). */
+  constructor(canvas: HTMLCanvasElement, world: World, map: CountyMap, loop = true) {
+    this.canvas = canvas;
+    this.world = world;
+    this.ctx = canvas.getContext('2d', { alpha: false })!;
+    this.paths = buildPaths(map);
+    this.resize = new ResizeObserver(() => this.fitCanvas());
+    this.resize.observe(canvas);
+    this.fitCanvas();
+    this.fitAll();
+    canvas.addEventListener('wheel', this.wheel, { passive: false });
+    canvas.addEventListener('pointerdown', this.down);
+    canvas.addEventListener('pointermove', this.move);
+    canvas.addEventListener('pointerup', this.up);
+    canvas.addEventListener('pointercancel', this.up);
+    canvas.addEventListener('pointerleave', this.leave);
+    canvas.addEventListener('dblclick', this.dbl);
+    if (loop) this.raf = requestAnimationFrame(this.frame);
+  }
+
+  dispose(): void {
+    cancelAnimationFrame(this.raf);
+    this.resize.disconnect();
+    const c = this.canvas;
+    c.removeEventListener('wheel', this.wheel);
+    c.removeEventListener('pointerdown', this.down);
+    c.removeEventListener('pointermove', this.move);
+    c.removeEventListener('pointerup', this.up);
+    c.removeEventListener('pointercancel', this.up);
+    c.removeEventListener('pointerleave', this.leave);
+    c.removeEventListener('dblclick', this.dbl);
+  }
+
+  setMap(map: CountyMap): void {
+    this.paths = buildPaths(map);
+    this.stillKey = '';
+  }
+
+  /** The whole county in view. */
+  fitAll(): void {
+    const b = this.paths.bounds;
+    if (!Number.isFinite(b.x0)) return;
+    this.fit(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, 24);
+  }
+
+  fit(x0: number, y0: number, w: number, h: number, pad = 32): void {
+    if (!this.width || !this.height) return;
+    const scale = Math.min((this.width - pad * 2) / Math.max(1, w), (this.height - pad * 2) / Math.max(1, h));
+    this.cam = { cx: x0 + w / 2, cy: y0 + h / 2, scale: clamp(scale, MIN_SCALE, MAX_SCALE) };
+  }
+
+  follow(sid: string | null): void {
+    this.following = sid;
+    this.selected = sid;
+    if (sid) this.cam.scale = Math.max(this.cam.scale, 6);
+  }
+
+  select(sid: string | null): void {
+    this.selected = sid;
+  }
+
+  private fitCanvas(): void {
+    const r = this.canvas.getBoundingClientRect();
+    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+    this.width = r.width;
+    this.height = r.height;
+    for (const c of [this.canvas, this.still, this.trail]) {
+      c.width = Math.max(1, Math.round(r.width * this.dpr));
+      c.height = Math.max(1, Math.round(r.height * this.dpr));
+    }
+    this.stillKey = '';
+  }
+
+  // --- Input -------------------------------------------------------------
+
+  private toWorld(px: number, py: number): { x: number; y: number } {
+    return { x: this.cam.cx + (px - this.width / 2) / this.cam.scale, y: this.cam.cy + (py - this.height / 2) / this.cam.scale };
+  }
+
+  private local(e: PointerEvent | WheelEvent | MouseEvent): { x: number; y: number } {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  private zoomAt(px: number, py: number, scale: number): void {
+    const before = this.toWorld(px, py);
+    this.cam.scale = clamp(scale, MIN_SCALE, MAX_SCALE);
+    const after = this.toWorld(px, py);
+    this.cam.cx += before.x - after.x;
+    this.cam.cy += before.y - after.y;
+  }
+
+  private readonly wheel = (e: WheelEvent) => {
+    e.preventDefault();
+    const p = this.local(e);
+    const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    this.zoomAt(p.x, p.y, this.cam.scale * Math.exp(-e.deltaY * lines * 0.0015));
+  };
+
+  private readonly dbl = (e: MouseEvent) => {
+    const p = this.local(e);
+    this.zoomAt(p.x, p.y, this.cam.scale * 2);
+  };
+
+  private readonly down = (e: PointerEvent) => {
+    this.canvas.setPointerCapture(e.pointerId);
+    this.pointers.set(e.pointerId, this.local(e));
+    this.dragged = false;
+    if (this.pointers.size === 2) {
+      const [a, b] = [...this.pointers.values()];
+      this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), scale: this.cam.scale };
+    }
+  };
+
+  private readonly move = (e: PointerEvent) => {
+    const p = this.local(e);
+    const was = this.pointers.get(e.pointerId);
+    if (!was) {
+      this.hover(p.x, p.y);
+      return;
+    }
+    this.pointers.set(e.pointerId, p);
+    if (this.pointers.size === 2 && this.pinch) {
+      const [a, b] = [...this.pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      this.zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, this.pinch.scale * (d / Math.max(1, this.pinch.d)));
+      this.dragged = true;
+      return;
+    }
+    const dx = p.x - was.x;
+    const dy = p.y - was.y;
+    if (!this.dragged && Math.hypot(dx, dy) < 3) {
+      this.pointers.set(e.pointerId, was);
+      return;
+    }
+    this.dragged = true;
+    if (this.following) {
+      this.following = null;
+      this.onFollowEnd();
+    }
+    this.cam.cx -= dx / this.cam.scale;
+    this.cam.cy -= dy / this.cam.scale;
+  };
+
+  private readonly up = (e: PointerEvent) => {
+    const p = this.local(e);
+    this.pointers.delete(e.pointerId);
+    if (this.pointers.size < 2) this.pinch = null;
+    if (!this.dragged && e.type === 'pointerup') {
+      const hit = this.playerAt(p.x, p.y, 14);
+      this.selected = hit?.sid ?? null;
+      this.onSelect(this.selected);
+    }
+  };
+
+  private readonly leave = () => {
+    if (!this.pointers.size) this.onHover(null);
+  };
+
+  private playerAt(px: number, py: number, within: number): PlayerView | null {
+    let best: PlayerView | null = null;
+    let bestD = within;
+    for (const p of this.world.players()) {
+      if (!p.seen) continue;
+      const s = this.toScreen(p.x, p.y);
+      const d = Math.hypot(s.x - px, s.y - py);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
+    }
+    return best;
+  }
+
+  private hover(px: number, py: number): void {
+    const now = performance.now();
+    if (now - this.lastHover < 50) return;
+    this.lastHover = now;
+    const p = this.playerAt(px, py, 12);
+    if (p) {
+      this.onHover({ x: px, y: py, text: `${p.name} · ${doing(p)} · ${p.town}${p.host ? ' · runs its traffic' : ''}` });
+      return;
+    }
+    const w = this.toWorld(px, py);
+    const within = 8 / this.cam.scale;
+    let best = within * within;
+    let text: string | null = null;
+    for (const r of this.world.order) {
+      if (this.layers.cars) {
+        const c = r.cars;
+        for (let i = 0; i < c.n; i++) {
+          const d = (c.x[i] - w.x) ** 2 + (c.y[i] - w.y) ** 2;
+          if (d < best) {
+            best = d;
+            text = `Car · ${c.ts[i] < STOPPED ? 'stopped' : `${Math.round(c.ts[i] * KMH)} km/h`} · ${r.meta.name}`;
+          }
+        }
+      }
+      if (this.layers.people) {
+        const c = r.people;
+        for (let i = 0; i < c.n; i++) {
+          const d = (c.x[i] - w.x) ** 2 + (c.y[i] - w.y) ** 2;
+          if (d < best) {
+            best = d;
+            text = `Townsperson · ${c.ts[i] < 0.1 ? 'standing' : 'walking'} · ${r.meta.name}`;
+          }
+        }
+      }
+    }
+    if (!text) {
+      for (const t of this.paths.towns) if (w.x >= t.x0 && w.y >= t.y0 && w.x <= t.x0 + t.width && w.y <= t.y0 + t.height) text = t.name;
+    }
+    this.onHover(text ? { x: px, y: py, text } : null);
+  }
+
+  // --- Drawing -----------------------------------------------------------
+
+  private toScreen(x: number, y: number): { x: number; y: number } {
+    return { x: (x - this.cam.cx) * this.cam.scale + this.width / 2, y: (y - this.cam.cy) * this.cam.scale + this.height / 2 };
+  }
+
+  private readonly frame = (now: number) => {
+    this.raf = requestAnimationFrame(this.frame);
+    this.frameAt(now);
+  };
+
+  /** Everything moved on to `now` and drawn. */
+  frameAt(now: number): void {
+    this.world.step(now);
+    if (this.following) {
+      const p = this.world.find(this.following);
+      if (p && p.seen) {
+        this.cam.cx = p.x;
+        this.cam.cy = p.y;
+      }
+    }
+    this.draw();
+    this.fpsCount++;
+    if (now - this.fpsAt >= 1000) {
+      this.fps = Math.round((this.fpsCount * 1000) / (now - this.fpsAt));
+      this.fpsCount = 0;
+      this.fpsAt = now;
+    }
+  }
+
+  /** The still parts, drawn again only when the view or what's shown changes. */
+  private drawStill(): void {
+    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height},${this.layers.roads},${this.layers.names}`;
+    if (key === this.stillKey) return;
+    this.stillKey = key;
+    const ctx = this.still.getContext('2d', { alpha: false })!;
+    const { scale } = this.cam;
+    const px = 1 / scale;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#0b0f14';
+    ctx.fillRect(0, 0, this.still.width, this.still.height);
+    this.toCounty(ctx);
+    // The towns' ground.
+    for (const t of this.paths.towns) {
+      ctx.fillStyle = t.private ? '#141b1f' : '#121a22';
+      ctx.fillRect(t.x0, t.y0, t.width, t.height);
+      ctx.strokeStyle = t.private ? '#2f4a3a' : '#22303d';
+      ctx.lineWidth = px;
+      ctx.strokeRect(t.x0, t.y0, t.width, t.height);
+    }
+    ctx.setLineDash([4 * px, 4 * px]);
+    ctx.strokeStyle = '#26323c';
+    ctx.stroke(this.paths.spaces);
+    ctx.setLineDash([]);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // The highways.
+    ctx.strokeStyle = '#3a4654';
+    ctx.lineWidth = Math.max(2.4, 1.6 * px);
+    ctx.stroke(this.paths.highways);
+    // The streets.
+    if (this.layers.roads) {
+      for (const s of this.paths.streets) {
+        ctx.strokeStyle = s.kind === 0 ? '#3a4654' : s.kind === 1 ? '#2a3440' : '#1f2832';
+        ctx.lineWidth = Math.max(s.width, (s.kind === 2 ? 0.6 : 0.9) * px);
+        ctx.stroke(s.path);
+      }
+    }
+    // The towns' names.
+    if (this.layers.names) {
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      for (const t of this.paths.towns) {
+        const s = this.toScreen(t.x0 + t.width / 2, t.y0);
+        ctx.fillStyle = '#8193a6';
+        ctx.fillText(t.name, s.x, s.y - 4);
+      }
+    }
+  }
+
+  /** The county's frame (tiles) on this canvas. */
+  private toCounty(ctx: CanvasRenderingContext2D): void {
+    const s = this.cam.scale * this.dpr;
+    ctx.setTransform(s, 0, 0, s, (this.width / 2 - this.cam.cx * this.cam.scale) * this.dpr, (this.height / 2 - this.cam.cy * this.cam.scale) * this.dpr);
+  }
+
+  private draw(): void {
+    this.drawStill();
+    const ctx = this.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.drawImage(this.still, 0, 0);
+    const { scale } = this.cam;
+    const px = 1 / scale;
+    // What's in view (tiles), with a margin.
+    const m = 4 + 20 * px;
+    const view = { x0: this.cam.cx - this.width / 2 / scale - m, y0: this.cam.cy - this.height / 2 / scale - m, x1: this.cam.cx + this.width / 2 / scale + m, y1: this.cam.cy + this.height / 2 / scale + m };
+
+    const dim = this.layers.reach && this.world.players().length > 0;
+    if (scale < SHAPED && (this.layers.cars || this.layers.people)) {
+      // Further out, each car and person is a few pixels: set straight into a buffer, drawn in one go.
+      const dots = this.plotDots(dim);
+      if (this.layers.trails) this.trailDots(dots);
+      else if (this.trailKey) this.clearTrails();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.drawImage(dots, 0, 0);
+      this.toCounty(ctx);
+    } else {
+      if (this.layers.trails) this.drawTrails(view);
+      else if (this.trailKey) this.clearTrails();
+      this.toCounty(ctx);
+      if (this.layers.people) this.drawPeople(ctx, view, px, dim);
+      if (this.layers.cars) this.drawCars(ctx, view, px, dim);
+    }
+    if (this.layers.players) this.drawPlayers(ctx, view, px);
+  }
+
+  private readonly dots = document.createElement('canvas');
+  private dotsImage: ImageData | null = null;
+  private dotsPx = new Uint32Array(0);
+  /** The part of the dots buffer drawn on last frame (device pixels), to clear. */
+  private dotsBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+
+  /** Every car and person in view as a few pixels in a buffer: no path, one image. Those near a player brighter, if `dim`. */
+  private plotDots(dim: boolean): HTMLCanvasElement {
+    const W = this.still.width;
+    const H = this.still.height;
+    if (!this.dotsImage || this.dotsImage.width !== W || this.dotsImage.height !== H) {
+      this.dotsImage = new ImageData(W, H);
+      this.dotsPx = new Uint32Array(this.dotsImage.data.buffer);
+      this.dots.width = W;
+      this.dots.height = H;
+      this.dotsBox = { x0: 0, y0: 0, x1: W, y1: H };
+    }
+    const px = this.dotsPx;
+    const was = this.dotsBox;
+    for (let y = was.y0; y < was.y1; y++) px.fill(0, y * W + was.x0, y * W + was.x1);
+    const box = { x0: W, y0: H, x1: 0, y1: 0 };
+    const k = this.cam.scale * this.dpr;
+    const ox = W / 2 - this.cam.cx * k;
+    const oy = H / 2 - this.cam.cy * k;
+    const size = (tiles: number, css: number) => Math.max(1, Math.round(Math.max(tiles * this.cam.scale, css) * this.dpr));
+    const plot = (l: Layer, n: number, s: number, near: number, color: (i: number) => number) => {
+      const half = s >> 1;
+      for (let i = 0; i < n; i++) {
+        if (near >= 0 && l.near[i] !== near) continue;
+        const X = ((l.x[i] * k + ox) | 0) - half;
+        const Y = ((l.y[i] * k + oy) | 0) - half;
+        if (X < 0 || Y < 0 || X + s > W || Y + s > H) continue;
+        const c = color(i);
+        for (let dy = 0; dy < s; dy++) {
+          const row = (Y + dy) * W + X;
+          for (let dx = 0; dx < s; dx++) px[row + dx] = c;
+        }
+        if (X < box.x0) box.x0 = X;
+        if (Y < box.y0) box.y0 = Y;
+        if (X + s > box.x1) box.x1 = X + s;
+        if (Y + s > box.y1) box.y1 = Y + s;
+      }
+    };
+    const sp = size(0.45, 2);
+    const sc = size(0.9, 3);
+    for (const pass of dim ? [0, 1] : [-1]) {
+      const bright = pass !== 0;
+      for (const room of this.world.order) {
+        if (this.layers.people) {
+          const c = bright ? PERSON_PX : PERSON_DIM_PX;
+          plot(room.people, room.people.n, sp, pass, () => c);
+        }
+        if (this.layers.cars) {
+          const ts = room.cars.ts;
+          const colors = bright ? SPEED_PX : SPEED_DIM_PX;
+          plot(room.cars, room.cars.n, sc, pass, (i) => colors[speedBand(ts[i])]);
+        }
+      }
+    }
+    // What changed: last frame's dots and this one's.
+    const x0 = Math.min(was.x0, box.x0), y0 = Math.min(was.y0, box.y0);
+    const x1 = Math.max(was.x1, box.x1), y1 = Math.max(was.y1, box.y1);
+    if (x1 > x0 && y1 > y0) this.dots.getContext('2d')!.putImageData(this.dotsImage, 0, 0, x0, y0, x1 - x0, y1 - y0);
+    this.dotsBox = box.x1 > box.x0 ? box : { x0: 0, y0: 0, x1: 0, y1: 0 };
+    return this.dots;
+  }
+
+  /** Trails, further out: the dots laid over what's faded of the last frames. */
+  private trailDots(dots: HTMLCanvasElement): void {
+    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height}`;
+    if (key !== this.trailKey) this.clearTrails();
+    this.trailKey = key;
+    const t = this.trail.getContext('2d')!;
+    t.setTransform(1, 0, 0, 1, 0, 0);
+    t.globalCompositeOperation = 'destination-out';
+    t.fillStyle = 'rgba(0,0,0,0.035)';
+    t.fillRect(0, 0, this.trail.width, this.trail.height);
+    t.globalCompositeOperation = 'source-over';
+    t.globalAlpha = 0.4;
+    t.drawImage(dots, 0, 0);
+    t.globalAlpha = 1;
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.drawImage(this.trail, 0, 0);
+  }
+
+  private trailKey = '';
+
+  private clearTrails(): void {
+    this.trailKey = '';
+    const t = this.trail.getContext('2d')!;
+    t.setTransform(1, 0, 0, 1, 0, 0);
+    t.clearRect(0, 0, this.trail.width, this.trail.height);
+  }
+
+  /** Where things have been lately: each frame the old fades a little and the new is added. */
+  private drawTrails(view: { x0: number; y0: number; x1: number; y1: number }): void {
+    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height}`;
+    if (key !== this.trailKey) this.clearTrails();
+    this.trailKey = key;
+    const t = this.trail.getContext('2d')!;
+    t.setTransform(1, 0, 0, 1, 0, 0);
+    t.globalCompositeOperation = 'destination-out';
+    t.fillStyle = 'rgba(0,0,0,0.035)';
+    t.fillRect(0, 0, this.trail.width, this.trail.height);
+    t.globalCompositeOperation = 'source-over';
+    this.toCounty(t);
+    const r = Math.max(0.35, 1.2 / this.cam.scale);
+    const dot = (l: Layer, color: string) => {
+      t.fillStyle = color;
+      t.beginPath();
+      for (let i = 0; i < l.n; i++) {
+        const x = l.x[i];
+        const y = l.y[i];
+        if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+        t.rect(x - r / 2, y - r / 2, r, r);
+      }
+      t.fill();
+    };
+    for (const room of this.world.order) {
+      if (this.layers.cars) dot(room.cars, 'rgba(56,189,248,0.5)');
+      if (this.layers.people) dot(room.people, 'rgba(233,228,255,0.35)');
+    }
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.drawImage(this.trail, 0, 0);
+  }
+
+  private drawPeople(ctx: CanvasRenderingContext2D, view: { x0: number; y0: number; x1: number; y1: number }, px: number, dim: boolean): void {
+    const r = Math.max(0.45, 2 * px);
+    for (const pass of dim ? [0, 1] : [1]) {
+      ctx.fillStyle = PERSON;
+      ctx.globalAlpha = pass === 0 ? 0.35 : 0.9;
+      ctx.beginPath();
+      for (const room of this.world.order) {
+        const l = room.people;
+        for (let i = 0; i < l.n; i++) {
+          if (dim && (l.near[i] === 1) !== (pass === 1)) continue;
+          const x = l.x[i];
+          const y = l.y[i];
+          if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+          ctx.rect(x - r / 2, y - r / 2, r, r);
+        }
+      }
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  private drawCars(ctx: CanvasRenderingContext2D, view: { x0: number; y0: number; x1: number; y1: number }, px: number, dim: boolean): void {
+    // Close in, each car its true shape and heading; further out, a dot.
+    const shaped = this.cam.scale >= SHAPED;
+    const L = 1.7, W = 0.85;
+    const r = Math.max(0.9, 3 * px);
+    for (const pass of dim ? [0, 1] : [1]) {
+      ctx.globalAlpha = pass === 0 ? 0.45 : 1;
+      for (let b = 0; b < SPEEDS.length; b++) {
+        const lo = b === 0 ? -1 : SPEEDS[b - 1].under;
+        const hi = SPEEDS[b].under;
+        ctx.fillStyle = SPEEDS[b].color;
+        ctx.beginPath();
+        for (const room of this.world.order) {
+          const l = room.cars;
+          for (let i = 0; i < l.n; i++) {
+            const s = l.ts[i];
+            if (s < lo || s >= hi) continue;
+            if (dim && (l.near[i] === 1) !== (pass === 1)) continue;
+            const x = l.x[i];
+            const y = l.y[i];
+            if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+            if (!shaped) {
+              ctx.rect(x - r / 2, y - r / 2, r, r);
+              continue;
+            }
+            const c = Math.cos(l.h[i]);
+            const n = Math.sin(l.h[i]);
+            const ax = (c * L) / 2, ay = (n * L) / 2;
+            const bx = (-n * W) / 2, by = (c * W) / 2;
+            ctx.moveTo(x + ax + bx, y + ay + by);
+            ctx.lineTo(x + ax - bx, y + ay - by);
+            ctx.lineTo(x - ax - bx, y - ay - by);
+            ctx.lineTo(x - ax + bx, y - ay + by);
+            ctx.closePath();
+          }
+        }
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  private drawPlayers(ctx: CanvasRenderingContext2D, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
+    const players = this.world.players().filter((p) => p.seen && p.x >= view.x0 - REACH && p.x <= view.x1 + REACH && p.y >= view.y0 - REACH && p.y <= view.y1 + REACH);
+    // Their reach, and who's within it of whom.
+    if (this.layers.reach) {
+      ctx.lineWidth = px;
+      ctx.setLineDash([3 * px, 3 * px]);
+      for (const p of players) {
+        ctx.strokeStyle = p.color;
+        ctx.globalAlpha = 0.45;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, REACH, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.2 * px;
+      ctx.beginPath();
+      for (const p of players) {
+        for (const q of p.nearPlayers) {
+          if (q.sid < p.sid || q.ride === p || p.ride === q) continue;
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(q.x, q.y);
+        }
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // Riding with someone: tied to them.
+    ctx.lineWidth = 2.5 * px;
+    ctx.strokeStyle = '#ffd166';
+    ctx.beginPath();
+    for (const p of players) {
+      if (!p.ride || !p.ride.seen) continue;
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.ride.x, p.ride.y);
+    }
+    ctx.stroke();
+    // Each player: a dot their colour (a square at the wheel), its heading, a ring if it runs its town's traffic.
+    const R = 5.5 * px;
+    for (const p of players) {
+      const driving = p.car > 0;
+      ctx.fillStyle = p.color;
+      ctx.strokeStyle = '#05080b';
+      ctx.lineWidth = 1.5 * px;
+      ctx.beginPath();
+      if (driving) ctx.rect(p.x - R, p.y - R, R * 2, R * 2);
+      else ctx.arc(p.x, p.y, R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = p.color;
+      ctx.lineWidth = 2 * px;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + Math.sin(p.yaw) * R * 2.2, p.y + Math.cos(p.yaw) * R * 2.2);
+      ctx.stroke();
+      if (p.host) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = px;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, R + 3 * px, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (p.sid === this.selected) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2 * px;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, R + 7 * px, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    if (this.layers.names) {
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.font = '600 12px system-ui, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#05080b';
+      for (const p of players) {
+        const s = this.toScreen(p.x, p.y);
+        ctx.strokeText(p.name, s.x + 10, s.y);
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(p.name, s.x + 10, s.y);
+      }
+    }
+  }
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));

@@ -39,6 +39,7 @@ static class Program
         if (args.Length > 0 && args[0] == "course") return CourseCheck.Run(System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText("server/towns/porchlight.json")).RootElement.GetProperty("key").GetString(), args.Length > 1 ? args[1] : null);
         if (args.Length > 2 && args[0] == "measure") return Measure(args[1], args[2]);
         if (args.Length > 1 && args[0] == "town") return RegenerateTown(args[1], args.Length > 2 ? args[2] : null);
+        if (args.Length > 2 && args[0] == "roadmap") return RoadMap(args[1], args[2]);
         if (args.Length > 2 && args[0] == "traffic") return TrafficCheck(args[1], args[2]);
         if (args.Length > 0 && args[0] == "county") return CountyCheck.Run(args.Length > 1 ? args[1] : null);
         if (args.Length > 0 && args[0] == "doors") return CountyCheck.Doors();
@@ -199,6 +200,26 @@ static class Program
         Console.WriteLine(same
             ? $"{name}: no change ({houses.Count} houses)."
             : $"{name}: {houses.Count} houses, was {was.Count}. Everyone there gets a new house when the server next starts with this file.");
+        return 0;
+    }
+
+    /// <summary>
+    /// The streets of a town that comes with the game, for the traffic view's map (server/towns/*.roads.json,
+    /// served by server/src/multiplayer/feed.ts): each street as [kind (0 main, 1 street, 2 path), width,
+    /// x0, y0, x1, y1, ...], in the town's tiles, a tenth of a tile at most off.
+    /// </summary>
+    static int RoadMap(string file, string output)
+    {
+        var doc = System.Text.Json.JsonDocument.Parse(System.IO.File.ReadAllText(file)).RootElement;
+        string key = doc.GetProperty("key").GetString();
+        var (seed, settings) = ParseKey(key);
+        var model = Generator.Generate(seed, settings);
+        var layout = Porchlight.Explore.Layout.Build(model);
+        string R(double v) => (Math.Round(v * 10) / 10).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var roads = layout.roads.Where(r => r.points != null && r.points.Count >= 2).Select(r =>
+            "[" + string.Join(",", new[] { ((int)r.kind).ToString(), R(r.width) }.Concat(r.points.SelectMany(p => new[] { R(p.x), R(p.y) }))) + "]");
+        System.IO.File.WriteAllText(output, $"{{\n  \"key\": {Quoted(key)},\n  \"roads\": [\n    {string.Join(",\n    ", roads)}\n  ]\n}}\n");
+        Console.WriteLine($"{doc.GetProperty("name").GetString()}: {layout.roads.Count} streets to {output}");
         return 0;
     }
 

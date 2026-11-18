@@ -9,11 +9,31 @@
 		reverse_proxy auth:3017
 	}
 
+	# Manage Porchlight's live traffic feed: one long response of small binary
+	# frames, each passed on the moment it comes (and not compressed: the
+	# server marks it no-transform).
+	handle /mp/traffic/feed {
+		reverse_proxy auth:3017 {
+			flush_interval -1
+		}
+	}
+
 	# Multiplayer (the same service): characters, matchmaking and the game's
 	# WebSockets, which Caddy proxies as they are. Same origin, so the session
 	# cookie goes along.
 	handle /mp/* {
 		reverse_proxy auth:3017
+	}
+
+	# Manage Porchlight (manage/, a React app): built into the game's
+	# StreamingAssets, so it's in the game's build here. One page; any path
+	# under /manage/ that isn't one of its files is that page.
+	redir /manage /manage/
+	handle /manage/* {
+		root * /srv/site/StreamingAssets
+		header Cache-Control "no-cache"
+		try_files {path} /manage/index.html
+		file_server
 	}
 
 	# The game: the Unity WebGL build (unity/Builds/WebGL), copied here by the

@@ -13,6 +13,7 @@ on:
     paths:
       - 'unity/**'
       - 'server/**'
+      - 'manage/**'
       # The missions alone go out quickly with missions.yml (a push with other
       # changes too comes here, and copies them along with the server).
       - '!server/missions/**'
@@ -49,6 +50,26 @@ jobs:
             echo "::error::The UNITY_LICENSE secret isn't set, so the game can't be built. See infra/README.md > One-time setup."
             exit 1
           fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Manage Porchlight (manage/, a React app at /manage), built into the
+      # game's StreamingAssets so every build of the game carries it.
+      - name: Manage — install, typecheck, test, build
+        working-directory: manage
+        run: |
+          npm ci
+          npm test
+          npm run build
+      # Its map drawn under four times the load towns can carry, in headless
+      # Chromium: fails if a frame, or taking in the feed, goes over budget.
+      - name: Manage — the map under stress
+        working-directory: manage
+        run: |
+          npx playwright-core install --with-deps --only-shell chromium
+          npm run test:browser
 
       - name: Game — towns grow (every invariant checked) and repeat
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60

@@ -52,6 +52,19 @@ jobs:
             exit 1
           fi
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # Manage Porchlight (manage/, a React app at /manage), built into the
+      # game's StreamingAssets so every build of the game carries it.
+      - name: Manage — install, typecheck, test, build
+        working-directory: manage
+        run: |
+          npm ci
+          npm test
+          npm run build
+
       # As in deploy.yml: the import cache for exactly these sources (and this system).
       - uses: actions/cache@v4
         with:

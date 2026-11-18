@@ -5,6 +5,7 @@
 //   /mp/characters...          the account's characters (accounts.ts)
 //   /mp/towns..., /mp/progress the towns, and what the account has earned (accounts.ts)
 //   /mp/missions...            the missions, compiled from server/missions (../missions.ts)
+//   /mp/traffic/...            the traffic view's county map and live feed (feed.ts)
 //   /mp/matchmake/...          Colyseus matchmaking (POST, then a WebSocket)
 //   /mp/<process>/<room>       the room's WebSocket
 //
@@ -16,6 +17,7 @@ import { Server, matchMaker } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { createMissionRoutes, DEFAULT_MISSIONS_DIR, MissionStore } from '../missions.ts';
 import { createCharacterRoutes, type GameDeps } from './accounts.ts';
+import { TrafficFeed } from './feed.ts';
 import { CityRoom, configureCityRoom, countyChanged, isOnline, playingIn, presence, whereIs } from './CityRoom.ts';
 import type { Persistence } from './persistence.ts';
 import { CITY_ROOM } from './protocol.ts';
@@ -37,6 +39,7 @@ export interface GameServer {
   server: Server;
   httpServer: HttpServer;
   port: number;
+  traffic: TrafficFeed;
 }
 
 export async function startGameServer(opts: GameServerOptions): Promise<GameServer> {
@@ -45,6 +48,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   configureCityRoom(deps);
   const characters = createCharacterRoutes(deps);
   const missions = createMissionRoutes(store);
+  const traffic = new TrafficFeed(deps);
 
   const httpServer = createServer();
   const server = new Server({
@@ -58,7 +62,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       app.use((req: IncomingMessage, res: ServerResponse) => {
         // A rejection nobody catches ends the process: one bad request mustn't take everyone's game with it.
         void (async () => {
-          if (!(await missions(req, res)) && !(await characters(req, res))) await opts.handler(req, res);
+          if (!(await missions(req, res)) && !(await traffic.routes(req, res)) && !(await characters(req, res))) await opts.handler(req, res);
         })().catch((err) => {
           console.error(`${req.method} ${req.url}:`, err);
           if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
@@ -70,7 +74,10 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   // Colyseus reflects any Origin by default (with credentials); only the app's own will do.
   matchMaker.controller.getCorsHeaders = () => ({ 'Access-Control-Allow-Origin': opts.appUrl });
   server.define(CITY_ROOM, CityRoom).filterBy(['town']);
-  server.onShutdown(() => opts.persistence.close());
+  server.onShutdown(() => {
+    traffic.close();
+    return opts.persistence.close();
+  });
 
   await server.listen(opts.port);
   // Colyseus's routes are at /matchmake/...; ours are under /mp. (Its WebSocket
@@ -78,5 +85,5 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   httpServer.prependListener('request', (req: IncomingMessage) => {
     if (req.url?.startsWith('/mp/matchmake/')) req.url = req.url.slice('/mp'.length);
   });
-  return { server, httpServer, port: (httpServer.address() as AddressInfo).port };
+  return { server, httpServer, port: (httpServer.address() as AddressInfo).port, traffic };
 }

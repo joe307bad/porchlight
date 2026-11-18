@@ -112,6 +112,16 @@ mergeInto(LibraryManager.library, {
     location.assign(UTF8ToString(urlPtr));
   },
 
+  // A page of the site in a new tab (the traffic view), the game left as it is.
+  // Called on the frame after the click, still within the click's user
+  // activation, so the browser allows it. 1 if it opened.
+  PL_OpenTab: function (urlPtr) {
+    var w = window.open(UTF8ToString(urlPtr), '_blank');
+    if (!w) return 0;
+    try { w.opener = null; } catch (e) {}
+    return 1;
+  },
+
   PL_PostForm: function (urlPtr) {
     var form = document.createElement('form');
     form.method = 'POST';

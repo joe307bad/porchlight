@@ -1,0 +1,27 @@
+{
+  "name": "porchlight-manage",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Managing Porchlight (/manage): first, traffic, the county map with every car, townsperson and player on it, live. Built into the game (unity/Assets/StreamingAssets/manage), so it ships with the web and desktop builds.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "test:browser": "node test-browser/stress.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "playwright-core": "^1.65.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.0"
+  }
+}

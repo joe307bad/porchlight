@@ -1,5 +1,5 @@
 // Serves the game's WebGL build in development: the build at
-// http://localhost:5173/, with /auth and /mp (WebSockets too) passed through
+// http://localhost:5173/ (and Manage Porchlight at /manage/), with /auth and /mp (WebSockets too) passed through
 // to the auth + game server on :3017, so sign-in cookies are first-party and
 // the server's APP_URL (localhost:5173) matches, as Caddy does in production.
 //
@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(process.argv[2] ?? path.join(here, '..', 'Builds', 'WebGL'));
+// Manage Porchlight as `npm run build` in manage/ last made it (the game's next build carries the same).
+const manage = path.join(here, '..', 'Assets', 'StreamingAssets', 'manage');
 const port = Number(process.env.PORT ?? 5173);
 const upstream = { host: '127.0.0.1', port: Number(process.env.SERVER_PORT ?? 3017) };
 
@@ -55,9 +57,24 @@ function proxy(req, res) {
 
 function serveFile(req, res) {
   let rel = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  // Manage Porchlight (manage/, built into the game's StreamingAssets), at /manage/ as Caddy serves it.
+  if (rel === '/manage') {
+    res.writeHead(302, { location: '/manage/' });
+    return res.end();
+  }
+  let base = root;
+  if (rel.startsWith('/manage/')) {
+    base = manage;
+    rel = rel.slice('/manage'.length);
+    let found = false;
+    try {
+      found = statSync(path.join(base, rel)).isFile();
+    } catch {}
+    if (!found) rel = '/index.html';
+  }
   if (rel.endsWith('/')) rel += 'index.html';
-  const file = path.join(root, rel);
-  if (!file.startsWith(root)) {
+  const file = path.join(base, rel);
+  if (!file.startsWith(base)) {
     res.writeHead(403);
     return res.end();
   }

@@ -240,6 +240,17 @@ namespace Porchlight.App
 #endif
         }
 
+        /// <summary>A page of the site (a path, or a whole address) in a new tab or the system browser, the game left as it is. False if the browser wouldn't open it.</summary>
+        public bool OpenTab(string url)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return PL_OpenTab(url) != 0;
+#else
+            Application.OpenURL(url.StartsWith("/") ? Origin + url : url);
+            return true;
+#endif
+        }
+
         public void PostForm(string url)
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -328,6 +339,7 @@ namespace Porchlight.App
         [DllImport("__Internal")] static extern void PL_ReplaceUrl(string url);
         [DllImport("__Internal")] static extern void PL_Navigate(string url);
         [DllImport("__Internal")] static extern void PL_PostForm(string url);
+        [DllImport("__Internal")] static extern int PL_OpenTab(string url);
         [DllImport("__Internal")] static extern string PL_StorageGet(int session, string key);
         [DllImport("__Internal")] static extern void PL_StorageSet(int session, string key, string value);
         [DllImport("__Internal")] static extern void PL_Download(IntPtr ptr, int length, string name, string type);

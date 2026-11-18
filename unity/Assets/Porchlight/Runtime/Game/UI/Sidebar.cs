@@ -608,7 +608,14 @@ namespace Porchlight.UI
             SyncPlaying();
         }
 
-        Action onGoHome, onJournal;
+        Action onGoHome, onJournal, onManage;
+
+        /// <summary>The Manage link (managing Porchlight, in the browser: ManageLink), or null for none.</summary>
+        public void SetManage(Action onManage)
+        {
+            this.onManage = onManage;
+            SyncPlaying();
+        }
         /// <summary>Where you are now ("in Ember Crossing", "on the Porchlight – South road"; null: not known), and how it's going online.</summary>
         string where, online = "";
 
@@ -720,6 +727,12 @@ namespace Porchlight.UI
             if (onGoHome != null) links.Add(El.Link("Go home", onGoHome));
             if (onSwitch != null) links.Add(El.Link(characterName != null ? "Switch character" : "Play online", onSwitch));
             if (onSignOut != null) links.Add(El.Link("Sign out", onSignOut));
+            if (onManage != null)
+            {
+                var manage = El.Link("Manage \u2197", onManage);
+                manage.tooltip = "Manage Porchlight: every car, townsperson and player in the county, live (opens in your browser)";
+                links.Add(manage);
+            }
             links.style.display = links.childCount > 0 ? DisplayStyle.Flex : DisplayStyle.None;
         }
 

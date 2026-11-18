@@ -30,8 +30,19 @@ fi
 stale() {
   [ ! -f "$BUILD/index.html" ] && return 0
   [ -n "$(find "$ROOT/unity/Assets" "$ROOT/unity/Packages" "$ROOT/unity/ProjectSettings" \
-    -type f -newer "$BUILD/index.html" -print -quit)" ]
+    -path "$ROOT/unity/Assets/StreamingAssets" -prune -o -type f -newer "$BUILD/index.html" -print -quit)" ]
 }
+
+# Manage Porchlight (manage/, at /manage/): built into the game's StreamingAssets when it's missing or out of date.
+MANAGE="$ROOT/unity/Assets/StreamingAssets/manage/index.html"
+if [ ! -d "$ROOT/manage/node_modules" ]; then
+  echo "Installing Manage's dependencies..."
+  npm --prefix "$ROOT/manage" install
+fi
+if [ ! -f "$MANAGE" ] || [ -n "$(find "$ROOT/manage/src" "$ROOT/manage/index.html" "$ROOT/manage/package.json" -newer "$MANAGE" -print -quit)" ]; then
+  echo "Building Manage Porchlight..."
+  npm --prefix "$ROOT/manage" run build
+fi
 
 if [ "${1:-}" = "--build" ] || stale; then
   if pgrep -f "Unity.app/Contents/MacOS/Unity.*-projectpath $ROOT/unity" >/dev/null 2>&1; then
