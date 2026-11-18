@@ -16,6 +16,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
@@ -59,7 +60,7 @@ namespace Porchlight.App
 #if !UNITY_WEBGL || UNITY_EDITOR
     /// <summary>
     /// The desktop app's Manage page, at http://127.0.0.1:port/manage/. Only GETs, only of the page's
-    /// own files and the three server routes it uses, and only asked for by that address (a page
+    /// own files and the three server routes it uses (and the page's one POST, back to the game), and only asked for by that address (a page
     /// elsewhere rebinding its own name to 127.0.0.1 is turned away by the Host it sends). One request a
     /// connection, each on the thread pool, so the feed's stream never waits on the game's frames.
     /// </summary>
@@ -89,6 +90,8 @@ namespace Porchlight.App
         readonly Uri origin;
         /// <summary>The game's session, sent on to the server (it can change: signing in again).</summary>
         volatile string cookie;
+        /// <summary>The app, for bringing it to the front (read on the game's thread: Unity's paths are only to be had there).</summary>
+        static string appBundle;
 
         ManageHost(string origin, string root)
         {
@@ -103,6 +106,8 @@ namespace Porchlight.App
         /// <summary>Serve Manage (once; later calls bring its session up to date). Its address.</summary>
         public static string Start(string origin, string cookie, string root)
         {
+            // …/Porchlight.app/Contents on a Mac: the app is the folder above.
+            if (Application.platform == RuntimePlatform.OSXPlayer) appBundle = Path.GetDirectoryName(Application.dataPath);
             if (running == null || running.origin != new Uri(origin)) running = new ManageHost(origin, root);
             running.cookie = cookie;
             return $"http://127.0.0.1:{running.port}{ManageLink.PATH}";
@@ -134,13 +139,26 @@ namespace Porchlight.App
                         await Reply(stream, 403, "text/plain", "Not here.").ConfigureAwait(false);
                         return;
                     }
+                    int q = target.IndexOf('?');
+                    string path = q < 0 ? target : target.Substring(0, q);
+                    // The page's "Back to Porchlight": the game to the front. Only from the page itself (a
+                    // browser says where a POST comes from), so no other site can pull the game forward.
+                    if (path == "/app/front" && method == "POST")
+                    {
+                        if (!headers.TryGetValue("origin", out var from) || from != $"http://127.0.0.1:{port}")
+                        {
+                            await Reply(stream, 403, "text/plain", "Not from here.").ConfigureAwait(false);
+                            return;
+                        }
+                        bool ok = ToFront();
+                        await Reply(stream, ok ? 200 : 501, "text/plain", ok ? "Here." : "Can't from here.").ConfigureAwait(false);
+                        return;
+                    }
                     if (method != "GET" && method != "HEAD")
                     {
                         await Reply(stream, 405, "text/plain", "Only GET.").ConfigureAwait(false);
                         return;
                     }
-                    int q = target.IndexOf('?');
-                    string path = q < 0 ? target : target.Substring(0, q);
                     if (path == "/" || path == "/manage") await Redirect(stream, ManageLink.PATH).ConfigureAwait(false);
                     else if (path.StartsWith(ManageLink.PATH, StringComparison.Ordinal)) await ServeFile(stream, path.Substring(ManageLink.PATH.Length), method == "HEAD").ConfigureAwait(false);
                     else if (PASSED.Contains(path)) await Pass(stream, target, headers).ConfigureAwait(false);
@@ -150,6 +168,68 @@ namespace Porchlight.App
                 {
                     // The browser went (closed the tab, or the feed with it): nothing to tell anyone.
                 }
+            }
+        }
+
+        /// <summary>
+        /// The game's window to the front, from Manage in the browser. A Mac opens the app that's already
+        /// running, which brings it forward; Windows lets the window take the foreground (the Alt press
+        /// is the usual way to be allowed to while another app has it). False where it can't.
+        /// </summary>
+        static bool ToFront()
+        {
+            try
+            {
+                if (appBundle != null)
+                {
+                    System.Diagnostics.Process.Start("/usr/bin/open", "\"" + appBundle + "\"")?.Dispose();
+                    return true;
+                }
+                if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                {
+                    IntPtr window = Win.MainWindow();
+                    if (window == IntPtr.Zero) return false;
+                    if (Win.IsIconic(window)) Win.ShowWindow(window, Win.SW_RESTORE);
+                    Win.keybd_event(Win.VK_MENU, 0, 0, UIntPtr.Zero);
+                    bool ok = Win.SetForegroundWindow(window);
+                    Win.keybd_event(Win.VK_MENU, 0, Win.KEYEVENTF_KEYUP, UIntPtr.Zero);
+                    return ok;
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("porchlight: Manage couldn't bring the game forward: " + e.Message);
+            }
+            return false;
+        }
+
+        static class Win
+        {
+            public const int SW_RESTORE = 9;
+            public const byte VK_MENU = 0x12;
+            public const uint KEYEVENTF_KEYUP = 0x2;
+            delegate bool EnumProc(IntPtr window, IntPtr data);
+            [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc proc, IntPtr data);
+            [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
+            [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+            [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
+            [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int how);
+            [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
+            [DllImport("user32.dll")] public static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+
+            /// <summary>This process's visible top-level window: the game's.</summary>
+            public static IntPtr MainWindow()
+            {
+                uint me = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+                IntPtr found = IntPtr.Zero;
+                EnumWindows((w, _) =>
+                {
+                    GetWindowThreadProcessId(w, out uint pid);
+                    if (pid != me || !IsWindowVisible(w)) return true;
+                    found = w;
+                    return false;
+                }, IntPtr.Zero);
+                return found;
             }
         }
 

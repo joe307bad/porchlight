@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { county, inDesktopApp, me, signInUrl, type CountyMap, type Me } from './api.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
-import { backToGame, embedded } from './embed.ts';
+import { backToApp, backToGame, embedded } from './embed.ts';
 import { DEFAULT_LAYERS, MapRenderer, type Hover, type Layers } from './render.ts';
 import { World } from './world.ts';
 
@@ -148,6 +148,11 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
           </div>
         )}
         <div className="map-buttons">
+          {!embedded && inDesktopApp() && (
+            <button className="btn btn-primary" onClick={() => void backToApp()} title="Back to the Porchlight app (Manage stays open here)">
+              ← Back to Porchlight
+            </button>
+          )}
           {embedded && (
             <button className="btn btn-primary" onClick={backToGame} title="Back to the game (Esc)">
               ← Back to the game

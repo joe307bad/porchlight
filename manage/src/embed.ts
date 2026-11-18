@@ -11,6 +11,18 @@ export const embedded = (() => {
   }
 })();
 
+/**
+ * Back to the desktop app, from the browser: the app serves this page, and brings
+ * its window to the front when the page asks (ManageLink.cs, POST /app/front).
+ */
+export async function backToApp(): Promise<boolean> {
+  try {
+    return (await fetch('/app/front', { method: 'POST' })).ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Back to the game: the game's page closes the frame. */
 export function backToGame(): void {
   window.parent.postMessage({ porchlight: 'manage-close' }, location.origin);
