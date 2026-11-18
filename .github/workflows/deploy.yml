@@ -102,11 +102,11 @@ jobs:
       - name: Simulation — publish for the box
         run: |
           dotnet publish sim/Porchlight.Sim.csproj -c Release -r linux-musl-arm64 --self-contained \
-            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o sim-publish
+            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o "$RUNNER_TEMP/sim-publish"
       - uses: actions/upload-artifact@v4
         with:
           name: sim
-          path: sim-publish/porchlight-sim
+          path: ${{ runner.temp }}/sim-publish/porchlight-sim
           if-no-files-found: error
           retention-days: 7
 
