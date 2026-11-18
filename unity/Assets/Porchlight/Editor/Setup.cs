@@ -388,6 +388,9 @@ namespace Porchlight.EditorTools
             var icon = AssetDatabase.LoadAssetAtPath<Texture2D>(AppIconPath);
             // Every size from the one picture (Unity scales it).
             var standalone = UnityEditor.Build.NamedBuildTarget.Standalone;
+            // A dev server is plain http (desktop/mac-dev.sh's http://jbhs:5173, chosen in Settings), which Unity
+            // refuses unless told. The live server is https, and its session is never sent to another (NativeSignIn).
+            PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
             if (icon != null) PlayerSettings.SetIcons(standalone, Enumerable.Repeat(icon, PlayerSettings.GetIconSizes(standalone, IconKind.Application).Length).ToArray(), IconKind.Application);
             else Debug.LogWarning("Porchlight: no app icon at " + AppIconPath);
         }
