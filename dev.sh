@@ -53,6 +53,19 @@ if [ ! -d "$ROOT/server/node_modules" ]; then
   npm --prefix "$ROOT/server" ci
 fi
 
+# The towns' traffic and townsfolk, run by the server (sim/, .NET): built when dotnet's here and it's
+# missing or out of date. Without it the server lets each town's players run it, as before.
+SIM_DLL="$ROOT/sim/bin/Release/net8.0/porchlight-sim.dll"
+if command -v dotnet >/dev/null 2>&1; then
+  if [ ! -f "$SIM_DLL" ] || [ -n "$(find "$ROOT/sim/src" "$ROOT/sim/Porchlight.Sim.csproj" "$ROOT/unity/Assets/Porchlight/Runtime/Shared" -newer "$SIM_DLL" -name '*.cs*' -print -quit)" ]; then
+    echo "Building the town simulation (sim/)..."
+    dotnet build "$ROOT/sim/Porchlight.Sim.csproj" -c Release -nologo -v quiet \
+      || echo "warning: the town simulation didn't build; the players will run their towns" >&2
+  fi
+else
+  echo "note: no dotnet, so no town simulation on the server; each town's players run its traffic." >&2
+fi
+
 # Rebuild when there's no build, when asked, or when the project has changed since the last one.
 stale() {
   [ ! -f "$BUILD/index.html" ] && return 0

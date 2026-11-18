@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { NORTH, type Place } from '../county.ts';
-import { and, asc, count, eq, lt, inArray, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gte, lt, inArray, isNotNull, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
@@ -197,6 +197,8 @@ export interface Persistence {
   keepRecord(accountId: string, characterId: string, townKey: string, missionId: string, seconds: number): Promise<Board & { before: number | null }>;
   /** The towns this account can live in: the ones that come with the game (anyone's), and the ones it made (only its own). */
   listTowns(accountId: string): Promise<TownInfo[]>;
+  /** Every town in a county (those that come with the game, and each account's placed in one of its slots): the server runs their traffic (sim/). */
+  countyTownKeys(): Promise<string[]>;
   /** Whether the account may play in the town with this key: one that comes with the game, one it made, or one no account has made. */
   mayEnter(accountId: string, townKey: string): Promise<boolean>;
   /** The town's key if this account made it; throws otherwise (or if it's gone). */
@@ -460,6 +462,15 @@ export class PgPersistence implements Persistence {
       .where(or(isNull(towns.createdBy), eq(towns.createdBy, accountId)))
       .orderBy(sql`${towns.createdBy} is not null`, towns.createdAt, towns.name);
     return rows.map(({ createdBy, ...t }) => ({ ...t, mine: createdBy === accountId, place: createdBy === null ? placeOf(t.key) : null }));
+  }
+
+  async countyTownKeys(): Promise<string[]> {
+    const rows = await this.db
+      .select({ key: towns.key })
+      .from(towns)
+      .where(or(isNull(towns.createdBy), and(isNotNull(towns.slot), gte(towns.slot, 0), lt(towns.slot, MAX_TOWNS))))
+      .orderBy(sql`${towns.createdBy} is not null`, towns.createdAt);
+    return [...new Set(rows.map((r) => r.key))];
   }
 
   async mayEnter(accountId: string, townKey: string): Promise<boolean> {
@@ -839,6 +850,13 @@ export class MemoryPersistence implements Persistence {
       .filter((t) => t.createdBy === null || t.createdBy === accountId)
       .sort((a, b) => Number(a.createdBy !== null) - Number(b.createdBy !== null))
       .map((t) => ({ id: t.id, name: t.name, key: t.key, mine: t.createdBy === accountId, residents: residents(t.id), place: t.createdBy === null ? placeOf(t.key) : null, slot: t.slot }));
+  }
+
+  async countyTownKeys(): Promise<string[]> {
+    this.check();
+    const placed = [...this.towns.values()].filter((t) => t.createdBy === null || (t.slot !== null && t.slot >= 0 && t.slot < MAX_TOWNS));
+    placed.sort((a, b) => Number(a.createdBy !== null) - Number(b.createdBy !== null));
+    return [...new Set(placed.map((t) => t.key))];
   }
 
   async mayEnter(accountId: string, townKey: string): Promise<boolean> {

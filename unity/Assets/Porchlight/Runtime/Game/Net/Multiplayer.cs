@@ -49,6 +49,8 @@ namespace Porchlight.App
         /// <summary>The traffic and townsfolk to send, while running them.</summary>
         WorldState? World();
         void ApplyWorld(byte[] cars, byte[] people, List<string> looks);
+        /// <summary>Where the server runs the town: what changed since its last (WorldSync.ReceiveDelta). False: it didn't fit; the whole town's wanted.</summary>
+        bool ApplyWorldDelta(byte[] delta);
         /// <summary>The room's list of the town's cars someone has got into ("p3,t12").</summary>
         void SetTaken(string list);
         void SetTownNight(bool on);
@@ -126,6 +128,8 @@ namespace Porchlight.App
         string placedIn;
         /// <summary>When we last asked to jump somewhere (ms), so its answer isn't taken for a correction.</summary>
         double teleportAt = double.NegativeInfinity;
+        /// <summary>When the whole town was last asked for (a delta that didn't fit).</summary>
+        double worldWantAt = double.NegativeInfinity;
         string lastSent = "";
         double changedAt, sentAt;
         object timer, worldTimer, retry;
@@ -396,6 +400,14 @@ namespace Porchlight.App
                 var looks = new List<string>();
                 if (w.TryGetValue("looks", out var l) && l is List<object> ll) foreach (var x in ll) if (x is string look) looks.Add(look);
                 host.ApplyWorld(w.TryGetValue("cars", out var c) ? c as byte[] : null, w.TryGetValue("people", out var p) ? p as byte[] : null, looks);
+            });
+            r.OnMessage(Protocol.MSG_WORLD_DELTA, m =>
+            {
+                if (!(m is Dictionary<string, object> w && w.TryGetValue("d", out var d) && d is byte[] bytes) || host.ApplyWorldDelta(bytes)) return;
+                // Not of the town this game has (it was still being built when the whole came): ask again, now and then.
+                if (platform.Now() - worldWantAt < 1000) return;
+                worldWantAt = platform.Now();
+                r.Send(Protocol.MSG_WORLD_WANT, new Dictionary<string, object>());
             });
             r.onStateChange = state =>
             {

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The towns' traffic and townsfolk, run on the server (README.md): the game's own
+    code (unity/Assets/Porchlight/Runtime/Shared), so a town here is the town every
+    player's game makes from the same key, car for car.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <AssemblyName>porchlight-sim</AssemblyName>
+    <RootNamespace>Porchlight.Sim</RootNamespace>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- One small box: the workstation collector, and memory handed back when idle. -->
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <!-- The game's code has warnings of its own (Unity's compiler settings differ). -->
+    <NoWarn>CS0162;CS0168;CS0219;CS0414;CS0649;CS0169;CS8632;CS0067</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="src/**/*.cs" />
+    <Compile Include="../unity/Assets/Porchlight/Runtime/Shared/**/*.cs" />
+    <Compile Include="../unity/Assets/Ink/Runtime/**/*.cs" />
+  </ItemGroup>
+</Project>

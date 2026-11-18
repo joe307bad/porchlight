@@ -6,6 +6,7 @@
 //   /mp/towns..., /mp/progress the towns, and what the account has earned (accounts.ts)
 //   /mp/missions...            the missions, compiled from server/missions (../missions.ts)
 //   /mp/traffic/...            the traffic view's county map and live feed (feed.ts)
+//   /mp/sim/where              where a car or townsperson is right now (the simulation's: ../sim/)
 //   /mp/matchmake/...          Colyseus matchmaking (POST, then a WebSocket)
 //   /mp/<process>/<room>       the room's WebSocket
 //
@@ -21,6 +22,9 @@ import { TrafficFeed } from './feed.ts';
 import { CityRoom, configureCityRoom, countyChanged, isOnline, playingIn, presence, whereIs } from './CityRoom.ts';
 import type { Persistence } from './persistence.ts';
 import { CITY_ROOM } from './protocol.ts';
+import { SimPool, type SimCommand } from '../sim/pool.ts';
+import { SimLink, setSim } from '../sim/link.ts';
+import { openRooms } from './CityRoom.ts';
 
 export interface GameServerOptions {
   port: number;
@@ -33,6 +37,9 @@ export interface GameServerOptions {
   handleSignals?: boolean;
   /** Where the missions' .ink files are (default server/missions). */
   missionsDir?: string;
+  /** The towns' traffic and townsfolk, run here (sim/pool.ts's findWorker), with this many workers; none: the players run them. */
+  sim?: SimCommand | null;
+  simWorkers?: number;
 }
 
 export interface GameServer {
@@ -40,6 +47,7 @@ export interface GameServer {
   httpServer: HttpServer;
   port: number;
   traffic: TrafficFeed;
+  sim: SimLink | null;
 }
 
 export async function startGameServer(opts: GameServerOptions): Promise<GameServer> {
@@ -48,7 +56,9 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   configureCityRoom(deps);
   const characters = createCharacterRoutes(deps);
   const missions = createMissionRoutes(store);
-  const traffic = new TrafficFeed(deps);
+  const simLink = opts.sim ? new SimLink(new SimPool(opts.sim, opts.simWorkers ?? 1), deps, openRooms) : null;
+  setSim(simLink);
+  const traffic = new TrafficFeed(deps, undefined, undefined, simLink);
 
   const httpServer = createServer();
   const server = new Server({
@@ -76,6 +86,8 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   server.define(CITY_ROOM, CityRoom).filterBy(['town']);
   server.onShutdown(() => {
     traffic.close();
+    simLink?.close();
+    setSim(null);
     return opts.persistence.close();
   });
 
@@ -85,5 +97,6 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   httpServer.prependListener('request', (req: IncomingMessage) => {
     if (req.url?.startsWith('/mp/matchmake/')) req.url = req.url.slice('/mp'.length);
   });
-  return { server, httpServer, port: (httpServer.address() as AddressInfo).port, traffic };
+  simLink?.start();
+  return { server, httpServer, port: (httpServer.address() as AddressInfo).port, traffic, sim: simLink };
 }

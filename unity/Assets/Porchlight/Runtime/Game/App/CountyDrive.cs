@@ -1007,6 +1007,8 @@ namespace Porchlight.App
             if (Shared) view.ApplyWorld(cars, people, looks);
         }
 
+        public bool ApplyWorldDelta(byte[] delta) => !Shared || view.ApplyWorldDelta(delta);
+
         public void SetTaken(string list)
         {
             if (Shared) view.SetTaken(list);

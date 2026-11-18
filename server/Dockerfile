@@ -2,6 +2,8 @@
 # directly (type stripping), so there is no build step and the image is the
 # source, the migrations and the dependencies.
 FROM node:24-alpine
+# The town simulation (sim/, .NET, self-contained) needs the C++ runtime.
+RUN apk add --no-cache libstdc++ libgcc
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
@@ -9,6 +11,9 @@ COPY src ./src
 COPY drizzle ./drizzle
 COPY missions ./missions
 COPY towns ./towns
+# The town simulation worker, published here by CI (sim/README.md); without it
+# the players run their towns' traffic, as before.
+COPY sim ./sim
 USER node
 ENV NODE_ENV=production PORT=3017
 EXPOSE 3017

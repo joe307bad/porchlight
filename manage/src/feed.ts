@@ -24,6 +24,33 @@ export class Feed {
   private readonly world: World;
   private readonly onStatus: (s: FeedStatus) => void;
 
+  /** This stream's name on the server, once it's said. */
+  private id: string | null = null;
+  /** The towns looked at closely: what's wanted, and what the server was last told. */
+  private focusWanted: string[] = [];
+  private focusSent: string | null = null;
+
+  /**
+   * The towns being looked at closely (their keys): the server sends those ten times a second, the
+   * rest's traffic once a second. Said when it changes (and again on a new stream).
+   */
+  focus(towns: string[]): void {
+    this.focusWanted = [...towns].sort();
+    void this.sendFocus();
+  }
+
+  private async sendFocus(): Promise<void> {
+    const body = JSON.stringify({ feed: this.id, towns: this.focusWanted });
+    if (!this.id || body === this.focusSent) return;
+    this.focusSent = body;
+    try {
+      const res = await fetch('/mp/traffic/focus', { method: 'POST', headers: { 'content-type': 'application/json' }, body });
+      if (!res.ok) this.focusSent = null;
+    } catch {
+      this.focusSent = null; // said again on the next change
+    }
+  }
+
   constructor(world: World, onStatus: (s: FeedStatus) => void) {
     this.world = world;
     this.onStatus = onStatus;
@@ -67,7 +94,14 @@ export class Feed {
         for (const f of frames.push(value)) {
           this.frames++;
           if (f.type === FRAME_POSITIONS) this.world.applyPositions(f, now);
-          else this.world.applyRooms(f.rooms);
+          else {
+            this.world.applyRooms(f.rooms);
+            if (f.feed && f.feed !== this.id) {
+              this.id = f.feed;
+              this.focusSent = null; // a new stream: say again what's looked at
+              void this.sendFocus();
+            }
+          }
         }
         if (!live) {
           live = true;

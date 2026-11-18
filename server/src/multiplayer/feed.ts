@@ -6,21 +6,30 @@
 //                            highways and the spaces between (JSON)
 //   GET /mp/traffic/feed     a stream of binary frames, about 10 a second, for
 //                            as long as the request stays open
+//   POST /mp/traffic/focus   { feed, towns: [key] }: the towns that viewer is
+//                            looking at closely (the rest come once a second)
+//   GET /mp/sim/where?town=<key>&kind=car|person&i=<n>
+//                            where that car or townsperson is right now (JSON)
 //
-// One timer serves every viewer: each tick packs each open room once (its
-// players, and its host's cars and townsfolk exactly as the game packed them,
-// WorldSync.cs), and each viewer is sent the rooms of its own county, joined.
-// A viewer whose connection can't keep up skips ticks rather than queueing
-// them. A town someone made is only ever sent to them.
+// One timer serves every viewer: each tick packs each town once (its players,
+// and its cars and townsfolk exactly as the game packs them, WorldSync.cs: the
+// server's simulation's, ../sim/, or where there's none its host's), and each
+// viewer is sent the towns of its own county, joined. The towns it's looking at
+// closely (it says which: /focus) come every tick; the rest every tick with
+// their players, but their traffic only once a second. A viewer whose connection
+// can't keep up skips ticks rather than queueing them. A town someone made is
+// only ever sent to them.
 //
 // Each frame: u32 length (of what follows), u8 type, then
 //
-//   type 1, rooms: UTF-8 JSON { rooms: [{ id, key, name, ox, oy, host, players: [{ sid, id, name, look }] }] }
-//     sent first, and again whenever the rooms or who's in them change. ox, oy:
-//     where the room's positions are measured from, on the county map.
+//   type 1, rooms: UTF-8 JSON { feed, rooms: [{ id, key, name, ox, oy, host, players: [{ sid, id, name, look }] }] }
+//     sent first, and again whenever the towns or who's in them change. ox, oy:
+//     where the town's positions are measured from, on the county map. feed:
+//     this stream's name, for /focus.
 //   type 2, positions:
 //     f64 server time (ms), u16 room count, then per room (in the last rooms frame's order)
-//       u32 id, u16 age of its world (ms; 65535: none, or older)
+//       u32 id, u16 age of its world (ms; 65535: none, or older; 65534: as last sent,
+//         and no cars or people follow)
 //       u16 players, then per player (in its rooms entry's order):
 //         f32 x, f32 z, f32 y, u16 heading (0-65535), u8 anim, u8 car (model + 1), i16 ride (the driver's index, or -1)
 //       u16 cars, then 7 bytes each as the game packs them
@@ -28,15 +37,22 @@
 //   Everything little-endian but the cars' and people's records (WorldSync.cs:
 //   big-endian u16 x and y in hundredths of a tile, heading 0-65535, u8 speed in fortieths of a tile a second).
 
+import { randomBytes } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { County, mineSlot, NORTH, type Space } from '../county.ts';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { openRooms, type CityRoom } from './CityRoom.ts';
 import { STARTER_TOWNS } from './persistence.ts';
+import type { SimLink } from '../sim/link.ts';
+import type { SimTown } from '../sim/pool.ts';
 
 const COUNTY = '/mp/traffic/county';
 const FEED = '/mp/traffic/feed';
+const FOCUS = '/mp/traffic/focus';
+const WHERE = '/mp/sim/where';
+/** A town not looked at closely: its traffic once in this many ticks. */
+export const QUIET_EVERY = 10;
 
 /** How often viewers are sent where everything is (ms). */
 export const FEED_MS = 100;
@@ -50,6 +66,8 @@ const PLAYER_BYTES = 18;
 export const FRAME_ROOMS = 1;
 export const FRAME_POSITIONS = 2;
 const NO_WORLD = 0xffff;
+/** Its cars and townsfolk as last sent: none in this frame. */
+const KEPT = 0xfffe;
 
 /** A county, as the traffic view draws it (all in tiles; the county's frame). */
 export interface CountyMapJson {
@@ -121,9 +139,19 @@ export function countyMapJson(county: County, names: Map<string, string>): Count
   };
 }
 
-/** One room, packed once a tick for every viewer who can see it. */
+/** A town (or the north room): its rooms here (a busy town can have two), and the simulation's run of it. */
+interface Source {
+  key: string;
+  id: number;
+  rooms: CityRoom[];
+  sim: SimTown | null;
+  /** Packed this tick: in full, and with only its players. */
+  full?: Packed;
+  quiet?: Packed;
+}
+
+/** One town, packed once a tick for every viewer who can see it. */
 interface Packed {
-  room: CityRoom;
   /** Changes whenever who's in the room (or what they're called, or look like, or who hosts) does. */
   sig: string;
   players: { sid: string; id: string; name: string; look: string }[];
@@ -132,18 +160,20 @@ interface Packed {
   bytes: Buffer;
 }
 
-function pack(room: CityRoom, now: number): Packed {
-  const list = [...room.watchPlayers()];
+function pack(src: Source, now: number, withWorld: boolean): Packed {
+  const list = src.rooms.flatMap((r) => [...r.watchPlayers()]);
   const index = new Map(list.map((p, i) => [p.sessionId, i]));
-  const world = room.world;
-  const age = world ? Math.max(0, Math.min(NO_WORLD, now - world.at)) : NO_WORLD;
-  const cars = world && age < NO_WORLD ? world.cars : null;
-  const people = world && age < NO_WORLD ? world.people : null;
+  // The server's simulation of it, else its host's.
+  const world = src.sim ? { cars: src.sim.cars, people: src.sim.people, at: src.sim.at } : (src.rooms.find((r) => r.world)?.world ?? null);
+  const fresh = world ? Math.max(0, Math.min(NO_WORLD, now - world.at)) : NO_WORLD;
+  const age = withWorld ? fresh : KEPT;
+  const cars = world && age < KEPT ? world.cars : null;
+  const people = world && age < KEPT ? world.people : null;
   const carBytes = cars ? cars.byteLength - (cars.byteLength % 7) : 0;
   const peopleBytes = people ? people.byteLength - (people.byteLength % 7) : 0;
-  const b = Buffer.allocUnsafe(4 + 2 + 2 + list.length * PLAYER_BYTES + 2 + carBytes + 2 + peopleBytes);
+  const b = Buffer.allocUnsafe(4 + 2 + 2 + list.length * PLAYER_BYTES + (age === KEPT ? 0 : 2 + carBytes + 2 + peopleBytes));
   let o = 0;
-  o = b.writeUInt32LE(room.watchId >>> 0, o);
+  o = b.writeUInt32LE(src.id >>> 0, o);
   o = b.writeUInt16LE(age, o);
   o = b.writeUInt16LE(list.length, o);
   for (const p of list) {
@@ -155,14 +185,17 @@ function pack(room: CityRoom, now: number): Packed {
     o = b.writeUInt8(p.car & 0xff, o);
     o = b.writeInt16LE(p.ride ? (index.get(p.ride) ?? -1) : -1, o);
   }
-  o = b.writeUInt16LE(carBytes / 7, o);
-  if (cars) o += Buffer.from(cars.buffer, cars.byteOffset, carBytes).copy(b, o);
-  o = b.writeUInt16LE(peopleBytes / 7, o);
-  if (people) o += Buffer.from(people.buffer, people.byteOffset, peopleBytes).copy(b, o);
+  if (age !== KEPT) {
+    o = b.writeUInt16LE(carBytes / 7, o);
+    if (cars) o += Buffer.from(cars.buffer, cars.byteOffset, carBytes).copy(b, o);
+    o = b.writeUInt16LE(peopleBytes / 7, o);
+    if (people) o += Buffer.from(people.buffer, people.byteOffset, peopleBytes).copy(b, o);
+  }
   const players = list.map((p) => ({ sid: p.sessionId, id: p.characterId, name: p.name, look: p.look }));
-  const host = index.get(room.state?.host ?? '') ?? -1;
+  let host = -1;
+  for (const r of src.rooms) host = Math.max(host, index.get(r.state?.host ?? '') ?? -1);
   const sig = `${host}|${players.map((p) => `${p.sid}:${p.name}:${p.look}`).join(',')}`;
-  return { room, sig, players, host, bytes: b };
+  return { sig, players, host, bytes: b };
 }
 
 /** Where a viewer's frames go: the feed's HTTP response (a test's stand-in has the same few members). */
@@ -180,7 +213,11 @@ export interface FeedSink {
 export const STUCK_MS = 30_000;
 
 interface Viewer {
+  /** This stream's name (for /focus). */
+  id: string;
   account: string;
+  /** The towns it's looking at closely (null: it hasn't said; everything, every tick). */
+  focus: Set<string> | null;
   res: FeedSink;
   /** The rooms of its county, and where each is on the map (null until known). */
   origins: Map<string, { x: number; y: number }> | null;
@@ -223,16 +260,27 @@ export class TrafficFeed {
   private readonly deps: GameDeps;
   private readonly rooms: () => Iterable<CityRoom>;
   private readonly now: () => number;
+  private readonly sim: SimLink | null;
+  /** Each town's number in the feed, never reused while this process runs. */
+  private readonly ids = new Map<string, number>();
+  private ticks = 0;
   private stats: FeedStats = { ticks: 0, totalMs: 0, maxMs: 0, skipped: 0, bytes: 0 };
   private reportedAt = 0;
   private slowSaidAt = -Infinity;
   /** Where reports go (the server log; a test listens). */
   log: (line: string) => void = (line) => console.log(line);
 
-  constructor(deps: GameDeps, rooms: () => Iterable<CityRoom> = openRooms, now: () => number = Date.now) {
+  constructor(deps: GameDeps, rooms: () => Iterable<CityRoom> = openRooms, now: () => number = Date.now, sim: SimLink | null = null) {
     this.deps = deps;
     this.rooms = rooms;
     this.now = now;
+    this.sim = sim;
+  }
+
+  private idOf(key: string): number {
+    let id = this.ids.get(key);
+    if (id === undefined) this.ids.set(key, (id = this.ids.size + 1));
+    return id;
   }
 
   get viewerCount(): number {
@@ -248,14 +296,14 @@ export class TrafficFeed {
 
   /** Handles the traffic routes; false if the request isn't one of them. */
   routes = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
-    const path = (req.url ?? '/').split('?')[0];
-    if (path !== COUNTY && path !== FEED) return false;
+    const [path, query = ''] = (req.url ?? '/').split('?');
+    if (path !== COUNTY && path !== FEED && path !== FOCUS && path !== WHERE) return false;
     const send = (status: number, body: unknown): true => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
       return true;
     };
-    if (req.method !== 'GET') return send(405, { error: 'Method not allowed.' });
+    if (req.method !== (path === FOCUS ? 'POST' : 'GET')) return send(405, { error: 'Method not allowed.' });
     const session = readSession(this.deps.sessionSecret, req.headers.cookie);
     if (!session) return send(401, { error: 'Not signed in.' });
     if (foreignOrigin(this.deps.appUrl, req.headers.origin)) return send(403, { error: 'Wrong origin.' });
@@ -266,6 +314,43 @@ export class TrafficFeed {
     if (path === COUNTY) {
       const { county, names } = await countyOf(this.deps, account.id);
       return send(200, countyMapJson(county, names));
+    }
+
+    if (path === FOCUS) {
+      let body: { feed?: unknown; towns?: unknown };
+      try {
+        body = JSON.parse(await readBody(req, 64 * 1024));
+      } catch {
+        return send(400, { error: 'Bad focus.' });
+      }
+      const viewer = [...this.viewers].find((v) => v.id === body.feed && v.account === account.id);
+      if (!viewer) return send(404, { error: 'No such feed.' });
+      const towns = Array.isArray(body.towns) ? body.towns.filter((t): t is string => typeof t === 'string').slice(0, 64) : [];
+      viewer.focus = new Set(towns);
+      return send(200, { ok: true });
+    }
+
+    if (path === WHERE) {
+      const q = new URLSearchParams(query);
+      const key = q.get('town') ?? '';
+      const kind = q.get('kind');
+      const i = Number(q.get('i'));
+      if (!(await this.deps.persistence.mayEnter(account.id, key))) return send(403, { error: "That town is someone else's." });
+      const town = this.sim?.running(key);
+      if (!town) return send(404, { error: 'The server isn\'t running that town.' });
+      const list = kind === 'car' ? town.cars : kind === 'person' ? town.people : null;
+      if (!list || !Number.isInteger(i) || i < 0 || i >= list.byteLength / 7) return send(404, { error: 'No such car or townsperson.' });
+      const v = new DataView(list.buffer, list.byteOffset + i * 7, 7);
+      return send(200, {
+        town: key,
+        kind,
+        i,
+        x: v.getUint16(0) / 100,
+        y: v.getUint16(2) / 100,
+        heading: (v.getUint16(4) / 65536) * 2 * Math.PI,
+        speed: v.getUint8(6) / 40,
+        at: town.at,
+      });
     }
 
     let mine = 0;
@@ -288,7 +373,7 @@ export class TrafficFeed {
    * if not given, its account's county, looked up. The function returned stops it.
    */
   watch(account: string, res: FeedSink, origins?: Map<string, { x: number; y: number }>): () => void {
-    const viewer: Viewer = { account, res, origins: origins ?? null, names: new Map(), countyAt: origins ? Infinity : 0, looking: false, sentSig: '', stuckSince: 0 };
+    const viewer: Viewer = { id: randomBytes(9).toString('base64url'), focus: null, account, res, origins: origins ?? null, names: new Map(), countyAt: origins ? Infinity : 0, looking: false, sentSig: '', stuckSince: 0 };
     this.viewers.add(viewer);
     if (!origins) this.lookUp(viewer);
     this.start();
@@ -367,8 +452,8 @@ export class TrafficFeed {
   /** Every room packed once, and each viewer sent the rooms of its county: the packed bytes themselves, never copied per viewer. */
   private send(): void {
     const now = this.now();
-    const byKey = new Map<string, Packed[]>();
-    let packed = false;
+    const tick = this.ticks++;
+    let sources: Map<string, Source> | null = null;
     for (const viewer of this.viewers) {
       if (now - viewer.countyAt > COUNTY_REFRESH_MS) this.lookUp(viewer);
       if (!viewer.origins) continue;
@@ -387,31 +472,29 @@ export class TrafficFeed {
         continue;
       }
       viewer.stuckSince = 0;
-      if (!packed) {
-        packed = true;
-        for (const room of this.rooms()) {
-          const list = byKey.get(room.town) ?? [];
-          list.push(pack(room, now));
-          byKey.set(room.town, list);
-        }
-      }
-      const mine: Packed[] = [];
+      sources ??= this.sources(now);
+      // Its towns: those it's looking at closely (or all, if it hasn't said) with their traffic every
+      // tick; the rest with it once a second, and only their players in between.
+      const mine: { src: Source; p: Packed }[] = [];
       let size = 8 + 2;
+      const everyone = viewer.focus === null || tick % QUIET_EVERY === 0;
       for (const key of viewer.origins.keys()) {
-        for (const p of byKey.get(key) ?? []) {
-          mine.push(p);
-          size += p.bytes.length;
-        }
+        const src = sources.get(key);
+        if (!src) continue;
+        const close = everyone || viewer.focus!.has(key);
+        const p = close ? (src.full ??= pack(src, now, true)) : (src.quiet ??= pack(src, now, false));
+        mine.push({ src, p });
+        size += p.bytes.length;
       }
       const res = viewer.res;
       res.cork();
-      const sig = mine.map((p) => `${p.room.watchId}#${p.sig}`).join(';') || '-';
+      const sig = mine.map(({ src, p }) => `${src.id}#${p.sig}`).join(';') || '-';
       if (sig !== viewer.sentSig) {
-        const rooms = mine.map((p) => {
-          const o = viewer.origins!.get(p.room.town)!;
-          return { id: p.room.watchId, key: p.room.town, name: viewer.names.get(p.room.town) ?? (p.room.town.startsWith(`${NORTH}:`) ? 'Countryside' : 'A town'), ox: o.x, oy: o.y, host: p.host, players: p.players };
+        const rooms = mine.map(({ src, p }) => {
+          const o = viewer.origins!.get(src.key)!;
+          return { id: src.id, key: src.key, name: viewer.names.get(src.key) ?? (src.key.startsWith(`${NORTH}:`) ? 'Countryside' : 'A town'), ox: o.x, oy: o.y, host: p.host, players: p.players };
         });
-        const json = Buffer.from(JSON.stringify({ rooms }), 'utf8');
+        const json = Buffer.from(JSON.stringify({ feed: viewer.id, rooms }), 'utf8');
         res.write(frameHead(FRAME_ROOMS, json.length));
         res.write(json);
         this.stats.bytes += 5 + json.length;
@@ -421,9 +504,41 @@ export class TrafficFeed {
       head.writeDoubleLE(now, 5);
       head.writeUInt16LE(mine.length, 13);
       res.write(head);
-      for (const p of mine) res.write(p.bytes);
+      for (const { p } of mine) res.write(p.bytes);
       res.uncork();
       this.stats.bytes += 5 + size;
     }
   }
+
+  /** Every town there's something of this tick: the simulation's (with or without players), and any with a room open. */
+  private sources(now: number): Map<string, Source> {
+    const out = new Map<string, Source>();
+    const get = (key: string) => {
+      let src = out.get(key);
+      if (!src) out.set(key, (src = { key, id: this.idOf(key), rooms: [], sim: this.sim?.running(key, now) ?? null }));
+      return src;
+    };
+    if (this.sim) for (const t of this.sim.pool.all()) if (this.sim.running(t.key, now)) get(t.key);
+    for (const room of this.rooms()) get(room.town).rooms.push(room);
+    return out;
+  }
+}
+
+/** A request's body, up to `max` bytes. */
+function readBody(req: IncomingMessage, max: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (c: Buffer) => {
+      size += c.length;
+      if (size > max) {
+        reject(new Error('too big'));
+        req.destroy();
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
 }

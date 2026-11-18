@@ -18,6 +18,18 @@ on:
       # changes too comes here, and copies them along with the server).
       - '!server/missions/**'
       - 'infra/**'
+      - 'sim/**'
+      - '.github/workflows/deploy.yml'
+  # A pull request is built and tested the same way (the game compiled, the
+  # server and the simulation tested), but never deployed: the deploy job is
+  # skipped. Test a branch on the dev setup (dev.sh, desktop/mac-dev.sh).
+  pull_request:
+    paths:
+      - 'unity/**'
+      - 'server/**'
+      - 'manage/**'
+      - 'sim/**'
+      - 'infra/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
@@ -28,8 +40,9 @@ env:
   DNS_ZONE: joebad.com
 
 concurrency:
-  group: deploy
-  cancel-in-progress: false
+  # Deploys queue one after another; a pull request's runs are their own (a newer push cancels the older).
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || 'deploy' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # --- The game: check its engine-free code, then build it for the web ---------
@@ -70,6 +83,32 @@ jobs:
         run: |
           npx playwright-core install --with-deps --only-shell chromium
           npm run test:browser
+
+      # The towns' traffic and townsfolk, run on the server by the game's own code (sim/):
+      # a tick of 40 towns timed (fails over 1 ms a town on average, or if the deltas save
+      # too little), the real worker run by the real server end to end, and then the
+      # worker published for the box (arm64 Alpine, self-contained) for the deploy job.
+      - name: Simulation — build, tick budget
+        run: |
+          dotnet build sim/Porchlight.Sim.csproj -c Release
+          dotnet sim/bin/Release/net8.0/porchlight-sim.dll --bench server/towns 10 1.0
+          # A player's game following each town by its deltas shows it as the server has it.
+          dotnet sim/bin/Release/net8.0/porchlight-sim.dll --follow server/towns
+      - name: Simulation — the server running it, end to end
+        working-directory: server
+        run: |
+          npm ci
+          node --test test/sim.test.ts test/sim-room.test.ts
+      - name: Simulation — publish for the box
+        run: |
+          dotnet publish sim/Porchlight.Sim.csproj -c Release -r linux-musl-arm64 --self-contained \
+            -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o sim-publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sim
+          path: sim-publish/porchlight-sim
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Game — towns grow (every invariant checked) and repeat
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60
@@ -117,6 +156,7 @@ jobs:
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -137,6 +177,14 @@ jobs:
           npm ci
           npm run typecheck
           npm test
+
+      # The simulation worker the build job published, beside the server (server/sim/README.md),
+      # after the tests (it's the box's, arm64: these tests ran it as built for the runner).
+      - uses: actions/download-artifact@v4
+        with:
+          name: sim
+          path: server/sim
+      - run: chmod +x server/sim/porchlight-sim
 
       # --- Provision -----------------------------------------------------------
       - uses: aws-actions/configure-aws-credentials@v4

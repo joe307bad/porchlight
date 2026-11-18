@@ -117,6 +117,7 @@ export class MapRenderer {
   private stillKey = '';
   private paths: StreetPaths;
   private cam: Camera = { cx: 0, cy: 0, scale: 1 };
+  private readonly map: CountyMap;
   private width = 0;
   private height = 0;
   private dpr = 1;
@@ -146,6 +147,7 @@ export class MapRenderer {
     this.world = world;
     this.ctx = canvas.getContext('2d', { alpha: false })!;
     this.paths = buildPaths(map);
+    this.map = map;
     this.resize = new ResizeObserver(() => this.fitCanvas());
     this.resize.observe(canvas);
     this.fitCanvas();
@@ -179,6 +181,15 @@ export class MapRenderer {
   }
 
   /** The whole county in view. */
+  /** The towns on screen (their keys), if it's close enough in to see their traffic move; none further out. */
+  townsInView(minScale = 1.5): string[] {
+    const { cx, cy, scale } = this.cam;
+    if (scale < minScale || !this.width) return [];
+    const x0 = cx - this.width / 2 / scale, x1 = cx + this.width / 2 / scale;
+    const y0 = cy - this.height / 2 / scale, y1 = cy + this.height / 2 / scale;
+    return this.map.towns.filter((t) => t.x0 < x1 && t.x0 + t.width > x0 && t.y0 < y1 && t.y0 + t.height > y0).map((t) => t.key);
+  }
+
   fitAll(): void {
     const b = this.paths.bounds;
     if (!Number.isFinite(b.x0)) return;
