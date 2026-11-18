@@ -45,7 +45,7 @@ namespace Porchlight.App
                 error.EnableInClassList("hidden", string.IsNullOrEmpty(message));
             }
 
-            Button save = null;
+            UnityEngine.UIElements.Button save = null;
             // The address last checked and found not answering: pressing again saves it anyway.
             string unanswered = null;
 
