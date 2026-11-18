@@ -29,8 +29,91 @@ namespace Porchlight.App
 
         public double Now() => Time.realtimeSinceStartupAsDouble * 1000;
 
-        /// <summary>Where the desktop app plays (unless PORCHLIGHT_ORIGIN says otherwise).</summary>
+        /// <summary>Where the desktop app plays, unless its Settings (Server) or PORCHLIGHT_ORIGIN say otherwise.</summary>
         public const string DESKTOP_ORIGIN = "https://porchlight.joebad.com/";
+
+        // The server, off the web: the one chosen in Settings (UI/ServerSettings.cs), kept in a
+        // file beside the session so a restart (or a script) finds it; `-porchlightServer <url>`
+        // at launch chooses it too (`-porchlightServer default` for the live one again).
+
+        static bool serverRead;
+        static string server;
+
+        static string ServerFile => System.IO.Path.Combine(Application.persistentDataPath, "server");
+
+        /// <summary>The server chosen in Settings ("http://jbhs:5173/"), or null for the live one.</summary>
+        public static string ChosenServer
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return null;
+#else
+                if (!serverRead)
+                {
+                    serverRead = true;
+                    var args = Environment.GetCommandLineArgs();
+                    int at = Array.IndexOf(args, "-porchlightServer");
+                    if (at >= 0 && at + 1 < args.Length)
+                    {
+                        if (args[at + 1] == "default" || !TryServer(args[at + 1], out var given)) given = null;
+                        SaveServer(given);
+                    }
+                    else
+                    {
+                        try
+                        {
+                            if (System.IO.File.Exists(ServerFile) && TryServer(System.IO.File.ReadAllText(ServerFile), out var kept)) server = kept;
+                        }
+                        catch (Exception e)
+                        {
+                            Debug.LogWarning("porchlight: the chosen server: " + e.Message);
+                        }
+                    }
+                    if (server != null) Debug.Log("porchlight: playing at " + server + " (chosen in Settings)");
+                }
+                return server;
+#endif
+            }
+        }
+
+        /// <summary>Keep `origin` (from TryServer) as the server from now on; null for the live one again.</summary>
+        public static void SaveServer(string origin)
+        {
+            serverRead = true;
+            server = origin == null || SameServer(origin, DESKTOP_ORIGIN) ? null : origin;
+            try
+            {
+                if (server == null) System.IO.File.Delete(ServerFile);
+                else
+                {
+                    System.IO.Directory.CreateDirectory(Application.persistentDataPath);
+                    System.IO.File.WriteAllText(ServerFile, server);
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("porchlight: keeping the chosen server: " + e.Message);
+            }
+        }
+
+        /// <summary>
+        /// A server's address as typed ("jbhs:5173", "http://jbhs:5173/anything") as an origin with a
+        /// slash ("http://jbhs:5173/"); false if it isn't one. No scheme is http.
+        /// </summary>
+        public static bool TryServer(string text, out string origin)
+        {
+            origin = null;
+            text = (text ?? "").Trim();
+            if (text.Length == 0) return false;
+            if (!text.Contains("://")) text = "http://" + text;
+            if (!Uri.TryCreate(text, UriKind.Absolute, out var u) || (u.Scheme != "http" && u.Scheme != "https") || string.IsNullOrEmpty(u.Host)) return false;
+            origin = u.GetLeftPart(UriPartial.Authority) + "/";
+            return true;
+        }
+
+        public static bool SameServer(string a, string b) =>
+            string.Equals(a?.TrimEnd('/'), b?.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// The desktop app (built with PORCHLIGHT_DESKTOP, by desktop.yml), or any
@@ -159,7 +242,7 @@ namespace Porchlight.App
             };
         }
 
-        /// <summary>The page's address, or a configured one off the web (PORCHLIGHT_ORIGIN, else localhost:3017).</summary>
+        /// <summary>The page's address; off the web PORCHLIGHT_ORIGIN, else the server chosen in Settings, else the live one (the desktop app) or localhost:3017.</summary>
         public string Href
         {
             get
@@ -173,7 +256,7 @@ namespace Porchlight.App
 #else
                 const string HOME = "http://localhost:3017/";
 #endif
-                return (Environment.GetEnvironmentVariable("PORCHLIGHT_ORIGIN") ?? HOME) + (string.IsNullOrEmpty(hash) ? "" : "#" + hash.TrimStart('#'));
+                return (Environment.GetEnvironmentVariable("PORCHLIGHT_ORIGIN") ?? ChosenServer ?? HOME) + (string.IsNullOrEmpty(hash) ? "" : "#" + hash.TrimStart('#'));
 #endif
             }
         }

@@ -30,10 +30,13 @@ ADMIN_PASSWORD="${KEYCLOAK_ADMIN_PASSWORD:-admin}"
 case "$MODE" in
   dev)
     APP_URL="${APP_URL:-http://localhost:5173}"
+    # This machine's own address as well as APP_URL (./dev.sh --host's), so switching between them needs nothing redone.
+    APP_URLS="http://localhost:5173 $APP_URL"
     CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-porchlight-dev-secret}"
     SSL_REQUIRED=none ;;
   prod)
     APP_URL="${APP_URL:?APP_URL is required in prod}"
+    APP_URLS="$APP_URL"
     CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:?KEYCLOAK_CLIENT_SECRET is required in prod}"
     SSL_REQUIRED=external ;;
   *) echo "unknown mode: $MODE" >&2; exit 2 ;;
@@ -80,6 +83,8 @@ fi
 # this secret, plus PKCE, and keeps the result in an HttpOnly cookie. The page
 # never holds a token. The secret is ours (deploy.sh generates it and keeps it
 # in Secrets Manager) rather than Keycloak's, so nothing has to be read back.
+REDIRECTS=$(printf '"%s/auth/callback",' $(printf '%s\n' $APP_URLS | sort -u)); REDIRECTS="[${REDIRECTS%,}]"
+LOGOUTS=$(printf '%s/*##' $(printf '%s\n' $APP_URLS | sort -u)); LOGOUTS="${LOGOUTS%##}"
 CLIENT_ARGS=(
   -s "clientId=$CLIENT_ID"
   -s "name=Porchlight"
@@ -92,11 +97,11 @@ CLIENT_ARGS=(
   -s "directAccessGrantsEnabled=false"
   -s "serviceAccountsEnabled=false"
   -s "frontchannelLogout=true"
-  # Exact, not a wildcard: the one callback the auth service serves.
-  -s "redirectUris=[\"$APP_URL/auth/callback\"]"
+  # Exact, not a wildcard: the one callback the auth service serves (at each address it's served at).
+  -s "redirectUris=$REDIRECTS"
   -s "webOrigins=[]"
   -s "attributes.\"pkce.code.challenge.method\"=S256"
-  -s "attributes.\"post.logout.redirect.uris\"=$APP_URL/*"
+  -s "attributes.\"post.logout.redirect.uris\"=$LOGOUTS"
 )
 CLIENT_UUID=$(kc get clients -r "$REALM" -q "clientId=$CLIENT_ID" --fields id --format csv --noquotes | head -n1 | tr -d '\r')
 if [ -n "$CLIENT_UUID" ]; then

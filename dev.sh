@@ -10,7 +10,34 @@
 # project is newer than the build, or with --build;
 # that needs Unity 6000.6.5f1 (set UNITY to its executable if it isn't in the
 # Hub's usual place).
+#
+#   ./dev.sh                          at http://localhost:5173/
+#   ./dev.sh --host jbhs --no-game    at http://jbhs:5173/, for other machines (a desktop
+#                                     app built on a Mac, set to that server), without the web game
+#   ./dev.sh --build                  build the web game first, even if it looks up to date
+#
+# One address carries it all: the game, the server (/auth, /mp), Manage (/manage/)
+# and Keycloak's sign-in pages (/realms/...), so that's all another machine needs.
 set -euo pipefail
+
+BUILD_GAME=auto
+PUBLIC_HOST=localhost
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --build) BUILD_GAME=yes ;;
+    --no-game) BUILD_GAME=no ;;
+    --host) PUBLIC_HOST="${2:?--host needs a name, e.g. --host jbhs}"; shift ;;
+    *) echo "unknown option: $1 (see the top of dev.sh)" >&2; exit 2 ;;
+  esac
+  shift
+done
+export PUBLIC_URL="http://$PUBLIC_HOST:5173"
+# The server's addresses for this run (they take the place of server/.env.development's).
+export APP_URL="$PUBLIC_URL"
+export KEYCLOAK_ISSUER="$PUBLIC_URL/realms/porchlight"
+export KEYCLOAK_INTERNAL_URL="http://localhost:8080/realms/porchlight"
+# Anywhere but localhost: listen for other machines too.
+if [ "$PUBLIC_HOST" != localhost ]; then export HOST=0.0.0.0; fi
 
 if ! command -v node >/dev/null 2>&1; then
   echo "error: Node.js is not installed. Install Node 23.6+ (https://nodejs.org) and try again." >&2
@@ -44,7 +71,9 @@ if [ ! -f "$MANAGE" ] || [ -n "$(find "$ROOT/manage/src" "$ROOT/manage/index.htm
   npm --prefix "$ROOT/manage" run build
 fi
 
-if [ "${1:-}" = "--build" ] || stale; then
+if [ "$BUILD_GAME" = no ]; then
+  echo "Not serving the web game (--no-game): the server, sign-in and Manage only."
+elif [ "$BUILD_GAME" = yes ] || stale; then
   if pgrep -f "Unity.app/Contents/MacOS/Unity.*-projectpath $ROOT/unity" >/dev/null 2>&1; then
     if [ ! -f "$BUILD/index.html" ]; then
       echo "error: there's no build yet, and the Unity editor has unity/ open so one can't be made; close it and run this again." >&2
@@ -80,5 +109,5 @@ else
   export NO_GAME_SERVER=1
 fi
 
-echo "Starting Porchlight at http://localhost:5173/  (sign in as dev / dev)"
+echo "Starting Porchlight at $PUBLIC_URL/  (sign in as dev / dev)"
 node "$ROOT/unity/Tools~/serve.mjs" "$BUILD"

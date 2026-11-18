@@ -65,6 +65,22 @@ Updates after that apply without asking. To sign later:
 - Windows: pass `--signParams` or `--azureTrustedSignFile` (e.g. Azure Trusted
   Signing).
 
+## Against a dev server (macOS)
+
+The app built on your Mac from main, playing on a dev server instead of the
+live one:
+
+```sh
+# on the dev machine (jbhs on the tailnet): the game server, sign-in and Manage at http://jbhs:5173
+./dev.sh --host jbhs --no-game
+# on the Mac: pull, build (Unity), open it there; sign in as dev / dev
+desktop/mac-dev.sh
+```
+
+`desktop/mac-dev.sh --help` lists its options (another `--server`, `--no-pull`,
+`--open`). The server is also in the app's Settings (on the sign-in card, and
+in the sidebar), and the app keeps a separate sign-in for each server.
+
 ## Trying it locally (macOS)
 
 ```sh
@@ -76,4 +92,5 @@ desktop/pack-mac.sh unity/Builds/macOS-app/Porchlight.app 0.0.1 Releases
 
 `PORCHLIGHT_UPDATES=<folder>` points an installed launcher at a folder of
 releases instead of GitHub, to try an update. `PORCHLIGHT_DESKTOP=1` makes any
-build sign in the desktop way, and `PORCHLIGHT_ORIGIN` sets the server.
+build sign in the desktop way, and `PORCHLIGHT_ORIGIN` sets the server for
+one run (over the one in Settings).

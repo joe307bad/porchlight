@@ -1681,3 +1681,29 @@ Label {
     color: #a99f88;
     -unity-text-align: middle-right;
 }
+
+/* The desktop app's Settings (UI/ServerSettings.cs): which server it plays on. */
+#settings {
+    background-color: rgba(20, 19, 17, 0.6);
+}
+
+.settings-field {
+    margin: 0 0 8px 0;
+    font-size: 15px;
+}
+
+.settings-note {
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: #a99f88;
+    white-space: normal;
+}
+
+.settings-links {
+    flex-direction: row;
+    justify-content: space-between;
+}
+
+.signin-server {
+    align-self: center;
+}

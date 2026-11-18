@@ -49,7 +49,7 @@ Signed in, the town on screen is one of the county's (see `infra/README.md`, The
 
 **In the editor:** open `unity/` in Unity 6000.6.5f1. A fresh checkout builds its model library as it opens; run **Porchlight ▸ Set Up Project** to rebuild it. Then open `Assets/Porchlight/Scenes/Boot.unity` and press Play.
 
-Off the web there's no page address and no browser cookies. The game talks to `PORCHLIGHT_ORIGIN`, or `http://localhost:3017` if that isn't set. It starts in dev mode unless you hand it a session with `PORCHLIGHT_COOKIE=pl_session=<value>` (copy it from a signed-in browser).
+Off the web there's no page address and no browser cookies. The game talks to `PORCHLIGHT_ORIGIN`, else the server chosen in its Settings (the desktop app's, `-porchlightServer <url>` at launch), else `http://localhost:3017` (the desktop app: the live server). It starts in dev mode unless you hand it a session with `PORCHLIGHT_COOKIE=pl_session=<value>` (copy it from a signed-in browser).
 
 **In the browser:** from the repository root, run
 

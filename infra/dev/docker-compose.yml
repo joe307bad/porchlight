@@ -3,7 +3,7 @@
 #
 #   username: dev   password: dev
 #
-# Admin console: http://localhost:8080/admin (admin / admin).
+# Admin console: http://localhost:5173/admin/ (admin / admin).
 #
 # Plus the game's database (multiplayer: accounts' characters, where each was,
 # sessions), which the server migrates itself on start (Drizzle, server/drizzle).
@@ -18,6 +18,11 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
       KC_HEALTH_ENABLED: "true"
+      # Reached through the site's address (unity/Tools~/serve.mjs passes /realms
+      # and the rest on), so that's the one in its pages and tokens: dev.sh sets
+      # PUBLIC_URL, http://localhost:5173 or http://<host>:5173 with --host.
+      KC_HOSTNAME: ${PUBLIC_URL:-http://localhost:5173}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
     ports:
       - "8080:8080"
     volumes:

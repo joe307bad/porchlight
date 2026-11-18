@@ -608,7 +608,14 @@ namespace Porchlight.UI
             SyncPlaying();
         }
 
-        Action onGoHome, onJournal, onManage;
+        Action onGoHome, onJournal, onManage, onSettings;
+
+        /// <summary>The Settings link (the desktop app's: which server, UI/ServerSettings.cs), or null for none.</summary>
+        public void SetSettings(Action onSettings)
+        {
+            this.onSettings = onSettings;
+            SyncPlaying();
+        }
 
         /// <summary>The Manage link (managing Porchlight, in the browser: ManageLink), or null for none.</summary>
         public void SetManage(Action onManage)
@@ -733,6 +740,7 @@ namespace Porchlight.UI
                 manage.tooltip = "Manage Porchlight: every car, townsperson and player in the county, live (opens in your browser)";
                 links.Add(manage);
             }
+            if (onSettings != null) links.Add(El.Link("Settings", onSettings));
             links.style.display = links.childCount > 0 ? DisplayStyle.Flex : DisplayStyle.None;
         }
 

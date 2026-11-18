@@ -30,7 +30,18 @@ namespace Porchlight.App
         static bool loaded;
         static TcpListener listening;
 
-        static string FilePath => Path.Combine(Application.persistentDataPath, "session");
+        /// <summary>
+        /// The session's file: "session" for the live server, and its own for any other (chosen in Settings, or
+        /// PORCHLIGHT_ORIGIN: "session-jbhs-5173"), so playing on one never signs the app out of another.
+        /// </summary>
+        static string FilePath => Path.Combine(Application.persistentDataPath, FileName(Platform.Instance.Origin));
+
+        public static string FileName(string origin)
+        {
+            if (Platform.SameServer(origin, Platform.DESKTOP_ORIGIN)) return "session";
+            var u = new Uri(origin);
+            return "session-" + u.Host.Replace(':', '_') + "-" + u.Port;
+        }
 
         /// <summary>The session kept from last time, or null.</summary>
         public static string Session
