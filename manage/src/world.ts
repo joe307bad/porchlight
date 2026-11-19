@@ -9,7 +9,7 @@
 // Who's near whom (players and the cars and people round them, and each
 // other) is worked out once per feed frame, not per drawn frame.
 
-import { ANIM, NO_WORLD, PLAYER_BYTES, RECORD, readPlayer, type PositionsFrame, type RoomMeta } from './protocol.ts';
+import { ANIM, KEPT, NO_WORLD, PLAYER_BYTES, RECORD, readPlayer, type PositionsFrame, type RoomMeta } from './protocol.ts';
 
 /** How quickly the drawn position closes on the sent one (per second), and further off than this (tiles) it jumps. */
 const EASE = 8;
@@ -17,7 +17,8 @@ const JUMP = 3;
 const PLAYER_EASE = 12;
 const PLAYER_JUMP = 24;
 /** A world older than this (ms) has stopped: its cars and people stand where they were. */
-const STALE_MS = 1000;
+/** Without word of a town's traffic for this long, it stops (towns not looked at closely come once a second). */
+const STALE_MS = 2500;
 /** Tiles round a player that count as near them. */
 export const REACH = 12;
 /** Tiles a second under which a car counts as stopped. */
@@ -227,8 +228,11 @@ export class World {
       const r = this.rooms.get(rp.id);
       if (!r) continue;
       const { ox, oy } = r.meta;
-      r.age = rp.age;
-      r.receivedAt = now;
+      const kept = rp.age === KEPT;
+      if (!kept) {
+        r.age = rp.age;
+        r.receivedAt = now;
+      }
       for (let i = 0; i < rp.players && i < r.players.length; i++) {
         const p = r.players[i];
         const d = readPlayer(v, rp.playersAt + i * PLAYER_BYTES);
@@ -241,7 +245,9 @@ export class World {
         p.ride = d.ride >= 0 && d.ride < r.players.length && d.ride !== i ? r.players[d.ride] : null;
         p.seen = true;
       }
-      if (rp.age === NO_WORLD) {
+      if (kept) {
+        // Its traffic carries on as it was.
+      } else if (rp.age === NO_WORLD) {
         r.cars.clear();
         r.people.clear();
       } else {

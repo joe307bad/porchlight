@@ -453,7 +453,9 @@ static class CountyCheck
                 var houses = Homes.All(model);
                 if (houses.Count == 0) return ($"{dest.name} has no houses", 0, count);
                 var house = houses[houses.Count / 2];
-                target = here.ToWorld(new Vec2(house.tiles[0].x + 0.5, house.tiles[0].y + 0.5));
+                // Its front door, as the game takes you to (a corner house's first tile may be nearer the side street).
+                var front = layout.houses.FirstOrDefault(lh => lh.buildingId == house.id);
+                target = here.ToWorld(front != null ? FrontDoor(front) : new Vec2(house.tiles[0].x + 0.5, house.tiles[0].y + 0.5));
                 name = "the house";
             }
             else if (stop == null) return ($"no way on from {Describe(here)}", 0, count);

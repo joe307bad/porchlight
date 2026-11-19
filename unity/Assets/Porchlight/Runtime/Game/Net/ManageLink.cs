@@ -60,7 +60,7 @@ namespace Porchlight.App
 #if !UNITY_WEBGL || UNITY_EDITOR
     /// <summary>
     /// The desktop app's Manage page, at http://127.0.0.1:port/manage/. Only GETs, only of the page's
-    /// own files and the three server routes it uses (and the page's one POST, back to the game), and only asked for by that address (a page
+    /// own files and the server routes it uses (and the page's two POSTs: back to the game, and which towns it's looking at), and only asked for by that address (a page
     /// elsewhere rebinding its own name to 127.0.0.1 is turned away by the Host it sends). One request a
     /// connection, each on the thread pool, so the feed's stream never waits on the game's frames.
     /// </summary>
@@ -71,6 +71,8 @@ namespace Porchlight.App
 
         /// <summary>What the page may ask the server for, passed on as it is.</summary>
         static readonly HashSet<string> PASSED = new HashSet<string> { "/auth/me", "/mp/traffic/county", "/mp/traffic/feed" };
+        /// <summary>What the page may tell the server (POST, from the page itself).</summary>
+        const string FOCUS = "/mp/traffic/focus";
 
         static readonly Dictionary<string, string> TYPES = new Dictionary<string, string>
         {
@@ -132,7 +134,7 @@ namespace Porchlight.App
                 {
                     client.NoDelay = true;
                     var stream = client.GetStream();
-                    var (method, target, headers) = await ReadRequest(stream).ConfigureAwait(false);
+                    var (method, target, headers, body) = await ReadRequest(stream).ConfigureAwait(false);
                     if (method == null) return;
                     if (!headers.TryGetValue("host", out var host) || host != $"127.0.0.1:{port}")
                     {
@@ -143,11 +145,16 @@ namespace Porchlight.App
                     string path = q < 0 ? target : target.Substring(0, q);
                     // The page's "Back to Porchlight": the game to the front. Only from the page itself (a
                     // browser says where a POST comes from), so no other site can pull the game forward.
-                    if (path == "/app/front" && method == "POST")
+                    if ((path == "/app/front" || path == FOCUS) && method == "POST")
                     {
                         if (!headers.TryGetValue("origin", out var from) || from != $"http://127.0.0.1:{port}")
                         {
                             await Reply(stream, 403, "text/plain", "Not from here.").ConfigureAwait(false);
+                            return;
+                        }
+                        if (path == FOCUS)
+                        {
+                            await Pass(stream, target, headers, body).ConfigureAwait(false);
                             return;
                         }
                         bool ok = ToFront();
@@ -234,7 +241,10 @@ namespace Porchlight.App
         }
 
         /// <summary>The request line and headers (lower-cased names); a null method if it isn't one.</summary>
-        static async Task<(string method, string target, Dictionary<string, string> headers)> ReadRequest(NetworkStream stream)
+        /// <summary>Most a request's body may be (the page's focus: a few towns' keys).</summary>
+        const int MAX_BODY = 64 * 1024;
+
+        static async Task<(string method, string target, Dictionary<string, string> headers, byte[] body)> ReadRequest(NetworkStream stream)
         {
             var buf = new byte[16 * 1024];
             int have = 0;
@@ -242,23 +252,35 @@ namespace Porchlight.App
             {
                 for (;;)
                 {
-                    if (have == buf.Length) return (null, null, null);
+                    if (have == buf.Length) return (null, null, null, null);
                     int n = await stream.ReadAsync(buf, have, buf.Length - have, timeout.Token).ConfigureAwait(false);
-                    if (n <= 0) return (null, null, null);
+                    if (n <= 0) return (null, null, null, null);
                     have += n;
                     string text = Encoding.ASCII.GetString(buf, 0, have);
                     int end = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
                     if (end < 0) continue;
                     var lines = text.Substring(0, end).Split(new[] { "\r\n" }, StringSplitOptions.None);
                     var first = lines[0].Split(' ');
-                    if (first.Length != 3 || !first[1].StartsWith("/", StringComparison.Ordinal)) return (null, null, null);
+                    if (first.Length != 3 || !first[1].StartsWith("/", StringComparison.Ordinal)) return (null, null, null, null);
                     var headers = new Dictionary<string, string>();
                     for (int i = 1; i < lines.Length; i++)
                     {
                         int colon = lines[i].IndexOf(':');
                         if (colon > 0) headers[lines[i].Substring(0, colon).Trim().ToLowerInvariant()] = lines[i].Substring(colon + 1).Trim();
                     }
-                    return (first[0], first[1], headers);
+                    // Its body: what came with the head, and the rest read to its length.
+                    int length = headers.TryGetValue("content-length", out var cl) && int.TryParse(cl, out var l) ? l : 0;
+                    if (length < 0 || length > MAX_BODY) return (null, null, null, null);
+                    var body = new byte[length];
+                    int start = end + 4, got = Math.Min(length, have - start);
+                    Array.Copy(buf, start, body, 0, got);
+                    while (got < length)
+                    {
+                        int m = await stream.ReadAsync(body, got, length - got, timeout.Token).ConfigureAwait(false);
+                        if (m <= 0) return (null, null, null, null);
+                        got += m;
+                    }
+                    return (first[0], first[1], headers, body);
                 }
             }
         }
@@ -305,10 +327,15 @@ namespace Porchlight.App
         }
 
         /// <summary>Passed on to the server with the game's session, and its answer streamed back as it comes (the feed never ends).</summary>
-        async Task Pass(NetworkStream stream, string target, Dictionary<string, string> headers)
+        async Task Pass(NetworkStream stream, string target, Dictionary<string, string> headers, byte[] body = null)
         {
-            using (var req = new HttpRequestMessage(HttpMethod.Get, new Uri(origin, target)))
+            using (var req = new HttpRequestMessage(body != null ? HttpMethod.Post : HttpMethod.Get, new Uri(origin, target)))
             {
+                if (body != null)
+                {
+                    req.Content = new ByteArrayContent(body);
+                    req.Content.Headers.TryAddWithoutValidation("Content-Type", "application/json");
+                }
                 string c = cookie;
                 if (!string.IsNullOrEmpty(c)) req.Headers.TryAddWithoutValidation("Cookie", c);
                 req.Headers.TryAddWithoutValidation("Accept", headers.TryGetValue("accept", out var accept) ? accept : "*/*");
@@ -317,11 +344,11 @@ namespace Porchlight.App
                     string type = res.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
                     long length = res.Content.Headers.ContentLength ?? -1;
                     await Head(stream, (int)res.StatusCode, res.ReasonPhrase ?? "", type, length).ConfigureAwait(false);
-                    using (var body = await res.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                    using (var answer = await res.Content.ReadAsStreamAsync().ConfigureAwait(false))
                     {
                         var buf = new byte[32 * 1024];
                         int n;
-                        while ((n = await body.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false)) > 0)
+                        while ((n = await answer.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false)) > 0)
                         {
                             await stream.WriteAsync(buf, 0, n).ConfigureAwait(false);
                             await stream.FlushAsync().ConfigureAwait(false);

@@ -32,12 +32,18 @@ namespace Porchlight.Model
         public double mainRoadWidth = 2;
         // streets
         public double roadDensity = 0.85;
+        /// <summary>The shortest block: the fewest tiles of land a street leaves between itself and a road alongside it.</summary>
         public double streetSegment = 5;
+        /// <summary>A block's depth: side streets this far apart, centre to centre (tiles).</summary>
         public double streetSpacing = 9;
+        /// <summary>A block's length, in side street spacings.</summary>
+        public double blockLength = 2;
+        /// <summary>How far streets wander from a regular grid: their places in the plan, and the way blocks run.</summary>
+        public double irregularity = 0.3;
         public double streetWidth = 1;
         /// <summary>How often a dead end that could be joined up is kept as a cul-de-sac instead.</summary>
         public double culDeSacs = 0.5;
-        /// <summary>How far ahead a dead end looks for a road to join, in street segments.</summary>
+        /// <summary>How far a dead end looks for a road to join (ahead, or round the corner), in shortest blocks.</summary>
         public double deadEndReach = 1.8;
         // lots and buildings
         public double lotMinSize = 8;
@@ -85,6 +91,8 @@ namespace Porchlight.Model
                 "roadDensity" => roadDensity,
                 "streetSegment" => streetSegment,
                 "streetSpacing" => streetSpacing,
+                "blockLength" => blockLength,
+                "irregularity" => irregularity,
                 "streetWidth" => streetWidth,
                 "culDeSacs" => culDeSacs,
                 "deadEndReach" => deadEndReach,
@@ -124,6 +132,8 @@ namespace Porchlight.Model
                     case "roadDensity": roadDensity = value; break;
                     case "streetSegment": streetSegment = value; break;
                     case "streetSpacing": streetSpacing = value; break;
+                    case "blockLength": blockLength = value; break;
+                    case "irregularity": irregularity = value; break;
                     case "streetWidth": streetWidth = value; break;
                     case "culDeSacs": culDeSacs = value; break;
                     case "deadEndReach": deadEndReach = value; break;
@@ -205,8 +215,10 @@ namespace Porchlight.Model
             S("bridgeCost", "Bridge cost", "Town & roads", 2, 60, 1),
             S("mainRoadWidth", "Main road width", "Town & roads", 1, 3, 0.25),
             S("roadDensity", "Street density", "Streets", 0, 1, 0.01),
-            S("streetSegment", "Segment length", "Streets", 3, 10, 0.5),
+            S("streetSegment", "Shortest block", "Streets", 3, 10, 0.5),
             S("streetSpacing", "Side street spacing", "Streets", 5, 20, 1),
+            S("blockLength", "Block length", "Streets", 1, 4, 0.25),
+            S("irregularity", "Irregularity", "Streets", 0, 1, 0.05),
             S("streetWidth", "Street width", "Streets", 0.5, 2, 0.25),
             S("culDeSacs", "Cul-de-sacs", "Streets", 0, 1, 0.05),
             S("deadEndReach", "Dead ends reach", "Streets", 1, 8, 0.1),

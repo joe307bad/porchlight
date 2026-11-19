@@ -2,7 +2,9 @@
 // packs where each car and person is (EncodeCars, EncodePeople) about ten
 // times a second, and everyone else follows along (Receive, then Step every
 // frame), easing toward each new position and carrying on in between at the
-// speed and heading it was going. Pure.
+// speed and heading it was going. Where the server runs the town (sim/), it
+// sends the whole town once (Receive) and then only the cars and people a
+// client carrying them on like this would have wrong (ReceiveDelta). Pure.
 
 using System;
 using System.Collections.Generic;
@@ -104,6 +106,61 @@ namespace Porchlight.Explore
             any = true;
         }
 
+        /// <summary>
+        /// The server's latest: only what changed (sim/src/Delta.cs: u16 cars, u16 people, then for
+        /// each, u16 n and n × (u16 index, record); big-endian). The rest carry on as they were. False
+        /// if it's of a town of other counts than this one has (the whole town's due: wait for it).
+        /// </summary>
+        public bool ReceiveDelta(byte[] d)
+        {
+            if (d == null || d.Length < 4) return false;
+            int nc = (d[0] << 8) | d[1], np = (d[2] << 8) | d[3];
+            if (!any || nc != cars.Length || np != people.Length) return false;
+            int at = 4;
+            if (!Patch(d, ref at, cars) || !Patch(d, ref at, people)) return false;
+            since = 0;
+            return true;
+        }
+
+        static bool Patch(byte[] d, ref int at, Target[] into)
+        {
+            if (at + 2 > d.Length) return false;
+            int n = (d[at] << 8) | d[at + 1];
+            at += 2;
+            if (at + n * (2 + RECORD) > d.Length) return false;
+            for (int k = 0; k < n; k++, at += 2 + RECORD)
+            {
+                int i = (d[at] << 8) | d[at + 1];
+                if (i >= into.Length) continue;
+                int r = at + 2;
+                into[i] = new Target
+                {
+                    x = ((d[r] << 8) | d[r + 1]) / SCALE,
+                    y = ((d[r + 2] << 8) | d[r + 3]) / SCALE,
+                    heading = ((d[r + 4] << 8) | d[r + 5]) / 65536.0 * 2 * Math.PI,
+                    speed = d[r + 6] / SPEED_SCALE,
+                };
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Where you are (tiles), if on foot in the street: a car carried on toward you waits short of
+        /// you rather than through you, until the server's word on it comes (it stops for you there too).
+        /// </summary>
+        public Vec2? You;
+        /// <summary>A car waits for you this far ahead of it (tiles), and this far either side.</summary>
+        const double WAIT_AHEAD = 1.6, WAIT_SIDE = 0.6;
+
+        bool Waits(in Target t)
+        {
+            if (You == null) return false;
+            double dx = You.Value.x - t.x, dy = You.Value.y - t.y;
+            double ahead = dx * Math.Cos(t.heading) + dy * Math.Sin(t.heading);
+            double side = -dx * Math.Sin(t.heading) + dy * Math.Cos(t.heading);
+            return ahead > 0 && ahead < WAIT_AHEAD && Math.Abs(side) < WAIT_SIDE;
+        }
+
         /// <summary>Forget the host's town (leaving the room, or running it ourselves now).</summary>
         public void Clear()
         {
@@ -123,7 +180,7 @@ namespace Porchlight.Explore
             {
                 ref var t = ref cars[i];
                 // Cars face (cos h, sin h).
-                if (going)
+                if (going && !Waits(t))
                 {
                     t.x += Math.Cos(t.heading) * t.speed * dt;
                     t.y += Math.Sin(t.heading) * t.speed * dt;

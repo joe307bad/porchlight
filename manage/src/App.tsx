@@ -113,7 +113,10 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     });
     f.start();
     setFeed(f);
+    // Which towns are looked at closely, said as it changes: those come ten times a second.
+    const focus = setInterval(() => f.focus(r.townsInView()), 500);
     return () => {
+      clearInterval(focus);
       f.stop();
       r.dispose();
     };

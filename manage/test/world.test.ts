@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { FRAME_POSITIONS, FRAME_ROOMS, FrameReader, type Frame, type RoomMeta } from '../src/protocol.ts';
+import { FRAME_POSITIONS, FRAME_ROOMS, FrameReader, KEPT, type Frame, type RoomMeta } from '../src/protocol.ts';
 import { World } from '../src/world.ts';
 
 const frame = (type: number, body: Uint8Array): Uint8Array => {
@@ -96,4 +96,36 @@ test('the world: placed on the county map, riders tied to drivers, cars carried 
   // The room closed: gone from the world.
   w.applyRooms([]);
   assert.equal(w.players().length, 0);
+});
+
+/** A positions frame of one room whose traffic is as last sent (age KEPT: no cars or people in it). */
+function keptFrame(id: number, players: { x: number; z: number }[]): Uint8Array {
+  const b = new Uint8Array(10 + 8 + players.length * 18);
+  const v = new DataView(b.buffer);
+  v.setUint16(8, 1, true);
+  v.setUint32(10, id, true);
+  v.setUint16(14, KEPT, true);
+  v.setUint16(16, players.length, true);
+  players.forEach((p, i) => {
+    v.setFloat32(18 + i * 18, p.x, true);
+    v.setFloat32(22 + i * 18, p.z, true);
+    v.setInt16(34 + i * 18, -1, true);
+  });
+  return frame(FRAME_POSITIONS, b);
+}
+
+test('a town not looked at closely: its players move, its traffic carries on as last sent', () => {
+  const w = new World();
+  const r = new FrameReader();
+  for (const f of r.push(roomsFrame([meta]))) if (f.type === FRAME_ROOMS) w.applyRooms(f.rooms);
+  for (const f of r.push(positionsFrame(7, [{ x: 1, z: 2 }, { x: 3, z: 4 }], [{ x: 5, y: 6, heading: 0, speed: 2 }])))
+    if (f.type === FRAME_POSITIONS) w.applyPositions(f, 1000);
+  const room = w.order[0];
+  for (const f of r.push(keptFrame(7, [{ x: 9, z: 9 }, { x: 3, z: 4 }])))
+    if (f.type === FRAME_POSITIONS) w.applyPositions(f, 1500);
+  assert.equal(room.cars.n, 1, 'the car is still there');
+  assert.equal(w.players()[0].tx, 109, 'the player moved');
+  // Still moving 2 s after its last word (a town not looked at closely hears once a second).
+  for (let t = 1000; t <= 3000; t += 100) w.step(t);
+  assert.ok(room.cars.x[0] > 105 + 2, `carried on: ${room.cars.x[0]}`);
 });

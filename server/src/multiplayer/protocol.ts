@@ -23,7 +23,12 @@ export const MSG_SPAWN = 'spawn'; // SpawnMessage, once after joining
 export const MSG_CORRECT = 'correct'; // CorrectMessage: snap here
 export const MSG_DOTS = 'dots'; // DotsMessage, once a second: everyone in the room, for the minimap
 export const MSG_UNLOCKS = 'unlocks'; // { unlocks }: another of the account's characters earned something
-// MSG_WORLD, passed on from the host to everyone else as it comes.
+// MSG_WORLD, passed on from the host to everyone else as it comes; or, where the
+// server runs the town (sim/), the whole town to each player arriving, and then:
+export const MSG_WORLD_DELTA = 'world_delta'; // { d }: what changed since the last (sim/src/Delta.cs), 10 a second
+export const MSG_WORLD_WANT = 'world_want'; // {}: a player whose delta didn't fit (their town wasn't ready for the whole): the whole again, to them
+/** The room's `host` while the server runs the town: no player is. */
+export const SERVER_HOST = 'server';
 
 /** Close codes (4000 is a consented leave; 4001-4010 are Colyseus's own). */
 export const CLOSE_SIGNED_IN_ELSEWHERE = 4100;

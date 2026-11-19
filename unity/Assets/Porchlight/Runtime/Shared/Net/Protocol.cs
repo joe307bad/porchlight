@@ -19,6 +19,10 @@ namespace Porchlight.Net
         public const string MSG_CAR = "car";
         /// <summary>The host's traffic and townsfolk; the room passes it on to everyone else.</summary>
         public const string MSG_WORLD = "world";
+        /// <summary>{ d }: where the server runs the town, what changed since its last (WorldSync.ReceiveDelta).</summary>
+        public const string MSG_WORLD_DELTA = "world_delta";
+        /// <summary>{}: a delta that didn't fit (the town wasn't ready for the whole): the whole again, please.</summary>
+        public const string MSG_WORLD_WANT = "world_want";
         /// <summary>{ what }: something earned, kept with the account.</summary>
         public const string MSG_UNLOCK = "unlock";
         /// <summary>{ id }: a mission played to its end.</summary>

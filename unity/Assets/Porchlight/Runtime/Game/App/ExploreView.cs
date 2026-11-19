@@ -1069,6 +1069,14 @@ namespace Porchlight.App
             }
         }
 
+        /// <summary>The server's traffic and townsfolk: what changed (the rest carry on).</summary>
+        public bool ApplyWorldDelta(byte[] delta)
+        {
+            // Running it ourselves: nothing wanted (the room says the server hosts in a moment).
+            if (authority) return true;
+            return world != null && sync.ReceiveDelta(delta);
+        }
+
         /// <summary>The room's list of taken cars: out of the traffic and off the street.</summary>
         public void SetTaken(string list)
         {
@@ -2614,6 +2622,7 @@ namespace Porchlight.App
                 // Your company is walked here, not by the host: keep them where this client has them.
                 var mine = followers.Select(f => (f, f.x, f.y, f.heading, f.speed)).ToList();
                 if (noticing != null) mine.Add((noticing, noticing.x, noticing.y, noticing.heading, 0));
+                sync.You = p != null && !InCar ? new Vec2(p.x, p.y) : (Vec2?)null;
                 sync.Step(dt, traffic.cars, people);
                 foreach (var (f, x, y, heading, speed) in mine)
                 {

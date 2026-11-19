@@ -7,7 +7,10 @@
 // carries the time its sender took it, which is what other clients play it
 // back by: the room's own ticks never decide its timing.
 //
-// The town itself is shared too: one client, the host, runs its traffic and
+// The town itself is shared too. Where the server runs it (sim/, the game's own
+// code in a .NET worker), the room is its host: each player arriving gets the
+// whole town, then what changed, ten times a second (simTick). Where it doesn't
+// (no worker, or it's down), one client, the host, runs its traffic and
 // townsfolk and sends them out about 10 times a second, which the room passes
 // on to everyone else (if the host goes quiet or leaves, another client takes
 // over from where things were). Night or day, the town's cars someone has got
@@ -46,6 +49,9 @@ import {
   MSG_UNLOCK,
   MSG_UNLOCKS,
   MSG_WORLD,
+  MSG_WORLD_DELTA,
+  MSG_WORLD_WANT,
+  SERVER_HOST,
   UNLOCKS,
   lookAllowed,
   SEND_MS,
@@ -59,6 +65,8 @@ import {
   type SpawnMessage,
 } from './protocol.ts';
 import { CityState, ParkedCar, Player } from './schema.ts';
+import { sim } from '../sim/link.ts';
+import type { SimTown } from '../sim/pool.ts';
 
 /** The room's housekeeping tick (idle players, who sees whom). Moves don't wait for it. */
 const TICK_MS = 50;
@@ -100,6 +108,8 @@ interface JoinOptions {
   arrive?: unknown;
   /** Which tab or device this is (it makes this up, and keeps it for as long as the tab lasts). */
   tab?: unknown;
+  /** The game follows the server's town by its deltas (MSG_WORLD_DELTA). Older games don't say so. */
+  follows?: unknown;
 }
 
 /** Everything about a player the clients don't get. */
@@ -117,6 +127,10 @@ interface PlayerRuntime {
   /** When a ride they asked for was last refused (ms). */
   rideRefusedAt: number;
   lastTeleportAt: number;
+  /** When they were last sent the whole town on asking (ms): once a second at most. */
+  worldWantAt: number;
+  /** Their game follows the server's town (JoinOptions.follows). While anyone's doesn't, a player hosts. */
+  follows: boolean;
   rate: RateLimit;
   /** World messages this second (while they're the host). */
   worldRate: RateLimit;
@@ -192,6 +206,8 @@ const TERRITORY_SLACK = 16;
 /** An account made or deleted a town: the rooms in its part of the county work out their ground again. */
 export function countyChanged(account: string): void {
   for (const r of rooms) if (r.countyAccount === account) void r.loadCounty();
+  // A town placed or gone: the simulation runs it, or stops.
+  void sim()?.refreshTowns();
 }
 
 /** Where someone driving in says they are (this room's frame), or null. */
@@ -238,6 +254,8 @@ export class CityRoom extends Room<{ state: CityState }> {
   private flushing = false;
   private flushFailures = 0;
   private flushSkip = 0;
+  /** When the whole town is due again to everyone (just after the server took it over: a client still hosting ignores the first). */
+  private simFullAt = 0;
   private tickTotal = 0;
   private tickMax = 0;
   private ticks = 0;
@@ -346,6 +364,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       if (!rt || typeof car !== 'string' || !/^[pt]\d{1,5}$/.test(car) || this.taken.has(car) || this.taken.size >= MAX_TAKEN) return;
       this.taken.add(car);
       this.state.taken = [...this.taken].join(',');
+      sim()?.takenChanged(this.town);
     });
     this.onMessage(MSG_CAR, (client, raw: unknown) => {
       const rt = this.admit(client);
@@ -363,6 +382,15 @@ export class CityRoom extends Room<{ state: CityState }> {
       car.z = c.z;
       car.yaw = quantizeYaw(m.yaw);
       if (!this.state.cars.has(client.sessionId)) this.state.cars.set(client.sessionId, car);
+    });
+    this.onMessage(MSG_WORLD_WANT, (client) => {
+      const rt = this.runtime.get(client.sessionId);
+      const now = Date.now();
+      if (!rt || this.state.host !== SERVER_HOST || now - rt.worldWantAt < 1_000) return;
+      const town = sim()?.running(this.town, now);
+      if (!town) return;
+      rt.worldWantAt = now;
+      client.send(MSG_WORLD, this.worldOf(town));
     });
     this.onMessage(MSG_WORLD, (client, raw: unknown) => {
       const rt = this.admit(client);
@@ -450,6 +478,8 @@ export class CityRoom extends Room<{ state: CityState }> {
         sessionRow,
         joinedAt: Date.now(),
         track: newTrack(),
+        worldWantAt: 0,
+        follows: options.follows === 1 || options.follows === true,
         lastInputAt: Date.now(),
         rideRefusedAt: 0,
         lastTeleportAt: 0,
@@ -471,6 +501,9 @@ export class CityRoom extends Room<{ state: CityState }> {
       // Nobody sees them (and they're on no one's minimap) until their first
       // move says where they are: the client checks the spot against the town.
       client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
+      // The town as the server has it, to carry on from (then what changes, each tick).
+      const town = this.state.host === SERVER_HOST && this.allFollow() ? sim()?.running(this.town) : null;
+      if (town) client.send(MSG_WORLD, this.worldOf(town));
     } catch (err) {
       if (online.get(auth.characterId)?.sessionId === client.sessionId) online.delete(auth.characterId);
       this.state.players.delete(client.sessionId);
@@ -531,6 +564,8 @@ export class CityRoom extends Room<{ state: CityState }> {
 
   async onDispose(): Promise<void> {
     rooms.delete(this);
+    // Its taken cars back into the traffic (unless another copy of the town has them).
+    if (this.taken.size > 0) sim()?.takenChanged(this.town);
     // Normally everyone's been saved on their way out; catch anyone who wasn't.
     const left = [...this.runtime.values()].filter((rt) => !rt.finished);
     await Promise.all(left.map((rt) => this.finish(rt, this.shuttingDown ? 'shutdown' : 'timeout')));
@@ -558,6 +593,33 @@ export class CityRoom extends Room<{ state: CityState }> {
     }
   }
 
+  /** The cars someone's in here ("t3", "p12"). */
+  takenList(): Iterable<string> {
+    return this.taken;
+  }
+
+  /** Where everyone's own cars are parked (tiles): the traffic stops for them too. */
+  *parkedCars(): Generator<{ x: number; y: number }> {
+    for (const c of this.state.cars.values()) yield { x: c.x, y: c.z };
+  }
+
+  /** The whole town, as the world message has it. */
+  private worldOf(town: SimTown): { cars: Uint8Array; people: Uint8Array; looks: string[] } {
+    return { cars: town.cars, people: town.people, looks: town.looks };
+  }
+
+  /** The simulation moved the town on: what changed, to everyone here. */
+  simTick(town: SimTown): void {
+    if (this.state.host !== SERVER_HOST || this.clients.length === 0) return;
+    this.broadcast(MSG_WORLD_DELTA, { d: town.delta });
+  }
+
+  /** The whole town, to everyone here (the server's just taken it over, or its townsfolk changed). */
+  simFull(town: SimTown): void {
+    if (this.state.host !== SERVER_HOST || this.clients.length === 0) return;
+    this.broadcast(MSG_WORLD, this.worldOf(town));
+  }
+
   /** Someone else has taken this character: save, sign off and close this session. */
   async evict(sessionId: string): Promise<void> {
     const rt = this.runtime.get(sessionId);
@@ -583,6 +645,11 @@ export class CityRoom extends Room<{ state: CityState }> {
     return verdict === 'ok' ? rt : null;
   }
 
+  private allFollow(): boolean {
+    for (const rt of this.runtime.values()) if (!rt.follows) return false;
+    return true;
+  }
+
   private tick(): void {
     const start = performance.now();
     const now = Date.now();
@@ -593,7 +660,22 @@ export class CityRoom extends Room<{ state: CityState }> {
         rt.player.anim = ANIM_IDLE;
       }
     }
-    this.chooseHost(now);
+    // Run by the server only if every game here can follow it (an older one would see the traffic stand still).
+    const town = this.allFollow() ? sim()?.running(this.town, now) : null;
+    if (town) {
+      if (this.state.host !== SERVER_HOST) {
+        this.state.host = SERVER_HOST;
+        this.simFull(town);
+        this.simFullAt = now + 300;
+      } else if (this.simFullAt && now >= this.simFullAt) {
+        this.simFullAt = 0;
+        this.simFull(town);
+      }
+    } else {
+      // Not run here (or not right now): a player runs it, as before.
+      if (this.state.host === SERVER_HOST) this.state.host = '';
+      this.chooseHost(now);
+    }
     for (const op of this.interest.drain()) {
       const viewer = this.runtime.get(op.viewer);
       const target = this.state.players.get(op.target);

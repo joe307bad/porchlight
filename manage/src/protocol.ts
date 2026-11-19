@@ -5,6 +5,8 @@ export const FRAME_ROOMS = 1;
 export const FRAME_POSITIONS = 2;
 /** A room's world age that means it has none (or none lately). */
 export const NO_WORLD = 0xffff;
+/** A room's cars and townsfolk as last sent: none in this frame. */
+export const KEPT = 0xfffe;
 /** Bytes per car or townsperson (WorldSync.cs), per player (feed.ts). */
 export const RECORD = 7;
 export const PLAYER_BYTES = 18;
@@ -23,6 +25,8 @@ export interface RoomMeta {
 
 export interface RoomsFrame {
   type: typeof FRAME_ROOMS;
+  /** This stream's name, for telling the server which towns are looked at closely (api.ts focus). */
+  feed?: string;
   rooms: RoomMeta[];
 }
 
@@ -98,8 +102,8 @@ export class FrameReader {
 
   private decode(type: number, body: Uint8Array): Frame | null {
     if (type === FRAME_ROOMS) {
-      const json = JSON.parse(this.text.decode(body)) as { rooms: RoomMeta[] };
-      return { type: FRAME_ROOMS, rooms: json.rooms };
+      const json = JSON.parse(this.text.decode(body)) as { feed?: string; rooms: RoomMeta[] };
+      return { type: FRAME_ROOMS, feed: json.feed, rooms: json.rooms };
     }
     if (type === FRAME_POSITIONS) return decodePositions(body);
     return null; // a kind this build doesn't know: skipped
@@ -119,6 +123,11 @@ export function decodePositions(body: Uint8Array): PositionsFrame {
     o += 8;
     const playersAt = o;
     o += players * PLAYER_BYTES;
+    if (age === KEPT) {
+      // Its traffic as last sent (a town not looked at closely, between its once-a-second updates).
+      rooms.push({ id, age, players, playersAt, cars: 0, carsAt: o, people: 0, peopleAt: o });
+      continue;
+    }
     const cars = v.getUint16(o, true);
     o += 2;
     const carsAt = o;
