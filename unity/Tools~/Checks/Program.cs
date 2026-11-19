@@ -2,6 +2,7 @@
 // plain .NET, without Unity:
 //
 //   dotnet run --project "unity/Tools~/Checks" -- towns [count]     # grow towns with every invariant checked
+//   dotnet run --project "unity/Tools~/Checks" -- streets [dir]     # how realistic the street layouts are, with a picture of each in dir (StreetsReport.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- net '<json>'      # play the real game server (NetCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- mission <file>    # play a compiled mission (MissionCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- chase [count]     # set chasers after someone (ChaseCheck.cs)
@@ -58,6 +59,7 @@ static class Program
         if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();
         if (args.Length > 0 && args[0] == "steering") return SteeringCheck.Run();
         if (args.Length > 0 && args[0] == "sleigh") return SleighCheck.Run();
+        if (args.Length > 0 && args[0] == "streets") return StreetsReport.Run(args.Length > 1 ? args[1] : null);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
         return 2;

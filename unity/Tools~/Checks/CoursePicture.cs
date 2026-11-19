@@ -13,11 +13,23 @@ using Porchlight.Model;
 
 static class CoursePicture
 {
-    public static void Write(string path, IReadOnlyList<RoadStroke> roads, Course course, double x0, double y0, double x1, double y1, int scale)
+    /// <summary>`ground`, if given: each tile's colour (or -1 for none) under the roads.</summary>
+    public static void Write(string path, IReadOnlyList<RoadStroke> roads, Course course, double x0, double y0, double x1, double y1, int scale, Func<int, int, int> ground = null)
     {
         int w = (int)Math.Ceiling((x1 - x0) * scale), h = (int)Math.Ceiling((y1 - y0) * scale);
         var px = new byte[w * h * 3];
         for (int i = 0; i < px.Length; i++) px[i] = 246;
+        if (ground != null)
+            for (int py = 0; py < h; py++)
+                for (int qx = 0; qx < w; qx++)
+                {
+                    int rgb = ground((int)Math.Floor(x0 + (double)qx / scale), (int)Math.Floor(y0 + (double)py / scale));
+                    if (rgb < 0) continue;
+                    int k = (py * w + qx) * 3;
+                    px[k] = (byte)(rgb >> 16);
+                    px[k + 1] = (byte)(rgb >> 8);
+                    px[k + 2] = (byte)rgb;
+                }
         void Dot(double x, double y, double r, int rgb)
         {
             double cx = (x - x0) * scale, cy = (y - y0) * scale, rr = Math.Max(0.6, r * scale);

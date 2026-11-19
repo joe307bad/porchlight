@@ -1,12 +1,12 @@
-// Stage 5: streets. Side streets run along the tile grid, sprouting at right
-// angles from points along the main roads and growing in short straight
-// segments (after Parish & Müller's local constraints): a segment that would
-// cross a road stops there and joins it, one that ends just short of a node or
-// road carries straight on to meet it, and one that hits water, steep ground,
-// the airport, the town edge or crowds a parallel road is dropped. Afterwards dead ends get
-// short connectors where one fits (but every so often one with room is kept as
-// a cul-de-sac, ending in a round bulb to turn in), land the roads never reach gets a
-// footpath back to the network, and a dead end with no room for its bulb is cut back.
+// Stage 5: streets. The land between the main roads is platted into blocks by
+// splitting it, region by region, with streets laid right across (StreetPlan.cs:
+// hierarchical domain splitting, with every street kept a block's depth from any
+// road alongside it). Then each street that ends where there was no road to meet
+// (water, steep ground, the town's edge) either stays a cul-de-sac, ending in a
+// round bulb to turn in, or is joined to a road within reach (straight on, or
+// round the corner) by a connector that keeps the same distance from the roads
+// alongside it. Land the roads never reach gets a footpath back to the network,
+// and a dead end too short to serve anything, or with no room for its bulb, is cut back.
 
 using System;
 using System.Collections.Generic;
@@ -15,13 +15,15 @@ using Porchlight.Model;
 
 namespace Porchlight.Gen
 {
-    public sealed class StreetsStage : IStepwiseStage
+    public sealed partial class StreetsStage : IStepwiseStage
     {
         static readonly double MIN_ANGLE = (35 * Math.PI) / 180;
+        /// <summary>cos 35°: a street meets a road at no shallower angle.</summary>
+        const double COS_MIN_ANGLE = 0.8191520442889918;
+        /// <summary>A street meeting a road this near a junction already there meets it at that junction (a crossroads).</summary>
+        const double SNAP = 0.75;
         static readonly double GRID_TOLERANCE = (8 * Math.PI) / 180;
         const double MIN_SEGMENT = 1.5;
-        const int MAX_PROPOSALS = 6000;
-        const int MAX_TRIES = 3;
         const double JUNCTION_CLEARANCE = 3;
         const double HEADING_REACH = 2;
         const int PATH_COMPONENT_MIN = 150;
@@ -30,30 +32,16 @@ namespace Porchlight.Gen
         /// <summary>A cul-de-sac runs at least this far from its junction to the middle of its bulb (tiles).</summary>
         const double CUL_DE_SAC_LENGTH = 4;
         const int MAX_PRUNE_PASSES = 50;
-        /// <summary>Proposals tried between one share of the work and the next (Steps).</summary>
-        const int PROPOSALS_A_STEP = 15, DEAD_ENDS_A_STEP = 40;
-
-        struct Proposal
-        {
-            public int from;
-            public double angle;
-            public int depth;
-            public double since;
-            public int tries;
-        }
+        /// <summary>No street runs alongside another road nearer than this, centre to centre (tiles): the Check's limit, with no land at all between them.</summary>
+        public const double MIN_APART = 4;
+        /// <summary>Dead ends looked at between one share of the work and the next (Steps).</summary>
+        const int DEAD_ENDS_A_STEP = 40;
 
         struct Hit
         {
             public int edge;
             public Vec2 point;
             public double t;
-        }
-
-        struct Grown
-        {
-            public int node;
-            public bool stop;
-            public double len;
         }
 
         public string Name => "streets";
@@ -89,7 +77,6 @@ namespace Porchlight.Gen
                 int i = Grid.Index(x, y, w);
                 return water[i] == 0 && airport[i] == 0 && zoo[i] == 0 && slope[i] <= p.maxRoadSlope;
             }
-            bool CellOk(Vec2 pt) => TileOk((int)Math.Floor(pt.x), (int)Math.Floor(pt.y));
             bool LandOk(Vec2 a, Vec2 b)
             {
                 foreach (var (x, y) in Grid.CellsOnSegment(a.x, a.y, b.x, b.y)) if (!TileOk(x, y)) return false;
@@ -145,15 +132,6 @@ namespace Porchlight.Gen
                     if (Array.IndexOf(ends, e.from) < 0 && Array.IndexOf(ends, e.to) < 0 && Geo.PolylineDistance(seg, e.points) < DUPLICATE_DISTANCE) return true;
                 return false;
             }
-            bool ClearOfOthers(Vec2[] pts, int[] skipNodes, double minDist)
-            {
-                foreach (var e in RoadGraphOps.LiveEdges(g))
-                {
-                    if (Array.IndexOf(skipNodes, e.from) >= 0 || Array.IndexOf(skipNodes, e.to) >= 0) continue;
-                    foreach (var pt in pts) if (!(Geo.DistToPolyline(pt, e.points) >= minDist)) return false;
-                }
-                return true;
-            }
             bool Joinable(int from, int to)
             {
                 if (from == to || Connected(from, to)) return false;
@@ -164,146 +142,8 @@ namespace Porchlight.Gen
                 return OnGrid(d) && !AngleClash(from, d) && !AngleClash(to, Geo.Scale(d, -1));
             }
 
-            Grown? Grow(Proposal prop)
-            {
-                var a = g.nodes[prop.from].at;
-                var dir = new Vec2(Math.Cos(prop.angle), Math.Sin(prop.angle));
-                if (AngleClash(prop.from, dir)) return null;
-                double len = p.streetSegment * rng.Range(0.85, 1.15) * (1 - 0.25 * prop.tries);
-                var b = Geo.Add(a, Geo.Scale(dir, len));
-                double snap = len * 0.5;
-
-                var hit = FirstHit(a, b, new[] { prop.from });
-                if (hit != null)
-                {
-                    if (hit.Value.t * len < MIN_SEGMENT || !LandOk(a, hit.Value.point)) return null;
-                    int n = RoadGraphOps.SplitEdgeAt(g, hit.Value.edge, hit.Value.point, 0.3);
-                    if (!Joinable(prop.from, n)) return null;
-                    RoadGraphOps.AddEdge(g, prop.from, n, RoadKind.Street);
-                    return new Grown { node = n, stop = true, len = hit.Value.t * len };
-                }
-                if (Geo.Dist(b, C) > R) return null;
-
-                var neighbours = new List<int>();
-                foreach (var e in RoadGraphOps.LiveEdges(g))
-                    if (e.from == prop.from || e.to == prop.from) neighbours.Add(e.from == prop.from ? e.to : e.from);
-                int near = -1;
-                double nearD = snap;
-                foreach (var nd in g.nodes)
-                {
-                    if (nd.id == prop.from || neighbours.Contains(nd.id)) continue;
-                    double d = Geo.Dist(nd.at, b);
-                    if (d < nearD && IncidentDirs(nd.id).Count > 0 && OnGrid(Unit(Geo.Sub(nd.at, a))))
-                    {
-                        nearD = d;
-                        near = nd.id;
-                    }
-                }
-                if (near >= 0)
-                {
-                    var target = g.nodes[near].at;
-                    var d = Unit(Geo.Sub(target, a));
-                    if (Geo.Dist(a, target) < MIN_SEGMENT || AngleClash(prop.from, d) || AngleClash(near, Geo.Scale(d, -1))) return null;
-                    if (FirstHit(a, target, new[] { prop.from, near }) != null || !LandOk(a, target)) return null;
-                    RoadGraphOps.AddEdge(g, prop.from, near, RoadKind.Street);
-                    return new Grown { node = near, stop = true, len = Geo.Dist(a, target) };
-                }
-
-                var ahead = FirstHit(a, Geo.Add(a, Geo.Scale(dir, len + snap)), new[] { prop.from });
-                if (ahead != null)
-                {
-                    if (!LandOk(a, ahead.Value.point)) return null;
-                    int n = RoadGraphOps.SplitEdgeAt(g, ahead.Value.edge, ahead.Value.point, 0.3);
-                    if (!Joinable(prop.from, n)) return null;
-                    RoadGraphOps.AddEdge(g, prop.from, n, RoadKind.Street);
-                    return new Grown { node = n, stop = true, len = Geo.Dist(a, ahead.Value.point) };
-                }
-
-                if (!LandOk(a, b)) return null;
-                double clearance = Math.Max(2.5, p.streetSpacing * 0.4);
-                if (!ClearOfOthers(new[] { b, Geo.Lerp(a, b, 0.5) }, new[] { prop.from }, clearance) || Grazes(a, b, new[] { prop.from })) return null;
-                int nn = RoadGraphOps.AddNode(g, b);
-                RoadGraphOps.AddEdge(g, prop.from, nn, RoadKind.Street);
-                return new Grown { node = nn, stop = false, len = len };
-            }
-
-            // Seeds: evenly spaced points along the main roads inside the town.
-            var seeds = new List<(Vec2 at, Vec2 tangent)>();
-            foreach (var e in RoadGraphOps.LiveEdges(g))
-            {
-                double total = Geo.PolylineLength(e.points);
-                for (double s = p.streetSpacing * rng.Range(0.4, 0.8); s < total - 2; s += p.streetSpacing * rng.Range(0.7, 1.0))
-                {
-                    var seg = Geo.SubPolyline(e.points, s, Math.Min(total, s + 0.5));
-                    if (seg.Count < 2) continue;
-                    var at = seg[0];
-                    if (Geo.Dist(at, C) > R || !CellOk(at)) continue;
-                    bool crowded = false;
-                    foreach (var n in g.nodes) if (Geo.Dist(n.at, at) < JUNCTION_CLEARANCE) crowded = true;
-                    if (crowded) continue;
-                    if (!rng.Chance(p.roadDensity * (0.6 + 0.4 * Falloff(at)))) continue;
-                    seeds.Add((at, Unit(Geo.Sub(seg[seg.Count - 1], at))));
-                }
-            }
-
-            var queue = new List<Proposal>();
-            foreach (var seed in seeds)
-            {
-                RoadEdge host = null;
-                foreach (var e in RoadGraphOps.LiveEdges(g))
-                {
-                    if (Geo.ClosestOnPolyline(seed.at, e.points).d < 1e-6)
-                    {
-                        host = e;
-                        break;
-                    }
-                }
-                if (host == null) continue;
-                int node = RoadGraphOps.SplitEdgeAt(g, host.id, seed.at);
-                double baseAngle = DetMath.Atan2(seed.tangent.y, seed.tangent.x);
-                foreach (int side in new[] { 1, -1 })
-                {
-                    if (rng.Chance(0.9)) queue.Add(new Proposal { from = node, angle = SnapToGrid(baseAngle + (side * Math.PI) / 2), depth = 0, since = 0, tries = 0 });
-                }
-            }
-
-            for (int q = 0; q < queue.Count && q < MAX_PROPOSALS; q++)
-            {
-                if (q % PROPOSALS_A_STEP == PROPOSALS_A_STEP - 1) yield return "/growing";
-                var prop = queue[q];
-                var res = Grow(prop);
-                if (res == null)
-                {
-                    if (prop.tries < MAX_TRIES)
-                    {
-                        var retry = prop;
-                        retry.tries = prop.tries + 1;
-                        queue.Add(retry);
-                    }
-                    continue;
-                }
-                var r = res.Value;
-                if (r.stop) continue;
-                var here = g.nodes[r.node].at;
-                double f = Falloff(here);
-                double since = prop.since + r.len;
-                if (since >= p.streetSpacing)
-                {
-                    foreach (int side in new[] { 1, -1 })
-                    {
-                        if (rng.Chance(p.roadDensity * (0.4 + 0.6 * f)))
-                        {
-                            queue.Add(new Proposal { from = r.node, angle = SnapToGrid(prop.angle + (side * Math.PI) / 2), depth = prop.depth + 1, since = 0, tries = 0 });
-                            since = 0;
-                        }
-                    }
-                }
-                if (rng.Chance(0.7 + 0.3 * f))
-                    queue.Add(new Proposal { from = r.node, angle = prop.angle, depth = prop.depth, since = since, tries = 0 });
-            }
-
-            // Room for a cul-de-sac's bulb at the end of `edge`: on gentle dry land,
-            // its asphalt and parking lane clear of every other road's.
+            // Room for a cul-de-sac's bulb at `at` (the end of `edge`, or of a street still to be laid: -1): on gentle
+            // dry land, its asphalt and parking lane clear of every other road's.
             double bulbRadius = Raster.BulbRadius(p);
             double bulbTiles = Raster.BulbHalfWidth(p);
             bool BulbFits(Vec2 at, int edge)
@@ -322,7 +162,52 @@ namespace Porchlight.Gen
             bool CulDeSac(int node, RoadEdge e) =>
                 Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id) && rng.Chance(p.culDeSacs);
 
-            foreach (var part in ConnectDeadEnds(g, keep, p.streetSegment * p.deadEndReach, FirstHit, LandOk, AngleClash, Joinable, CulDeSac)) yield return part;
+            // The land to plat: what blocks are made of (Parcels.Ground), and where a street may be laid.
+            var rock = Raster.RockMask(slope, p);
+            var parkZoo = Menagerie.Mask(model.zoo, w, h, 1);
+            var land = new byte[w * h];
+            var roadOk = new byte[w * h];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    int i = Grid.Index(x, y, w);
+                    bool inside = Numbers.Hypot(x + 0.5 - C.x, y + 0.5 - C.y) <= R;
+                    land[i] = inside && water[i] == 0 && rock[i] == 0 && airport[i] == 0 && parkZoo[i] == 0 ? (byte)1 : (byte)0;
+                    roadOk[i] = TileOk(x, y) ? (byte)1 : (byte)0;
+                }
+            }
+            var plan = new StreetPlan(model, g, rng, land, roadOk, Falloff, BulbFits, FirstHit);
+            int floor = plan.floor;
+            if (p.roadDensity > 0) foreach (var part in plan.Run()) yield return "/plan" + part;
+
+            // A connector keeps a block's depth from any road alongside it too: one it runs nearly parallel to (a road
+            // it meets or crosses doesn't count).
+            double apart = floor + 2 * Math.Ceiling(Raster.RoadHalfWidth(RoadKind.Street, p) - 1e-9) - 2;
+            bool Roomy(Vec2 a, Vec2 b, int[] ends)
+            {
+                double len = Geo.Dist(a, b);
+                if (len < 1e-9) return true;
+                var u = new Vec2((b.x - a.x) / len, (b.y - a.y) / len);
+                var box = Geo.PolygonBounds(new List<Vec2> { a, b });
+                foreach (var e in RoadGraphOps.LiveEdges(g))
+                {
+                    if (e.kind == RoadKind.Path || Array.IndexOf(ends, e.from) >= 0 || Array.IndexOf(ends, e.to) >= 0) continue;
+                    if (!BoxesNear(box, Geo.PolygonBounds(e.points), apart)) continue;
+                    for (int k = 0; k + 1 < e.points.Count; k++)
+                    {
+                        var s0 = e.points[k];
+                        var s1 = e.points[k + 1];
+                        double sl = Geo.Dist(s0, s1);
+                        if (sl < 1e-9 || Math.Abs(Geo.Cross(u, new Vec2((s1.x - s0.x) / sl, (s1.y - s0.y) / sl))) > 0.5) continue;
+                        for (double t = 0; t <= len; t += 0.5)
+                            if (Geo.DistToSegment(Geo.Lerp(a, b, t / len), s0, s1) < apart) return false;
+                    }
+                }
+                return true;
+            }
+
+            foreach (var part in ConnectDeadEnds(g, keep, p.streetSegment * p.deadEndReach, FirstHit, LandOk, AngleClash, Joinable, CulDeSac, Roomy)) yield return part;
             foreach (var part in AddFootpaths(model, g, water, cost, slope, terrainInfo, C)) yield return part;
 
             RoadGraphOps.Planarize(g);
@@ -331,17 +216,19 @@ namespace Porchlight.Gen
             yield return "/merge";
             foreach (var part in DropDuplicateStreets(g)) yield return part;
             yield return "/dedupe";
-            // A dead end without room for its bulb is cut back, a stretch at a time.
+            // A dead end too short to serve anything, or without room for its bulb, is cut back, a stretch at a time.
             for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
             {
                 var cut = new List<int>();
                 foreach (var b in Raster.Bulbs(RoadGraphOps.LiveEdges(g)))
                 {
                     var e = g.edges[b.edge];
-                    if (!keep.Contains(b.atEnd ? e.to : e.from) && !BulbFits(b.at, b.edge)) cut.Add(b.edge);
+                    if (keep.Contains(b.atEnd ? e.to : e.from)) continue;
+                    if (!BulbFits(b.at, b.edge) || Geo.PolylineLength(e.points) < Math.Max(CUL_DE_SAC_LENGTH, floor)) cut.Add(b.edge);
                 }
                 if (cut.Count == 0) break;
                 foreach (int e in cut) g.dead.Add(e);
+                RoadGraphOps.MergePassThrough(g, keep);
                 yield return "/prune";
             }
             var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
@@ -426,6 +313,11 @@ namespace Porchlight.Gen
                 errors.Add("road graph is not a single connected component");
             errors.AddRange(CheckCrossings(graph));
             errors.AddRange(CheckDuplicates(graph));
+            foreach (var c in CloseParallels(graph, MIN_APART))
+            {
+                errors.Add($"roads {c.a} and {c.b} run alongside each other {Numbers.ToFixed(c.apart, 1)} apart near {Numbers.ToFixed(c.at.x, 1)},{Numbers.ToFixed(c.at.y, 1)}");
+                break;
+            }
             errors.AddRange(RoadsStage.CheckRoadSlopes(model, RoadKind.Main));
             errors.AddRange(RoadsStage.CheckRoadSlopes(model, RoadKind.Street));
             errors.AddRange(RoadGraphOps.CheckBridges(model, Raster.WaterMask(model)));
@@ -441,7 +333,8 @@ namespace Porchlight.Gen
             Func<Vec2, Vec2, bool> landOk,
             Func<int, Vec2, bool> angleClash,
             Func<int, int, bool> joinable,
-            Func<int, RoadEdge, bool> culDeSac)
+            Func<int, RoadEdge, bool> culDeSac,
+            Func<Vec2, Vec2, int[], bool> roomy)
         {
             var inc = RoadGraphOps.Incidence(g);
             int seen = 0;
@@ -463,13 +356,29 @@ namespace Porchlight.Gen
                 }
                 if (culDeSac(node, e)) continue;
                 var dir = Geo.Scale(Heading(a, along), -1);
-                var hit = firstHit(a, Geo.Add(a, Geo.Scale(dir, reach)), new[] { node }, -1);
-                if (hit != null && hit.Value.t * reach >= MIN_SEGMENT && landOk(a, hit.Value.point))
+                // Straight on to the road ahead, or else round the corner to the nearer road to one side.
+                var ahead = firstHit(a, Geo.Add(a, Geo.Scale(dir, reach)), new[] { node }, -1);
+                var tries = new List<Hit>();
+                if (ahead != null) tries.Add(ahead.Value);
+                var sides = new List<Hit>();
+                foreach (var side in new[] { new Vec2(-dir.y, dir.x), new Vec2(dir.y, -dir.x) })
                 {
-                    int n = RoadGraphOps.SplitEdgeAt(g, hit.Value.edge, hit.Value.point, 0.75);
-                    if (joinable(node, n)) RoadGraphOps.AddEdge(g, node, n, RoadKind.Street);
-                    continue;
+                    var hit = firstHit(a, Geo.Add(a, Geo.Scale(side, reach)), new[] { node }, -1);
+                    if (hit != null) sides.Add(hit.Value);
                 }
+                Numbers.StableSort(sides, (x, y) => x.t - y.t);
+                tries.AddRange(sides);
+                bool joined = false;
+                foreach (var hit in tries)
+                {
+                    if (hit.t * reach < MIN_SEGMENT || !landOk(a, hit.point) || !roomy(a, hit.point, new[] { node })) continue;
+                    int n = RoadGraphOps.SplitEdgeAt(g, hit.edge, hit.point, SNAP);
+                    if (!joinable(node, n)) continue;
+                    RoadGraphOps.AddEdge(g, node, n, RoadKind.Street);
+                    joined = true;
+                    break;
+                }
+                if (joined) continue;
                 int best = -1;
                 double bestD = reach;
                 foreach (var nd in g.nodes)
@@ -482,7 +391,7 @@ namespace Porchlight.Gen
                     best = nd.id;
                     bestD = d;
                 }
-                if (best < 0 || !joinable(node, best)) continue;
+                if (best < 0 || !joinable(node, best) || !roomy(a, g.nodes[best].at, new[] { node, best })) continue;
                 var dd = Unit(Geo.Sub(g.nodes[best].at, a));
                 if (angleClash(best, Geo.Scale(dd, -1))) continue;
                 RoadGraphOps.AddEdge(g, node, best, RoadKind.Street);
@@ -614,6 +523,73 @@ namespace Porchlight.Gen
                 }
             }
             return null;
+        }
+
+        /// <summary>A street running alongside another road (not two main roads), nearer than `within` tiles centre to centre.</summary>
+        public struct Alongside
+        {
+            public int a, b;
+            public Vec2 at;
+            public double apart;
+        }
+
+        /// <summary>
+        /// Streets that run alongside another street or road, nearly parallel (within 15°) for at
+        /// least two tiles, closer than `within` (centre to centre): the land between is too thin to build on.
+        /// (Not where a road kinks right by a junction the two share.)
+        /// </summary>
+        public static List<Alongside> CloseParallels(RoadGraph graph, double within)
+        {
+            var o = new List<Alongside>();
+            var edges = graph.edges;
+            var boxes = new Bounds2[edges.Count];
+            for (int i = 0; i < edges.Count; i++) boxes[i] = Geo.PolygonBounds(edges[i].points);
+            const double sin = 0.25881904510252074; // sin 15°
+            for (int i = 0; i < edges.Count; i++)
+            {
+                var A = edges[i];
+                if (A.kind == RoadKind.Path) continue;
+                for (int j = i + 1; j < edges.Count; j++)
+                {
+                    var B = edges[j];
+                    if (B.kind == RoadKind.Path || (A.kind == RoadKind.Main && B.kind == RoadKind.Main) || !BoxesNear(boxes[i], boxes[j], within)) continue;
+                    bool found = false;
+                    for (int s = 0; s + 1 < A.points.Count && !found; s++)
+                    {
+                        var a0 = A.points[s];
+                        var a1 = A.points[s + 1];
+                        double la = Geo.Dist(a0, a1);
+                        if (la < 1e-9) continue;
+                        var u = new Vec2((a1.x - a0.x) / la, (a1.y - a0.y) / la);
+                        for (int t = 0; t + 1 < B.points.Count && !found; t++)
+                        {
+                            var b0 = B.points[t];
+                            var b1 = B.points[t + 1];
+                            double lb = Geo.Dist(b0, b1);
+                            if (lb < 1e-9) continue;
+                            var v = new Vec2((b1.x - b0.x) / lb, (b1.y - b0.y) / lb);
+                            if (Math.Abs(u.x * v.y - u.y * v.x) > sin) continue;
+                            double p0 = Geo.Dot(Geo.Sub(b0, a0), u), p1 = Geo.Dot(Geo.Sub(b1, a0), u);
+                            double lo = Math.Max(0, Math.Min(p0, p1)), hi = Math.Min(la, Math.Max(p0, p1));
+                            if (hi - lo < 2) continue;
+                            double mid = (lo + hi) / 2;
+                            // Where B is at the middle of the stretch they share.
+                            double k = Math.Abs(p1 - p0) < 1e-9 ? 0 : (mid - p0) / (p1 - p0);
+                            var bm = Geo.Lerp(b0, b1, Math.Max(0, Math.Min(1, k)));
+                            double apart = Math.Abs(Geo.Cross(u, Geo.Sub(bm, a0)));
+                            if (apart <= 0.5 || apart >= within) continue;
+                            // Not a road's own kink right at a junction the two share.
+                            bool atJunction = false;
+                            foreach (int n in new[] { A.from, A.to })
+                                if ((n == B.from || n == B.to) && Geo.Dist(graph.nodes[n].at, bm) < 3) atJunction = true;
+                            if (atJunction) continue;
+                            o.Add(new Alongside { a = A.id, b = B.id, at = bm, apart = apart });
+                            found = true;
+                        }
+                    }
+                }
+            }
+            return o;
         }
 
         static bool BoxesNear(List<Vec2> a, List<Vec2> b, double pad) => BoxesNear(Geo.PolygonBounds(a), Geo.PolygonBounds(b), pad);
