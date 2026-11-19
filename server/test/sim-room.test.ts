@@ -65,7 +65,7 @@ test('the server hosts its towns: the whole town on arrival, then deltas', { ski
   const id = (await (await fetch(`${base}/mp/characters`, { method: 'POST', headers: { ...headers('walker'), 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Walker' }) })).json()).id;
   const worlds: { cars: Uint8Array; people: Uint8Array; looks: string[] }[] = [];
   const deltas: Uint8Array[] = [];
-  const room = await c.joinOrCreate('city', { town: KEY, width: 256, height: 256, character: id });
+  const room = await c.joinOrCreate('city', { town: KEY, width: 256, height: 256, character: id, follows: 1 });
   room.onMessage(MSG_SPAWN, () => {});
   room.onMessage(MSG_WORLD, (m) => worlds.push(m));
   room.onMessage(MSG_WORLD_DELTA, (m) => deltas.push(m.d));
@@ -103,6 +103,26 @@ test('the server hosts its towns: the whole town on arrival, then deltas', { ski
   assert.ok(where.x >= 0 && where.x <= 256 && where.y >= 0 && where.y <= 256);
   assert.equal((await fetch(`${base}/mp/sim/where?town=${encodeURIComponent(KEY)}&kind=car&i=99999`, { headers: headers('walker') })).status, 404);
   await room.leave();
+});
+
+test('an older game that can\'t follow the server\'s town gets a player hosting instead', { skip }, async () => {
+  const join = async (sub: string, follows: boolean) => {
+    const c = new Client(`${base}/mp`);
+    c.auth.token = token(sub);
+    const id = (await (await fetch(`${base}/mp/characters`, { method: 'POST', headers: { ...headers(sub), 'content-type': 'application/json' }, body: JSON.stringify({ name: sub }) })).json()).id;
+    const room = await c.joinOrCreate('city', { town: KEY, width: 256, height: 256, character: id, ...(follows ? { follows: 1 } : {}) });
+    room.onMessage('*', () => {});
+    // A first move puts them somewhere (only someone somewhere can host).
+    room.send('move', { seq: 1, t: Math.round(performance.now()), epoch: 0, x: 128, y: 0, z: 128, yaw: 0, anim: 0, car: 0, ride: '' });
+    return room;
+  };
+  const newer = await join('newer', true);
+  await until('the server to host', () => newer.state.host === SERVER_HOST);
+  const older = await join('older', false);
+  await until('a player to host', () => newer.state.host !== SERVER_HOST && newer.state.host !== '');
+  await older.leave();
+  await until('the server to host again', () => newer.state.host === SERVER_HOST);
+  await newer.leave();
 });
 
 test('the feed has every town\'s traffic, nobody in them; towns not looked at closely come once a second', { skip }, async () => {

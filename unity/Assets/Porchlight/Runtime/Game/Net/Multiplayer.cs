@@ -290,7 +290,7 @@ namespace Porchlight.App
             var t = town;
             if (t == null) return;
             int gen = generation;
-            var options = new Dictionary<string, object> { ["town"] = t.key, ["width"] = t.width, ["height"] = t.height, ["character"] = character.id, ["tab"] = Account.Tab };
+            var options = new Dictionary<string, object> { ["town"] = t.key, ["width"] = t.width, ["height"] = t.height, ["character"] = character.id, ["tab"] = Account.Tab, ["follows"] = 1 };
             if (arriving != null)
                 options["arrive"] = new Dictionary<string, object> { ["x"] = arriving[0], ["y"] = arriving[1], ["z"] = arriving[2], ["yaw"] = arriving[3] };
             SetStatus(NetStatus.Joining);

@@ -108,6 +108,8 @@ interface JoinOptions {
   arrive?: unknown;
   /** Which tab or device this is (it makes this up, and keeps it for as long as the tab lasts). */
   tab?: unknown;
+  /** The game follows the server's town by its deltas (MSG_WORLD_DELTA). Older games don't say so. */
+  follows?: unknown;
 }
 
 /** Everything about a player the clients don't get. */
@@ -127,6 +129,8 @@ interface PlayerRuntime {
   lastTeleportAt: number;
   /** When they were last sent the whole town on asking (ms): once a second at most. */
   worldWantAt: number;
+  /** Their game follows the server's town (JoinOptions.follows). While anyone's doesn't, a player hosts. */
+  follows: boolean;
   rate: RateLimit;
   /** World messages this second (while they're the host). */
   worldRate: RateLimit;
@@ -475,6 +479,7 @@ export class CityRoom extends Room<{ state: CityState }> {
         joinedAt: Date.now(),
         track: newTrack(),
         worldWantAt: 0,
+        follows: options.follows === 1 || options.follows === true,
         lastInputAt: Date.now(),
         rideRefusedAt: 0,
         lastTeleportAt: 0,
@@ -497,7 +502,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       // move says where they are: the client checks the spot against the town.
       client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
       // The town as the server has it, to carry on from (then what changes, each tick).
-      const town = this.state.host === SERVER_HOST ? sim()?.running(this.town) : null;
+      const town = this.state.host === SERVER_HOST && this.allFollow() ? sim()?.running(this.town) : null;
       if (town) client.send(MSG_WORLD, this.worldOf(town));
     } catch (err) {
       if (online.get(auth.characterId)?.sessionId === client.sessionId) online.delete(auth.characterId);
@@ -640,6 +645,11 @@ export class CityRoom extends Room<{ state: CityState }> {
     return verdict === 'ok' ? rt : null;
   }
 
+  private allFollow(): boolean {
+    for (const rt of this.runtime.values()) if (!rt.follows) return false;
+    return true;
+  }
+
   private tick(): void {
     const start = performance.now();
     const now = Date.now();
@@ -650,7 +660,8 @@ export class CityRoom extends Room<{ state: CityState }> {
         rt.player.anim = ANIM_IDLE;
       }
     }
-    const town = sim()?.running(this.town, now);
+    // Run by the server only if every game here can follow it (an older one would see the traffic stand still).
+    const town = this.allFollow() ? sim()?.running(this.town, now) : null;
     if (town) {
       if (this.state.host !== SERVER_HOST) {
         this.state.host = SERVER_HOST;
