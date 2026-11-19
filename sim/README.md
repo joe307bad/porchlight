@@ -20,13 +20,15 @@ copies that state for each viewer:
   you waits short of you until the server's next word on it.
 - **Manage** (`/mp/traffic/feed`) has every town's traffic, whether anyone's in it
   or not. It gets the towns on screen close up ten times a second (it says which:
-  `POST /mp/traffic/focus`), and the rest's traffic once a second.
+  `POST /mp/traffic/focus`), and the rest's traffic once a second. While a player
+  runs a town instead (see below), Manage shows theirs, since that's what the players see.
 - **Anyone** can ask where a car or townsperson is right now:
   `GET /mp/sim/where?town=<key>&kind=car|person&i=<n>`.
 
-If the worker isn't there (no build of it, or `SIM=off`), or it stops, the server
-falls back to how it was before: each town's players run its traffic (one of them
-hosts). A worker that stops is restarted, waiting longer each time it keeps
+If the worker isn't there (no build of it, or `SIM=off`), or it stops, or someone
+in the town is on a game too old to follow the server (the game says it can when it
+joins: `follows: 1`), the server falls back to how it was before: each town's
+players run its traffic (one of them hosts). A worker that stops is restarted, waiting longer each time it keeps
 stopping, and towns come back once they're made again.
 
 ## The wire (stdin and stdout)

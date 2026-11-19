@@ -44,6 +44,7 @@ import { County, mineSlot, NORTH, type Space } from '../county.ts';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { openRooms, type CityRoom } from './CityRoom.ts';
 import { STARTER_TOWNS } from './persistence.ts';
+import { SERVER_HOST } from './protocol.ts';
 import type { SimLink } from '../sim/link.ts';
 import type { SimTown } from '../sim/pool.ts';
 
@@ -336,8 +337,10 @@ export class TrafficFeed {
       const kind = q.get('kind');
       const i = Number(q.get('i'));
       if (!(await this.deps.persistence.mayEnter(account.id, key))) return send(403, { error: "That town is someone else's." });
-      const town = this.sim?.running(key);
-      if (!town) return send(404, { error: 'The server isn\'t running that town.' });
+      // What the players see: the server's simulation, or the player running it while it doesn't.
+      const src = this.sources(Date.now()).get(key);
+      const town = src?.sim ?? src?.rooms.find((r) => r.world)?.world ?? null;
+      if (!town) return send(404, { error: 'Nobody\'s running that town.' });
       const list = kind === 'car' ? town.cars : kind === 'person' ? town.people : null;
       if (!list || !Number.isInteger(i) || i < 0 || i >= list.byteLength / 7) return send(404, { error: 'No such car or townsperson.' });
       const v = new DataView(list.buffer, list.byteOffset + i * 7, 7);
@@ -519,7 +522,13 @@ export class TrafficFeed {
       return src;
     };
     if (this.sim) for (const t of this.sim.pool.all()) if (this.sim.running(t.key, now)) get(t.key);
-    for (const room of this.rooms()) get(room.town).rooms.push(room);
+    for (const room of this.rooms()) {
+      const src = get(room.town);
+      src.rooms.push(room);
+      // A player runs this town's traffic (the server doesn't, for now): theirs is what the game shows.
+      const host = room.state?.host ?? '';
+      if (host && host !== SERVER_HOST) src.sim = null;
+    }
     return out;
   }
 }

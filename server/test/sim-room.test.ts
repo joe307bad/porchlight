@@ -120,6 +120,16 @@ test('an older game that can\'t follow the server\'s town gets a player hosting 
   await until('the server to host', () => newer.state.host === SERVER_HOST);
   const older = await join('older', false);
   await until('a player to host', () => newer.state.host !== SERVER_HOST && newer.state.host !== '');
+  // While a player runs it, what's asked of the town is theirs (it's what the players see), not the simulation's.
+  const host = [newer, older].find((r) => r.state.host === r.sessionId)!;
+  host.send(MSG_WORLD, { cars: new Uint8Array([0x01, 0xf4, 0x01, 0xf4, 0, 0, 0]), people: new Uint8Array(0), looks: [] });
+  const car0 = async () => (await (await fetch(`${base}/mp/sim/where?town=${encodeURIComponent(KEY)}&kind=car&i=0`, { headers: headers('older') })).json()) as { x: number; y: number };
+  let seen = { x: -1, y: -1 };
+  for (let i = 0; i < 50 && !(seen.x === 5 && seen.y === 5); i++) {
+    seen = await car0();
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.deepEqual([seen.x, seen.y], [5, 5]);
   await older.leave();
   await until('the server to host again', () => newer.state.host === SERVER_HOST);
   await newer.leave();
