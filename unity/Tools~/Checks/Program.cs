@@ -8,6 +8,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- chase [count]     # set chasers after someone (ChaseCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- homes             # the town that comes with the game has houses to live in, and is up to date (from the repo's root)
 //   dotnet run --project "unity/Tools~/Checks" -- town <file> [key] # regenerate it into its file (`npm run town` in server/)
+//   dotnet run --project "unity/Tools~/Checks" -- zoning [key ...]  # what each starter town's buildings are for: homes, jobs, balance (ZoningCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- measure <seed> 'width=256&riverCount=0'   # how big and built up a town is
 //   dotnet run --project "unity/Tools~/Checks" -- county [vectors-file] # the county: its spaces, highways and rooms (CountyCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- trips <key> [key] [key] # directions to a house in each of these towns (your slots), driven on the roads
@@ -41,6 +42,7 @@ static class Program
         if (args.Length > 2 && args[0] == "measure") return Measure(args[1], args[2]);
         if (args.Length > 1 && args[0] == "town") return RegenerateTown(args[1], args.Length > 2 ? args[2] : null);
         if (args.Length > 2 && args[0] == "roadmap") return RoadMap(args[1], args[2]);
+        if (args.Length > 0 && args[0] == "zoning") return ZoningCheck.Run(args.Skip(1).ToArray());
         if (args.Length > 2 && args[0] == "traffic") return TrafficCheck(args[1], args[2]);
         if (args.Length > 0 && args[0] == "county") return CountyCheck.Run(args.Length > 1 ? args[1] : null);
         if (args.Length > 0 && args[0] == "doors") return CountyCheck.Doors();
@@ -220,8 +222,12 @@ static class Program
         string R(double v) => (Math.Round(v * 10) / 10).ToString(System.Globalization.CultureInfo.InvariantCulture);
         var roads = layout.roads.Where(r => r.points != null && r.points.Count >= 2).Select(r =>
             "[" + string.Join(",", new[] { ((int)r.kind).ToString(), R(r.width) }.Concat(r.points.SelectMany(p => new[] { R(p.x), R(p.y) }))) + "]");
-        System.IO.File.WriteAllText(output, $"{{\n  \"key\": {Quoted(key)},\n  \"roads\": [\n    {string.Join(",\n    ", roads)}\n  ]\n}}\n");
-        Console.WriteLine($"{doc.GetProperty("name").GetString()}: {layout.roads.Count} streets to {output}");
+        // And what each building is for (Zoning.cs): Manage's land-use map.
+        var zoning = Porchlight.Explore.Zoning.Plan(model, layout);
+        var buildings = Porchlight.Explore.Zoning.Encode(zoning).Select(b => "[" + string.Join(",", b) + "]");
+        string summary = $"{{ \"homes\": {zoning.homes}, \"residents\": {zoning.residents}, \"workers\": {zoning.workers}, \"jobs\": {zoning.jobs} }}";
+        System.IO.File.WriteAllText(output, $"{{\n  \"key\": {Quoted(key)},\n  \"roads\": [\n    {string.Join(",\n    ", roads)}\n  ],\n  \"zoning\": {summary},\n  \"buildings\": [\n    {string.Join(",\n    ", buildings)}\n  ]\n}}\n");
+        Console.WriteLine($"{doc.GetProperty("name").GetString()}: {layout.roads.Count} streets, {zoning.buildings.Count} buildings ({zoning.homes} homes, {zoning.jobs} jobs) to {output}");
         return 0;
     }
 

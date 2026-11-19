@@ -6,9 +6,12 @@
 
 import type { CountyMap } from './api.ts';
 import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
+import { ZONES, buildingAt, describe } from './zoning.ts';
 
 export interface Layers {
   roads: boolean;
+  /** What the buildings are for (land use). */
+  zoning: boolean;
   cars: boolean;
   people: boolean;
   players: boolean;
@@ -17,7 +20,7 @@ export interface Layers {
   trails: boolean;
 }
 
-export const DEFAULT_LAYERS: Layers = { roads: true, cars: true, people: true, players: true, names: true, reach: true, trails: false };
+export const DEFAULT_LAYERS: Layers = { roads: true, zoning: true, cars: true, people: true, players: true, names: true, reach: true, trails: false };
 
 /** Car colours by speed (tiles a second): stopped, crawling, moving, fast. */
 export const SPEEDS = [
@@ -68,8 +71,10 @@ interface Camera {
 interface StreetPaths {
   /** By kind (0 main, 1 street, 2 path), then by width. */
   streets: { kind: number; width: number; path: Path2D }[];
+  /** The buildings, a path a zone (ZONES order). */
+  zones: Path2D[];
   highways: Path2D;
-  towns: { name: string; x0: number; y0: number; width: number; height: number; private: boolean }[];
+  towns: CountyMap['towns'];
   spaces: Path2D;
   bounds: { x0: number; y0: number; x1: number; y1: number };
 }
@@ -81,7 +86,9 @@ function buildPaths(map: CountyMap): StreetPaths {
     x0 = Math.min(x0, x); y0 = Math.min(y0, y);
     x1 = Math.max(x1, x); y1 = Math.max(y1, y);
   };
+  const zones = ZONES.map(() => new Path2D());
   for (const t of map.towns) {
+    for (const b of t.buildings ?? []) zones[b[0]]?.rect(t.x0 + b[1], t.y0 + b[2], b[3] - b[1], b[4] - b[2]);
     grow(t.x0, t.y0);
     grow(t.x0 + t.width, t.y0 + t.height);
     for (const r of t.roads ?? []) {
@@ -107,7 +114,7 @@ function buildPaths(map: CountyMap): StreetPaths {
   for (const s of map.spaces) spaces.rect(s.x0, s.y0, s.width, s.height);
   // Paths under streets, streets under main roads.
   const streets = [...byKey.values()].sort((a, b) => b.kind - a.kind || a.width - b.width);
-  return { streets, highways, towns: map.towns, spaces, bounds: { x0, y0, x1, y1 } };
+  return { streets, zones, highways, towns: map.towns, spaces, bounds: { x0, y0, x1, y1 } };
 }
 
 export class MapRenderer {
@@ -361,7 +368,11 @@ export class MapRenderer {
       }
     }
     if (!text) {
-      for (const t of this.paths.towns) if (w.x >= t.x0 && w.y >= t.y0 && w.x <= t.x0 + t.width && w.y <= t.y0 + t.height) text = t.name;
+      for (const t of this.paths.towns) {
+        if (w.x < t.x0 || w.y < t.y0 || w.x > t.x0 + t.width || w.y > t.y0 + t.height) continue;
+        const b = this.layers.zoning ? buildingAt(t, w.x - t.x0, w.y - t.y0) : null;
+        text = b ? `${describe(b)} · ${t.name}` : t.name;
+      }
     }
     this.onHover(text ? { x: px, y: py, text } : null);
   }
@@ -398,7 +409,7 @@ export class MapRenderer {
 
   /** The still parts, drawn again only when the view or what's shown changes. */
   private drawStill(): void {
-    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height},${this.layers.roads},${this.layers.names}`;
+    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height},${this.layers.roads},${this.layers.zoning},${this.layers.names}`;
     if (key === this.stillKey) return;
     this.stillKey = key;
     const ctx = this.still.getContext('2d', { alpha: false })!;
@@ -426,6 +437,15 @@ export class MapRenderer {
     ctx.strokeStyle = '#3a4654';
     ctx.lineWidth = Math.max(2.4, 1.6 * px);
     ctx.stroke(this.paths.highways);
+    // What the buildings are for, under the streets.
+    if (this.layers.zoning) {
+      ctx.globalAlpha = 0.5;
+      this.paths.zones.forEach((path, z) => {
+        ctx.fillStyle = ZONES[z].color;
+        ctx.fill(path);
+      });
+      ctx.globalAlpha = 1;
+    }
     // The streets.
     if (this.layers.roads) {
       for (const s of this.paths.streets) {

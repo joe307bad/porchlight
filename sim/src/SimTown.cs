@@ -28,6 +28,8 @@ namespace Porchlight.Sim
         public readonly int id;
         public readonly string key;
         readonly IsoLayout layout;
+        /// <summary>What each of its buildings is for (Zoning.cs), for Manage's land-use map.</summary>
+        public readonly TownZoning zoning;
         public readonly Traffic traffic;
         public readonly List<Pedestrian> people = new List<Pedestrian>();
         /// <summary>Townsfolk made with the town (the rest got out of cars someone took).</summary>
@@ -50,6 +52,7 @@ namespace Porchlight.Sim
             var (seed, p) = ParseKey(key);
             var model = Generator.Generate(seed, p);
             layout = Layout.Build(model);
+            zoning = Zoning.Plan(model, layout);
             // ExploreView.Populate, in the same order, so each car and person here is the game's.
             traffic = new Traffic(layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             var rng = new Rng($"{model.seed}::townsfolk");

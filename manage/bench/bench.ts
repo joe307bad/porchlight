@@ -29,7 +29,7 @@ function streets(): number[][] {
 
 const origin = (i: number) => ({ x: (i % 4) * (SIZE + 120), y: Math.floor(i / 4) * (SIZE + 120) });
 const map: CountyMap = {
-  towns: Array.from({ length: TOWNS }, (_, i) => ({ key: `t${i}`, name: `Town ${i + 1}`, x0: origin(i).x, y0: origin(i).y, width: SIZE, height: SIZE, private: false, roads: streets() })),
+  towns: Array.from({ length: TOWNS }, (_, i) => ({ key: `t${i}`, name: `Town ${i + 1}`, x0: origin(i).x, y0: origin(i).y, width: SIZE, height: SIZE, private: false, roads: streets(), zoning: null, buildings: null })),
   spaces: [],
   highways: Array.from({ length: TOWNS - 1 }, (_, i) => [origin(i).x + SIZE, origin(i).y + SIZE / 2, origin(i + 1).x, origin(i + 1).y + SIZE / 2]),
 };
