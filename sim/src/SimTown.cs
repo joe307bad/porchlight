@@ -138,6 +138,18 @@ namespace Porchlight.Sim
             }
         }
 
+        /// <summary>
+        /// Its streets, as the Manage map draws them (Checks roadmap writes the same for the towns that come
+        /// with the game): [kind, width, x0, y0, x1, y1, …] in tiles, the town's frame, to a tenth.
+        /// </summary>
+        public List<double[]> Roads()
+        {
+            double R(double v) => Math.Round(v * 10) / 10;
+            return layout.roads.Where(r => r.points != null && r.points.Count >= 2)
+                .Select(r => new[] { (double)(int)r.kind, R(r.width) }.Concat(r.points.SelectMany(q => new[] { R(q.x), R(q.y) })).ToArray())
+                .ToList();
+        }
+
         public byte[] Cars() => WorldSync.EncodeCars(traffic.cars);
         public byte[] People() => WorldSync.EncodePeople(people);
     }

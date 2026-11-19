@@ -33,6 +33,8 @@ export interface SimTown {
   at: number;
   /** The looks of townsfolk past those the town came with. */
   looks: string[];
+  /** Its streets once made (SimTown.Roads: [kind, width, x0, y0, x1, y1, ...], tiles, its own frame), for Manage's map. */
+  roads: number[][] | null;
   /** Why it couldn't be made, if it couldn't. */
   error: string | null;
   /** Its townsfolk changed (LOOKS): this tick goes to its players whole, not as a delta (their counts differ). */
@@ -181,7 +183,7 @@ export class SimPool {
     const want = new Set(keys);
     for (const key of want) {
       if (this.byKey.has(key)) continue;
-      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], error: null, fullDue: false };
+      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, error: null, fullDue: false };
       this.towns.set(town.id, town);
       this.byKey.set(key, town);
     }
@@ -262,10 +264,11 @@ export class SimPool {
   received(type: number, body: Buffer): void {
     if (type === OUT_TICK) return this.tick(body);
     if (type === OUT_READY) {
-      const m = JSON.parse(body.toString()) as { id: number; cars?: number; people?: number; error?: string };
+      const m = JSON.parse(body.toString()) as { id: number; cars?: number; people?: number; roads?: number[][]; error?: string };
       const town = this.towns.get(m.id);
       if (!town) return;
       town.error = m.error ?? null;
+      if (Array.isArray(m.roads)) town.roads = m.roads;
       if (m.error) this.log(`sim: ${town.key} couldn't be made: ${m.error}`);
       return;
     }

@@ -1,8 +1,9 @@
 // The traffic view's data (manage/, the React app at /manage): the county as
 // a map, and every car, townsperson and player in it, live.
 //
-//   GET /mp/traffic/county   the signed-in account's county: its towns (and the
-//                            roads of the ones that come with the game), the
+//   GET /mp/traffic/county   the signed-in account's county: its towns (and their
+//                            roads: saved for the ones that come with the game,
+//                            the simulation's for the rest), the
 //                            highways and the spaces between (JSON)
 //   GET /mp/traffic/feed     a stream of binary frames, about 10 a second, for
 //                            as long as the request stays open
@@ -80,7 +81,7 @@ export interface CountyMapJson {
     width: number;
     height: number;
     private: boolean;
-    /** Its streets (town's own frame): [kind, width, x0, y0, x1, y1, ...], when known (the towns that come with the game). */
+    /** Its streets (town's own frame): [kind, width, x0, y0, x1, y1, ...], when known (saved, or the simulation's once it's made the town). */
     roads: number[][] | null;
   }[];
   /** The junction north of Porchlight, and an account's empty places for towns. */
@@ -129,12 +130,13 @@ async function countyOf(deps: GameDeps, accountId: string): Promise<{ county: Co
   return { county, names };
 }
 
-export function countyMapJson(county: County, names: Map<string, string>): CountyMapJson {
+/** A town's streets: saved for those that come with the game; for the rest, as the simulation made them. */
+export function countyMapJson(county: County, names: Map<string, string>, made: (key: string) => number[][] | null = () => null): CountyMapJson {
   const box = (s: Space) => ({ x0: s.x0, y0: s.y0, width: s.width, height: s.height });
   return {
     towns: county.spaces
       .filter((s) => s.kind === 'town')
-      .map((s) => ({ key: s.townKey!, name: names.get(s.townKey!) ?? 'A town', ...box(s), private: s.isPrivate, roads: roadsOf(s.townKey!) })),
+      .map((s) => ({ key: s.townKey!, name: names.get(s.townKey!) ?? 'A town', ...box(s), private: s.isPrivate, roads: roadsOf(s.townKey!) ?? made(s.townKey!) })),
     spaces: county.spaces.filter((s) => s.kind === 'junction' || s.kind === 'vacant').map((s) => ({ kind: s.kind, ...box(s) })),
     highways: county.highways.map((h) => h.points.flatMap((p) => [round1(p.x), round1(p.y)])),
   };
@@ -314,7 +316,7 @@ export class TrafficFeed {
 
     if (path === COUNTY) {
       const { county, names } = await countyOf(this.deps, account.id);
-      return send(200, countyMapJson(county, names));
+      return send(200, countyMapJson(county, names, (key) => this.sim?.pool.town(key)?.roads ?? null));
     }
 
     if (path === FOCUS) {
