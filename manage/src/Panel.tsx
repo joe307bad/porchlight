@@ -7,6 +7,7 @@ import type { CountyMap, Me } from './api.ts';
 import type { Feed, FeedStatus } from './feed.ts';
 import { KMH, PERSON, SPEEDS, type Layers, type MapRenderer } from './render.ts';
 import { REACH, STOPPED, doing, type World } from './world.ts';
+import { BALANCED, JOBS_PER_HOME, ZONES, landUse } from './zoning.ts';
 
 const REFRESH_MS = 250;
 
@@ -32,6 +33,7 @@ const LAYER_NAMES: [keyof Layers, string][] = [
   ['names', 'Names'],
   ['reach', `Who's near whom (${REACH} tiles)`],
   ['roads', 'Streets'],
+  ['zoning', 'Land use'],
   ['trails', 'Trails'],
 ];
 
@@ -128,6 +130,8 @@ export function Panel(p: Props) {
             </ul>
           </section>
 
+          <LandUse map={p.map} onTown={p.onTown} />
+
           <section>
             <h2>Show</h2>
             <div className="layers">
@@ -160,6 +164,58 @@ export function Panel(p: Props) {
         </div>
       )}
     </aside>
+  );
+}
+
+/** What each town's buildings are for: homes and work, made with the town from its seed. */
+function LandUse({ map, onTown }: { map: CountyMap; onTown: (t: CountyMap['towns'][number]) => void }) {
+  const towns = map.towns.map((t) => ({ t, u: landUse(t) }));
+  return (
+    <section aria-label="Land use">
+      <h2>Land use</h2>
+      <p className="muted small">
+        Every building is a home, a workplace or both, set when the town is made from its seed. Each town aims for a job for every working resident, about{' '}
+        {JOBS_PER_HOME} a household; planners count {BALANCED.low}–{BALANCED.high} as balanced.
+      </p>
+      <ul className="list">
+        {towns.map(({ t, u }) => (
+          <li key={t.key}>
+            <button className="row" onClick={() => onTown(t)} title="Show it on the map">
+              <span className="grow">
+                <span className="name">{t.name}</span>
+                {!u ? (
+                  <span className="sub">Not zoned yet: shown once the simulation has made the town.</span>
+                ) : (
+                  <>
+                    <span className="sub">
+                      {u.residential.toLocaleString()} residential · {u.business.toLocaleString()} business · {u.mixed.toLocaleString()} mixed · {(u.byZone[5] ?? 0).toLocaleString()} civic
+                    </span>
+                    <span className="zone-bar" aria-hidden="true">
+                      {u.byZone.map((n, z) =>
+                        n ? <i key={z} style={{ flexGrow: n, background: ZONES[z].color }} title={`${ZONES[z].label}: ${n.toLocaleString()}`} /> : null,
+                      )}
+                    </span>
+                    <span className="sub">
+                      {u.homes.toLocaleString()} homes ({u.residents.toLocaleString()} people, {u.workers.toLocaleString()} at work) · {u.jobs.toLocaleString()} jobs
+                    </span>
+                    <span className={`sub ${u.balance === 'balanced' ? 'good' : 'bad'}`}>
+                      {u.jobsPerHome.toFixed(2)} jobs a home, {u.balance}
+                    </span>
+                  </>
+                )}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="legend">
+        {ZONES.map((z) => (
+          <span key={z.label}>
+            <i style={{ background: z.color }} /> {z.label}
+          </span>
+        ))}
+      </div>
+    </section>
   );
 }
 

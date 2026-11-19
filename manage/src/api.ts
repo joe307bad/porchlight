@@ -14,6 +14,10 @@ export interface CountyMap {
     private: boolean;
     /** Each street: [kind (0 main, 1 street, 2 path), width, x0, y0, x1, y1, ...] in the town's tiles. */
     roads: number[][] | null;
+    /** What its buildings are for, the town's figures (Zoning.cs); null until known. */
+    zoning: { homes: number; residents: number; workers: number; jobs: number } | null;
+    /** Each building: [zone (zoning.ts ZONES), x0, y0, x1, y1 (tiles, exclusive), homes, jobs] in the town's tiles. */
+    buildings: number[][] | null;
   }[];
   spaces: { kind: string; x0: number; y0: number; width: number; height: number }[];
   highways: number[][];

@@ -395,3 +395,31 @@ p {
   font-weight: 600;
   color: var(--accent);
 }
+
+/* Land use: a town's buildings by what they're for. */
+.small {
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+
+.zone-bar {
+  display: flex;
+  height: 6px;
+  margin: 4px 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+
+.zone-bar i {
+  flex-basis: 0;
+  min-width: 2px;
+}
+
+.sub.good {
+  color: var(--good);
+}
+
+.sub.bad {
+  color: var(--bad);
+}

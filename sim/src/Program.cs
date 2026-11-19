@@ -5,8 +5,9 @@
 //   in   1 TOWNS    JSON [{ id, key }]: the towns to run (any not listed stop)
 //        2 PLAYERS  u16 n, n × (u32 town, u16 count, count × (f32 x, f32 y)): where players are (tiles)
 //        3 TAKEN    JSON { id, taken: ["t3", …] }: the cars someone's in
-//   out  1 READY    JSON { id, cars, people, roads } once a town's made (roads: its streets, for
-//                   Manage's map, SimTown.Roads), or { id, error }
+//   out  1 READY    JSON { id, cars, people, roads, zoning, buildings } once a town's made (roads: its
+//                   streets, for Manage's map, SimTown.Roads; zoning and buildings: what each building
+//                   is for, Zoning.cs), or { id, error }
 //        2 TICK     f64 when (unix ms), u16 n, n × (u32 town, u16 cars, u16 people,
 //                   records (7 bytes each, cars then people), u32 length, delta (Delta.cs))
 //        3 LOOKS    JSON { id, looks }: the townsfolk past those the town came with
@@ -78,7 +79,9 @@ namespace Porchlight.Sim
                     if (!wanted.TryGetValue(town.id, out var key) || key != town.key) continue; // no longer wanted
                     towns[town.id] = town;
                     if (takenOf.TryGetValue(town.id, out var taken)) town.SetTaken(taken);
-                    Send(OUT_READY, Json(new { id = town.id, cars = town.traffic.cars.Count, people = town.people.Count, roads = town.Roads() }));
+                    Send(OUT_READY, Json(new { id = town.id, cars = town.traffic.cars.Count, people = town.people.Count, roads = town.Roads(),
+                        zoning = new { homes = town.zoning.homes, residents = town.zoning.residents, workers = town.zoning.workers, jobs = town.zoning.jobs },
+                        buildings = Porchlight.Explore.Zoning.Encode(town.zoning) }));
                 }
                 Tick();
                 double ms = Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
