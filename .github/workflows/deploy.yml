@@ -125,14 +125,9 @@ jobs:
       - name: Game — the sleigh flies through its rings, lands where it's sent, and down the chimney and back
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- sleigh
 
-      # Unity's import cache, reused only for the exact same sources. No
-      # restore-keys fallback: opening the project on a Library left by older
-      # sources got the editor killed (exit 137) as it loaded the stale script
-      # assemblies, while a cold Library builds fine.
-      - uses: actions/cache@v4
-        with:
-          path: unity/Library
-          key: unity-library-${{ hashFiles('unity/Assets/**', 'unity/Packages/**', 'unity/ProjectSettings/**') }}
+      # No cache of Unity's Library: the editor is killed (exit 137) as it opens
+      # a restored one, even one saved from exactly these sources, while a cold
+      # Library builds fine.
 
       - name: Game — WebGL build
         uses: game-ci/unity-builder@v4

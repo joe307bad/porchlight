@@ -65,11 +65,7 @@ jobs:
           npm test
           npm run build
 
-      # As in deploy.yml: the import cache for exactly these sources (and this system).
-      - uses: actions/cache@v4
-        with:
-          path: unity/Library
-          key: unity-library-${{ matrix.name }}-${{ hashFiles('unity/Assets/**', 'unity/Packages/**', 'unity/ProjectSettings/**') }}
+      # A cold Library every time, as in deploy.yml (a restored one gets the editor killed).
 
       - name: Game — ${{ matrix.name }} build
         uses: game-ci/unity-builder@v4
