@@ -152,6 +152,10 @@ alternative once townsfolk have whole days):
 Manage can then show what this builds: trips by hour, flows on each street,
 and the junctions that jam.
 
+The wider research (is the town planned like a real one, where shops go,
+traffic, townsfolk and events) and the full to-do list are in
+[city-research.md](city-research.md).
+
 ## Sources
 
 - US EPA EnviroAtlas, *Employment-to-housing ratio* fact sheet:
