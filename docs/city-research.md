@@ -349,46 +349,57 @@ From `Explore/Traffic.cs`:
 
 ### To-do
 
-- [ ] **Trips, not wandering.** Give every car an origin and destination (a
-  home, a job, a shop, the highway) and route it with `StreetRoute` on
-  travel-time costs. This is the change everything else builds on.
+Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
+
+- [x] **Trips, not wandering.** Every car has an origin and destination (a
+  home, a job, a shop, a gate) and is routed over the lanes on free-flow
+  travel time (`Life/Router.cs`, not `StreetRoute`). This is the change
+  everything else builds on.
 - [ ] **Junction control by road class** (needs the §1 hierarchy):
-  - local × local: all-way stop
-  - collector × local: two-way stop with HCM gap acceptance (4.1 s / 6.2 s)
-    [T12]
-  - arterial × arterial: fixed-time signal, cycle from Webster on the
-    expected peak flows, worked out when the town is made [T10]
-- [ ] **Don't block the box:** no car enters a junction unless there's room
-  where it's going. A car stuck N minutes re-routes or leaves [T18].
-- [ ] **Queue-based server sim (A/B Street / SUMO MESO style):** each lane
-  a FIFO queue holding about length / (car + 2 m) cars, released from the
-  stop line every ~1.9 s [T25][T20][T8]. Congestion follows without
-  per-tick physics, so whole towns stay cheap off-screen.
+  - [x] local × local: all-way stop (PR #19: any junction whose legs are
+    all the same rank)
+  - [ ] collector × local: two-way stop with HCM gap acceptance (4.1 s /
+    6.2 s) [T12]. Stop signs on the minor legs are in (a 500 ms stop, then
+    first come first served), but there's no gap acceptance yet.
+  - [ ] arterial × arterial: fixed-time signal, cycle from Webster on the
+    expected peak flows, worked out when the town is made [T10]. Fixed
+    two-stage 30 s signals are in (PR #19), but the cycle isn't from Webster
+    yet.
+- [x] **Don't block the box:** no car enters a junction unless there's room
+  where it's going. A car held 3 minutes is let through, and one held behind
+  a player for 15 s turns round (PR #19) [T18].
+- [x] **Queue-based server sim (A/B Street / SUMO MESO style):** each lane
+  is a queue of cars on intervals, event-driven, with no per-tick physics
+  (PR #19: 0.18 ms a town a tick) [T25][T20][T8].
 - [ ] **IDM near the camera on the host** [T1][T2]. Keep its entry and exit
   times pinned to the server's queue schedule so the two never disagree.
   Use MOBIL only on multi-lane county highways [T7].
-- [ ] **Speed limits by road class** (arterial 50 km/h, local 30 km/h)
-  instead of one cruise speed.
+- [x] **Speed limits by road class** (Main 3.5 tiles/s, about 30 mph;
+  streets 2.1), slower on bends and turns (PR #19).
 - [ ] **Congestion-aware routing:** BPR edge costs from the last ~15 minutes
   of flow. Re-route a random ~10% of drivers each simulated day, which
   converges towards Wardrop equilibrium cheaply, as MATSim does [T14][T15][T21].
-- [ ] **Parking as a real step:** spaces per building (kerb, driveway, car
-  park). Arriving cars take the nearest free one or cruise on, then walk to
-  the door. Cruising then appears on its own downtown and round events
-  [T17][T18].
-- [ ] **Traffic through the gates:** commuters and visitors arrive and leave
-  by the county highways, and the highways get traffic (`docs/highways.md`).
+- [x] **Parking as a real step:** kerb and driveway spots (PR #19). Arriving
+  cars take a free spot near the door, or hunt for one (jittered, so hunters
+  fan out), then walk to the door [T17][T18]. Car parks are still to come.
+- [ ] **Traffic through the gates:**
+  - [x] commuters and through traffic arrive and leave by the gates (PR #19);
+  - [ ] the county highways get traffic (`docs/highways.md`).
 - [ ] **Vehicles with jobs:**
-  - buses on a timetable that stop and hold up the lane
-  - delivery vans in the morning
-  - bin lorries by zone and weekday
-  - emergency vehicles that make others pull over
+  - [x] buses on a timetable that stop and hold up the lane (PR #19: one
+    loop a town, every 20 minutes, ridden by the timetable)
+  - [ ] delivery vans in the morning
+  - [ ] bin lorries by zone and weekday
+  - [ ] emergency vehicles that make others pull over
 
   The models already exist in `Catalog.cs`.
-- [ ] **A gridlock check:** a `Checks traffic-day` that runs a full
-  simulated day on a few seeds and fails on any car stuck for long [T18].
-- [ ] **Townsfolk as obstacles:** cars yield at crossings, and pedestrians
-  cross at junctions with a gap, not anywhere.
+- [x] **A gridlock check:** `Checks traffic-day` runs a full simulated day
+  of each starter town and two seeds, and fails on anyone stuck, a trip over
+  3 hours, too many failed trips, or a day that doesn't repeat. CI runs it,
+  with `Checks life` (PR #19) [T18].
+- [x] **Townsfolk as obstacles:** cars wait for walkers on their turn, and
+  walkers cross at junctions with leave, or mid-block at a cost (PR #19).
+  Players in the road stop cars too, on a lane or in a junction.
 
 ## 5. What do the townsfolk need to look like a real population?
 
@@ -447,46 +458,56 @@ From `Explore/Actors.cs` and `Walking.cs`:
 
 ### To-do
 
-- [ ] **Fix walking pace** to ~1.2–1.5 m/s (0.3–0.4 tiles/s), with a few
-  joggers. This is a one-line change in `Actors.cs:276-283`.
+Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
+
+- [x] **Fix walking pace:** 0.22–0.34 tiles/s (2–3 mph), with 5% joggers
+  (PR #19).
 - [ ] **Households** for every home zoning makes, seeded from the town:
   single, couple, family with 1–3 children, retirees. Use a fixed mix, with
   PopulationSim-style rebalancing only if totals drift [T27][T29]. This
-  turns zoning's `residents` into actual people.
+  turns zoning's `residents` into actual people. PR #19 makes the people (1.2
+  working residents a home, by the proletariat robot), but not their
+  households' make-up.
 - [ ] **A job for every worker**, by a doubly-constrained gravity model:
   P(job j | home i) ∝ jobs_j · e^(−β·t_ij), filling each job once [T35].
   - The town's surplus jobs (~0.2 a household) go to commuters from
     neighbouring towns, which puts peaks on the county highways.
   - Some residents work out of town.
-- [ ] **A daily plan per person (ActivitySim-style)** [T30]:
+
+  PR #19 fills jobs at random from the slots (commuters in, residents out
+  through the gates), not by gravity yet.
+- [x] **A daily plan per person (ActivitySim-style)** [T30]. PR #19: work
+  (with lunch and shops on the way home), school, errands and visits, about
+  3 trips a day. Weekends, shifts and school drop-offs are still to come.
   - the day: work, school or home, plus 0–2 stops (shop, leisure, errand),
     for ~3 trips a day [T33]
   - workers: shift starts around 8:00 ± 60 min, plus some retail, evening
     and night shifts; weekend work at ~29% of weekdays [T36]
   - school: bell times, with parents dropping children off on the way to
     work
-- [ ] **A town clock** (server-side, shared). Night becomes a time, not a
-  toggle. Departure = activity start − expected travel time − a buffer, so
+- [x] **A town clock** (server-side, shared): real time, county-wide (UTC−5)
+  (PR #19). The sky's night still comes from the client. Departure = activity start − expected travel time − a buffer, so
   rush hours and their jams follow from the plans.
-- [ ] **Mode choice:** walk under ~800 m (assumed), drive if the household
-  has a car (the driveways are already there), bus once buses run.
-- [ ] **Level of detail** [T41][T25]:
+- [x] **Mode choice:** walk under 60 tiles (240 m), drive if their car is
+  parked where they are, bus if the timetable beats walking (PR #19).
+- [x] **Level of detail** [T41][T25]. PR #19: everyone is simulated as
+  events, and only those out are drawn, through fixed slots. No RVO2 yet.
   - off-screen, a person is their plan plus where they are in it, with
     departures and arrivals as events on the server
   - near a player, the host gives them a body that walks or drives
   - RVO2 for sidewalk avoidance [T39]; social force only for dense crowds at
     events [T38]
-- [ ] **Regulars.** Keep each person's home and job across days, so the
+- [x] **Regulars.** Keep each person's home and job across days (PR #19), so the
   same faces walk to the same bakery. Players notice that more than
   accuracy. Light needs (hunger, fun) can choose errands later.
-- [ ] **Going indoors:** people enter and leave buildings through their
-  front doors (`Homes.Door`), and parked cars pick up and drop off their
-  drivers.
+- [x] **Going indoors:** people enter and leave buildings through their
+  doors, and parked cars pick up and drop off their drivers (PR #19).
 - [ ] **Manage views:**
-  - people by activity (home, work, travelling)
-  - trips by hour
-  - each street's flow
-  - the junctions that jam
+  - [x] people by activity: who's indoors in each building, out, or out of
+    town (PR #19)
+  - [x] trips by hour (PR #19: the busiest hour and each mode's share)
+  - [ ] each street's flow (counted, not drawn yet)
+  - [x] the junctions that jam (PR #19: the slow junctions, as a count)
 
 ## 6. Randomness: matches, concerts and the logistics they bring
 
@@ -584,29 +605,29 @@ From `Explore/Actors.cs` and `Walking.cs`:
 Each step stands on the one before. Start with the cheap ones. Progress is
 tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
 
-1. **Cheap fixes now:**
-   - walking pace (§5)
-   - speed limits by road class (§4)
-   - the road hierarchy tags and their check (§1) *(done)*
-2. **A town clock** shared by the server and clients; night becomes a time
-   (§5).
-3. **People:** households from zoning's homes, jobs by gravity model, daily
-   plans (§5).
-4. **Trips:** cars driving those plans by `StreetRoute`; traffic through the
-   gates and on the highways (§4).
-5. **Junction control** (stops and signals) and don't-block-the-box, plus
-   the gridlock check (§4).
-6. **Parking as a trip step**, with going indoors (§4, §5).
-7. **Queue-based server traffic with IDM near players**, and
-   congestion-aware re-routing (§4).
-8. **Better towns:** land-value field, shops by threshold, industry
-   wedges, civic buildings (era rings, transect zones, neighbourhoods, the
-   ring road and a second centre are done, §1) (§2–3).
+1. **Cheap fixes now:** walking pace (§5) and speed limits (§4) are done
+   (#19); the road hierarchy tags and their check (§1) are done (#18).
+2. **A town clock** shared by the server and clients (§5): done (#19).
+   Night still comes from the client's sky.
+3. **People:** daily plans are done (#19). Household make-up and jobs by
+   gravity model (§5) are left.
+4. **Trips:** cars driving those plans, and traffic through the gates, are
+   done (#19). Traffic on the highways (§4) is left.
+5. **Junction control** (stops and signals), don't-block-the-box and the
+   gridlock check (§4): done (#19). Gap acceptance and Webster cycles are
+   left.
+6. **Parking as a trip step**, with going indoors (§4, §5): done (#19).
+7. **Queue-based server traffic** (§4): done (#19). IDM near players and
+   congestion-aware re-routing are left.
+8. **Better towns:** era rings, transect zones, neighbourhoods with their
+   schools and parks, the ring road and a second centre are done (§1, #18).
+   The land-value field, shops by threshold, industry wedges and the other
+   civic buildings (§2–3) are left.
 9. **The calendar and events:** market day first (the plaza is already
    there), then a venue with match days, parades, incidents and shared
    weather (§6).
-10. **Manage** shows each layer as it lands: activities, trips by hour,
-    street flows, jams and events.
+10. **Manage** shows each layer as it lands. Activities, trips by hour and
+    jams are done (#19); street flows and events are left.
 
 ---
 
