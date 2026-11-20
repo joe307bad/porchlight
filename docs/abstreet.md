@@ -695,6 +695,63 @@ unlimited spots, for maps with no parking data.
 - **Later, a seitan-style fuzz:** close random roads mid-day (as the
   marathon course does) and check nothing wedges.
 
+### Manage: seeing every car and townsperson
+
+"Nothing ticks" doesn't hide anything from Manage. Manage is just one more
+"someone asking". The last system was slow because it *decided* motion for
+every car near a junction every tick. Here those decisions happen only at
+events. Reading a car's position between events is a lerp along its
+distance interval, capped by the car ahead: pure arithmetic that changes
+nothing in the sim. Every car in a town can be read every feed frame well
+inside the 1 ms budget.
+
+**1. Moving agents: sample at the feed's rate.**
+- Keep today's feed (`server/src/multiplayer/feed.ts`) as it is. Each
+  frame, the worker calls `Positions()` at `now` and packs the 7-byte
+  `WorldSync` records it already sends. Focused towns come 10 times a
+  second, the rest once a second.
+- The cost now scales with agents on a trip, not with the population or
+  with traffic physics.
+- The slot pool (§4, "The wire") handles agents coming and going for
+  Manage as it does for players.
+
+**2. Everyone indoors: show buildings, not dots.**
+- An `Inside(building)` person has no position to sample: they are the
+  building. Thousands of dots stacked on doorways wouldn't tell you
+  anything anyway.
+- Keep a count per building, changed by the trip start and end events the
+  sim already handles. Nothing is worked out per frame.
+- Draw it on Manage's Land use layer as a count or heat. Hovering a building
+  lists who's inside and each person's next `StartTrip`.
+- Count `OffMap` people at each gate and highway: commuters out, and
+  through traffic.
+- These counts change only on events. Send them as a small JSON frame when
+  they change, or once a second.
+
+**3. Later, optionally: send intervals, not positions.**
+- Between events, an agent is `(road, dir, s₀, s₁, t₀, t₁)`. Stream those
+  changes and let Manage lerp along the road polylines it already has from
+  `/mp/traffic/county`. Motion is smooth at any frame rate, and the wire
+  carries only events.
+- The catch is the queue cap. A car that has caught its leader stays on its
+  old interval, so Manage has to apply the same `min(lerp, leader's back −
+  0.25 tiles)` rule. That means knowing who is on each lane. Lane entries
+  are events, so it's doable, but it is a second copy of the sim's rule.
+  The `--follow`-style drift check would have to cover it.
+- Only worth doing if bandwidth or smoothness in Manage turns out to
+  matter.
+
+**Clicking one agent.** `/mp/sim/where` already exists. With a real sim
+behind it, it can return more than a position:
+- the trip's legs, route and destination, and the next scheduled event;
+- for a car, whether it is `Queued` or `WaitingToAdvance`, and what it's
+  blocked by (`blocked_by`).
+
+That is A/B Street's debug view, and it's what makes gridlock legible.
+
+**When:** 1 and 2 come with step 5 of the plan ("People"), since they fit
+today's wire with almost no change. 3 waits until it's needed.
+
 ---
 
 ## 10. Other A/B Street apps worth a look
@@ -748,7 +805,9 @@ city-research.md's list (in brackets).
    - `Population.cs` from zoning by the proletariat robot;
    - `Person` states, and trips that start as events;
    - the slot pool on the wire;
-   - walkers walk their trips; wanderers stay.
+   - walkers walk their trips; wanderers stay;
+   - Manage samples moving agents and shows who's indoors per building
+     (§9, "Manage: seeing every car and townsperson").
 6. **Trips by car** [4]:
    - routes over (road, dir), with infinite parking;
    - borders at the gates and highways.
