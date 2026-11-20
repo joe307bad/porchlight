@@ -28,7 +28,7 @@ namespace Porchlight.Life
         public readonly Dictionary<int, Wait> carWaits = new Dictionary<int, Wait>(), walkerWaits = new Dictionary<int, Wait>();
         public readonly List<Problem> problems = new List<Problem>();
         public long problemCount;
-        public long gridlockBroken, waitedTooLong, hunts, noSpot, turnedRound, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
+        public long gridlockBroken, gaveUp, waitedTooLong, hunts, noSpot, turnedRound, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
         /// <summary>The longest any trip took (ms), and which.</summary>
         public long longestTrip;
 
@@ -135,6 +135,27 @@ namespace Porchlight.Life
         }
 
         /// <summary>Cars on the road now (buses too).</summary>
+        /// <summary>
+        /// How many of the town's blocks (a street between two junctions, either way) have a car on them now, of
+        /// how many there are: how busy the streets look, where CarsOnRoad is how many cars there are.
+        /// </summary>
+        public int BlocksInUse(out int blocks)
+        {
+            var all = new HashSet<long>();
+            var used = new HashSet<long>();
+            foreach (var l in net.lanes) all.Add(BlockKey(l));
+            foreach (var c in cars)
+            {
+                if (c.seg < 0) continue;
+                int lane = c.seg < Lanes ? c.seg : net.movements[c.seg - Lanes].to;
+                used.Add(BlockKey(net.lanes[lane]));
+            }
+            blocks = all.Count;
+            return used.Count;
+        }
+
+        static long BlockKey(Lane l) => ((long)l.road << 40) | ((long)Math.Min(l.fromNode, l.toNode) << 20) | (uint)Math.Max(l.fromNode, l.toNode);
+
         public int CarsOnRoad()
         {
             int n = 0;
@@ -203,6 +224,7 @@ namespace Porchlight.Life
                 ["waits"] = waits,
                 ["problems"] = stats.problemCount,
                 ["gridlockBroken"] = stats.gridlockBroken,
+                ["gaveUp"] = stats.gaveUp,
                 ["mainCrossings"] = stats.mainCrossings,
                 ["hunts"] = stats.hunts,
             };

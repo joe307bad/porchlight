@@ -47,7 +47,7 @@ then the body. Log lines go to stderr.
 | 1 TOWNS   | JSON `[{ id, key }]`: every town to run (the rest stop) |
 | 2 PLAYERS | u16 towns, then for each: u32 id, u16 n, n × (f32 x, f32 y), little-endian |
 | 3 TAKEN   | JSON `{ id, taken: ["t3", "p12"] }` |
-| 4 ASK     | JSON `{ ask, town, kind: "car" \| "person" \| "building" \| "focus-car" \| "focus-person", i, by? }`: about one car slot, person (townsfolk index) or building (zoning's index) now; or Manage's focus on a car or person (its decision tree, queue and way ahead: [docs/town-life.md](../docs/town-life.md) §10), `i` being where it's drawn (`by: "slot"`) or who it is (`by: "id"`) |
+| 4 ASK     | JSON `{ ask, town, kind: "car" \| "person" \| "building" \| "focus-car" \| "focus-person", i, by? }`: about one car slot, person (townsfolk index) or building (zoning's index) now; or Manage's focus on a car or person (its decision tree, queue and way ahead: [docs/town-life.md](../docs/town-life.md) §11), `i` being where it's drawn (`by: "slot"`) or who it is (`by: "id"`) |
 
 | Out | Body |
 | --- | --- |

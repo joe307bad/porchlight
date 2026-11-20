@@ -741,7 +741,7 @@ namespace Porchlight.Life
         /// <summary>On the last lane of its way: find a spot ahead to stop for, near the door, or hunt for one.</summary>
         void OnLastLane(Car c)
         {
-            if (c.bus >= 0 || c.dest.border || options.infiniteParking || c.target >= 0) return;
+            if (c.bus >= 0 || c.van >= 0 || c.dest.border || options.infiniteParking || c.target >= 0) return;
             if (!net.access.TryGetValue(c.dest.id, out var a)) return;
             var lane = net.lanes[c.seg];
             double door = net.DoneFor(lane, a) - lane.start;
@@ -807,6 +807,11 @@ namespace Porchlight.Life
             if (c.bus >= 0)
             {
                 AtStop(c);
+                return;
+            }
+            if (c.van >= 0)
+            {
+                if (!VanOnward(c)) RemoveVan(c);
                 return;
             }
             if (c.dest.border)
@@ -997,6 +1002,7 @@ namespace Porchlight.Life
             {
                 RemoveFromRoad(c);
                 if (c.owner >= 0) Fail(people[c.owner], "turned round with nowhere to go");
+                if (c.van >= 0) RemoveVan(c);
                 return true;
             }
             c.route = route;

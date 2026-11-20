@@ -51,6 +51,8 @@ namespace Porchlight.Life
         public bool unprotected;
         /// <summary>Must stop before going.</summary>
         public bool stops;
+        /// <summary>At a signal (routes count the wait).</summary>
+        public bool signal;
         public List<Vec2> points;
         public List<double> at;
     }
@@ -485,6 +487,7 @@ namespace Porchlight.Life
                 m.stage = leg >= 0 ? j.legStage[leg] : 0;
                 m.stops = j.control == Life.Control.AllWayStop || (j.control == Life.Control.Stop && from.rank < top);
                 m.unprotected = j.control == Life.Control.Stop && from.rank < top && to.rank > from.rank;
+                m.signal = j.control == Life.Control.Signal;
             }
         }
 

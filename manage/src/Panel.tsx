@@ -307,7 +307,7 @@ function FocusView({
         </button>
       </section>
     );
-  const title = f.kind === 'person' ? `Person #${f.id}` : f.bus !== undefined && f.bus >= 0 ? 'The bus' : `Car #${f.id}`;
+  const title = f.kind === 'person' ? `Person #${f.id}` : f.bus !== undefined && f.bus >= 0 ? 'The bus' : f.van !== undefined && f.van >= 0 ? `Van #${f.van}` : `Car #${f.id}`;
   return (
     <section className="focus" aria-label="Focus" ref={ref}>
       <h2>{title}</h2>

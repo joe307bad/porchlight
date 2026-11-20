@@ -21,7 +21,7 @@
 //                            one car or townsperson, found by where it's drawn (its place in
 //                            the positions frame) or who it is (the id an earlier answer gave):
 //                            its decision tree, its queue of what's next, its day, and its way
-//                            ahead (docs/town-life.md §10; JSON); &brief=1: just a line of who
+//                            ahead (docs/town-life.md §11; JSON); &brief=1: just a line of who
 //                            and what they're doing, for the map's hover
 //
 // One timer serves every viewer: each tick packs each town once (its players,

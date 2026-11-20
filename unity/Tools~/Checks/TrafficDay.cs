@@ -27,6 +27,8 @@ static class TrafficDay
     const long LONGEST_TRIP = 3 * TownClock.HOUR;
     /// <summary>At most this share of trips may fail.</summary>
     const double MOST_FAILED = 0.02;
+    /// <summary>By day, at least this share of a town's blocks should have a car on them, on average (Rounds.cs: it was 1-6% before vans).</summary>
+    const double LEAST_BUSY = 0.15;
     /// <summary>A day in November 2026: any day will do, but always the same one.</summary>
     /// <summary>8:15 that day: the morning rush.</summary>
     public static long Morning => TownClock.At(DAY, 8 * TownClock.HOUR + 15 * TownClock.MINUTE);
@@ -69,6 +71,9 @@ static class TrafficDay
         life.Start(start);
         int peakCars = 0, peakOut = 0, peakDrawnCars = 0, peakDrawnPeople = 0;
         string peakAt = "";
+        // How busy the streets look by day (08:00-20:00): the share of blocks with a car on them, on average and at the quietest.
+        double busySum = 0, busyLow = 1;
+        int busyN = 0, blocks = 0;
         var fingerprint = new List<long>();
         for (long t = start; t <= start + 27 * TownClock.HOUR; t += TownClock.MINUTE)
         {
@@ -80,6 +85,23 @@ static class TrafficDay
                 peakAt = TownClock.Format(t);
             }
             peakOut = Math.Max(peakOut, outNow);
+            long hour = TownClock.TimeOfDay(t) / TownClock.HOUR;
+            if (hour >= 8 && hour < 20 && t < start + 24 * TownClock.HOUR)
+            {
+                // Vans sit out the rushes: none sets off on a call in one (one already on its way finishes it).
+                bool InRush(long m)
+                {
+                    double h = TownClock.TimeOfDay(m) / (double)TownClock.HOUR;
+                    return h >= 7.75 && h < 9.25 || h >= 16.25 && h < 18.25;
+                }
+                var rushing = life.vans.Where(v => v.seg >= 0 && v.route != null && InRush(v.routed)).ToList();
+                if (rushing.Count > 0 && errs.Count < 5)
+                    errs.Add($"{TownClock.Format(t)}: van {rushing[0].van} set off on a call at {TownClock.Format(rushing[0].routed)}, in the rush");
+                double busy = life.BlocksInUse(out blocks) / (double)Math.Max(1, blocks);
+                busySum += busy;
+                busyLow = Math.Min(busyLow, busy);
+                busyN++;
+            }
             life.Draw();
             peakDrawnCars = Math.Max(peakDrawnCars, life.carSlots.Count(s => s.shown));
             peakDrawnPeople = Math.Max(peakDrawnPeople, life.personSlots.Count(s => s.shown));
@@ -97,6 +119,7 @@ static class TrafficDay
             errs.Add($"{s.failed} of {s.started} trips failed: {string.Join(", ", s.failures.Select(kv => $"{kv.Key} {kv.Value}"))}");
         if (s.undrawnCars > 0 || s.undrawnPeople > 0)
             errs.Add($"more out at once than slots to draw them: {s.undrawnCars} cars and {s.undrawnPeople} people undrawn ({life.busSlotsFrom} car slots, {life.personSlots.Length} people slots)");
+        if (busySum / Math.Max(1, busyN) < LEAST_BUSY) errs.Add($"the streets are empty by day: {100 * busySum / Math.Max(1, busyN):0}% of blocks with a car on them");
         if (s.started < life.people.Count) errs.Add($"only {s.started} trips for {life.people.Count} people");
         // The same day again from the same key: the same, hour by hour.
         var again = Make(key);
@@ -112,8 +135,9 @@ static class TrafficDay
         string Mean(int m) => s.finishedBy[m] == 0 ? "-" : $"{s.durationBy[m] / s.finishedBy[m] / 1000.0 / 60:0.0} min";
         report = $"{name}: {life.people.Count} people, {life.cars.Count - life.buses.Count} cars, {life.buses.Count} bus(es){(life.busWhy != null ? $" ({life.busWhy})" : $" {life.busStops.Count} stops")}, {life.net.lanes.Count} lanes, {life.net.junctions.Count} junctions; made in {made} ms, day in {ms - made} ms ({life.handled} events)\n" +
                  $"  trips {s.started} started, {s.finished} made, {s.failed} failed; walk {s.finishedBy[0]} ({Mean(0)}), drive {s.finishedBy[1]} ({Mean(1)}), bus {s.finishedBy[2]} ({Mean(2)})\n" +
+                 $"  streets by day: {100 * busySum / Math.Max(1, busyN):0}% of {blocks} blocks with a car on them (at the quietest {100 * busyLow:0}%)\n" +
                  $"  peak {peakCars} cars on the road at {peakAt}, {peakOut} out; drawn at most {peakDrawnCars}/{life.carSlots.Length} cars, {peakDrawnPeople}/{life.personSlots.Length} people\n" +
-                 $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
+                 $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, gave up {s.gaveUp}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
         return errs;
     }
 
@@ -179,6 +203,29 @@ static class LifeDebug
             Console.WriteLine($"car {c.id} {c.state} seg {c.seg}{(c.seg >= life.net.lanes.Count ? " (turn)" : "")} step {c.step}/{c.route?.Count} front {life.Front(c):0.00} s1 {c.s1:0.00} laggy {c.laggy} blockedBy [{string.Join(",", life.BlockedBy(c.id))}] arrived {(c.arrived < 0 ? "-" : TownClock.Format(c.arrived))}");
         foreach (var c in life.cars.Where(c => c.seg >= 0 && c.state == CarState.Waiting).Take(12))
             Console.WriteLine("  " + life.WhyWaiting(c));
+        // A jam: follow who each held-up car waits on to the end of the line, and say what the ends are doing.
+        var ends = new Dictionary<int, int>();
+        int cycles = 0;
+        foreach (var c in life.cars.Where(c => c.seg >= 0 && (c.state == CarState.Queued || c.state == CarState.Waiting)))
+        {
+            var seen = new HashSet<int>();
+            int x = c.id;
+            while (true)
+            {
+                if (!seen.Add(x)) { cycles++; x = -1; break; }
+                var by = life.BlockedBy(x);
+                if (by.Count == 0) break;
+                x = by[0];
+            }
+            if (x >= 0) ends[x] = ends.TryGetValue(x, out int n) ? n + 1 : 1;
+        }
+        Console.WriteLine($"held up: {ends.Values.Sum() + cycles}, in cycles {cycles}, ends {ends.Count}");
+        foreach (var (e, n) in ends.OrderByDescending(kv => kv.Value).Take(12))
+        {
+            var c = life.cars[e];
+            Console.WriteLine($"  end car {e} ({n} behind): {c.state} seg {c.seg}{(c.seg >= life.net.lanes.Count ? " (turn)" : "")} step {c.step}/{c.route?.Count} front {life.Front(c):0.00} s1 {c.s1:0.00} van {c.van} bus {c.bus}" +
+                              (c.state == CarState.Waiting ? "\n    " + life.WhyWaiting(c) : ""));
+        }
         var walkers = life.people.Where(p => p.trip != null && p.trip.mode == Mode.Walk).Take(5);
         foreach (var p in walkers) Console.WriteLine($"walker {p.id} piece {p.piece}/{p.walk?.Count} w0 {p.w0} crossWait {p.crossWait} node {(p.walk != null && p.piece < p.walk.Count ? p.walk[p.piece].node : -9)}");
         return 0;

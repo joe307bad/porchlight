@@ -1,4 +1,4 @@
-// Manage's focus view (docs/town-life.md §10): one person or one car, followed
+// Manage's focus view (docs/town-life.md §11): one person or one car, followed
 // by who they are rather than the slot they're drawn in, with
 //
 //   - their decision tree: each question their day and the town's rules asked
@@ -205,9 +205,10 @@ namespace Porchlight.Life
                 ["id"] = c.id,
                 ["clock"] = Now,
                 ["time"] = TownClock.Format(Now),
-                ["who"] = c.bus >= 0 ? "The town bus" : "A car",
+                ["who"] = c.bus >= 0 ? "The town bus" : c.van >= 0 ? "A van on its rounds" : "A car",
                 ["owner"] = c.owner,
                 ["bus"] = c.bus,
+                ["van"] = c.van,
                 ["state"] = c.state.ToString(),
                 ["slot"] = c.seg >= 0 || c.bus >= 0 ? c.slot : -1,
             };
@@ -323,6 +324,7 @@ namespace Porchlight.Life
             if (id < 0 || id >= cars.Count) return null;
             var c = cars[id];
             if (c.bus >= 0) return $"The bus · {CarDoing(c, null)}";
+            if (c.van >= 0) return $"Van #{c.van} · {CarDoing(c, null)} · on its rounds";
             string doing = CarDoing(c, null);
             if (c.owner < 0) return $"Car #{c.id} · {doing}";
             var o = people[c.owner];
@@ -422,6 +424,12 @@ namespace Porchlight.Life
             if (driver)
             {
                 if (c.bus >= 0) tree.Add(Why.Info("Who's driving, and where to?", "The town bus, round and round its loop", $"{busStops.Count} stops, by the timetable."));
+                else if (c.van >= 0 && c.seg >= 0)
+                {
+                    var (_, off) = Shift(c.van, TownClock.DayOf(Now));
+                    tree.Add(Why.Info("Who's driving, and where to?", $"A van on its rounds: next, {PlaceText(c.dest, building)}",
+                        $"Deliveries and tradespeople: its shift ends at {TownClock.Format(off)}. Each call's the nearest of {VAN_CHOICES} picked at random, so it works one part of town at a time; it drops off and goes on, without parking."));
+                }
                 else if (c.owner >= 0 && people[c.owner].trip != null && c.seg >= 0)
                 {
                     var t = people[c.owner].trip;
@@ -441,7 +449,7 @@ namespace Porchlight.Life
                 int turns = 0;
                 for (int k = c.step + 1; k < c.route.Count; k++) if (c.route[k] >= Lanes) turns++;
                 tree.Add(Why.Info("Which way?", $"The quickest by the clear roads: {Minutes(c.routeS)}, {turns} junction{(turns == 1 ? "" : "s")} still to go",
-                    $"Each street at its limit and each turn at its speed; pulling out from a stop sign onto a bigger road counts as {Router.UNPROTECTED_S:0} s more. Worked out at {TownClock.Format(c.routed)}."));
+                    $"Each street at its limit and each turn at its speed; a signal counts as {Router.SIGNAL_S:0.#} s (its wait, on average), and pulling out from a stop sign onto a bigger road {Router.UNPROTECTED_S:0} s. Worked out at {TownClock.Format(c.routed)}."));
             }
             tree.Add(StateWhy(c, building));
             if (c.bus < 0) tree.Add(StopWhy(c, building));
@@ -493,6 +501,7 @@ namespace Porchlight.Life
         Why StopWhy(Car c, Func<int, int> building)
         {
             if (c.dest.border) return Why.Info("Where will it stop?", "It won't: it leaves the map by the gate");
+            if (c.van >= 0) return Why.Info("Where will it stop?", $"It won't park: it drops off at {PlaceText(c.dest, building)} and goes on to its next call");
             if (options.infiniteParking) return Why.Info("Where will it stop?", $"By the door of {PlaceText(c.dest, building)}", "Parking's endless in this town (a check's setting).");
             if (c.target >= 0)
             {
@@ -566,6 +575,7 @@ namespace Porchlight.Life
                 return;
             }
             string end = c.dest.border ? "Leave the map by the gate"
+                : c.van >= 0 ? $"Drop off at {PlaceText(c.dest, building)}, then on to its next call"
                 : c.target >= 0 ? $"Park: {(net.spots[c.target].kind == SpotKind.Driveway ? "the driveway" : "the kerb spot it holds")} at {PlaceText(c.dest, building)}"
                 : $"Park near {PlaceText(c.dest, building)} (the free spot nearest the door, or hunt)";
             queue.Add(Item((long)(t * 1000), end, false));

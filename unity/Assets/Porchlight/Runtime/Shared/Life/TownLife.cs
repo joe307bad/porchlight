@@ -30,6 +30,8 @@ namespace Porchlight.Life
         /// <summary>Park anywhere, as many as like: no spots (gets trips going without parking).</summary>
         public bool infiniteParking;
         public bool buses = true;
+        /// <summary>Vans on their rounds (Rounds.cs).</summary>
+        public bool vans = true;
         /// <summary>How many cars and people can be drawn at once (the wire's slots); -1: sized to the town.</summary>
         public int carSlots = -1, peopleSlots = -1;
         /// <summary>How long before the start to begin, so trips under way at the start are on the road.</summary>
@@ -47,7 +49,7 @@ namespace Porchlight.Life
 
     public sealed partial class TownLife
     {
-        const long K_CAR = 1, K_CLEAR = 2, K_TRIP = 3, K_WALK = 4, K_BUS = 5;
+        const long K_CAR = 1, K_CLEAR = 2, K_TRIP = 3, K_WALK = 4, K_BUS = 5, K_VAN = 6, K_SWEEP = 7;
 
         public readonly TownModel model;
         public readonly TownZoning zoning;
@@ -100,7 +102,8 @@ namespace Porchlight.Life
             for (int i = 0; i < spotHolder.Length; i++) spotHolder[i] = -1;
             MakePeople();
             MakeBusRoute();
-            int carN = this.options.carSlots >= 0 ? this.options.carSlots : CarSlotsFor(people.Count);
+            if (this.options.vans) MakeVans();
+            int carN = this.options.carSlots >= 0 ? this.options.carSlots : CarSlotsFor(people.Count) + vans.Count;
             int personN = this.options.peopleSlots >= 0 ? this.options.peopleSlots : PersonSlotsFor(people.Count);
             int busN = busRoute != null ? buses.Count : 0;
             busSlotsFrom = carN;
@@ -143,6 +146,8 @@ namespace Porchlight.Life
             Now = from;
             Settle(from);
             StartBuses(from);
+            StartVans(from);
+            Schedule(K_SWEEP, 0, from + TownClock.MINUTE);
             RunUntil(moment);
         }
 
@@ -190,6 +195,8 @@ namespace Porchlight.Life
                 case K_TRIP: OnTripDue(people[id]); break;
                 case K_WALK: OnWalk(people[id]); break;
                 case K_BUS: OnBusDue(id); break;
+                case K_VAN: OnVanDue(id); break;
+                case K_SWEEP: Sweep(); break;
             }
         }
 
@@ -324,6 +331,8 @@ namespace Porchlight.Life
             c.slot = -1;
             carSlots[slot] = new Pose { who = -1 };
             stats.taken++;
+            // A van: another comes out on its rounds a little later.
+            if (c.van >= 0) Schedule(K_VAN, c.van, Now + 10 * TownClock.MINUTE);
             if (c.owner >= 0)
             {
                 var p = people[c.owner];

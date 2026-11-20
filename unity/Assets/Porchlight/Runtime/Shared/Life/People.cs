@@ -18,11 +18,14 @@ namespace Porchlight.Life
     public sealed partial class TownLife
     {
         /// <summary>
-        /// How much busier a town's life is than its plan's figures (Zoning's 2.5 people and 1.2 jobs a home): each
-        /// home's people and each building's jobs, this many times over. At one, a big town's streets looked empty;
-        /// it scales with the town, since it's per home and per job.
+        /// How many more people a town's life has than its plan's figures (Zoning's 2.5 a home), all of them at home
+        /// in the day: children, the retired, those working from home. Its workers and jobs are the plan's (so the
+        /// rushes are what the roads were laid out for); the rest make their trips through the day, to the shops,
+        /// school and visiting, mostly on foot. It's per home, so a bigger town has that many more.
         /// </summary>
-        public const double CROWD = 1;
+        public const double CROWD = 3;
+        /// <summary>A household has at most this many cars a home: those at home in the day share what's left.</summary>
+        const double CARS_A_HOME = 2;
         /// <summary>More people than homes or jobs by this much: the rest commute in or out, or pass through.</summary>
         public const double THROUGH = 1.2;
         /// <summary>The chance of a home slot or job slot, kept within these.</summary>
@@ -48,14 +51,17 @@ namespace Porchlight.Life
             var homeSlots = new List<int>();
             var jobSlots = new List<int>();
             var stayHome = new List<int>();
-            double workerCarry = 0, residentCarry = 0, jobCarry = 0;
+            double workerCarry = 0, residentCarry = 0;
+            var homesIn = new Dictionary<int, int>();
+            var carsIn = new Dictionary<int, int>();
             foreach (var b in zoning?.buildings ?? new List<ZonedBuilding>())
             {
                 if (!net.access.ContainsKey(b.buildingId)) continue;
                 if (b.homes > 0) homesList.Add(b.buildingId);
                 if (b.zone == Zone.Retail || b.zone == Zone.MixedUse) shops.Add(b.buildingId);
                 if (b.zone == Zone.Civic) schools.Add(b.buildingId);
-                workerCarry += b.homes * Zoning.WORKERS_A_HOME * CROWD;
+                homesIn[b.buildingId] = b.homes;
+                workerCarry += b.homes * Zoning.WORKERS_A_HOME;
                 residentCarry += b.homes * Zoning.PEOPLE_A_HOME * CROWD;
                 int workers = (int)Math.Floor(workerCarry);
                 workerCarry -= workers;
@@ -63,10 +69,7 @@ namespace Porchlight.Life
                 residentCarry -= residents;
                 for (int k = 0; k < workers; k++) homeSlots.Add(b.buildingId);
                 for (int k = 0; k < Math.Max(0, residents - workers); k++) stayHome.Add(b.buildingId);
-                jobCarry += b.jobs * CROWD;
-                int jobs = (int)Math.Floor(jobCarry);
-                jobCarry -= jobs;
-                for (int k = 0; k < jobs; k++) jobSlots.Add(b.buildingId);
+                for (int k = 0; k < b.jobs; k++) jobSlots.Add(b.buildingId);
             }
             if (shops.Count == 0) foreach (var b in zoning?.buildings ?? new List<ZonedBuilding>()) if (b.jobs > 0 && net.access.ContainsKey(b.buildingId)) shops.Add(b.buildingId);
             rng.Shuffle(homeSlots);
@@ -88,14 +91,23 @@ namespace Porchlight.Life
                 var kind = !home.border ? PersonKind.Worker : !work.border ? PersonKind.CommuterIn : PersonKind.Through;
                 if (kind == PersonKind.Through && gates > 1 && work.id == home.id) work = Place.Gate((home.id + 1 + rng.Int(0, gates - 2)) % gates);
                 bool car = kind != PersonKind.Worker || work.border || rng.Chance(WORKER_CARS);
+                if (car && !home.border) carsIn[home.id] = carsIn.TryGetValue(home.id, out int had) ? had + 1 : 1;
                 AddPerson(rng, kind, home, work, car);
             }
             // Workers no job was found for, and everyone else at home: children and the rest.
-            for (; h < homeSlots.Count; h++) AddPerson(rng, PersonKind.AtHome, Place.Building(homeSlots[h]), Place.Building(homeSlots[h]), rng.Chance(AT_HOME_CARS));
+            // (Each household's cars, up to CARS_A_HOME a home: the rest go without.)
+            bool CarFor(int b, bool wants)
+            {
+                int had = carsIn.TryGetValue(b, out int n) ? n : 0;
+                if (!wants || had >= CARS_A_HOME * Math.Max(1, homesIn.TryGetValue(b, out int homes) ? homes : 1)) return false;
+                carsIn[b] = had + 1;
+                return true;
+            }
+            for (; h < homeSlots.Count; h++) AddPerson(rng, PersonKind.AtHome, Place.Building(homeSlots[h]), Place.Building(homeSlots[h]), CarFor(homeSlots[h], rng.Chance(AT_HOME_CARS)));
             foreach (int b in stayHome)
             {
                 bool student = rng.Chance(STUDENTS) && schools.Count > 0;
-                AddPerson(rng, student ? PersonKind.Student : PersonKind.AtHome, Place.Building(b), student ? Place.Building(Nearest(schools, b, rng, 0)) : Place.Building(b), !student && rng.Chance(AT_HOME_CARS));
+                AddPerson(rng, student ? PersonKind.Student : PersonKind.AtHome, Place.Building(b), student ? Place.Building(Nearest(schools, b, rng, 0)) : Place.Building(b), CarFor(b, !student && rng.Chance(AT_HOME_CARS)));
             }
         }
 
@@ -328,7 +340,14 @@ namespace Porchlight.Life
 
         void ScheduleNext(Person p)
         {
-            if (p.next >= p.plan.Count) PlanDay(p, p.day + 1);
+            if (p.next >= p.plan.Count)
+            {
+                // A car left where its driver gave up in the traffic (Gridlock.cs) is fetched home by morning.
+                var c = p.car >= 0 ? cars[p.car] : null;
+                if (c != null && !p.home.border && p.at.Same(p.home) && c.seg < 0 && !c.offMap && c.parkedBy >= 0 && c.parkedBy != p.home.id && !wantsOut.Contains(c.id))
+                    ParkNear(c, p.home);
+                PlanDay(p, p.day + 1);
+            }
             if (p.plan.Count == 0)
             {
                 // A day with nothing in it: look again tomorrow.

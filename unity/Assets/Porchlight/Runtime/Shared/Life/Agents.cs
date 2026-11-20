@@ -57,6 +57,12 @@ namespace Porchlight.Life
         public bool stopped;
         /// <summary>Since when a player has stood in its way.</summary>
         public long heldSince = -1;
+        /// <summary>Where it was when it last moved (segment, front), and when: a car that hasn't in a long while gives up.</summary>
+        public int seenSeg = -1;
+        public double seenFront;
+        public long movedAt;
+        /// <summary>A van on its rounds: which one (-1: not a van).</summary>
+        public int van = -1;
         /// <summary>A bus: which one (-1: not a bus), and the stop it's at or last left.</summary>
         public int bus = -1;
         public int busStop;

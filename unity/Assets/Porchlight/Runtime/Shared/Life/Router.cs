@@ -14,6 +14,12 @@ namespace Porchlight.Life
     {
         /// <summary>What pulling out from a stop sign onto a bigger road costs a route (seconds).</summary>
         public const double UNPROTECTED_S = 30;
+        /// <summary>
+        /// What a signal costs a route (seconds): the wait, on average, of a car turning up at any moment (red half
+        /// the time, for half a stage on average). Counting it, routes don't thread every signal in town when there's
+        /// a way round, and the town's traffic spreads over its streets.
+        /// </summary>
+        public const double SIGNAL_S = RoadNet.STAGE_MS / 1000.0 / 4;
         /// <summary>A stop sign's stop (seconds), as routes count it.</summary>
         const double STOP_S = 2;
         /// <summary>The most trees of ways kept at once.</summary>
@@ -44,7 +50,7 @@ namespace Porchlight.Life
 
         public double LaneTime(Lane l) => l.Span / l.speed;
 
-        public double TurnTime(Movement m) => m.length / m.speed + (m.unprotected ? UNPROTECTED_S : 0) + (m.stops ? STOP_S : 0);
+        public double TurnTime(Movement m) => m.length / m.speed + (m.unprotected ? UNPROTECTED_S : 0) + (m.stops ? STOP_S : 0) + (m.signal ? SIGNAL_S : 0);
 
         Tree TreeTo(int target)
         {

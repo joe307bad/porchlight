@@ -30,6 +30,8 @@ run the same code.
 | `Life/Walking.cs` | Walkers, crossings and crowding. |
 | `Life/Buses.cs` | The bus loop, stops and riders. |
 | `Life/Analytics.cs` | Figures for Manage, and who's indoors where. |
+| `Life/Rounds.cs` | Vans on their rounds: how many, their shifts, their calls. |
+| `Life/Gridlock.cs` | Giving up in the traffic: a car that hasn't moved in 10 minutes. |
 | `Life/Focus.cs` | Manage's focus on one car or person: its decision tree, its queue, and its way ahead. |
 | `Life/TownKey.cs` | Parses a town's key (shared with the server worker). |
 | `Explore/Traffic.cs` | What the game draws: the slots as cars and walkers, plus the boats. |
@@ -193,7 +195,7 @@ A car at the front asks to go (`Ask`). The junction's rules are one
 function, `Judge`, that changes nothing: it asks its questions in order and
 returns go, or why not and when to ask again. `Ask` acts on that verdict.
 Manage's focus view calls the same function, so the reasons it shows are
-the rule that ran (§10). A car is refused if any of these hold, in this
+the rule that ran (§11). A car is refused if any of these hold, in this
 order:
 
 - it hasn't made its stop yet (stop signs);
@@ -218,6 +220,24 @@ a knot: everyone would wait forever. The newcomer is let through, and
 times a day in the biggest town). Without them, an early version of Ember
 Crossing wedged with 480 cars by mid-morning.
 
+### Giving up in the traffic
+
+A knot at a junction isn't the only way to wedge. A whole grid can lock: a
+ring of full lanes round a block, each car waiting for room the next one
+holds, with none of them at a junction to ask. Ember Crossing's evening
+rush did this, with 1,219 cars still in a ring at 3 am, because the knot
+check only runs when a car asks at a junction.
+
+So once a minute every car on the road is looked at (`Sweep`,
+`Life/Gridlock.cs`). One that hasn't moved 0.3 tiles in 10 minutes
+(`STUCK_MS`) **gives up its drive**: it pulls over by the nearest building
+and its driver walks the rest of the way. A driver bound for a gate gives
+up the trip instead; a van goes off its rounds. That frees a car's length
+in the ring, and the ring moves. The car is fetched home by the next
+morning. `stats.gaveUp` counts them: none in the small towns, a few
+hundred a day in Ember Crossing and Porchlight. (Cancelling drivers held up
+past a threshold is A/B Street's idea.)
+
 ### Players in the road
 
 `SetObstacles(points)` takes where the players are, on every update:
@@ -239,7 +259,20 @@ next junction, and a new route from there.
 
 - each lane's span at its limit;
 - each turn's curve at its speed;
-- a stop's 2 s, and an unprotected turn's 30 s.
+- a stop's 2 s, and an unprotected turn's 30 s;
+- a signal's 7.5 s (`SIGNAL_S`): the wait, on average, of a car turning up
+  at any moment, red half the time for half a 30 s stage on average.
+
+Counting signals keeps routes from threading every signal in town when
+there's a way round. Without it, Ember Crossing's long trips all funnelled
+through its core, where signals stand 1–3 tiles apart, and jammed it. With
+it, its mean drive fell from 27 to 13 minutes and its rush-hour peak from
+754 cars to 304.
+
+Coordinating close signals (one timing for signals under 16 tiles apart,
+a green wave along each road) was tried and made it worse: every cross
+street went red at once, which starved it (38 minutes, 765 cars). Each
+signal keeps its own timing.
 
 Trips to the same lane share one **tree of ways**: a reverse Dijkstra from
 the target over the turns into each lane, made the first time it's asked
@@ -288,10 +321,18 @@ The population is made from the town's zoning (`Zoning.cs`), by the
 
 - There are **home slots**: 1.2 working residents per household.
 - There are **job slots**: one per job.
-- Both are taken **three times over** (`CROWD`): the town's life is busier
-  than its plan's figures, which stay as zoning says. With the plan's own
-  numbers a big town's streets looked empty. Because it's per home and per
-  job, a bigger town gets proportionally more people.
+- Each home has **three times** the plan's 2.5 people (`CROWD`). The extra
+  people are all at home in the day: children, the retired, those working
+  from home. The workers and jobs are the plan's, so the rushes are what
+  the roads were laid out for, and the extra people's trips (to the shops,
+  school and visiting) come through the day, mostly on foot. It's per home,
+  so a bigger town gets proportionally more.
+- A household has at most **2 cars a home** (`CARS_A_HOME`): workers' come
+  first, then those at home in the day share what's left.
+
+Tripling workers and jobs as well was tried. Rush hour tripled and Ember
+Crossing and Porchlight wedged, without the streets looking much busier
+in between: commuters bunch at the rushes.
 - People = 1.2 × the larger of the two. The extra fifth are through
   traffic.
 - Each person tries for a home slot, then a job slot. The chances of each
@@ -414,11 +455,40 @@ are short enough to walk.
 
 ---
 
-## 9. Drawing it: the slots
+## 9. Vans on their rounds
+
+A town's streets aren't only its own people's comings and goings. Vans
+call at its homes, shops and offices all day: deliveries, tradespeople,
+the post. They're most of what keeps a side street from being empty
+between the rushes. Without them, only 1–6% of a town's blocks had a car
+on them by day. `Life/Rounds.cs` has them:
+
+- **How many:** 0.6 a block (`VANS_A_BLOCK`; a block is a street between
+  two junctions, either way). A bigger town has more.
+- **A shift:** out between 06:30 and 07:30, off between 20:00 and 22:00,
+  from the van's id and the day.
+- **The rushes are sat out** (07:45–09:15 and 16:15–18:15). A van that
+  finishes a call in one waits off the road until it's over. The rushes
+  have the commuters, and a van then only holds them up: all-day vans
+  doubled Ember Crossing's rush-hour drives.
+- **Calls:** a van comes out at a building and drives to its next call:
+  the nearest of three buildings picked at random, at least 12 tiles away.
+  So it works one part of town at a time. It drops off and goes on: vans
+  never park, so they don't take the kerb spots residents need.
+
+Vans are cars with no owner (`Car.van`). They're drawn like any car, can
+be taken by a player (another comes out 10 minutes later), and give up in
+the traffic like anyone else. In Manage, hovering one says "Van #n · … · on
+its rounds", and focusing on it says where its next call is and when its
+shift ends.
+
+---
+
+## 10. Drawing it: the slots
 
 The game draws a fixed set of **slots**, not every agent:
 
-- **Car slots:** `clamp(ceil(people × 0.05), 12, 900)`, with the buses'
+- **Car slots:** `clamp(ceil(people × 0.05), 12, 900)` plus one a van, with the buses'
   slots after them. A congested town's rush puts 4–6% of its people on the
   road at once.
 - **Person slots:** `clamp(ceil(people × 0.06), 16, 1200)`.
@@ -458,7 +528,7 @@ The slots go out exactly as cars and people always have (7 bytes each,
 
 ---
 
-## 10. What it counts, and Manage
+## 11. What it counts, and Manage
 
 `LifeStats` counts as the day goes:
 
@@ -572,7 +642,7 @@ their legs).
 
 ---
 
-## 11. Checks
+## 12. Checks
 
 All of these run in CI (`.github/workflows/deploy.yml`).
 
@@ -585,17 +655,23 @@ fails if:
 - more than 2% of trips failed;
 - more were out at once than there are slots;
 - there were fewer trips than people;
+- by day (08:00–20:00) fewer than 15% of the town's blocks had a car on
+  them, on average (`BlocksInUse`);
+- a van set off on a call in a rush;
 - a car overtook the one ahead or left its interval (checked every minute);
 - the same day doesn't come out the same twice.
 
 It prints how each day went, for comparing across commits:
 
-| Town | People | Trips | Failed | Walk / drive / bus | Peak cars on the road | Day |
+| Town | People | Trips | Failed | Walk / drive / bus | Peak cars on the road | Blocks with a car by day |
 | --- | --- | --- | --- | --- | --- | --- |
-| Ember Crossing | 5,502 | 16,595 | 93 | 10,402 / 6,075 / 25 | 236 | 5.4 s |
-| Porchlight | 5,418 | 16,427 | 7 | 10,133 / 6,252 / 35 | 54 | 4.4 s |
-| Lanternport | 1,205 | 3,637 | 16 | 2,705 / 910 / 6 | 14 | 0.3 s |
-| Juniper Falls | 391 | 1,196 | 2 | 1,032 / 162 / 0 | 6 | 0.1 s |
+| Ember Crossing | 15,542 | 47,625 | 407 | 39,849 / 7,328 / 41 | 627 | 23% |
+| Porchlight | 15,303 | 47,159 | 203 | 39,057 / 7,818 / 81 | 492 | 25% |
+| Lanternport | 3,405 | 10,481 | 35 | 9,273 / 1,154 / 19 | 118 | 23% |
+| Juniper Falls | 1,106 | 3,374 | 3 | 3,181 / 190 / 0 | 63 | 26% |
+
+(Before the extra people and the vans: 5,502 / 5,418 / 1,205 / 391 people,
+and 6% / 4% / 2% / 1% of blocks with a car on them.)
 
 Ember Crossing's planned core (short blocks between back-to-back signals,
 from the town planning work) makes the only real rush hour: its drives take
@@ -628,6 +704,10 @@ given/when/then:
 - **Focus only looks.** Given the same town twice through two hours of the
   morning, when one is focused on (everyone out, every ten seconds), then
   both come out the same: the same trips, every car where the other's is.
+- **Vans at midday.** Given a town at noon, then at least a quarter of its
+  vans are out, none has an owner or holds a parking spot, and Manage's
+  focus and hover each say it's a van on its rounds. An hour on, at least
+  half are on to another call.
 - **Turn names.** Given every turn in a town, right turns are on average
   shorter than left (traffic keeps right), and there are some of each.
 - **A player in a junction.** Given a player in the middle of the busiest
@@ -687,6 +767,7 @@ contributors, Apache-2.0) describes in its design documents:
 - "laggy heads";
 - reserving room on the lane out;
 - breaking cycles of waiting cars;
+- cancelling drivers held up past a threshold;
 - generating trips from building capacities;
 - a jittered hunt for parking.
 

@@ -151,6 +151,9 @@ namespace Porchlight.Sim
                     try
                     {
                         var town = new SimTown(id, key);
+                        // Started here too (its life run up to now from a little before), not in the first tick: that
+                        // takes a while in a big town, and every other town's tick would wait on it.
+                        town.Step(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                         Log($"town {id} made in {sw.ElapsedMilliseconds} ms: {town.traffic.cars.Count} cars, {town.people.Count} people");
                         made.Enqueue(town);
                     }

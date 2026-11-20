@@ -158,9 +158,11 @@ export interface EntityFocus {
   /** A person: Inside, OnTrip or OffMap; their car (-1: none). */
   where?: string;
   car?: number;
-  /** A car: whose (-1: the bus), which bus (-1: none), its state. */
+  /** A car: whose (-1: a bus or van), which bus (-1: none), its state. */
   owner?: number;
   bus?: number;
+  /** A van on its rounds: which one (-1: not a van). */
+  van?: number;
   state?: string;
   /** What they're drawn as now (a person driving is drawn as their car), and its place in the feed's records. */
   drawn: 'car' | 'person' | 'none';

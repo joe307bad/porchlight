@@ -59,6 +59,7 @@ static class LifeCheck
         yield return ("Manage's focus: every person and car out explained, its queue in order, its way drawn from where it is", Focus);
         yield return ("Manage's focus only looks: a morning watched closely comes out the same as one not", FocusOnlyLooks);
         yield return ("turns are named the driver's way: right turns are the tight ones", TurnNames);
+        yield return ("vans on their rounds at midday: out, calling, and saying so", VansAtMidday);
         yield return ("no car drives through a player standing in a junction", JunctionPlayer);
         yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
         yield return ("with parking everywhere, nobody hunts for a spot", InfiniteParking);
@@ -402,6 +403,34 @@ static class LifeCheck
     /// Given every turn in the town, when each is named the driver's way, then the right turns are the tight ones
     /// (shorter on average than the left: traffic keeps right), and there are some of each.
     /// </summary>
+    /// <summary>
+    /// Given a town at noon, then vans are out on their rounds (a car on the road with no owner), each van going to
+    /// a call it'll drop off at without parking, and Manage's focus and hover say it's a van on its rounds.
+    /// </summary>
+    static string VansAtMidday(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var life = new TownLife(model, layout, zoning);
+        if (life.vans.Count == 0) return "no vans";
+        life.Start(TrafficDay.Morning + 4 * TownClock.HOUR);
+        var out_ = life.vans.Where(v => v.seg >= 0).ToList();
+        if (out_.Count < life.vans.Count / 4) return $"only {out_.Count} of {life.vans.Count} vans out at noon";
+        foreach (var v in out_)
+        {
+            if (v.owner >= 0) return $"van {v.van} has an owner";
+            if (v.target >= 0) return $"van {v.van} is holding a parking spot";
+            var f = life.FocusCar(v.id);
+            var tree = (List<Dictionary<string, object>>)f["tree"];
+            if (!((string)tree[0]["a"]).StartsWith("A van on its rounds")) return $"van {v.van}'s focus says \"{tree[0]["a"]}\"";
+            if (!life.BriefCar(v.id).StartsWith($"Van #{v.van} ")) return $"van {v.van}'s hover says \"{life.BriefCar(v.id)}\"";
+        }
+        // An hour on, they've moved on to other calls, and none's stuck.
+        var calls = out_.ToDictionary(v => v.id, v => v.dest.id);
+        life.RunUntil(life.Now + TownClock.HOUR);
+        int moved = out_.Count(v => v.seg >= 0 && v.dest.id != calls[v.id]);
+        if (moved < out_.Count / 2) return $"only {moved} of {out_.Count} vans on to another call an hour on";
+        return null;
+    }
+
     static string TurnNames(TownModel model, IsoLayout layout, TownZoning zoning)
     {
         var life = new TownLife(model, layout, zoning);
