@@ -433,7 +433,7 @@ static class LifeCheck
     }
 
     /// <summary>
-    /// Given an hour of a town's morning rush, then: the router's been told the lanes' hold-ups; drivers going to a
+    /// Given a town's morning rush (07:30-09:30), then: the router's been told the lanes' hold-ups; drivers going to a
     /// building hold a kerb spot near its door, none more than RESERVE_REACH away; a driver waiting to pull out was let
     /// in; a light changed for a car waiting at red with nobody coming the other way (if the town has lights); and in a
     /// town big enough to queue, a held-up driver took a quicker way.
@@ -442,7 +442,7 @@ static class LifeCheck
     {
         var life = new TownLife(model, layout, zoning);
         life.Start(TrafficDay.Morning - 45 * TownClock.MINUTE);
-        life.RunUntil(TrafficDay.Morning + 15 * TownClock.MINUTE);
+        life.RunUntil(TrafficDay.Morning + 75 * TownClock.MINUTE);
         var s = life.stats;
         if (s.reserved == 0) return "nobody held a spot as they set off";
         foreach (var c in life.cars)

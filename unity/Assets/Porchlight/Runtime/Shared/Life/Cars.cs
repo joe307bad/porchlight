@@ -116,10 +116,17 @@ namespace Porchlight.Life
         }
 
         /// <summary>A car held back gets a fresh interval from where it really is, so nothing jumps when what held it goes.</summary>
-        void Refresh(Car c)
+        void Refresh(Car c) => Refresh(c, double.NaN);
+
+        /// <summary>
+        /// As Refresh, going on from `p` (NaN: where it is now). Lifting what held a car back (the back of the car
+        /// ahead clearing, a driver let in), its own interval has run on past where it was held: it goes on from where
+        /// it was (as Front said before), not leaping to where its interval's got to.
+        /// </summary>
+        void Refresh(Car c, double p)
         {
             if (c.seg < 0 || c.state == CarState.Parking || c.state == CarState.Unparking || c.state == CarState.AtStop) return;
-            double p = Front(c);
+            if (double.IsNaN(p)) p = Front(c);
             if (p >= c.s1 - 1e-6)
             {
                 Schedule(K_CAR, c.id, Now);
@@ -286,6 +293,9 @@ namespace Porchlight.Life
             c.laggy = -1;
             Cancel(K_CLEAR, c.id);
             var q = queues[seg];
+            // Where the car behind it is, before it's let go (its interval's run on, held back by this one's back).
+            int behind = q.cars.Count > 0 && q.cars[0] != c.id ? q.cars[0] : -1;
+            double was = behind >= 0 ? Front(cars[behind]) : double.NaN;
             if (q.laggy == c.id) q.laggy = -1;
             version++;
             if (seg < Lanes) Uncommit(seg, c);
@@ -295,7 +305,8 @@ namespace Porchlight.Life
                 if (underway.TryGetValue(node, out var list)) list.RemoveAll(u => u.car == c.id);
                 Wake(node);
             }
-            RefreshFront(seg);
+            if (behind >= 0) Refresh(cars[behind], was);
+            else RefreshFront(seg);
         }
 
         // --- Junctions --------------------------------------------------------------------------
@@ -843,11 +854,12 @@ namespace Porchlight.Life
             if (q.letting == c.id && q.held == held) return;
             if (q.letting != c.id) stats.letIn++;
             int was = q.held;
+            double wasAt = was >= 0 && was != held && cars[was].seg == c.startLane ? Front(cars[was]) : double.NaN;
             q.letting = c.id;
             q.held = held;
             q.heldAt = Math.Max(0, stop);
             version++;
-            if (was >= 0 && was != held && cars[was].seg == c.startLane) Refresh(cars[was]);
+            if (was >= 0 && was != held && cars[was].seg == c.startLane) Refresh(cars[was], wasAt);
             if (held >= 0) Refresh(cars[held]);
         }
 
@@ -858,10 +870,11 @@ namespace Porchlight.Life
             var q = queues[c.startLane];
             if (q.letting != c.id) return;
             int held = q.held;
+            double was = held >= 0 && cars[held].seg == c.startLane ? Front(cars[held]) : double.NaN;
             q.letting = -1;
             q.held = -1;
             version++;
-            if (held >= 0 && cars[held].seg == c.startLane) Refresh(cars[held]);
+            if (held >= 0 && cars[held].seg == c.startLane) Refresh(cars[held], was);
         }
 
         /// <summary>On the last lane of its way: find a spot ahead to stop for, near the door, or hunt for one.</summary>

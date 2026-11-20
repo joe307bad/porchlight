@@ -760,7 +760,7 @@ given/when/then:
 - **Focus only looks.** Given the same town twice through two hours of the
   morning, when one is focused on (everyone out, every ten seconds), then
   both come out the same: the same trips, every car where the other's is.
-- **The rush travels smart.** Given an hour of a town's morning rush,
+- **The rush travels smart.** Given a town's morning rush (07:30–09:30),
   then: drivers held spots as they set off, none more than 30 tiles from
   the door; a light changed for a waiting car (in a town with lights); and
   in a big town (over 10,000 people), held-up drivers took another way and
