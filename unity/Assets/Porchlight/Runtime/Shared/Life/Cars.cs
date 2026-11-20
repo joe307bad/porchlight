@@ -36,6 +36,8 @@ namespace Porchlight.Life
         public const long PARK_KERB_MS = 15_000, UNPARK_KERB_MS = 10_000, DRIVEWAY_MS = 5_000;
         /// <summary>A refused car asks again after this long anyway, in case it was never woken.</summary>
         const long ASK_AGAIN_MS = 10_000;
+        /// <summary>A car at the end of a turn with no space yet at the start of the lane beyond looks again this soon.</summary>
+        const long LOOK_AGAIN_MS = 300;
         /// <summary>Waited this long at a junction, a car goes anyway (a last resort: the knot check should have freed it).</summary>
         const long GIVE_WAY_MS = 3 * TownClock.MINUTE;
         /// <summary>Held up by a player this long, a car turns round.</summary>
@@ -51,9 +53,9 @@ namespace Porchlight.Life
         /// <summary>Which cars each waiting car is waiting on.</summary>
         readonly Dictionary<int, List<int>> blockedBy = new Dictionary<int, List<int>>();
 
-        int version = 1;
+        long version = 1;
         double[] frontMemo;
-        int[] frontStamp;
+        long[] frontStamp;
 
         int Lanes => net.lanes.Count;
 
@@ -208,8 +210,17 @@ namespace Porchlight.Life
             }
             if (c.seg >= Lanes)
             {
-                // Round the turn: into the lane (room was kept for it).
-                Advance(c, c.route[c.step + 1]);
+                // Round the turn: into the lane (room was kept for it), once there's space at its start. (There
+                // mightn't be: a car let in to undo a knot, or another turn's car into the same lane just ahead.)
+                int next = c.route[c.step + 1];
+                int behind = LastOn(next);
+                if (behind >= 0 && Front(cars[behind]) - cars[behind].length < FOLLOWING - 1e-6)
+                {
+                    c.state = CarState.Queued;
+                    Schedule(K_CAR, c.id, Now + LOOK_AGAIN_MS);
+                    return;
+                }
+                Advance(c, next);
                 return;
             }
             var queue = queues[c.seg];
@@ -346,8 +357,9 @@ namespace Porchlight.Life
             if (by != null)
             {
                 blockedBy[c.id] = by;
-                // Gridlock: the cars waiting on each other all the way round to this one. Let it go anyway,
-                // and the knot comes undone. (So too, last of all, for a car that's waited far too long.)
+                // Gridlock: no room beyond, and the cars waiting on each other all the way round to this one. Let
+                // it go anyway (it waits on its turn, in the box), and the knot comes undone. (So too, last of all,
+                // for a car that's waited far too long.)
                 bool knot = false;
                 foreach (int b in by) knot |= WaitsOn(b, c.id);
                 bool tooLong = Now - c.arrived > GIVE_WAY_MS;
@@ -367,6 +379,34 @@ namespace Porchlight.Life
             Commit(m.to, c);
             stats.Delay(j.node, Now - c.arrived, car: true);
             Advance(c, Lanes + mid);
+        }
+
+        /// <summary>Why a waiting car hasn't gone (for the checks and the debug view): its turn, the room beyond, and who's in the way.</summary>
+        public string WhyWaiting(Car c)
+        {
+            if (c.seg < 0 || c.seg >= Lanes || c.route == null || c.step + 1 >= c.route.Count) return $"car {c.id}: not at a junction";
+            int mid = c.route[c.step + 1] - Lanes;
+            var m = net.movements[mid];
+            var j = net.junctions[m.node];
+            var q = queues[m.to];
+            var parts = new List<string> { $"car {c.id} at node {j.node} ({j.control}) turn {mid}{(m.uturn ? " U" : "")} into lane {m.to} (span {net.lanes[m.to].Span:0.00})" };
+            parts.Add($"room: committed {q.committed:0.00} + {c.length + FOLLOWING:0.00} {(Room(m.to, c) ? "fits" : "doesn't fit")}, {q.cars.Count} on it [{string.Join(",", q.cars)}], lastIn {q.lastIn}");
+            double held = 0;
+            foreach (var o in cars)
+            {
+                if (o.seg == m.to || (o.laggy == m.to)) held += o.length + FOLLOWING;
+                else if (o.seg >= Lanes && net.movements[o.seg - Lanes].to == m.to) held += o.length + FOLLOWING;
+            }
+            parts.Add($"actually held {held:0.00}");
+            if (underway.TryGetValue(j.node, out var going))
+            {
+                var crossing = new List<string>();
+                foreach (var g in going) if (j.conflicts[m.local][g.local]) crossing.Add($"{g.car}:{cars[g.car].state}/seg{cars[g.car].seg}");
+                parts.Add($"underway [{string.Join(",", crossing)}]");
+            }
+            if (blockedBy.TryGetValue(c.id, out var by)) parts.Add($"blockedBy [{string.Join(",", by)}]");
+            parts.Add($"waited {(Now - c.arrived) / 1000}s, next event {(events.When(Key(K_CAR, c.id)) - Now) / 1000}s");
+            return string.Join("; ", parts);
         }
 
         /// <summary>Does `from` wait (through whoever it's waiting on, and they on, …) on `target`?</summary>
@@ -399,6 +439,19 @@ namespace Porchlight.Life
             int i = q.cars.IndexOf(x);
             if (i > 0) yield return q.cars[i - 1];
             else if (i == 0 && q.laggy >= 0) yield return q.laggy;
+            // At the end of a turn, waiting for space on the lane beyond: on its last car.
+            if (i == 0 && c.seg >= Lanes && c.state == CarState.Queued && c.step + 1 < c.route.Count)
+            {
+                int behind = LastOn(c.route[c.step + 1]);
+                if (behind >= 0) yield return behind;
+            }
+        }
+
+        /// <summary>The last car into a lane (on it, or with its back still there), or -1.</summary>
+        int LastOn(int lane)
+        {
+            var q = queues[lane];
+            return q.cars.Count > 0 ? q.cars[q.cars.Count - 1] : -1;
         }
 
         /// <summary>Everyone waiting at a junction asks again now: longest waiting first.</summary>

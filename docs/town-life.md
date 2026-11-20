@@ -62,7 +62,9 @@ trip, walk and bus.
 
 `TownLife.RunUntil(t)` pops and handles every event up to `t`. Drawing at
 any moment needs no events: each car's position is a pure function of its
-interval (below).
+interval (below). Each car's front is remembered until anything changes,
+including the clock, so looking at the town never changes what it does
+next.
 
 ### Starting mid-day
 
@@ -168,6 +170,14 @@ stays counted there, so the car behind can't close up, until its front is
 a car-length into the new segment. Until then it goes no faster than the
 segment it's leaving. That way it swings out of a slow turn, rather than
 snapping to the next lane's speed.
+
+### The end of a turn
+
+A car reaching the end of its turn moves onto the lane beyond only when
+there's space at the lane's start: the last car in must be a following gap
+clear of it. Otherwise it waits on the turn, in the box, and looks again
+every 300 ms. Two cars can be on turns into the same lane at once (one let
+through to undo a knot), and they never end up inside each other.
 
 ### Room ahead
 
@@ -398,8 +408,9 @@ are short enough to walk.
 
 The game draws a fixed set of **slots**, not every agent:
 
-- **Car slots:** `clamp(ceil(people × 0.02), 12, 150)`, with the buses'
-  slots after them.
+- **Car slots:** `clamp(ceil(people × 0.05), 12, 300)`, with the buses'
+  slots after them. A congested town's rush puts 4–6% of its people on the
+  road at once.
 - **Person slots:** `clamp(ceil(people × 0.06), 16, 400)`.
 
 A car takes a slot when it comes out onto the road, and gives it back when
@@ -407,7 +418,7 @@ it parks. A walker takes one when they step outside, and gives it back at
 the door. An empty slot is **hidden**. Each slot keeps one car model or one
 walker look for good, so nothing about a slot changes but where it is and
 whether it's shown. `traffic-day` fails if more are ever out than there are
-slots. In practice the peak is about 40% of them.
+slots.
 
 `TownLife.Draw()` fills `carSlots` and `personSlots` with a pose (shown, x,
 y, heading, who) from each agent's interval or walk. `Explore/Traffic.cs`

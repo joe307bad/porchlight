@@ -129,7 +129,9 @@ static class TrafficDay
         foreach (var (lead, follow) in life.Pairs())
         {
             double gap = life.Front(lead) - lead.length - life.Front(follow);
-            if (gap < TownLife.FOLLOWING - 1e-6) errs.Add($"{TownClock.Format(t)}: car {follow.id} {gap:0.000} tiles behind car {lead.id}");
+            if (gap < TownLife.FOLLOWING - 1e-6)
+                errs.Add($"{TownClock.Format(t)}: car {follow.id} {gap:0.000} tiles behind car {lead.id} on segment {lead.seg}{(lead.seg >= life.net.lanes.Count ? " (turn)" : "")}: " +
+                         $"lead {lead.state} front {life.Front(lead):0.00} len {lead.length:0.00} [{lead.s0:0.00}->{lead.s1:0.00}] laggy {lead.laggy}; follow {follow.state} front {life.Front(follow):0.00} [{follow.s0:0.00}->{follow.s1:0.00}] laggy {follow.laggy} step {follow.step}");
             if (errs.Count > 5) return;
         }
     }
@@ -175,6 +177,8 @@ static class LifeDebug
         Console.WriteLine(string.Join(", ", states));
         foreach (var c in life.cars.Where(c => c.seg >= 0).Take(15))
             Console.WriteLine($"car {c.id} {c.state} seg {c.seg}{(c.seg >= life.net.lanes.Count ? " (turn)" : "")} step {c.step}/{c.route?.Count} front {life.Front(c):0.00} s1 {c.s1:0.00} laggy {c.laggy} blockedBy [{string.Join(",", life.BlockedBy(c.id))}] arrived {(c.arrived < 0 ? "-" : TownClock.Format(c.arrived))}");
+        foreach (var c in life.cars.Where(c => c.seg >= 0 && c.state == CarState.Waiting).Take(12))
+            Console.WriteLine("  " + life.WhyWaiting(c));
         var walkers = life.people.Where(p => p.trip != null && p.trip.mode == Mode.Walk).Take(5);
         foreach (var p in walkers) Console.WriteLine($"walker {p.id} piece {p.piece}/{p.walk?.Count} w0 {p.w0} crossWait {p.crossWait} node {(p.walk != null && p.piece < p.walk.Count ? p.walk[p.piece].node : -9)}");
         return 0;

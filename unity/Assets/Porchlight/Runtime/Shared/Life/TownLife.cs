@@ -63,7 +63,18 @@ namespace Porchlight.Life
         readonly EventQueue events = new EventQueue();
 
         /// <summary>The moment the town's life has reached (ms since 1970).</summary>
-        public long Now { get; private set; }
+        /// <summary>The town clock where its life has got to (ms since 1970). Moving it on stales every car's remembered front.</summary>
+        public long Now
+        {
+            get => now;
+            private set
+            {
+                if (value == now) return;
+                now = value;
+                version++;
+            }
+        }
+        long now;
         public bool Started { get; private set; }
 
         /// <summary>The wire's slots: what's drawn in each.</summary>
@@ -105,7 +116,7 @@ namespace Porchlight.Life
                 carSlots[carN + k].who = buses[k].id;
             }
             frontMemo = new double[cars.Count + 16];
-            frontStamp = new int[cars.Count + 16];
+            frontStamp = new long[cars.Count + 16];
         }
 
         /// <summary>The most wanderers a town has: townsfolk strolling with nowhere to be (Pedestrian), besides those on their way somewhere.</summary>
@@ -115,7 +126,7 @@ namespace Porchlight.Life
         public static int Wanderers(double walkable) => (int)Math.Min(MOST_WANDERERS, Math.Floor(walkable / 48));
 
         /// <summary>Car slots for a town of this many people: enough for its busiest hour, with room to spare.</summary>
-        public static int CarSlotsFor(int population) => Math.Max(12, Math.Min(150, (int)Math.Ceiling(population * 0.02)));
+        public static int CarSlotsFor(int population) => Math.Max(12, Math.Min(300, (int)Math.Ceiling(population * 0.05)));
 
         public static int PersonSlotsFor(int population) => Math.Max(16, Math.Min(400, (int)Math.Ceiling(population * 0.06)));
 
