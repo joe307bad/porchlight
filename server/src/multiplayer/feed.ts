@@ -20,8 +20,9 @@
 //   GET /mp/sim/focus?town=<key>&kind=car|person&slot=<n> (or &id=<n>)
 //                            one car or townsperson, found by where it's drawn (its place in
 //                            the positions frame) or who it is (the id an earlier answer gave):
-//                            its decision tree, its queue of what's next, and its way ahead
-//                            (docs/town-life.md §10; JSON)
+//                            its decision tree, its queue of what's next, its day, and its way
+//                            ahead (docs/town-life.md §10; JSON); &brief=1: just a line of who
+//                            and what they're doing, for the map's hover
 //
 // One timer serves every viewer: each tick packs each town once (its players,
 // and its cars and townsfolk exactly as the game packs them, WorldSync.cs: the
@@ -408,7 +409,8 @@ export class TrafficFeed {
       if ((kind !== 'car' && kind !== 'person') || !Number.isInteger(i) || i < 0) return send(400, { error: 'Say kind=car or person, and slot= or id=.' });
       const sim = this.sim?.running(key, Date.now()) ?? null;
       if (!sim) return send(404, { error: "The simulation isn't running that town." });
-      const answer = await this.sim!.pool.ask(key, kind === 'car' ? 'focus-car' : 'focus-person', i, by);
+      const brief = q.get('brief') === '1';
+      const answer = await this.sim!.pool.ask(key, `${brief ? 'brief' : 'focus'}-${kind}` as 'focus-car' | 'focus-person' | 'brief-car' | 'brief-person', i, by);
       if (!answer) return send(404, { error: kind === 'car' ? 'No such car.' : 'No such townsperson.' });
       return send(200, { town: key, ...(answer as object) });
     }

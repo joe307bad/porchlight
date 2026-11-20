@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { focusPoint, isFocus, mark, untilText, type EntityFocus, type FocusRoom } from '../src/life.ts';
+import { dayMark, focusPoint, isFocus, mark, untilText, type EntityFocus, type FocusRoom } from '../src/life.ts';
 
 const focus = (o: Partial<EntityFocus>): EntityFocus => ({
   town: 'seed=x',
@@ -62,6 +62,10 @@ test("a queue's steps say when: now, in seconds or minutes, or later in the day 
   assert.equal(untilText({ at: null, time: null, what: 'Walk from the car', now: false }, clock), 'then');
   // A step whose time has come (the answer's a second old): now.
   assert.equal(untilText({ at: clock - 500, time: '08:14:59', what: 'Junction 3', now: false }, clock), 'now');
+});
+
+test("a day's trips are marked made, failed, under way, next and later", () => {
+  assert.deepEqual((['done', 'failed', 'now', 'next', 'later'] as const).map(dayMark), ['✓', '✗', '▶', '→', '·']);
 });
 
 test('a click that finds a wanderer or an empty slot is no focus', () => {

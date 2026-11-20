@@ -288,6 +288,10 @@ The population is made from the town's zoning (`Zoning.cs`), by the
 
 - There are **home slots**: 1.2 working residents per household.
 - There are **job slots**: one per job.
+- Both are taken **three times over** (`CROWD`): the town's life is busier
+  than its plan's figures, which stay as zoning says. With the plan's own
+  numbers a big town's streets looked empty. Because it's per home and per
+  job, a bigger town gets proportionally more people.
 - People = 1.2 × the larger of the two. The extra fifth are through
   traffic.
 - Each person tries for a home slot, then a job slot. The chances of each
@@ -414,10 +418,10 @@ are short enough to walk.
 
 The game draws a fixed set of **slots**, not every agent:
 
-- **Car slots:** `clamp(ceil(people × 0.05), 12, 300)`, with the buses'
+- **Car slots:** `clamp(ceil(people × 0.05), 12, 900)`, with the buses'
   slots after them. A congested town's rush puts 4–6% of its people on the
   road at once.
-- **Person slots:** `clamp(ceil(people × 0.06), 16, 400)`.
+- **Person slots:** `clamp(ceil(people × 0.06), 16, 1200)`.
 
 A car takes a slot when it comes out onto the road, and gives it back when
 it parks. A walker takes one when they step outside, and gives it back at
@@ -525,12 +529,22 @@ marked ✓ or ✗; a fact (how long, how fast, which way) is unmarked.
   way), and where it'll stop (driveway, the kerb spot it holds, hunting).
   A car waiting at a junction gets `Judge`'s questions, each answered.
 
+**Their day** comes first: where they are in their routine. It lists
+today's trips in order: those made (✓, with when they got there) or
+failed (✗, and why), the one under way (▶, with which leg), the next (→)
+and the rest (·), then tomorrow's once it's planned. Above it, a sentence
+says what decides what happens next: on a trip, each leg ends when they get
+there; otherwise only their plan moves them, and the next trip goes when
+it's due (or as soon as they're back). Below it, who they are and the rule
+their day was drawn up by. A car shows its owner's day, since that's what
+sends it out. Each person remembers their last six trips for this.
+
 **The decision queue** is what comes next, in order, each with when it
 starts where that's known:
 
 - a person: the rest of this trip's legs (the one under way first; when it
   ends, about, for a walk at their pace or a drive at the limits), arriving,
-  then the rest of the day's plan. A trip due before they're back goes as
+  then their plan's next trip (the rest are in their day). A trip due before they're back goes as
   soon as they are (it's shown then, with when it was due);
 - a car: what it's doing now, each junction ahead (up to 12) with the turn
   it takes and the junction's control, then where it parks or the gate it
@@ -543,6 +557,10 @@ and turns to where it'll stop, or the walker's pieces of sidewalk and
 crossings. A ring marks the focus, dashed when it isn't out (indoors, or
 parked), and a cross marks where it's going. **Follow** keeps it in the
 middle of the map.
+
+**Hovering** a car or townsperson asks for a line about them
+(`&brief=1`): who, what they're doing, and where in their day ("trip 2 of
+4 today"), or whose errand a car is on. Clicking opens the focus.
 
 Turns are named the driver's way. Lane +1 runs on the side `SideLane` calls
 left of the road's direction, because the tile frame is mirrored; that is

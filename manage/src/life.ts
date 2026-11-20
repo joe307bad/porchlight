@@ -172,8 +172,26 @@ export interface EntityFocus {
   /** The way ahead (town frame), and where it ends. */
   path: [number, number][];
   dest: [number, number] | null;
+  /** A person's day (a car's: its owner's): where they are in it, and what decides what's next. */
+  day?: DayView;
   /** A person's last few trips. */
   recent?: { purpose: string; mode: string; to: string; started: string; ended: string | null; made: boolean; failed: string | null }[];
+}
+
+/** Where someone is in their day (sim's Focus.cs Day). */
+export interface DayView {
+  /** Who they are, and the rule their day was drawn up by. */
+  who: string;
+  rule: string;
+  /** Today's trips: made or failed, the one under way, the next and the later ones (and tomorrow's, once planned). */
+  entries: { at: number; time: string; tomorrow: boolean; what: string; mode: string | null; status: 'done' | 'failed' | 'now' | 'next' | 'later'; note: string | null }[];
+  /** What happens next, and what decides it, in a sentence. */
+  decides: string;
+}
+
+/** A day's entry's mark: ✓ made, ✗ couldn't be, ▶ under way, → next, · later. */
+export function dayMark(status: DayView['entries'][number]['status']): string {
+  return { done: '✓', failed: '✗', now: '▶', next: '→', later: '·' }[status];
 }
 
 /** What's focused on: a town's car or person, by who it is. */

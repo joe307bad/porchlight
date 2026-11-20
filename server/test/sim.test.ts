@@ -209,6 +209,7 @@ interface Focus {
   path: number[][];
   empty?: boolean;
   wanderer?: boolean;
+  day?: { decides: string; entries: { status: string }[] };
 }
 
 test('Manage focuses on a car or townsperson: found where it\'s drawn, followed by who it is, its tree and queue', { skip, timeout: 60_000 }, async () => {
@@ -253,6 +254,9 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     assert.equal(person!.tree[0].q, 'Where are they?');
     assert.match(person!.tree[0].a, new RegExp(`building ${fullest}\\b`), 'the building as Manage knows it (zoning\'s order)');
     assert.ok(person!.queue.some((x) => x.what.startsWith('Set off')), 'their next trip is in their queue');
+    // Their day: where they are in it, and what decides what's next.
+    assert.ok(person!.day && typeof person!.day.decides === 'string' && person!.day.decides.length > 0, 'what decides what they do next');
+    assert.ok(person!.day!.entries.some((e) => e.status === 'next'), 'their next trip marked in their day');
 
     // The first townsfolk records are the wanderers: they've no day to explain.
     const first = await focus('person', 'slot', 0);
@@ -268,6 +272,10 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
       assert.ok(f.tree.some((w) => w.q === 'How are they getting there?'), 'how they chose to get there');
       const again = await focus('person', 'id', f.id);
       assert.equal(again?.id, f.id);
+      // The map's hover line on them: who, what, and how far through their day.
+      const brief = (await pool.ask(key, 'brief-person', i, 'slot')) as { id: number; line: string } | null;
+      assert.equal(brief?.id, f.id);
+      assert.match(brief!.line, /^Person #\d+ · .+ · trip \d+ of \d+ today$/);
       break;
     }
     assert.equal(await pool.ask('no-such-town', 'focus-car', 0, 'slot'), null);

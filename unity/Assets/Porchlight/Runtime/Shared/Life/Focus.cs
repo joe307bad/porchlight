@@ -161,8 +161,8 @@ namespace Porchlight.Life
                     tree.Add(Why.Info("When do they go out next?", $"{TownClock.Format(DayStart(p.day) + n.depart)}, {Lower(PurposeText(n.purpose))}: {PlaceText(n.to, building)}", DayRule(p.kind)));
                 }
             }
-            // The rest of the day's plan (and the next day's, once that's planned).
-            // (A trip due before the one they're on is done goes as soon as they're there: OnTripDue's delayed.)
+            // Their next planned trip (the rest of the day is in `day`). A trip due before the one they're on is done
+            // goes as soon as they're there (OnTripDue's delayed).
             long after = Now;
             foreach (var item in queue) if (item["at"] is long t && t > after) after = t;
             for (int k = p.next; k < p.plan.Count; k++)
@@ -173,12 +173,13 @@ namespace Porchlight.Life
                 string what = $"Set off, {Lower(PurposeText(n.purpose))}: {PlaceText(n.to, building)}";
                 if (due < after) queue.Add(Item(after, $"{what} (due {TownClock.Format(due)}: as soon as they're there)", false));
                 else queue.Add(Item(due, what, false, seconds: false));
-                after = Math.Max(after, due);
+                break;
             }
             o["tree"] = tree.ConvertAll(w => w.ToMap());
             o["queue"] = queue;
             o["path"] = Points(path);
             o["dest"] = dest == null ? null : new[] { Round(dest.Value.x), Round(dest.Value.y) };
+            o["day"] = Day(p, building);
             if (p.recent != null)
                 o["recent"] = p.recent.ConvertAll(t => new Dictionary<string, object>
                 {
@@ -225,11 +226,107 @@ namespace Porchlight.Life
                 dest = EndOf(c);
             }
             o["doing"] = CarDoing(c, building);
+            // Whose it is: their day is what sends it out and brings it home.
+            if (c.owner >= 0) o["day"] = Day(people[c.owner], building);
             o["tree"] = tree.ConvertAll(w => w.ToMap());
             o["queue"] = queue;
             o["path"] = Points(path);
             o["dest"] = dest == null ? null : new[] { Round(dest.Value.x), Round(dest.Value.y) };
             return o;
+        }
+
+        // --- A day, and a line ---------------------------------------------------------------------
+
+        /// <summary>
+        /// Where they are in their day: today's trips so far (how each went), the one under way, the ones still to
+        /// come (and tomorrow's, once that's planned), who they are and the rule their day was drawn up by, and in
+        /// a sentence what happens next and what decides it.
+        /// </summary>
+        Dictionary<string, object> Day(Person p, Func<int, int> building)
+        {
+            long today = TownClock.DayOf(Now);
+            var entries = new List<Dictionary<string, object>>();
+            Dictionary<string, object> Entry(long at, Purpose why, Place to, string mode, string status, string note = null) => new Dictionary<string, object>
+            {
+                ["at"] = at,
+                ["time"] = TownClock.Format(at),
+                ["tomorrow"] = TownClock.DayOf(at) > today,
+                ["what"] = $"{PurposeText(why)}: {PlaceText(to, building)}",
+                ["mode"] = mode,
+                ["status"] = status,
+                ["note"] = note,
+            };
+            if (p.recent != null)
+                foreach (var t in p.recent)
+                {
+                    if (TownClock.DayOf(t.started) != today) continue;
+                    string note = t.made ? $"there at {TownClock.Format(t.ended)}" : $"couldn't be made{(t.failed != null ? $": {t.failed}" : "")}";
+                    entries.Add(Entry(t.started, t.purpose, t.to, $"by {ModeText(t.mode)}", t.made ? "done" : "failed", note));
+                }
+            if (p.trip != null) entries.Add(Entry(p.trip.started, p.trip.purpose, p.trip.to, $"by {ModeText(p.trip.mode)}", "now", LegsText(p)));
+            long nextAt = -1;
+            Planned? next = null;
+            for (int k = p.next; k < p.plan.Count; k++)
+            {
+                var n = p.plan[k];
+                if (n.depart < 0) continue;
+                long due = DayStart(p.day) + n.depart;
+                if (next == null)
+                {
+                    next = n;
+                    nextAt = due;
+                }
+                entries.Add(Entry(due, n.purpose, n.to, null, next.Value.depart == n.depart && nextAt == due ? "next" : "later"));
+            }
+            string decides;
+            string nextText = next == null ? "" : $"{(TownClock.DayOf(nextAt) > today ? "tomorrow " : "")}at {TownClock.Format(nextAt)}, {Lower(PurposeText(next.Value.purpose))} ({PlaceText(next.Value.to, building)})";
+            if (p.trip != null)
+                decides = $"They're on their way: each leg ends when they get there, and the next starts. Then their plan's next trip is due {nextText}" +
+                          (next != null && nextAt < Now + 60_000 ? "; if it's due before they're back, they set off again as soon as they are." : ".");
+            else if (next != null)
+                decides = $"Their plan: they set off {nextText}. Nothing else moves them: the plan was drawn up at midnight from who they are, and each trip goes when it's due (or as soon as they're back, if they're still out).";
+            else decides = "Nothing more planned: the next day's plan is drawn up at midnight.";
+            return new Dictionary<string, object>
+            {
+                ["who"] = KindText(p.kind),
+                ["rule"] = DayRule(p.kind),
+                ["entries"] = entries,
+                ["decides"] = decides,
+            };
+        }
+
+        /// <summary>Where they are in the trip under way: "leg 2 of 3, driving".</summary>
+        string LegsText(Person p)
+        {
+            var t = p.trip;
+            if (t == null || t.leg < 0 || t.leg >= t.legs.Count) return null;
+            return $"leg {t.leg + 1} of {t.legs.Count}: {Lower(LegText(p, t, t.leg, null))}";
+        }
+
+        /// <summary>A line for the map's hover: who, what they're doing, and where in their day.</summary>
+        public string BriefPerson(int id)
+        {
+            if (id < 0 || id >= people.Count) return null;
+            var p = people[id];
+            long today = TownClock.DayOf(Now);
+            int done = 0, left = 0;
+            if (p.recent != null) foreach (var t in p.recent) if (TownClock.DayOf(t.started) == today) done++;
+            for (int k = p.next; k < p.plan.Count; k++) if (p.plan[k].depart >= 0 && TownClock.DayOf(DayStart(p.day) + p.plan[k].depart) == today) left++;
+            string doing = p.trip != null ? $"{PurposeText(p.trip.purpose)}, by {ModeText(p.trip.mode)}" : p.where == Where.OffMap ? "Out of town" : "Indoors";
+            string where = p.trip != null ? $"trip {done + 1} of {done + 1 + left} today" : $"{done} trip{(done == 1 ? "" : "s")} today, {left} to go";
+            return $"Person #{p.id} · {doing} · {where}";
+        }
+
+        /// <summary>A line for the map's hover: the car, what it's doing, and whose errand.</summary>
+        public string BriefCar(int id)
+        {
+            if (id < 0 || id >= cars.Count) return null;
+            var c = cars[id];
+            if (c.bus >= 0) return $"The bus · {CarDoing(c, null)}";
+            string doing = CarDoing(c, null);
+            if (c.owner < 0) return $"Car #{c.id} · {doing}";
+            var o = people[c.owner];
+            return $"Car #{c.id} · {doing} · person #{o.id}{(o.trip != null ? $", {Lower(PurposeText(o.trip.purpose))}" : "")}";
         }
 
         // --- People's trees -----------------------------------------------------------------------

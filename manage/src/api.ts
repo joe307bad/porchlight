@@ -65,6 +65,14 @@ export async function buildingLife(key: string, i: number): Promise<import('./li
  * Manage's focus on a car or townsperson: found where it's drawn (`slot`, its place in the feed's records) or
  * followed by who it is (`id`, from an earlier answer). Null if there's nobody (or the town isn't running).
  */
+/** A line about the car or townsperson drawn at `slot` (who, what they're doing, where in their day), for the map's hover; null if none. */
+export async function briefOn(town: string, kind: 'car' | 'person', slot: number): Promise<string | null> {
+  const res = await fetch(`/mp/sim/focus?town=${encodeURIComponent(town)}&kind=${kind}&slot=${slot}&brief=1`, { cache: 'no-store', credentials: 'same-origin' });
+  if (!res.ok) return null;
+  const a = (await res.json()) as { line?: string | null };
+  return a.line ?? null;
+}
+
 export async function focusOn(town: string, kind: 'car' | 'person', by: 'slot' | 'id', i: number): Promise<import('./life.ts').FocusAnswer | null> {
   const res = await fetch(`/mp/sim/focus?town=${encodeURIComponent(town)}&kind=${kind}&${by}=${i}`, { cache: 'no-store', credentials: 'same-origin' });
   if (!res.ok) return null;

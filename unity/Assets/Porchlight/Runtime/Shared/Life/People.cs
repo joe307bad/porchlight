@@ -17,12 +17,18 @@ namespace Porchlight.Life
 {
     public sealed partial class TownLife
     {
+        /// <summary>
+        /// How much busier a town's life is than its plan's figures (Zoning's 2.5 people and 1.2 jobs a home): each
+        /// home's people and each building's jobs, this many times over. At one, a big town's streets looked empty;
+        /// it scales with the town, since it's per home and per job.
+        /// </summary>
+        public const double CROWD = 1;
         /// <summary>More people than homes or jobs by this much: the rest commute in or out, or pass through.</summary>
         public const double THROUGH = 1.2;
         /// <summary>The chance of a home slot or job slot, kept within these.</summary>
         const double P_LOW = 0.05, P_HIGH = 0.9;
-        /// <summary>The trips each person remembers, for Manage's focus view.</summary>
-        const int RECENT = 3;
+        /// <summary>The trips each person remembers, for Manage's focus view (a day's worth: the busiest days have five or six).</summary>
+        const int RECENT = 6;
         /// <summary>Closer than this (tiles: 240 m), people walk.</summary>
         public const double WALK_TILES = 60;
         /// <summary>Of those at home in the day, this many are children at school.</summary>
@@ -42,22 +48,25 @@ namespace Porchlight.Life
             var homeSlots = new List<int>();
             var jobSlots = new List<int>();
             var stayHome = new List<int>();
-            double workerCarry = 0, residentCarry = 0;
+            double workerCarry = 0, residentCarry = 0, jobCarry = 0;
             foreach (var b in zoning?.buildings ?? new List<ZonedBuilding>())
             {
                 if (!net.access.ContainsKey(b.buildingId)) continue;
                 if (b.homes > 0) homesList.Add(b.buildingId);
                 if (b.zone == Zone.Retail || b.zone == Zone.MixedUse) shops.Add(b.buildingId);
                 if (b.zone == Zone.Civic) schools.Add(b.buildingId);
-                workerCarry += b.homes * Zoning.WORKERS_A_HOME;
-                residentCarry += b.homes * Zoning.PEOPLE_A_HOME;
+                workerCarry += b.homes * Zoning.WORKERS_A_HOME * CROWD;
+                residentCarry += b.homes * Zoning.PEOPLE_A_HOME * CROWD;
                 int workers = (int)Math.Floor(workerCarry);
                 workerCarry -= workers;
                 int residents = (int)Math.Floor(residentCarry);
                 residentCarry -= residents;
                 for (int k = 0; k < workers; k++) homeSlots.Add(b.buildingId);
                 for (int k = 0; k < Math.Max(0, residents - workers); k++) stayHome.Add(b.buildingId);
-                for (int k = 0; k < b.jobs; k++) jobSlots.Add(b.buildingId);
+                jobCarry += b.jobs * CROWD;
+                int jobs = (int)Math.Floor(jobCarry);
+                jobCarry -= jobs;
+                for (int k = 0; k < jobs; k++) jobSlots.Add(b.buildingId);
             }
             if (shops.Count == 0) foreach (var b in zoning?.buildings ?? new List<ZonedBuilding>()) if (b.jobs > 0 && net.access.ContainsKey(b.buildingId)) shops.Add(b.buildingId);
             rng.Shuffle(homeSlots);

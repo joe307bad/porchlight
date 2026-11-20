@@ -295,6 +295,17 @@ static class LifeCheck
                 var queue = (List<Dictionary<string, object>>)o["queue"];
                 if (p.trip == null) continue;
                 people++;
+                // Their day: the trip under way once, the next at most once, all in time order; the hover's line agrees.
+                var day = (Dictionary<string, object>)o["day"];
+                var entries = (List<Dictionary<string, object>>)day["entries"];
+                if (entries.Count(e => (string)e["status"] == "now") != 1) return $"person {p.id}: on a trip, but their day has {entries.Count(e => (string)e["status"] == "now")} under way";
+                if (entries.Count(e => (string)e["status"] == "next") > 1) return $"person {p.id}: two next trips in their day";
+                for (int k = 1; k < entries.Count; k++)
+                    if ((long)entries[k]["at"] < (long)entries[k - 1]["at"] && (string)entries[k]["status"] != "next" && (string)entries[k]["status"] != "later")
+                        return $"person {p.id}: their day's out of order at {entries[k]["time"]}";
+                if (string.IsNullOrEmpty((string)day["decides"])) return $"person {p.id}: nothing says what decides what's next";
+                string brief = life.BriefPerson(p.id);
+                if (!brief.Contains(p.trip.mode == Mode.Drive ? "by car" : p.trip.mode == Mode.Bus ? "by bus" : "by foot")) return $"person {p.id}: the hover says \"{brief}\"";
                 var how = tree.FirstOrDefault(w => (string)w["q"] == "How are they getting there?");
                 if (how == null) return $"person {p.id}: no way-of-getting-there in their tree";
                 if ((string)how["a"] != modes[p.trip.mode]) return $"person {p.id}: the tree says \"{how["a"]}\" but the trip is by {p.trip.mode}";

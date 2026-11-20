@@ -161,7 +161,7 @@ namespace Porchlight.Sim
         /// own id), or by where they're drawn now (a place in the tick's car or person records). A wanderer, or
         /// an empty slot, has no day to explain. Buildings are given as Manage knows them (zoning's order).
         /// </summary>
-        public object Focus(bool car, bool bySlot, int i)
+        public object Focus(bool car, bool bySlot, int i, bool brief = false)
         {
             var life = traffic.life;
             int id = i;
@@ -177,6 +177,8 @@ namespace Porchlight.Sim
                 }
                 if (id < 0) return new { empty = true };
             }
+            // Just a line (the map's hover): who, what they're doing, and where in their day.
+            if (brief) return new { id, line = car ? life.BriefCar(id) : life.BriefPerson(id) };
             var index = BuildingIndex();
             Func<int, int> building = b => index.TryGetValue(b, out int k) ? k : -1;
             object o = car ? life.FocusCar(id, building) : life.FocusPerson(id, building);

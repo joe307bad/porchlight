@@ -126,9 +126,9 @@ namespace Porchlight.Life
         public static int Wanderers(double walkable) => (int)Math.Min(MOST_WANDERERS, Math.Floor(walkable / 48));
 
         /// <summary>Car slots for a town of this many people: enough for its busiest hour, with room to spare.</summary>
-        public static int CarSlotsFor(int population) => Math.Max(12, Math.Min(300, (int)Math.Ceiling(population * 0.05)));
+        public static int CarSlotsFor(int population) => Math.Max(12, Math.Min(900, (int)Math.Ceiling(population * 0.05)));
 
-        public static int PersonSlotsFor(int population) => Math.Max(16, Math.Min(400, (int)Math.Ceiling(population * 0.06)));
+        public static int PersonSlotsFor(int population) => Math.Max(16, Math.Min(1200, (int)Math.Ceiling(population * 0.06)));
 
         // --- Time ------------------------------------------------------------------------------
 

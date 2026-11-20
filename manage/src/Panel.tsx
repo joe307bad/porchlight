@@ -8,7 +8,7 @@ import type { Feed, FeedStatus } from './feed.ts';
 import { KMH, PERSON, SPEEDS, type Layers, type MapRenderer } from './render.ts';
 import { REACH, STOPPED, doing, type World } from './world.ts';
 import { BALANCED, JOBS_PER_HOME, ZONES, landUse } from './zoning.ts';
-import { MODES, describeInside, figures, mark, untilText, type BuildingLife, type EntityFocus, type FocusTarget, type TownLife, type Why } from './life.ts';
+import { MODES, dayMark, describeInside, figures, mark, untilText, type DayView, type BuildingLife, type EntityFocus, type FocusTarget, type TownLife, type Why } from './life.ts';
 
 const REFRESH_MS = 250;
 
@@ -334,6 +334,7 @@ function FocusView({
           Close
         </button>
       </div>
+      {f.day && <Day day={f.day} owner={f.kind === 'car' ? f.owner : undefined} />}
       <h3>Why</h3>
       <Tree items={f.tree} />
       <h3>Next</h3>
@@ -359,6 +360,33 @@ function FocusView({
         </>
       )}
     </section>
+  );
+}
+
+/** Where someone is in their day: each trip (made, under way, to come), what decides what's next, and the rule their day was drawn up by. */
+function Day({ day, owner }: { day: DayView; owner?: number }) {
+  return (
+    <>
+      <h3>{owner !== undefined ? `Its driver's day (#${owner})` : 'Their day'}</h3>
+      <p className="decides">{day.decides}</p>
+      <ol className="day">
+        {day.entries.map((e, i) => (
+          <li key={i} className={e.status}>
+            <span className="mark">{dayMark(e.status)}</span>
+            <span className="when">{e.tomorrow ? `tmrw ${e.time}` : e.time}</span>
+            <span className="what">
+              {e.what}
+              {e.mode && <span className="sub"> {e.mode}</span>}
+              {e.note && <span className="note">{e.note}</span>}
+            </span>
+          </li>
+        ))}
+        {day.entries.length === 0 && <li className="later">Nothing planned.</li>}
+      </ol>
+      <p className="rule">
+        <b>{day.who}.</b> {day.rule}
+      </p>
+    </>
   );
 }
 

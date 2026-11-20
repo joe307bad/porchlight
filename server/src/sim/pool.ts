@@ -277,10 +277,10 @@ export class SimPool {
 
   /**
    * About one car (traffic slot), person (townsfolk index) or building (zoning index) in a town now; or Manage's
-   * focus on a car or person (its decision tree and queue), found by where it's drawn (`by` 'slot') or who it is
-   * ('id'). Null if there's none or no answer.
+   * focus on a car or person (its decision tree and queue; 'brief-…': just a line, for the map's hover), found by
+   * where it's drawn (`by` 'slot') or who it is ('id'). Null if there's none or no answer.
    */
-  ask(key: string, kind: 'car' | 'person' | 'building' | 'focus-car' | 'focus-person', i: number, by?: 'slot' | 'id'): Promise<unknown> {
+  ask(key: string, kind: 'car' | 'person' | 'building' | 'focus-car' | 'focus-person' | 'brief-car' | 'brief-person', i: number, by?: 'slot' | 'id'): Promise<unknown> {
     const town = this.byKey.get(key);
     if (!town || !town.ready) return Promise.resolve(null);
     const ask = this.nextAsk++;

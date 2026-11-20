@@ -61,6 +61,8 @@ const MAX_SCALE = 40;
 export const KMH = 14.4;
 
 export interface Hover {
+  /** The car or townsperson it's about (town|kind|slot), if it's the simulation's line on them. */
+  key?: string;
   x: number;
   y: number;
   text: string;
@@ -162,6 +164,8 @@ export class MapRenderer {
   /** A building clicked (its town's key and index), or null (somewhere else). */
   onBuilding: (b: { key: string; i: number } | null) => void = () => {};
   onHover: (h: Hover | null) => void = () => {};
+  /** The car or townsperson under the pointer (null: none), for a line about them from the simulation. */
+  onHoverEntity: (e: { key: string; kind: 'car' | 'person'; slot: number; x: number; y: number } | null) => void = () => {};
   /** A car or townsperson clicked: its town, and its place in the feed's records. */
   onEntity: (e: { key: string; kind: 'car' | 'person'; slot: number }) => void = () => {};
   /** The camera's stopped following the focus (the map was dragged). */
@@ -425,6 +429,8 @@ export class MapRenderer {
       this.onHover({ x: px, y: py, text: `${p.name} · ${doing(p)} · ${p.town}${p.host ? ' · runs its traffic' : ''}` });
       return;
     }
+    const e = this.entityAt(px, py, 8);
+    this.onHoverEntity(e ? { ...e, x: px, y: py } : null);
     const w = this.toWorld(px, py);
     const within = 8 / this.cam.scale;
     let best = within * within;

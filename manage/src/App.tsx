@@ -4,7 +4,7 @@
 // few times a second, from the same World.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { buildingLife, county, focusOn, inDesktopApp, me, signInUrl, townLife, type CountyMap, type Me } from './api.ts';
+import { briefOn, buildingLife, county, focusOn, inDesktopApp, me, signInUrl, townLife, type CountyMap, type Me } from './api.ts';
 import { isFocus, type BuildingLife, type EntityFocus, type FocusAnswer, type FocusTarget, type TownLife } from './life.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
@@ -137,7 +137,29 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         setTarget({ town: e.key, kind: a.kind, id: a.id });
       });
     };
-    r.onHover = setHover;
+    // Hovering a car or townsperson: the map's own line straight away, then the simulation's (who, what they're
+    // doing, where in their day) once it answers, if the pointer's still on them.
+    let hovered = '';
+    const briefs = new Map<string, { line: string | null; at: number }>();
+    r.onHover = (h) => {
+      if (!h) hovered = '';
+      setHover((was) => (h && hovered && was && was.text.includes('click for why') && was.key === hovered ? { ...was, x: h.x, y: h.y } : h));
+    };
+    r.onHoverEntity = (e) => {
+      const k = e ? `${e.key}|${e.kind}|${e.slot}` : '';
+      if (k === hovered) return;
+      hovered = k;
+      if (!e) return;
+      const show = (line: string | null) => {
+        if (hovered === k && line) setHover({ x: e.x, y: e.y, text: `${line} · click for why`, key: k });
+      };
+      const kept = briefs.get(k);
+      if (kept && performance.now() - kept.at < 2000) return show(kept.line);
+      void briefOn(e.key, e.kind, e.slot).then((line) => {
+        briefs.set(k, { line, at: performance.now() });
+        show(line);
+      });
+    };
     r.onBuilding = (b) => {
       if (!b) return setBuilding(null);
       void buildingLife(b.key, b.i).then(setBuilding);
