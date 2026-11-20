@@ -9,6 +9,10 @@ name: Desktop
 on:
   push:
     branches: [main]
+    # A push of docs alone (docs/, READMEs and other Markdown) makes no release.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
 
 permissions:

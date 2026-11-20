@@ -20,6 +20,8 @@ on:
       - 'infra/**'
       - 'sim/**'
       - '.github/workflows/deploy.yml'
+      # Docs alone (READMEs and other Markdown) don't deploy.
+      - '!**/*.md'
   # A pull request is built and tested the same way (the game compiled, the
   # server and the simulation tested), but never deployed: the deploy job is
   # skipped. Test a branch on the dev setup (dev.sh, desktop/mac-dev.sh).
@@ -31,6 +33,7 @@ on:
       - 'sim/**'
       - 'infra/**'
       - '.github/workflows/deploy.yml'
+      - '!**/*.md'
   workflow_dispatch:
 
 env:
