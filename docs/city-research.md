@@ -82,25 +82,63 @@ Scale: a tile is 4 m, a town about 256 × 256 tiles (1 km square).
 
 ### To-do
 
-- [ ] **Road hierarchy.** Tag edges arterial / collector / local. Main roads
-  through the centre are arterials, and the first split streets in each
-  region are collectors. Add a `Checks streets` report of length shares
-  against FHWA's ~70% local [P1].
-- [ ] **A ring or bypass.** Today every trip to the other side of town goes
-  through the centre. Add a ring or bypass in bigger towns, so arterials are
-  spaced 200–800 m apart [P1].
-- [ ] **Era rings.** Each ring gets a "built" era: a tight grid core of
-  ~15 × 20-tile blocks [P2], then garden suburb, then post-war loops and
-  cul-de-sacs [P3]. Store the era per block so houses can look their age
-  later [P28].
-- [ ] **Transect zones.** Assign T3–T6 by distance plus noise, and take
-  setback, height and lot width from a T-zone table instead of the
-  `innerCity`/`downtown` thresholds [P7].
-- [ ] **Neighbourhood units.** Group blocks into ~400 m neighbourhoods
-  bounded by arterials. Each gets a school and a park near its middle and
-  shops at its arterial corners [P5].
-- [ ] **A second centre** (multiple nuclei) in large towns: at the station,
-  the docks or the airport [P8].
+All six are in: `Gen/TownPlan.cs` (eras, the transect table, the ring's radius,
+the second centre), `Gen/Plan.cs` (the plan stage: each block's era and zone,
+and the neighbourhoods), with the roads, streets, lots and buildings stages
+following them. `Checks plan` holds every town to it (below), and CI runs it.
+
+- [x] **Road hierarchy.** Every road edge has a class (`RoadClass`, beside its
+  `RoadKind`): main roads are arterials, but for a spur that only leads to the
+  airport or the zoo (a collector); the streets laid by the first three levels
+  of splitting each piece of land between the main roads are collectors; the
+  rest are local. `Checks streets` reports the length shares inside the town,
+  and `Checks plan` holds the big dry towns to FHWA's: Porchlight is 15%
+  arterial, 14% collector, 70% local [P1].
+- [x] **A ring or bypass.** A town at least 320 m in radius gets a ring road at
+  half its radius (never nearer than 200 m: 256 m in Porchlight), routed by the
+  main roads' A* from point to point round its circle. It crosses the roads out
+  from the centre rather than following them. `Checks plan`: from each gate to
+  the next on arterials without coming within half the ring's radius of the
+  middle, and a small town has no such way round [P1].
+- [x] **Era rings.** Each block's `era`: the core within ~0.3 of the radius,
+  garden suburbs to ~0.65, post-war beyond (the edges wander). The core is a
+  regular grid of ~15 × 20-tile blocks (scaled with the street spacing; 16 × 22
+  in Porchlight, median) with no courts or cul-de-sacs (a dead end it can't join
+  is cut back, unless it's a street down to the water); the garden suburbs have
+  some courts; post-war has the most, and keeps more dead ends as cul-de-sacs
+  [P2][P3]. Stored per block so houses can look their age later [P28].
+- [x] **Transect zones.** Each block's `transect`, T3–T6, by distance from the
+  nearer centre plus a wobble. The town's own settings place the zones
+  (`downtown`: T5, with T6 at its heart; `innerCity`: T4), so a key keeps its
+  character, and `TownPlan.Rules` is the table: front yards (T3 only), lot size
+  (lotMaxSize × 1, 0.85, 0.7, 0.55), house heights, shops and towers (T5–T6),
+  gardens and courtyards. It replaces the `innerCity`/`downtown` thresholds in
+  the buildings stage and the street scene [P7].
+- [x] **Neighbourhood units.** The land the arterials and water cut the town
+  into, each piece a neighbourhood about 400 m across: a piece smaller than a
+  220 m square joins the smallest one beside it, and one bigger than 1.6 × 400 m
+  square or more than 520 m across is split. Each with four blocks or more keeps
+  the block nearest its middle as a park (green, nothing built), and gets a
+  school (a new building kind, drawn as a hall) near its middle and up to four
+  shops on the arterial where an arterial meets another or a collector.
+  Porchlight has ten [P5].
+- [x] **A second centre** in large towns: just outside the airport's gate,
+  towards the town (pulled to 0.45–0.8 of the radius), or failing that its
+  bay. It's a T5 centre of its own (half the main one's reach), with offices,
+  their towers half as tall [P8]. (No station yet, and the docks come later in
+  the pipeline than the plan, so it's the airport or the waterfront.)
+
+What `Checks plan` holds, for the county's towns, four big towns and three small
+ones: every road classed and the arterials reaching every gate; FHWA's shares
+(big dry towns); the ring's way round (big towns) and none in small ones; the
+eras in order out from the middle, the core's block size and no cul-de-sacs in
+it, and more a block post-war; the zones in order, lots smaller and houses taller
+nearer the middle, front yards only in T3 and shops in T3–T4 only at
+neighbourhood corners; every neighbourhood under 600 m across, its park and
+school nearer its middle than most of it, the park green and the corner shops on
+an arterial, and most neighbourhoods kept within the arterials (big dry towns);
+the second centre with T5 blocks and offices round it that the main centre alone
+wouldn't give; and all of it the same again from the same key.
 
 ## 2. Are the shops and businesses in realistic places?
 
@@ -549,7 +587,7 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
 1. **Cheap fixes now:**
    - walking pace (§5)
    - speed limits by road class (§4)
-   - the road hierarchy tags and their check (§1)
+   - the road hierarchy tags and their check (§1) *(done)*
 2. **A town clock** shared by the server and clients; night becomes a time
    (§5).
 3. **People:** households from zoning's homes, jobs by gravity model, daily
@@ -562,7 +600,8 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
 7. **Queue-based server traffic with IDM near players**, and
    congestion-aware re-routing (§4).
 8. **Better towns:** land-value field, shops by threshold, industry
-   wedges, civic buildings, era rings, transect zones (§1–3).
+   wedges, civic buildings (era rings, transect zones, neighbourhoods, the
+   ring road and a second centre are done, §1) (§2–3).
 9. **The calendar and events:** market day first (the plaza is already
    there), then a venue with match days, parades, incidents and shared
    weather (§6).

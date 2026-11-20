@@ -23,7 +23,7 @@ namespace Porchlight.Gen
         {
             var g = new GraphBuilder();
             foreach (var n in graph.nodes) g.nodes.Add(new RoadNode { id = n.id, at = n.at });
-            foreach (var e in graph.edges) g.edges.Add(new RoadEdge { id = e.id, from = e.from, to = e.to, kind = e.kind, points = new List<Vec2>(e.points) });
+            foreach (var e in graph.edges) g.edges.Add(new RoadEdge { id = e.id, from = e.from, to = e.to, kind = e.kind, cls = e.cls, points = new List<Vec2>(e.points) });
             return g;
         }
 
@@ -43,13 +43,13 @@ namespace Porchlight.Gen
             return id;
         }
 
-        public static int AddEdge(GraphBuilder g, int from, int to, RoadKind kind, List<Vec2> points = null)
+        public static int AddEdge(GraphBuilder g, int from, int to, RoadKind kind, List<Vec2> points = null, RoadClass cls = RoadClass.Local)
         {
             int id = g.edges.Count;
             var pts = points ?? new List<Vec2> { g.nodes[from].at, g.nodes[to].at };
             pts[0] = g.nodes[from].at;
             pts[pts.Count - 1] = g.nodes[to].at;
-            g.edges.Add(new RoadEdge { id = id, from = from, to = to, kind = kind, points = pts });
+            g.edges.Add(new RoadEdge { id = id, from = from, to = to, kind = kind, cls = cls, points = pts });
             return id;
         }
 
@@ -67,8 +67,8 @@ namespace Porchlight.Gen
             var second = new List<Vec2> { c.point };
             for (int k = c.seg + 1; k < edge.points.Count; k++) second.Add(edge.points[k]);
             g.dead.Add(edgeId);
-            AddEdge(g, edge.from, node, edge.kind, Dedupe(first));
-            AddEdge(g, node, edge.to, edge.kind, Dedupe(second));
+            AddEdge(g, edge.from, node, edge.kind, Dedupe(first), edge.cls);
+            AddEdge(g, node, edge.to, edge.kind, Dedupe(second), edge.cls);
             return node;
         }
 
@@ -188,7 +188,7 @@ namespace Porchlight.Gen
                 foreach (var piece in pieces)
                 {
                     if (piece.from == piece.to && piece.pts.Count <= 2) continue;
-                    AddEdge(g, piece.from, piece.to, edge.kind, piece.pts);
+                    AddEdge(g, piece.from, piece.to, edge.kind, piece.pts, edge.cls);
                 }
             }
         }
@@ -214,7 +214,7 @@ namespace Porchlight.Gen
                 g.dead.Add(e2.id);
                 var pts = new List<Vec2>(a.points);
                 for (int k = 1; k < b.points.Count; k++) pts.Add(b.points[k]);
-                int id = AddEdge(g, from, to, e1.kind, pts);
+                int id = AddEdge(g, from, to, e1.kind, pts, e1.cls > e2.cls ? e1.cls : e2.cls);
                 foreach (var (n, old) in new[] { (from, e1.id), (to, e2.id) })
                 {
                     var l = inc[n];
@@ -255,7 +255,7 @@ namespace Porchlight.Gen
             for (int i = 0; i < edges.Count; i++)
             {
                 var e = edges[i];
-                graph.edges.Add(new RoadEdge { id = i, from = used[e.from], to = used[e.to], kind = e.kind, points = e.points });
+                graph.edges.Add(new RoadEdge { id = i, from = used[e.from], to = used[e.to], kind = e.kind, cls = e.cls, points = e.points });
             }
             return graph;
         }

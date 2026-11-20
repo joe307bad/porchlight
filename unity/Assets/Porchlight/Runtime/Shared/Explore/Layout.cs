@@ -231,11 +231,14 @@ namespace Porchlight.Explore
             var buildingOnLot = new Dictionary<int, Building>();
             foreach (var b in model.buildings) buildingOnLot[b.lotId] = b;
 
+            var parks = new HashSet<int>();
+            foreach (var hood in model.neighbourhoods) if (hood.parkBlockId >= 0) parks.Add(hood.parkBlockId);
             int seen = 0;
             foreach (var block in model.blocks)
             {
                 if (++seen % BLOCKS_A_STEP == 0) yield return "/blocks";
                 var lots = model.lots.FindAll(l => l.blockId == block.id);
+                var rule = TownPlan.Rules(block.transect);
                 int wanted = 0, placed = 0;
                 int builtLots = 0;
                 foreach (var l in lots) if (buildingOnLot.ContainsKey(l.id)) builtLots++;
@@ -243,11 +246,10 @@ namespace Porchlight.Explore
                 {
                     var lotTiles = Parcels.TilesIn(lot.polygon, null, w, h).FindAll(Open);
                     var own = new HashSet<int>(lotTiles);
-                    // The inner city (where buildings stand on the sidewalk) has no gardens.
-                    bool inner = Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / model.townRadius < p.innerCity;
+                    // The urban zones (where buildings stand on the sidewalk) have no gardens, and a park is all green.
                     if (!buildingOnLot.TryGetValue(lot.id, out var b))
                     {
-                        bool garden = !inner && builtLots >= 2 && Hash(lot.id, 1) < 0.45 && !lotTiles.Exists(landings.Contains);
+                        bool garden = rule.gardens && !parks.Contains(block.id) && builtLots >= 2 && Hash(lot.id, 1) < 0.45 && !lotTiles.Exists(landings.Contains);
                         foreach (int t in lotTiles) use[t] = garden ? Use.COMMUNITY_GARDEN : Use.GREEN;
                         if (garden) foreach (int t in lotTiles) fences.AddRange(FenceAround(t, own, w, h, Street));
                         continue;
@@ -263,7 +265,13 @@ namespace Porchlight.Explore
                         cy = cy + t.y + 0.5;
                     }
                     double fromCentre = Numbers.Hypot(cx / footprint.Count - C.x, cy / footprint.Count - C.y) / (model.townRadius * p.downtown);
-                    bool nearCentre = Porchlight.Gen.BuildingsStage.InCentre(fromCentre * p.downtown, p.downtown);
+                    // A second centre's towers rise half as high at most.
+                    if (model.secondCentre != null)
+                    {
+                        var S = model.secondCentre.Value;
+                        fromCentre = Math.Min(fromCentre, 0.5 + Numbers.Hypot(cx / footprint.Count - S.x, cy / footprint.Count - S.y) / (model.townRadius * TownPlan.SECOND_REACH * p.downtown));
+                    }
+                    bool nearCentre = block.transect >= Transect.T5;
                     var style = b.kind == BuildingKind.Shop && nearCentre && b.floors >= 2 ? HouseStyle.Office : StyleOf(b.kind);
                     // Offices are four or five floors; past that (towerFloors), taller towards the middle,
                     // each a little different: a skyline.
@@ -299,7 +307,7 @@ namespace Porchlight.Explore
                         foreach (int t in yard) if (use[t] == Use.YARD && !landings.Contains(t) && (far < 0 || BackDistance(t, house, w) > BackDistance(far, house, w))) far = t;
                         if (far >= 0 && Hash(rndSeed, 1) < 0.65) use[far] = Use.SHED;
                     }
-                    if (small && !inner && Hash(rndSeed, 2) < p.gardens)
+                    if (small && rule.gardens && Hash(rndSeed, 2) < p.gardens)
                     {
                         // Beds beside and behind the house: yard touching it, never in front.
                         var beds = yard.FindAll(t => use[t] == Use.YARD && !landings.Contains(t) && Touches(t, footprint, w) && FrontDistance(t, house, w) <= 0);

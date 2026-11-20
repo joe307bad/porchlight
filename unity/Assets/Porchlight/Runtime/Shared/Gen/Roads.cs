@@ -107,16 +107,17 @@ namespace Porchlight.Gen
             foreach (var g in model.gates) gates.Add(Grid.Index((int)Math.Floor(g.x), (int)Math.Floor(g.y), w));
             Numbers.StableSort(gates, (a, b) => AStar.Octile(a, centerCell, w) - AStar.Octile(b, centerCell, w));
 
-            void Route(int from, Func<int, double> step)
+            void Route(int from, Func<int, double> step, int goal = -1, double cheapest = REUSE_COST)
             {
+                if (goal < 0) goal = centerCell;
                 var path = AStar.FindGridPath(from, new GridSearch
                 {
                     Width = w,
                     Height = h,
                     Step = (a, to) => step(to),
                     TurnCost = TURN_COST,
-                    Goal = c => c == centerCell,
-                    Estimate = c => AStar.Manhattan(c, centerCell, w) * REUSE_COST,
+                    Goal = c => c == goal,
+                    Estimate = c => AStar.Manhattan(c, goal, w) * cheapest,
                 });
                 if (path == null) return;
                 int n = path.Count;
@@ -144,6 +145,25 @@ namespace Porchlight.Gen
             {
                 Route(gate, Step);
                 yield return "/gate";
+            }
+            // A big town's ring road, round the middle at RingRadius (TownPlan): the main roads' A*, from one
+            // point on the circle to the next. It crosses the roads out from the centre rather than following them
+            // (no discount for running along one), and keeps near its circle.
+            double ring = TownPlan.RingRadius(model);
+            if (ring > 0)
+            {
+                var stops = RingStops(model, ring, cost, rng);
+                for (int k = 0; k < stops.Count; k++)
+                {
+                    var (fromCell, toCell) = (stops[k], stops[(k + 1) % stops.Count]);
+                    Route(fromCell, to =>
+                    {
+                        if (float.IsPositiveInfinity(cost[to])) return double.PositiveInfinity;
+                        double off = Math.Abs(Numbers.Hypot((to % w) + 0.5 - model.center.x, to / w + 0.5 - model.center.y) - ring);
+                        return cost[to] + (beside[to] != 0 && onRoad[to] == 0 ? BESIDE_PENALTY : 0) + RING_PULL * off * off / (ring * ring);
+                    }, toCell, 1);
+                    yield return "/ring";
+                }
             }
             // The road to the airport: out of its car park (straight across the airport's
             // own tiles, which the others go round) and on to the nearest road.
@@ -188,6 +208,38 @@ namespace Porchlight.Gen
             next.roads = RoadGraphOps.Compact(builder);
             next.bridges = RoadGraphOps.ComputeBridges(next, Raster.WaterMask(next));
             done(next);
+        }
+
+        /// <summary>Points round the ring road: RING_STOPS of them, each a dry tile on its circle (or as near it as there is one), clockwise.</summary>
+        const int RING_STOPS = 8;
+        /// <summary>The cost per tile of the ring straying a whole radius off its circle (the square of how far off, as a share of it).</summary>
+        const double RING_PULL = 12;
+
+        static List<int> RingStops(TownModel model, double ring, float[] cost, Rng rng)
+        {
+            int w = model.width, h = model.height;
+            var o = new List<int>();
+            var water = Raster.WaterMask(model);
+            double turn = rng.Range(0, 2 * Math.PI / RING_STOPS);
+            for (int k = 0; k < RING_STOPS; k++)
+            {
+                double a = turn + k * 2 * Math.PI / RING_STOPS;
+                int found = -1;
+                // Out or in along the spoke, nearest the circle first.
+                for (int step = 0; step <= ring * 0.25 && found < 0; step++)
+                    foreach (int sign in step == 0 ? new[] { 1 } : new[] { 1, -1 })
+                    {
+                        double r = ring + sign * step;
+                        int x = (int)Math.Floor(model.center.x + DetMath.Cos(a) * r), y = (int)Math.Floor(model.center.y + DetMath.Sin(a) * r);
+                        if (x < 2 || y < 2 || x >= w - 2 || y >= h - 2) continue;
+                        int c = Grid.Index(x, y, w);
+                        if (float.IsPositiveInfinity(cost[c]) || water[c] != 0) continue;
+                        found = c;
+                        break;
+                    }
+                if (found >= 0 && !o.Contains(found)) o.Add(found);
+            }
+            return o.Count >= 3 ? o : new List<int>();
         }
 
         /// <summary>The longest stub (tiles) left poking past a junction at the town centre.</summary>

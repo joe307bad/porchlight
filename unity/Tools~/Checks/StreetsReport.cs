@@ -28,7 +28,7 @@ static class StreetsReport
         towns.Add(("default-b", "seed=0f9e8d7c6b5a"));
         if (dir != null) System.IO.Directory.CreateDirectory(dir);
         int bad = 0;
-        Console.WriteLine("town              close<4  close<6  stubs  deadends  T  X  bend  slivers  blocks  built  ms");
+        Console.WriteLine("town              close<4  close<6  stubs  deadends  T  X  bend  slivers  blocks  built  art  col  local  ms");
         string only = Environment.GetEnvironmentVariable("STREETS_ONLY");
         foreach (var (name, key) in towns)
         {
@@ -38,6 +38,7 @@ static class StreetsReport
             var m = Generator.Generate(seed, p);
             long ms = sw.ElapsedMilliseconds;
             var g = m.roads;
+            var shares = StreetsStage.ClassShares(m);
             int close4 = StreetsStage.CloseParallels(g, 4).Count, close6 = StreetsStage.CloseParallels(g, 6).Count;
             var degree = new Dictionary<int, int>();
             foreach (var e in g.edges) foreach (int n in new[] { e.from, e.to }) degree[n] = (degree.TryGetValue(n, out int d) ? d : 0) + 1;
@@ -65,7 +66,7 @@ static class StreetsReport
             foreach (var lot in m.lots) lotTiles += Parcels.TilesIn(lot.polygon, null, w, h).Count;
             if (close4 > 0) bad++;
             foreach (var c in StreetsStage.CloseParallels(g, 4)) Console.WriteLine($"  {name}: {g.edges[c.a].kind} {c.a} [{string.Join(" ", g.edges[c.a].points.Select(q => $"{q.x:0.#},{q.y:0.#}"))}] and {g.edges[c.b].kind} {c.b} [{string.Join(" ", g.edges[c.b].points.Select(q => $"{q.x:0.#},{q.y:0.#}"))}] {c.apart:0.0} apart");
-            Console.WriteLine($"{name,-17} {close4,7}  {close6,7}  {stubs,5}  {dead,8}  {t3} {x4} {bend,4}  {100.0 * slivers / Math.Max(1, freeCount),6:0.0}%  {m.blocks.Count,6}  {100.0 * lotTiles / Math.Max(1, freeCount),4:0}%  {ms}");
+            Console.WriteLine($"{name,-17} {close4,7}  {close6,7}  {stubs,5}  {dead,8}  {t3} {x4} {bend,4}  {100.0 * slivers / Math.Max(1, freeCount),6:0.0}%  {m.blocks.Count,6}  {100.0 * lotTiles / Math.Max(1, freeCount),4:0}%  {100 * shares.arterial,3:0}% {100 * shares.collector,3:0}% {100 * shares.local,4:0}%  {ms}");
             if (dir != null)
             {
                 var layout = Porchlight.Explore.Layout.Build(m);

@@ -9,6 +9,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- homes             # the town that comes with the game has houses to live in, and is up to date (from the repo's root)
 //   dotnet run --project "unity/Tools~/Checks" -- town <file> [key] # regenerate it into its file (`npm run town` in server/)
 //   dotnet run --project "unity/Tools~/Checks" -- zoning [key ...]  # what each starter town's buildings are for: homes, jobs, balance (ZoningCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- plan [key ...]    # is the town planned like a real one: road hierarchy, ring, eras, transect, neighbourhoods, second centre (TownPlanCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- measure <seed> 'width=256&riverCount=0'   # how big and built up a town is
 //   dotnet run --project "unity/Tools~/Checks" -- county [vectors-file] # the county: its spaces, highways and rooms (CountyCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- trips <key> [key] [key] # directions to a house in each of these towns (your slots), driven on the roads
@@ -43,6 +44,7 @@ static class Program
         if (args.Length > 1 && args[0] == "town") return RegenerateTown(args[1], args.Length > 2 ? args[2] : null);
         if (args.Length > 2 && args[0] == "roadmap") return RoadMap(args[1], args[2]);
         if (args.Length > 0 && args[0] == "zoning") return ZoningCheck.Run(args.Skip(1).ToArray());
+        if (args.Length > 0 && args[0] == "plan") return TownPlanCheck.Run(args.Skip(1).ToArray());
         if (args.Length > 2 && args[0] == "traffic") return TrafficCheck(args[1], args[2]);
         if (args.Length > 0 && args[0] == "county") return CountyCheck.Run(args.Length > 1 ? args[1] : null);
         if (args.Length > 0 && args[0] == "doors") return CountyCheck.Doors();
