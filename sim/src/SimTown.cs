@@ -161,6 +161,9 @@ namespace Porchlight.Sim
         /// own id), or by where they're drawn now (a place in the tick's car or person records). A wanderer, or
         /// an empty slot, has no day to explain. Buildings are given as Manage knows them (zoning's order).
         /// </summary>
+        /// <summary>The town's traffic lights now (Manage's map).</summary>
+        public object Signals() => traffic.life.Signals();
+
         public object Focus(bool car, bool bySlot, int i, bool brief = false)
         {
             var life = traffic.life;

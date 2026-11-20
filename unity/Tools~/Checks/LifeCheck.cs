@@ -60,6 +60,7 @@ static class LifeCheck
         yield return ("Manage's focus only looks: a morning watched closely comes out the same as one not", FocusOnlyLooks);
         yield return ("turns are named the driver's way: right turns are the tight ones", TurnNames);
         yield return ("vans on their rounds at midday: out, calling, and saying so", VansAtMidday);
+        yield return ("the morning rush travels smart: routes by the traffic, spots held, drivers let in, lights that change for a car", TravelsSmart);
         yield return ("no car drives through a player standing in a junction", JunctionPlayer);
         yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
         yield return ("with parking everywhere, nobody hunts for a spot", InfiniteParking);
@@ -428,6 +429,34 @@ static class LifeCheck
         life.RunUntil(life.Now + TownClock.HOUR);
         int moved = out_.Count(v => v.seg >= 0 && v.dest.id != calls[v.id]);
         if (moved < out_.Count / 2) return $"only {moved} of {out_.Count} vans on to another call an hour on";
+        return null;
+    }
+
+    /// <summary>
+    /// Given an hour of a town's morning rush, then: the router's been told the lanes' hold-ups; drivers going to a
+    /// building hold a kerb spot near its door, none more than RESERVE_REACH away; a driver waiting to pull out was let
+    /// in; a light changed for a car waiting at red with nobody coming the other way (if the town has lights); and in a
+    /// town big enough to queue, a held-up driver took a quicker way.
+    /// </summary>
+    static string TravelsSmart(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var life = new TownLife(model, layout, zoning);
+        life.Start(TrafficDay.Morning - 45 * TownClock.MINUTE);
+        life.RunUntil(TrafficDay.Morning + 15 * TownClock.MINUTE);
+        var s = life.stats;
+        if (s.reserved == 0) return "nobody held a spot as they set off";
+        foreach (var c in life.cars)
+        {
+            if (c.seg < 0 || c.target < 0 || !c.reserved || c.dest.border || c.van >= 0) continue;
+            var spot = life.net.spots[c.target];
+            if (spot.kind != SpotKind.Kerb || !life.net.access.TryGetValue(c.dest.id, out var a)) continue;
+            double d = Geo.Dist(spot.at, a.door);
+            if (d > 30 + 1e-6) return $"car {c.id} holds a spot {d:0.0} tiles from the door";
+        }
+        bool lights = life.net.junctions.Values.Any(j => j.control == Control.Signal);
+        if (lights && s.lightsChanged == 0) return "no light changed for a car waiting with nobody coming the other way";
+        if (life.people.Count > 10000 && s.rerouted == 0) return "in a town this big, no held-up driver took another way";
+        if (life.people.Count > 10000 && s.letIn == 0) return "in a town this big, no driver let anyone pull out";
         return null;
     }
 

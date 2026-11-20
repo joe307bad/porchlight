@@ -279,6 +279,17 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
       break;
     }
     assert.equal(await pool.ask('no-such-town', 'focus-car', 0, 'slot'), null);
+
+    // The traffic lights Manage draws: each signal's stage and when it ends, a lamp at each stop line on a stage.
+    const signals = (await pool.ask(key, 'signals', 0)) as { now: number; stageMs: number; lights: { stage: number; ends: number; lamps: number[][] }[] };
+    assert.ok(signals && Array.isArray(signals.lights), 'the lights');
+    assert.equal(signals.stageMs, 30_000);
+    for (const l of signals.lights) {
+      assert.ok(l.stage === 0 || l.stage === 1);
+      assert.ok(l.ends > signals.now && l.ends <= signals.now + signals.stageMs, 'its stage ends within a stage from now');
+      assert.ok(l.lamps.length >= 3 && l.lamps.every((p) => p.length === 3 && (p[2] === 0 || p[2] === 1)), 'a lamp on each way in');
+      assert.ok(new Set(l.lamps.map((p) => p[2])).size === 2, 'some ways go on each stage');
+    }
   } finally {
     pool.close();
   }

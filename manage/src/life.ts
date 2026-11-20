@@ -242,3 +242,31 @@ export function focusPoint(f: EntityFocus, room: FocusRoom | null | undefined): 
   if (layer && f.slot >= 0 && f.slot < layer.n && layer.shown[f.slot]) return { x: layer.x[f.slot], y: layer.y[f.slot], live: true };
   return { x: room.ox + f.at[0], y: room.oy + f.at[1], live: false };
 }
+
+/** A town's traffic lights (sim's TownLife.Signals): each signal's stage showing green and when it ends, and its lamps. */
+export interface Signals {
+  town: string;
+  /** The town's clock when asked (ms). */
+  now: number;
+  stageMs: number;
+  lights: { node: number; stage: number; ends: number; lamps: [number, number, number][] }[];
+}
+
+/** The last few seconds of a green show amber. */
+export const AMBER_MS = 3_000;
+
+/**
+ * A lamp's colour at town time `now`: green if its stage is the one showing (amber in its last seconds), red if not.
+ * Past `ends` the stages take turns, a stage each, as the server's lights do (until it says one changed early).
+ */
+export function lampColor(light: { stage: number; ends: number }, lampStage: number, now: number, stageMs: number): 'green' | 'amber' | 'red' {
+  let stage = light.stage;
+  let ends = light.ends;
+  if (now >= ends) {
+    const k = Math.floor((now - ends) / stageMs) + 1;
+    stage = (stage + k) % 2;
+    ends += k * stageMs;
+  }
+  if (lampStage !== stage) return 'red';
+  return ends - now <= AMBER_MS ? 'amber' : 'green';
+}

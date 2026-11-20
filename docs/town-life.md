@@ -32,6 +32,7 @@ run the same code.
 | `Life/Analytics.cs` | Figures for Manage, and who's indoors where. |
 | `Life/Rounds.cs` | Vans on their rounds: how many, their shifts, their calls. |
 | `Life/Gridlock.cs` | Giving up in the traffic: a car that hasn't moved in 10 minutes. |
+| `Life/Congestion.cs` | Routing by the traffic: each lane's hold-up measured, and held-up drivers taking a quicker way. |
 | `Life/Focus.cs` | Manage's focus on one car or person: its decision tree, its queue, and its way ahead. |
 | `Life/TownKey.cs` | Parses a town's key (shared with the server worker). |
 | `Explore/Traffic.cs` | What the game draws: the slots as cars and walkers, plus the boats. |
@@ -141,6 +142,14 @@ Each junction's control is chosen by its legs:
 - A car never starts a turn it can't finish before its green ends (its
   length plus the turn, at the turn's speed).
 
+**A light changes for a car waiting** (`skipEmpty`). A car at red asks
+again; if nobody is at, near (4 s at the limit) or crossing the junction on
+the turns that are green, and the green has run at least 8 s, the light
+changes now: the junction's offset moves so its stage is the car's, a whole
+stage long from now. Every copy still agrees, since the stage is still the
+clock plus the offset. A quiet side street no longer holds a car for half a
+minute in front of an empty main road. `stats.lightsChanged` counts them.
+
 **Stop signs** cost a 500 ms stop before a car may ask to go. Crossing or
 joining a bigger road from a stop sign is *unprotected*: routes count it as
 an extra 30 s, so drivers prefer the signals.
@@ -238,6 +247,16 @@ morning. `stats.gaveUp` counts them: none in the small towns, a few
 hundred a day in Ember Crossing and Porchlight. (Cancelling drivers held up
 past a threshold is A/B Street's idea.)
 
+### Letting a driver in
+
+A car pulling out from the kerb needs a gap in the lane (`letIn`). After two
+tries without one, the nearest car coming up behind it, far enough back to
+stop, **holds back** for it: that car's front is kept behind the spot until
+the driver is out, and the driver takes the gap it leaves. Only one car on a
+lane is held at a time, and it's let go when the driver is out or gives up.
+`stats.letIn` counts them. Without it, a car could wait out a whole rush at
+the kerb of a busy street.
+
 ### Players in the road
 
 `SetObstacles(points)` takes where the players are, on every update:
@@ -255,9 +274,9 @@ next junction, and a new route from there.
 
 ## 4. Routes
 
-`Router` finds the quickest way by free-flow time:
+`Router` finds the quickest way as the roads are:
 
-- each lane's span at its limit;
+- each lane's span at its limit, plus its **hold-up** as last measured;
 - each turn's curve at its speed;
 - a stop's 2 s, and an unprotected turn's 30 s;
 - a signal's 7.5 s (`SIGNAL_S`): the wait, on average, of a car turning up
@@ -273,6 +292,21 @@ Coordinating close signals (one timing for signals under 16 tiles apart,
 a green wave along each road) was tried and made it worse: every cross
 street went red at once, which starved it (38 minutes, 765 cars). Each
 signal keeps its own timing.
+
+### Routing by the traffic
+
+`Life/Congestion.cs` (`liveRoutes`). As each car leaves a lane, the time it
+took over its time at the limit is noted (less a signal's 7.5 s, which the
+turn already counts). Every 5 minutes each lane's hold-up is worked out
+again: half the last figure, half what was measured since, counting the car
+waiting at the front too. The router is told, and its trees are made again
+from the new times.
+
+A driver held up a minute (queued or waiting at a junction) looks again,
+at most every 3 minutes: if there's a way at least a fifth quicker from
+where they are, they take it. `stats.rerouted` counts them. So traffic
+spreads off a jammed main road onto the streets round it, and back when it
+clears.
 
 Trips to the same lane share one **tree of ways**: a reverse Dijkstra from
 the target over the turns into each lane, made the first time it's asked
@@ -291,6 +325,16 @@ in [0.1, 0.9) that is particular to that car and that lane. Drivers hunting
 at once therefore fan out instead of all circling the same block. If
 there's no free spot within reach (600 lanes), the car parks at the door
 anyway, as if there were room, and `stats.noSpot` counts it.
+
+### Holding a spot as you set off
+
+A driver going to a building picks the nearest free kerb spot within 30
+tiles of its door as they set off (`reserveSpots`), and drives to it. It's
+held from then, so nobody else takes it on the way and there's no hunt on
+arrival. Spots are found through a grid of 10-tile cells. With none free
+in reach, the driver goes to the door's own spots as before, and hunts if
+they're taken. `stats.reserved` counts them; the hunts in the big towns
+fall by about a fifth.
 
 ---
 
@@ -372,7 +416,10 @@ and a new day comes out different.
 - **Through drivers** pass in the morning or midday, and back out in the
   afternoon.
 
-A visit goes to a nearby home 60% of the time, otherwise to a shop. A plan
+A visit goes to a nearby home 60% of the time, otherwise to a shop.
+"Nearby" is the nearest of 6 picked at random (`nearErrands`; 3 without):
+lunch, the shops and visits stay closer to home, so more of them are on
+foot and the drives are shorter. A plan
 always ends at home.
 
 ### A trip
@@ -551,6 +598,7 @@ serves:
 | --- | --- |
 | `GET /mp/sim/life?town=<key>` | The town's clock, who's indoors where, who's off the map at each gate, and the day's figures. |
 | `GET /mp/sim/building?town=<key>&i=<n>` | Who's in that building, and when each next goes out. |
+| `GET /mp/sim/signals?town=<key>` | The town's traffic lights now: each signal's stage showing green and when it ends (`ends`, town ms), and a lamp on the kerb by each stop line with the stage it goes on. |
 | `GET /mp/sim/where?town=<key>&kind=car\|person&i=<n>` | As before, plus whether the slot is empty, and who's in it and what they're doing (the agent's state, trip and legs). |
 
 **Manage** (`manage/src/life.ts`) shows this:
@@ -563,6 +611,13 @@ serves:
   indoors, out and out of town. It also gives trips made and failed, each
   mode's share and mean time, the busiest hour, how full the kerbs are,
   and the slow junctions.
+
+- **Traffic lights,** close in (2 pixels a tile or more), are a small lamp
+  in a dark housing on the kerb by each stop line: green, amber in a
+  stage's last 3 s, red. Manage asks for the lights of the towns in view
+  once a second, and in between works out each lamp from the stage and
+  when it ends (`lampColor`), as the town does. How the game shows them is
+  still to be decided.
 
 Hidden slots aren't drawn, hovered or counted.
 
@@ -620,7 +675,8 @@ starts where that's known:
   it takes and the junction's control, then where it parks or the gate it
   leaves by. The times wait out the junction it's at (by `Judge`), each stop
   sign's stop, and each signal to its turn's green (signals keep time, so
-  their greens are known); traffic ahead isn't counted.
+  their greens are known, though one may change early for it); traffic
+  ahead isn't counted.
 
 **The way ahead** is drawn on the map from where it is: the car's lanes
 and turns to where it'll stop, or the walker's pieces of sidewalk and
@@ -704,6 +760,11 @@ given/when/then:
 - **Focus only looks.** Given the same town twice through two hours of the
   morning, when one is focused on (everyone out, every ten seconds), then
   both come out the same: the same trips, every car where the other's is.
+- **The rush travels smart.** Given an hour of a town's morning rush,
+  then: drivers held spots as they set off, none more than 30 tiles from
+  the door; a light changed for a waiting car (in a town with lights); and
+  in a big town (over 10,000 people), held-up drivers took another way and
+  drivers were let in.
 - **Vans at midday.** Given a town at noon, then at least a quarter of its
   vans are out, none has an owner or holds a parking spot, and Manage's
   focus and hover each say it's a van on its rounds. An hour on, at least
@@ -756,6 +817,30 @@ weekday:
 
 ---
 
+### What each part of travelling smart is worth
+
+`LIFE_OFF=<options>` (comma-separated `LifeOptions` fields) turns those
+options off for `traffic-day`, to see what each does. A day of Ember
+Crossing and Porchlight, the same people and cars:
+
+| | Ember: mean drive | failed trips | gave up | blocks busy | Porchlight: mean drive | failed | gave up | busy |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| None of them | 24.7 min | 407 | 612 | 23% | 12.8 min | 203 | 113 | 25% |
+| All of them | 9.1 min | 39 | 0 | 30% | 8.7 min | 16 | 0 | 32% |
+| All but `liveRoutes` | 13.6 min | 125 | 250 | 23% | 10.4 min | 73 | 49 | 25% |
+| All but `reserveSpots` | 9.5 min | 28 | 0 | 31% | 9.0 min | 11 | 0 | 32% |
+| All but `letIn` | 9.2 min | 47 | 0 | 31% | 8.6 min | 23 | 0 | 32% |
+| All but `skipEmpty` | 9.6 min | 38 | 0 | 30% | 8.6 min | 20 | 0 | 31% |
+| All but `nearErrands` | 9.3 min | 50 | 2 | 31% | 9.0 min | 15 | 0 | 32% |
+
+Routing by the traffic is most of it. The rest each take a little off the
+drive or the hunts (`reserveSpots`: about 700 fewer hunts a day in each;
+`nearErrands`: about 1,500 fewer drives). The streets are busier, not
+quieter: the same cars, moving, are on more blocks than when they stood in
+one queue downtown.
+
+---
+
 ## Credits
 
 The architecture follows ideas that the traffic simulation game
@@ -768,6 +853,7 @@ contributors, Apache-2.0) describes in its design documents:
 - reserving room on the lane out;
 - breaking cycles of waiting cars;
 - cancelling drivers held up past a threshold;
+- routing by measured travel times, and rerouting drivers held up;
 - generating trips from building capacities;
 - a jittered hunt for parking.
 

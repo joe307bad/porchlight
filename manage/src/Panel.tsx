@@ -49,6 +49,7 @@ const LAYER_NAMES: [keyof Layers, string][] = [
   ['roads', 'Streets'],
   ['zoning', 'Land use'],
   ['trails', 'Trails'],
+  ['signals', 'Traffic lights'],
 ];
 
 export function Panel(p: Props) {

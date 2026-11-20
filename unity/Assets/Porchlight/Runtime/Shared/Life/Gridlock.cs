@@ -45,6 +45,7 @@ namespace Porchlight.Life
                 else if (Now - c.movedAt >= STUCK_MS) (stuck = stuck ?? new List<Car>()).Add(c);
             }
             if (stuck != null) foreach (var c in stuck) GiveUp(c);
+            Congestion();
             Schedule(K_SWEEP, 0, Now + TownClock.MINUTE);
         }
 

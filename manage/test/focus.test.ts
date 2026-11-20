@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { dayMark, focusPoint, isFocus, mark, untilText, type EntityFocus, type FocusRoom } from '../src/life.ts';
+import { AMBER_MS, dayMark, focusPoint, isFocus, lampColor, mark, untilText, type EntityFocus, type FocusRoom } from '../src/life.ts';
 
 const focus = (o: Partial<EntityFocus>): EntityFocus => ({
   town: 'seed=x',
@@ -73,4 +73,15 @@ test('a click that finds a wanderer or an empty slot is no focus', () => {
   assert.equal(isFocus({ empty: true }), false);
   assert.equal(isFocus(null), false);
   assert.equal(isFocus(focus({})), true);
+});
+
+test("a traffic light's lamps: green on its stage, amber at the end of it, red otherwise, taking turns after", () => {
+  const light = { stage: 0, ends: 30_000 };
+  assert.equal(lampColor(light, 0, 10_000, 30_000), 'green');
+  assert.equal(lampColor(light, 1, 10_000, 30_000), 'red');
+  assert.equal(lampColor(light, 0, 30_000 - AMBER_MS + 1, 30_000), 'amber');
+  // Past when it said it ends: the other stage's turn, then back.
+  assert.equal(lampColor(light, 1, 31_000, 30_000), 'green');
+  assert.equal(lampColor(light, 0, 31_000, 30_000), 'red');
+  assert.equal(lampColor(light, 0, 61_000, 30_000), 'green');
 });

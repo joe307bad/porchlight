@@ -28,7 +28,7 @@ namespace Porchlight.Life
         public readonly Dictionary<int, Wait> carWaits = new Dictionary<int, Wait>(), walkerWaits = new Dictionary<int, Wait>();
         public readonly List<Problem> problems = new List<Problem>();
         public long problemCount;
-        public long gridlockBroken, gaveUp, waitedTooLong, hunts, noSpot, turnedRound, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
+        public long gridlockBroken, gaveUp, rerouted, lightsChanged, letIn, reserved, waitedTooLong, hunts, noSpot, turnedRound, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
         /// <summary>The longest any trip took (ms), and which.</summary>
         public long longestTrip;
 
@@ -155,6 +155,36 @@ namespace Porchlight.Life
         }
 
         static long BlockKey(Lane l) => ((long)l.road << 40) | ((long)Math.Min(l.fromNode, l.toNode) << 20) | (uint)Math.Max(l.fromNode, l.toNode);
+
+        /// <summary>
+        /// The town's traffic lights now, for Manage to draw: each signal's stage showing green and when it ends (ms;
+        /// a light changing early for a car waiting the other way moves that), and a lamp on the kerb by the stop line
+        /// of each lane into it (x, y, the stage it goes on), where the cars waiting there don't hide it.
+        /// </summary>
+        public Dictionary<string, object> Signals()
+        {
+            var lights = new List<object>();
+            var nodes = new List<int>(net.junctions.Keys);
+            nodes.Sort();
+            foreach (int node in nodes)
+            {
+                var j = net.junctions[node];
+                if (j.control != Control.Signal) continue;
+                var (stage, ends) = RoadNet.Stage(j, Now);
+                var lamps = new List<double[]>();
+                var seen = new HashSet<int>();
+                foreach (int id in j.movements)
+                {
+                    var m = net.movements[id];
+                    if (!seen.Add(m.from)) continue;
+                    var l = net.lanes[m.from];
+                    var (p, _) = net.LanePoint(l.road, l.dir, l.end, net.roads[l.road].width / 4 + 0.35);
+                    lamps.Add(new[] { Math.Round(p.x, 2), Math.Round(p.y, 2), m.stage });
+                }
+                lights.Add(new Dictionary<string, object> { ["node"] = node, ["stage"] = stage, ["ends"] = ends, ["lamps"] = lamps });
+            }
+            return new Dictionary<string, object> { ["now"] = Now, ["stageMs"] = RoadNet.STAGE_MS, ["lights"] = lights };
+        }
 
         public int CarsOnRoad()
         {

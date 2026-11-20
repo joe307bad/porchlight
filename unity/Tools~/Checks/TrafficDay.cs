@@ -61,11 +61,23 @@ static class TrafficDay
         return new TownLife(model, layout, zoning, options);
     }
 
+    /// <summary>The life's options, with any named in LIFE_OFF (comma-separated: liveRoutes, reserveSpots, letIn, skipEmpty, nearErrands, vans) off: to see what each does.</summary>
+    static LifeOptions Options()
+    {
+        var o = new LifeOptions();
+        foreach (var name in (Environment.GetEnvironmentVariable("LIFE_OFF") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var f = typeof(LifeOptions).GetField(name.Trim()) ?? throw new ArgumentException($"no option {name}");
+            f.SetValue(o, false);
+        }
+        return o;
+    }
+
     static List<string> Day(string name, string key, out string report)
     {
         var errs = new List<string>();
         var sw = Stopwatch.StartNew();
-        var life = Make(key);
+        var life = Make(key, Options());
         long made = sw.ElapsedMilliseconds;
         long start = TownClock.At(DAY, 0);
         life.Start(start);
@@ -94,9 +106,9 @@ static class TrafficDay
                     double h = TownClock.TimeOfDay(m) / (double)TownClock.HOUR;
                     return h >= 7.75 && h < 9.25 || h >= 16.25 && h < 18.25;
                 }
-                var rushing = life.vans.Where(v => v.seg >= 0 && v.route != null && InRush(v.routed)).ToList();
+                var rushing = life.vans.Where(v => v.seg >= 0 && v.callFrom >= 0 && InRush(v.callFrom)).ToList();
                 if (rushing.Count > 0 && errs.Count < 5)
-                    errs.Add($"{TownClock.Format(t)}: van {rushing[0].van} set off on a call at {TownClock.Format(rushing[0].routed)}, in the rush");
+                    errs.Add($"{TownClock.Format(t)}: van {rushing[0].van} set off on a call at {TownClock.Format(rushing[0].callFrom)}, in the rush");
                 double busy = life.BlocksInUse(out blocks) / (double)Math.Max(1, blocks);
                 busySum += busy;
                 busyLow = Math.Min(busyLow, busy);
@@ -122,7 +134,7 @@ static class TrafficDay
         if (busySum / Math.Max(1, busyN) < LEAST_BUSY) errs.Add($"the streets are empty by day: {100 * busySum / Math.Max(1, busyN):0}% of blocks with a car on them");
         if (s.started < life.people.Count) errs.Add($"only {s.started} trips for {life.people.Count} people");
         // The same day again from the same key: the same, hour by hour.
-        var again = Make(key);
+        var again = Make(key, Options());
         again.Start(start);
         var fp2 = new List<long>();
         for (long t = start; t <= start + 27 * TownClock.HOUR; t += TownClock.MINUTE)
@@ -137,7 +149,7 @@ static class TrafficDay
                  $"  trips {s.started} started, {s.finished} made, {s.failed} failed; walk {s.finishedBy[0]} ({Mean(0)}), drive {s.finishedBy[1]} ({Mean(1)}), bus {s.finishedBy[2]} ({Mean(2)})\n" +
                  $"  streets by day: {100 * busySum / Math.Max(1, busyN):0}% of {blocks} blocks with a car on them (at the quietest {100 * busyLow:0}%)\n" +
                  $"  peak {peakCars} cars on the road at {peakAt}, {peakOut} out; drawn at most {peakDrawnCars}/{life.carSlots.Length} cars, {peakDrawnPeople}/{life.personSlots.Length} people\n" +
-                 $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, gave up {s.gaveUp}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
+                 $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, gave up {s.gaveUp}, rerouted {s.rerouted}, lights changed {s.lightsChanged}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
         return errs;
     }
 

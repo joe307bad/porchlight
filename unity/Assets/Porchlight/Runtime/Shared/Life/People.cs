@@ -195,8 +195,12 @@ namespace Porchlight.Life
         }
 
         /// <summary>Of a few of `list` picked at random, the nearest to building `b`.</summary>
-        int Nearest(List<int> list, int b, Rng rng, int tries = 3)
+        /// <summary>The nearest of this many picked at random (ERRAND_CHOICES with nearErrands): more, and errands are nearer home.</summary>
+        const int CHOICES = 3, ERRAND_CHOICES = 6;
+
+        int Nearest(List<int> list, int b, Rng rng, int tries = -1)
         {
+            if (tries < 0) tries = options.nearErrands ? ERRAND_CHOICES : CHOICES;
             var from = Door(Place.Building(b));
             if (tries <= 0)
             {

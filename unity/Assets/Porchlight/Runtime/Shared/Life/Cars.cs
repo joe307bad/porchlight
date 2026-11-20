@@ -97,6 +97,7 @@ namespace Porchlight.Life
                 if (lag.seg >= 0) p = Math.Min(p, q.length + Front(lag) - lag.length - FOLLOWING);
             }
             if (q.blockFirst == c.id && !double.IsNaN(q.blockAt)) p = Math.Min(p, q.blockAt - STAND_OFF);
+            if (q.held == c.id) p = Math.Min(p, q.heldAt);
             p = Math.Max(p, Math.Min(c.s0, -c.length));
             frontMemo[c.id] = p;
             return p;
@@ -237,6 +238,7 @@ namespace Porchlight.Life
         /// <summary>Onto the next segment: off the front of this one (its back still here a while), onto the back of that.</summary>
         void Advance(Car c, int next)
         {
+            if (c.seg < Lanes) Measured(c);
             var q = queues[c.seg];
             q.cars.Remove(c.id);
             if (c.laggy >= 0) ClearLaggy(c);
@@ -253,6 +255,8 @@ namespace Porchlight.Life
             Schedule(K_CLEAR, c.id, Now + (long)Math.Ceiling((c.length + FOLLOWING) / Math.Max(0.05, SegSpeed(next)) * 1000));
             if (next < Lanes)
             {
+                c.laneSince = Now;
+                c.laneFrom = 0;
                 stats.Flow(net.lanes[next].road, Now);
                 if (last) OnLastLane(c);
             }
@@ -303,7 +307,9 @@ namespace Porchlight.Life
             if (!waitingAt.TryGetValue(j.node, out var waiting)) waitingAt[j.node] = waiting = new List<int>();
             if (!waiting.Contains(c.id)) waiting.Add(c.id);
             blockedBy.Remove(c.id);
-            var verdict = Judge(c, m, j, out long again, out var by, out bool knot, null);
+            var verdict = Judge(c, m, j, out long again, out var by, out bool knot, null, out bool change);
+            // Its light changes now: nobody's coming the way that was green (the junction's clock moves on).
+            if (verdict == Verdict.Go && change) ChangeLight(j, m.stage);
             if (m.stops && !c.stopped && verdict != Verdict.StopFirst) c.stopped = true;
             if (by != null) blockedBy[c.id] = by;
             if (verdict != Verdict.Go)
@@ -352,11 +358,14 @@ namespace Porchlight.Life
         /// it's waiting on (crossing turns under way, whoever filled the lane beyond), when it got that far; `knot`:
         /// they wait on it in turn (gridlock), so it goes anyway.
         /// </summary>
-        Verdict Judge(Car c, Movement m, Junction j, out long again, out List<int> by, out bool knot, List<Why> explain)
+        Verdict Judge(Car c, Movement m, Junction j, out long again, out List<int> by, out bool knot, List<Why> explain) => Judge(c, m, j, out again, out by, out knot, explain, out _);
+
+        Verdict Judge(Car c, Movement m, Junction j, out long again, out List<int> by, out bool knot, List<Why> explain, out bool change)
         {
             again = Now;
             by = null;
             knot = false;
+            change = false;
             if (m.stops)
             {
                 bool served = c.stopped || Now >= c.arrived + STOP_MS;
@@ -375,6 +384,20 @@ namespace Porchlight.Life
                 bool green = stage == m.stage;
                 explain?.Add(new Why("Is its light green?", green ? $"Yes, until {TownClock.FormatSeconds(ends)}" : $"No: green at {TownClock.FormatSeconds(ends)}", green,
                     $"Two stages of {RoadNet.STAGE_MS / 1000} s; its turn goes in stage {m.stage + 1}, now it's stage {stage + 1}."));
+                if (!green && options.skipEmpty)
+                {
+                    // Nobody coming the way that's green, and it's been green a while: the light changes for it.
+                    bool long_ = Now - (ends - RoadNet.STAGE_MS) >= MIN_GREEN_MS;
+                    bool empty = long_ && NobodyComing(j, stage);
+                    explain?.Add(new Why("Is anyone coming the way that's green?", !long_ ? $"Green only since {TownClock.FormatSeconds(ends - RoadNet.STAGE_MS)}: it stays at least {MIN_GREEN_MS / 1000} s" : empty ? "No: its light changes for it now" : "Yes", empty,
+                        "A signal with nobody coming on its green changes for a car waiting the other way."));
+                    if (empty)
+                    {
+                        green = true;
+                        change = true;
+                        ends = Now + RoadNet.STAGE_MS;
+                    }
+                }
                 if (!green)
                 {
                     again = ends + 1;
@@ -439,6 +462,40 @@ namespace Porchlight.Life
                 return Verdict.Blocked;
             }
             return Verdict.Go;
+        }
+
+        /// <summary>A light stays green at least this long before it changes for someone waiting the other way.</summary>
+        const long MIN_GREEN_MS = 8_000;
+        /// <summary>A car this near the line (seconds at its lane's limit) is coming.</summary>
+        const double COMING_S = 4;
+
+        /// <summary>Is nobody at, coming to (within COMING_S) or going through junction `j` on a turn of `stage`?</summary>
+        bool NobodyComing(Junction j, int stage)
+        {
+            foreach (int id in j.movements)
+            {
+                var m = net.movements[id];
+                if (m.stage != stage) continue;
+                var q = queues[m.from];
+                if (q.cars.Count > 0)
+                {
+                    var f = cars[q.cars[0]];
+                    var lane = net.lanes[m.from];
+                    if (lane.Span - Front(f) <= COMING_S * lane.speed) return false;
+                }
+                if (queues[Lanes + id].cars.Count > 0) return false;
+            }
+            return true;
+        }
+
+        /// <summary>Junction `j`'s light changes now to `stage`, green for a whole stage; those waiting there ask again.</summary>
+        void ChangeLight(Junction j, int stage)
+        {
+            // Stage(j, t) = ((t + offset) / STAGE) mod 2: from now, `stage`, a stage's length.
+            long period = 2 * RoadNet.STAGE_MS;
+            j.offset = ((stage * RoadNet.STAGE_MS - Now) % period + period) % period;
+            stats.lightsChanged++;
+            Wake(j.node);
         }
 
         /// <summary>Why a waiting car hasn't gone (for the checks and the debug view): its turn, the room beyond, and who's in the way.</summary>
@@ -549,12 +606,12 @@ namespace Porchlight.Life
         readonly HashSet<int> wantsOut = new HashSet<int>();
         readonly Dictionary<int, int> tries = new Dictionary<int, int>();
 
-        /// <summary>Is there a gap at `d` along `lane` for a car this long (and room in the lane)?</summary>
+        /// <summary>Is there a gap at `d` along `lane` for a car this long (and room in the lane, unless it's being let in)?</summary>
         bool Gap(int lane, double d, Car c, out int index)
         {
             var q = queues[lane];
             index = 0;
-            if (!Room(lane, c)) return false;
+            if (!Room(lane, c) && q.letting != c.id) return false;
             if (q.laggy >= 0 && d > q.length - c.length - FOLLOWING * 2 && cars[q.laggy].seg >= 0) return false;
             for (int i = 0; i < q.cars.Count; i++)
             {
@@ -578,6 +635,10 @@ namespace Porchlight.Life
             c.s0 = c.s1 = d;
             c.t0 = c.t1 = Now;
             c.offMap = false;
+            c.laneSince = Now;
+            c.laneFrom = d;
+            c.rerouted = -1;
+            c.reroutes = 0;
             version++;
             TakeCarSlot(c);
             return true;
@@ -588,6 +649,7 @@ namespace Porchlight.Life
         {
             Cancel(K_CAR, c.id);
             Cancel(K_CLEAR, c.id);
+            StopLetting(c);
             wantsOut.Remove(c.id);
             if (c.laggy >= 0) ClearLaggy(c);
             if (c.seg >= 0)
@@ -669,6 +731,13 @@ namespace Porchlight.Life
                     var s = net.spots[keep];
                     targets.Add((s.lane, s.s - net.lanes[s.lane].start));
                 }
+                else if (options.reserveSpots && !options.infiniteParking && c.bus < 0 && c.van < 0 && (keep = NearestFreeSpot(to.door)) >= 0)
+                {
+                    // A spot near the door, held from now: driven to, not looked for on arrival (no circling the block).
+                    stats.reserved++;
+                    var s = net.spots[keep];
+                    targets.Add((s.lane, s.s - net.lanes[s.lane].start));
+                }
                 else
                 {
                     foreach (int l in net.LanesFor(to))
@@ -689,8 +758,13 @@ namespace Porchlight.Life
             {
                 spotHolder[keep] = c.id;
                 c.target = keep;
+                c.reserved = net.spots[keep].kind == SpotKind.Kerb;
             }
-            else c.target = -1;
+            else
+            {
+                c.target = -1;
+                c.reserved = false;
+            }
             return true;
         }
 
@@ -701,17 +775,23 @@ namespace Porchlight.Life
             {
                 int n = tries.TryGetValue(c.id, out int t) ? t + 1 : 1;
                 tries[c.id] = n;
-                if (n >= MOST_TRIES)
+                // A couple of tries and no gap: the next driver along holds back to let it in.
+                if (options.letIn && n >= LET_IN_AFTER) LetIn(c);
+                bool letting = queues[c.startLane].letting == c.id;
+                // (Being let in, it tries every second: as soon as the cars past the one holding back are by.)
+                if (n >= (letting ? 3 * MOST_TRIES : MOST_TRIES))
                 {
+                    StopLetting(c);
                     wantsOut.Remove(c.id);
                     if (c.target >= 0 && spotHolder[c.target] == c.id) spotHolder[c.target] = -1;
                     c.target = -1;
                     if (c.owner >= 0) Fail(people[c.owner], "no gap to pull out into");
                     return;
                 }
-                Schedule(K_CAR, c.id, Now + 3000);
+                Schedule(K_CAR, c.id, Now + (letting ? 1000 : 3000));
                 return;
             }
+            StopLetting(c);
             wantsOut.Remove(c.id);
             tries.Remove(c.id);
             long wait = 0;
@@ -736,6 +816,52 @@ namespace Porchlight.Life
                 SetInterval(c, c.s1, c.route.Count == 1 ? c.goal : SegLength(c.seg));
             }
             if (c.route.Count == 1) OnLastLane(c);
+        }
+
+        /// <summary>Tries at pulling out before the next driver along lets it in.</summary>
+        const int LET_IN_AFTER = 2;
+
+        /// <summary>
+        /// Car `c`, waiting at the kerb to pull out at `startD` along `startLane`: the first car coming along that can
+        /// still stop short of it does (a car's length and a gap back), and holds there till it's out. The cars past it
+        /// already go on, and leave the gap. (One car let in at a time on a lane.)
+        /// </summary>
+        void LetIn(Car c)
+        {
+            var q = queues[c.startLane];
+            if (q.letting >= 0 && q.letting != c.id) return;
+            double stop = c.startD - c.length - FOLLOWING;
+            int held = -1;
+            foreach (int id in q.cars)
+            {
+                if (Front(cars[id]) <= stop + 1e-6)
+                {
+                    held = id;
+                    break;
+                }
+            }
+            if (q.letting == c.id && q.held == held) return;
+            if (q.letting != c.id) stats.letIn++;
+            int was = q.held;
+            q.letting = c.id;
+            q.held = held;
+            q.heldAt = Math.Max(0, stop);
+            version++;
+            if (was >= 0 && was != held && cars[was].seg == c.startLane) Refresh(cars[was]);
+            if (held >= 0) Refresh(cars[held]);
+        }
+
+        /// <summary>Car `c`'s out (or given up): whoever held back for it goes on.</summary>
+        void StopLetting(Car c)
+        {
+            if (c.startLane < 0 || c.startLane >= queues.Length) return;
+            var q = queues[c.startLane];
+            if (q.letting != c.id) return;
+            int held = q.held;
+            q.letting = -1;
+            q.held = -1;
+            version++;
+            if (held >= 0 && cars[held].seg == c.startLane) Refresh(cars[held]);
         }
 
         /// <summary>On the last lane of its way: find a spot ahead to stop for, near the door, or hunt for one.</summary>
@@ -789,6 +915,49 @@ namespace Porchlight.Life
             SetInterval(c, Front(c), SegLength(c.seg));
         }
 
+        /// <summary>A driver going somewhere holds the free kerb spot nearest its door within this (tiles) as they set off.</summary>
+        const double RESERVE_REACH = 30;
+
+        /// <summary>The free kerb spot nearest `door` within RESERVE_REACH, or -1.</summary>
+        int NearestFreeSpot(Vec2 door)
+        {
+            if (spotGrid == null)
+            {
+                spotGrid = new Dictionary<long, List<int>>();
+                for (int s = 0; s < net.spots.Count; s++)
+                {
+                    if (net.spots[s].kind != SpotKind.Kerb || net.spots[s].scenery) continue;
+                    long key = SpotCell(net.spots[s].at);
+                    if (!spotGrid.TryGetValue(key, out var list)) spotGrid[key] = list = new List<int>();
+                    list.Add(s);
+                }
+            }
+            int best = -1;
+            double bestD = RESERVE_REACH;
+            int cx = (int)Math.Floor(door.x / SPOT_CELL), cy = (int)Math.Floor(door.y / SPOT_CELL);
+            int r = (int)Math.Ceiling(RESERVE_REACH / SPOT_CELL);
+            for (int dx = -r; dx <= r; dx++)
+                for (int dy = -r; dy <= r; dy++)
+                {
+                    if (!spotGrid.TryGetValue(((long)(cx + dx) << 32) | (uint)(cy + dy), out var list)) continue;
+                    foreach (int s in list)
+                    {
+                        if (spotHolder[s] >= 0) continue;
+                        double d = Geo.Dist(door, net.spots[s].at);
+                        if (d < bestD || (d == bestD && s < best))
+                        {
+                            bestD = d;
+                            best = s;
+                        }
+                    }
+                }
+            return best;
+        }
+
+        const double SPOT_CELL = 10;
+        Dictionary<long, List<int>> spotGrid;
+        static long SpotCell(Vec2 p) => ((long)(int)Math.Floor(p.x / SPOT_CELL) << 32) | (uint)(int)Math.Floor(p.y / SPOT_CELL);
+
         bool Free(int spot)
         {
             var s = net.spots[spot];
@@ -799,6 +968,7 @@ namespace Porchlight.Life
         {
             spotHolder[spot] = c.id;
             c.target = spot;
+            c.reserved = false;
         }
 
         /// <summary>At the end of its way: a gate (off the map), a bus stop, or where it parks.</summary>

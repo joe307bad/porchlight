@@ -4,7 +4,7 @@
 // few times a second, from the same World.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { briefOn, buildingLife, county, focusOn, inDesktopApp, me, signInUrl, townLife, type CountyMap, type Me } from './api.ts';
+import { briefOn, buildingLife, county, focusOn, signalsOf, inDesktopApp, me, signInUrl, townLife, type CountyMap, type Me } from './api.ts';
 import { isFocus, type BuildingLife, type EntityFocus, type FocusAnswer, type FocusTarget, type TownLife } from './life.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
@@ -17,6 +17,8 @@ type Phase = { state: 'loading' } | { state: 'signedOut' } | { state: 'error'; w
 const LAYERS_KEY = 'porchlight.manage.traffic.layers';
 /** How often each town's life is asked for (ms). */
 const LIFE_MS = 5_000;
+/** How often the traffic lights in view are asked for (ms). */
+const SIGNALS_MS = 1_000;
 /** How often the car or person focused on is asked about again (ms). */
 const FOCUS_MS = 1_000;
 
@@ -189,9 +191,16 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     };
     void lifeOnce();
     const lifeTimer = setInterval(() => void lifeOnce(), LIFE_MS);
+    // The traffic lights of the towns in view, close in: a light changes every half minute (or early, for a car
+    // waiting the other way), so once a second.
+    const signalTimer = setInterval(() => {
+      if (!r.showsSignals()) return;
+      for (const key of r.townsInView()) void signalsOf(key).then((s) => !stopped && r.setSignals(key, s));
+    }, SIGNALS_MS);
     return () => {
       stopped = true;
       clearInterval(lifeTimer);
+      clearInterval(signalTimer);
       clearInterval(focus);
       f.stop();
       r.dispose();

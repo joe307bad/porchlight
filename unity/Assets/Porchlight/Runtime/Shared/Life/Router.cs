@@ -1,8 +1,10 @@
-// Ways over the town's lanes for drivers: the quickest by free-flow travel time
-// (each lane's length at its limit, each turn's curve at its speed, and a heavy
+// Ways over the town's lanes for drivers: the quickest by travel time as the
+// roads are (each lane's length at its limit plus the hold-up measured on it
+// lately, each turn's curve at its speed, a signal's average wait, and a heavy
 // penalty for pulling out from a stop sign onto a bigger road), and the hunt for
 // a parking spot when the street is full. Trips to the same place share one tree
-// of ways there, worked out the first time it's asked for. Pure.
+// of ways there, worked out the first time it's asked for after the hold-ups
+// were last measured (SetDelays). Pure.
 
 using System;
 using System.Collections.Generic;
@@ -48,7 +50,39 @@ namespace Porchlight.Life
             foreach (var m in net.movements) ins[m.to].Add(m.id);
         }
 
-        public double LaneTime(Lane l) => l.Span / l.speed;
+        /// <summary>Each lane's hold-up (seconds over its time at the limit), as last measured.</summary>
+        double[] delay;
+
+        public double LaneTime(Lane l) => l.Span / l.speed + (delay != null ? delay[l.id] : 0);
+
+        /// <summary>The lanes' hold-ups as measured now: every tree of ways is worked out again from them.</summary>
+        public void SetDelays(double[] seconds)
+        {
+            delay = (double[])seconds.Clone();
+            trees.Clear();
+            recent.Clear();
+        }
+
+        /// <summary>What's left of `route` from `d` along its segment `step`, to `goal` along its last (seconds, as Route counts it).</summary>
+        public double Left(List<int> route, int step, double d, double goal)
+        {
+            int n = net.lanes.Count;
+            double t = 0;
+            for (int k = step; k < route.Count; k++)
+            {
+                int seg = route[k];
+                if (seg >= n)
+                {
+                    t += TurnTime(net.movements[seg - n]);
+                    continue;
+                }
+                var l = net.lanes[seg];
+                double from = k == step ? d : 0, to = k == route.Count - 1 ? goal : l.Span;
+                t += Math.Max(0, to - from) / l.speed;
+                if (k < route.Count - 1 && delay != null) t += delay[seg] * Math.Max(0, Math.Min(1, (l.Span - from) / Math.Max(1e-6, l.Span)));
+            }
+            return t;
+        }
 
         public double TurnTime(Movement m) => m.length / m.speed + (m.unprotected ? UNPROTECTED_S : 0) + (m.stops ? STOP_S : 0) + (m.signal ? SIGNAL_S : 0);
 
@@ -140,7 +174,7 @@ namespace Porchlight.Life
                     }
                 }
                 if (bestM < 0) continue;
-                double total = Math.Max(0, fl.Span - d) / fl.speed + bestC + td / tl.speed;
+                double total = Math.Max(0, fl.Span - d) / fl.speed + (delay != null ? delay[from] * Math.Max(0, Math.Min(1, (fl.Span - d) / Math.Max(1e-6, fl.Span))) : 0) + bestC + td / tl.speed;
                 if (total >= seconds) continue;
                 var segs = new List<int> { from, net.lanes.Count + bestM };
                 int at = net.movements[bestM].to;

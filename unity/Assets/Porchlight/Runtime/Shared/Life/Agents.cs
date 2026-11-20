@@ -57,12 +57,19 @@ namespace Porchlight.Life
         public bool stopped;
         /// <summary>Since when a player has stood in its way.</summary>
         public long heldSince = -1;
+        /// <summary>When it came onto the lane it's on, and how far along (for the lane's measured hold-up).</summary>
+        public long laneSince;
+        public double laneFrom;
+        /// <summary>When its way was last changed for the traffic, and how many times this drive.</summary>
+        public long rerouted = -1;
+        public int reroutes;
         /// <summary>Where it was when it last moved (segment, front), and when: a car that hasn't in a long while gives up.</summary>
         public int seenSeg = -1;
         public double seenFront;
         public long movedAt;
-        /// <summary>A van on its rounds: which one (-1: not a van).</summary>
+        /// <summary>A van on its rounds: which one (-1: not a van), and when it set off for the call it's making.</summary>
         public int van = -1;
+        public long callFrom = -1;
         /// <summary>A bus: which one (-1: not a bus), and the stop it's at or last left.</summary>
         public int bus = -1;
         public int busStop;
@@ -74,8 +81,9 @@ namespace Porchlight.Life
         public bool huntFailed;
         /// <summary>Where it's driving to.</summary>
         public Place dest;
-        /// <summary>The spot it's holding to park in (-1: none yet).</summary>
+        /// <summary>The spot it's holding to park in (-1: none yet), and whether it was held as it set off (not hunted for).</summary>
         public int target = -1;
+        public bool reserved;
         /// <summary>Its way's free-flow time as the router reckoned it (s), and when it was worked out.</summary>
         public double routeS;
         public long routed = -1;
@@ -98,6 +106,10 @@ namespace Porchlight.Life
         /// <summary>Lanes: a player standing in it, how far along, and the first car behind them.</summary>
         public double blockAt = double.NaN;
         public int blockFirst = -1;
+        /// <summary>Lanes: a car being let in from the kerb (-1: none), the car held back for it, and how far along that one stops.</summary>
+        public int letting = -1;
+        public int held = -1;
+        public double heldAt;
     }
 
     public enum Mode { Walk, Drive, Bus }

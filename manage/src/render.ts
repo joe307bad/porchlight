@@ -7,7 +7,7 @@
 import type { CountyMap } from './api.ts';
 import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
 import { ZONES, buildingIndexAt, describe } from './zoning.ts';
-import { focusPoint, indoorRadius, indoors, type EntityFocus, type TownLife } from './life.ts';
+import { focusPoint, indoorRadius, indoors, lampColor, type EntityFocus, type Signals, type TownLife } from './life.ts';
 
 export interface Layers {
   roads: boolean;
@@ -19,9 +19,16 @@ export interface Layers {
   names: boolean;
   reach: boolean;
   trails: boolean;
+  /** Traffic lights, a lamp at each stop line (close in). */
+  signals: boolean;
 }
 
-export const DEFAULT_LAYERS: Layers = { roads: true, zoning: true, cars: true, people: true, players: true, names: true, reach: true, trails: false };
+export const DEFAULT_LAYERS: Layers = { roads: true, zoning: true, cars: true, people: true, players: true, names: true, reach: true, trails: false, signals: true };
+
+/** Lamp colours. */
+const LAMPS = { green: '#3ddc84', amber: '#ffb020', red: '#ff4d4d' } as const;
+/** Closer in than this (pixels a tile), traffic lights are drawn. */
+export const SIGNALS_FROM = 2;
 
 /** Car colours by speed (tiles a second): stopped, crawling, moving, fast. */
 export const SPEEDS = [
@@ -260,6 +267,54 @@ export class MapRenderer {
     if (on) {
       this.following = null;
       this.cam.scale = Math.max(this.cam.scale, 8);
+    }
+  }
+
+  /** Each town's traffic lights as last heard, and how far its clock was from ours then (ms). */
+  private signals = new Map<string, { s: Signals; skew: number }>();
+
+  /** A town's traffic lights, just heard (null: forget them). */
+  setSignals(key: string, s: Signals | null): void {
+    if (!s) this.signals.delete(key);
+    else this.signals.set(key, { s, skew: s.now - Date.now() });
+  }
+
+  /** Whether the lights are drawn at this zoom (and so worth asking for). */
+  showsSignals(): boolean {
+    return this.layers.signals && this.cam.scale >= SIGNALS_FROM;
+  }
+
+  /** Each traffic light, a small lamp in a dark housing on the kerb by each stop line: green, amber or red. */
+  private drawSignals(ctx: CanvasRenderingContext2D, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
+    if (!this.showsSignals()) return;
+    const size = Math.max(0.45, 2.5 * px);
+    const housing = size + Math.max(0.2, 1.5 * px);
+    for (const [key, { s, skew }] of this.signals) {
+      const room = this.roomOf(key);
+      if (!room) continue;
+      const now = Date.now() + skew;
+      ctx.fillStyle = '#0b0d12';
+      ctx.beginPath();
+      for (const light of s.lights)
+        for (const [lx, ly] of light.lamps) {
+          const x = room.meta.ox + lx, y = room.meta.oy + ly;
+          if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+          ctx.rect(x - housing / 2, y - housing / 2, housing, housing);
+        }
+      ctx.fill();
+      for (const color of ['green', 'amber', 'red'] as const) {
+        ctx.fillStyle = LAMPS[color];
+        ctx.beginPath();
+        for (const light of s.lights)
+          for (const [lx, ly, stage] of light.lamps) {
+            const x = room.meta.ox + lx, y = room.meta.oy + ly;
+            if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+            if (lampColor(light, stage, now, s.stageMs) !== color) continue;
+            ctx.moveTo(x + size / 2, y);
+            ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+          }
+        ctx.fill();
+      }
     }
   }
 
@@ -623,6 +678,7 @@ export class MapRenderer {
       if (this.layers.people) this.drawPeople(ctx, view, px, dim);
       if (this.layers.cars) this.drawCars(ctx, view, px, dim);
     }
+    this.drawSignals(ctx, view, px);
     this.drawFocus(ctx, px);
     if (this.layers.players) this.drawPlayers(ctx, view, px);
   }

@@ -32,6 +32,16 @@ namespace Porchlight.Life
         public bool buses = true;
         /// <summary>Vans on their rounds (Rounds.cs).</summary>
         public bool vans = true;
+        /// <summary>Routes by the traffic as measured, and drivers held up thinking again (Congestion.cs).</summary>
+        public bool liveRoutes = true;
+        /// <summary>A parking spot near the door held from setting off (Cars.cs Plan), not looked for on arrival.</summary>
+        public bool reserveSpots = true;
+        /// <summary>Drivers let a car waiting to pull out in (Cars.cs PullOut).</summary>
+        public bool letIn = true;
+        /// <summary>A signal with nobody coming the way that's green lets the other way go (Cars.cs Judge).</summary>
+        public bool skipEmpty = true;
+        /// <summary>Errands to places near home more than far (People.cs PlanDay).</summary>
+        public bool nearErrands = true;
         /// <summary>How many cars and people can be drawn at once (the wire's slots); -1: sized to the town.</summary>
         public int carSlots = -1, peopleSlots = -1;
         /// <summary>How long before the start to begin, so trips under way at the start are on the road.</summary>

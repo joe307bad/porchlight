@@ -448,8 +448,8 @@ namespace Porchlight.Life
             {
                 int turns = 0;
                 for (int k = c.step + 1; k < c.route.Count; k++) if (c.route[k] >= Lanes) turns++;
-                tree.Add(Why.Info("Which way?", $"The quickest by the clear roads: {Minutes(c.routeS)}, {turns} junction{(turns == 1 ? "" : "s")} still to go",
-                    $"Each street at its limit and each turn at its speed; a signal counts as {Router.SIGNAL_S:0.#} s (its wait, on average), and pulling out from a stop sign onto a bigger road {Router.UNPROTECTED_S:0} s. Worked out at {TownClock.Format(c.routed)}."));
+                tree.Add(Why.Info("Which way?", $"The quickest as the roads are: {Minutes(c.routeS)}, {turns} junction{(turns == 1 ? "" : "s")} still to go" + (c.reroutes > 0 ? $" (changed {c.reroutes} time{(c.reroutes == 1 ? "" : "s")} for the traffic)" : ""),
+                    $"Each street at its limit plus how held up it's been lately (measured every {TownLife.ROUTE_EVERY_MS / TownClock.MINUTE} minutes), each turn at its speed; a signal counts as {Router.SIGNAL_S:0.#} s (its wait, on average), and pulling out from a stop sign onto a bigger road {Router.UNPROTECTED_S:0} s. Held up a minute, a driver looks for a way at least a fifth quicker. Worked out at {TownClock.Format(c.routed)}."));
             }
             tree.Add(StateWhy(c, building));
             if (c.bus < 0) tree.Add(StopWhy(c, building));

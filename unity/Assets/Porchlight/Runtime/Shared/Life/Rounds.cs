@@ -154,6 +154,7 @@ namespace Porchlight.Life
                 c.step = 0;
                 c.goal = targets[t].Item2;
                 c.dest = Place.Building(best);
+                c.callFrom = Now;
                 c.target = -1;
                 c.state = CarState.Crossing;
                 SetInterval(c, Front(c), route.Count == 1 ? c.goal : SegLength(c.seg));
