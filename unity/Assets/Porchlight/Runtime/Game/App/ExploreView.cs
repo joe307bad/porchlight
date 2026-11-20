@@ -2584,6 +2584,7 @@ namespace Porchlight.App
             }
             else if (p != null && mode == CameraMode.Close && !p.IsAuto && room == null && !screenKeys)
             {
+                if (!double.IsFinite(chaseSwing)) chaseSwing = 0;
                 if (inputV.y < 0 && chaseSwing != 0)
                 {
                     p.heading += chaseSwing;

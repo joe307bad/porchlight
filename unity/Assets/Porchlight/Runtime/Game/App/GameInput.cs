@@ -228,12 +228,14 @@ namespace Porchlight.App
             }
         }
 
-        static double Level(float v) => v > TRIGGER_DEADZONE ? (v - TRIGGER_DEADZONE) / (1 - TRIGGER_DEADZONE) : 0;
+        // A browser reads an axis the pad doesn't have as NaN (Chrome on Windows offers devices with only
+        // two axes as gamepads): that's a stick or trigger at rest, not a number to steer by.
+        static double Level(float v) => float.IsFinite(v) && v > TRIGGER_DEADZONE ? (v - TRIGGER_DEADZONE) / (1 - TRIGGER_DEADZONE) : 0;
 
         /// <summary>A stick with a round deadzone, rescaled so it still runs smoothly from 0 to 1 (y down, as the browser reports).</summary>
         static Vec2 Stick(Vector2 v)
         {
-            double x = v.x, y = -v.y;
+            double x = float.IsFinite(v.x) ? v.x : 0, y = float.IsFinite(v.y) ? -v.y : 0;
             double len = Numbers.Hypot(x, y);
             if (len < DEADZONE) return new Vec2(0, 0);
             double k = Math.Min(1, (len - DEADZONE) / (1 - DEADZONE)) / len;

@@ -877,7 +877,7 @@ namespace Porchlight.App
 
         void Rooms(Vec2 at)
         {
-            if (Net == null || Net.RoomKey == null) return;
+            if (Net == null || Net.RoomKey == null || !double.IsFinite(at.x) || !double.IsFinite(at.y)) return;
             string want = map.RoomAt(at);
             if (want != wantRoom)
             {
