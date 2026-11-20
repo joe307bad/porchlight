@@ -11,6 +11,10 @@ in order, is at the end. Citations: `[P#]` are planning and procedural
 generation, `[T#]` traffic, population and events; both lists are at the
 bottom. *(unverified)* marks a figure we couldn't trace to its primary source.
 
+The to-do lists are tracked in
+[issue #17](https://github.com/joe307bad/porchlight/issues/17); tick items off
+there as they land.
+
 Scale: a tile is 4 m, a town about 256 × 256 tiles (1 km square).
 
 ---
@@ -539,7 +543,8 @@ From `Explore/Actors.cs` and `Walking.cs`:
 
 ## The whole list, in order
 
-Each step stands on the one before. Start with the cheap ones.
+Each step stands on the one before. Start with the cheap ones. Progress is
+tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
 
 1. **Cheap fixes now:**
    - walking pace (§5)
