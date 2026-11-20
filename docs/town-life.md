@@ -6,7 +6,7 @@ morning rush, out for lunch, to the shops, home in the evening, now and then
 to visit someone. They walk, drive or take the bus. Their cars queue at
 junctions, wait at stop signs and signals, park at the kerb or in their
 driveway, and hunt for a spot when the street is full. A day of the busiest
-town (about 5,900 people and 18,000 trips) runs in about 3.5 seconds.
+town (about 5,500 people and 16,600 trips) runs in about 5 seconds.
 
 This is the design the [A/B Street research](abstreet.md) recommended. It
 was written from that doc's description of the ideas. No A/B Street code was
@@ -508,10 +508,14 @@ It prints how each day went, for comparing across commits:
 
 | Town | People | Trips | Failed | Walk / drive / bus | Peak cars on the road | Day |
 | --- | --- | --- | --- | --- | --- | --- |
-| Porchlight | 5,880 | 17,858 | 6 | 11,843 / 5,969 / 40 | 51 | 3.5 s |
-| Ember Crossing | 4,867 | 14,618 | 18 | 10,534 / 4,055 / 11 | 48 | 2.8 s |
-| Lanternport | 1,153 | 3,467 | 21 | 2,697 / 746 / 3 | 13 | 0.2 s |
-| Juniper Falls | 488 | 1,473 | 2 | 1,265 / 206 / 0 | 8 | 0.1 s |
+| Ember Crossing | 5,502 | 16,595 | 93 | 10,402 / 6,075 / 25 | 236 | 5.4 s |
+| Porchlight | 5,418 | 16,427 | 7 | 10,133 / 6,252 / 35 | 54 | 4.4 s |
+| Lanternport | 1,205 | 3,637 | 16 | 2,705 / 910 / 6 | 14 | 0.3 s |
+| Juniper Falls | 391 | 1,196 | 2 | 1,032 / 162 / 0 | 6 | 0.1 s |
+
+Ember Crossing's planned core (short blocks between back-to-back signals,
+from the town planning work) makes the only real rush hour: its drives take
+about twice as long as Porchlight's.
 
 **`Checks life server/towns`** checks one rule per scenario, each as
 given/when/then:
@@ -526,6 +530,11 @@ given/when/then:
 - **A player on a lane.** Given a car going along a lane, when a player
   stands in front of it, then within two seconds it has stopped short of
   them, and it goes again once they've gone.
+- **Nobody's run over.** Given the morning rush, when a player steps out
+  in a clear spot just in front of a moving car, wherever it is (on a
+  lane, on a turn, about to take one), then over the next three seconds
+  no car drives into them. This is tried 200 times a town. With players
+  ignored, it fails in every town.
 - **A player in a junction.** Given a player in the middle of the busiest
   junction through the rush, then no car on a turn there reaches them,
   cars do wait, and the waiting cars go once the player leaves.

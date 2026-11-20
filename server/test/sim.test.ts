@@ -73,25 +73,65 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
     }
     assert.ok(sent < full * 0.6, `deltas ${sent} B against ${full} B whole`);
 
-    // A player standing in front of a car: it stops there.
-    const v = new DataView(town.cars.buffer, town.cars.byteOffset, town.cars.byteLength);
-    let moving = -1;
-    for (let i = 0; i < town.cars.byteLength / RECORD; i++) if (v.getUint8(i * RECORD + 6) > 20) moving = i;
-    if (moving >= 0) {
+    // A player stepping out in front of a car: it stops short of them, and never drives into them. The town
+    // runs on the real clock, so which cars are moving differs run to run, and the player reaches the worker
+    // a tick or few after the positions they were placed by (the car's moved on meanwhile): a car that's
+    // already on the spot by then, turns off before reaching it, or whose slot goes to another car proves
+    // nothing either way, and the next one's tried.
+    const pose = (u: { cars: Uint8Array }, at: number) => {
+      const w = new DataView(u.cars.buffer, u.cars.byteOffset, u.cars.byteLength);
+      const rx = w.getUint16(at), ry = w.getUint16(at + 2);
+      if (rx === 0xffff && ry === 0xffff) return null;
+      return { x: rx / 100, y: ry / 100, h: (w.getUint16(at + 4) / 65536) * 2 * Math.PI, speed: w.getUint8(at + 6) / 40 };
+    };
+    let stopped = -1;
+    const tried = new Set<number>();
+    const judged: number[] = [];
+    for (let attempt = 0; attempt < 8 && stopped < 0; attempt++) {
       const [t] = await until(pool, (ts) => ts.length > 0);
-      const w = new DataView(t.cars.buffer, t.cars.byteOffset, t.cars.byteLength);
+      let moving = -1;
+      for (let i = 0; i < t.cars.byteLength / RECORD; i++) {
+        const p = pose(t, i * RECORD);
+        if (p && p.speed > 0.5 && !tried.has(i)) moving = i;
+      }
+      if (moving < 0) break;
+      tried.add(moving);
       const at = moving * RECORD;
-      const x = w.getUint16(at) / 100, y = w.getUint16(at + 2) / 100, h = (w.getUint16(at + 4) / 65536) * 2 * Math.PI;
-      const stand = { x: x + Math.cos(h) * 1.2, y: y + Math.sin(h) * 1.2 };
-      let speed = Infinity;
-      for (let i = 0; i < 20 && speed > 0.2; i++) {
+      const first = pose(t, at)!;
+      const stand = { x: first.x + Math.cos(first.h) * 3, y: first.y + Math.sin(first.h) * 3 };
+      // Somewhere clear: no other car on (or just short of) the spot.
+      let clear = true;
+      for (let i = 0; i < t.cars.byteLength / RECORD; i++) {
+        const o = i !== moving ? pose(t, i * RECORD) : null;
+        if (o && Math.hypot(o.x - stand.x, o.y - stand.y) < 1.5) clear = false;
+      }
+      if (!clear) continue;
+      let last = first;
+      let seen = false;
+      let nearest = Infinity;
+      for (let i = 0; i < 20; i++) {
         pool.setPlayers(new Map([[key, [stand]]]));
         const [u] = await until(pool, (ts) => ts.length > 0);
-        speed = new DataView(u.cars.buffer, u.cars.byteOffset).getUint8(at + 6) / 40;
+        const p = pose(u, at);
+        if (!p || Math.hypot(p.x - last.x, p.y - last.y) > 3) break; // parked, or the slot's another car's now
+        last = p;
+        const d = Math.hypot(p.x - stand.x, p.y - stand.y);
+        const along = (stand.x - p.x) * Math.cos(p.h) + (stand.y - p.y) * Math.sin(p.h);
+        // Already at the spot when the player got there: too late to stop, not driving into them.
+        if (!seen && along < 1.4) break;
+        if (!seen) judged.push(moving);
+        seen = true;
+        assert.ok(d > 0.45 || along <= 0 || p.speed <= 0.2, `car ${moving} drove into the player (${d.toFixed(2)} tiles off, ${p.speed} tiles a second)`);
+        if (d > nearest + 0.5) break; // it turned off another way
+        nearest = Math.min(nearest, d);
+        if (p.speed <= 0.2 && along < 2.5) {
+          stopped = moving;
+          break;
+        }
       }
-      assert.ok(speed <= 0.2, `car ${moving} stopped for the player (still ${speed} tiles a second)`);
       pool.setPlayers(new Map());
     }
+    if (judged.length > 0) assert.ok(stopped >= 0, `none of cars ${judged.join(', ')} stopped for a player in front of it`);
 
     // A car taken after the town's first word on it: out of the traffic, its driver onto the pavement.
     pool.setTaken(key, []);
