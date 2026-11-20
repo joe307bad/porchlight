@@ -299,7 +299,7 @@ From `Explore/Traffic.cs`:
 | TM:PE [T24] (Cities: Skylines mod) | priority signs, timed lights, lane arrows, parking AI |
 
 **A/B Street** (Rust, open source) is the closest match to a game like ours
-[T25][T26]:
+[T25][T26]. [abstreet.md](abstreet.md) goes through its code and what to port:
 - It is a **discrete-event** sim: each agent schedules its next transition
   in a priority queue, so a quiet map costs almost nothing.
 - Its retrospective's lessons [T18]:
