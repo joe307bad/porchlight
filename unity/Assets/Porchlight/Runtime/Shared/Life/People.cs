@@ -21,6 +21,8 @@ namespace Porchlight.Life
         public const double THROUGH = 1.2;
         /// <summary>The chance of a home slot or job slot, kept within these.</summary>
         const double P_LOW = 0.05, P_HIGH = 0.9;
+        /// <summary>The trips each person remembers, for Manage's focus view.</summary>
+        const int RECENT = 3;
         /// <summary>Closer than this (tiles: 240 m), people walk.</summary>
         public const double WALK_TILES = 60;
         /// <summary>Of those at home in the day, this many are children at school.</summary>
@@ -365,13 +367,18 @@ namespace Porchlight.Life
             var from = p.at;
             var trip = new Trip { id = (int)stats.started, from = from, to = to, purpose = why, started = Now };
             var c = p.car >= 0 ? cars[p.car] : null;
+            trip.why.gate = from.border || to.border;
             if ((from.border || to.border) && c == null)
             {
                 // Through a gate needs a car: anyone without one has one waiting there.
                 GiveCar(p, from);
                 c = cars[p.car];
+                trip.why.given = true;
             }
             if (c != null && from.border && !c.offMap) ParkNear(c, from);
+            trip.why.hasCar = c != null;
+            trip.why.dist = Geo.Dist(Door(from), Door(to));
+            trip.why.carHere = c != null && !c.offMap && c.parkedBy == from.id;
             if (c != null && WouldDrive(p, c, from, to))
             {
                 trip.mode = Mode.Drive;
@@ -379,7 +386,7 @@ namespace Porchlight.Life
                 trip.legs.Add(new Leg { kind = LegKind.Drive, dest = to });
                 if (!to.border) trip.legs.Add(new Leg { kind = LegKind.Walk, to = Door(to) });
             }
-            else if (BusBetter(p, Door(from), Door(to), out int board, out int alight))
+            else if (BusBetter(p, Door(from), Door(to), out int board, out int alight, ref trip.why))
             {
                 trip.mode = Mode.Bus;
                 trip.legs.Add(new Leg { kind = LegKind.Walk, from = Door(from), to = busStops[board].at });
@@ -449,6 +456,14 @@ namespace Porchlight.Life
             {
                 p.at = trip.to;
                 if (made) stats.Finished(trip, Now);
+                trip.ended = Now;
+                trip.made = made;
+                // Kept only to say how it went: its legs (and their points) aren't.
+                trip.legs.Clear();
+                trip.legs.TrimExcess();
+                if (p.recent == null) p.recent = new List<Trip>(RECENT);
+                if (p.recent.Count >= RECENT) p.recent.RemoveAt(0);
+                p.recent.Add(trip);
             }
             p.where = p.at.border ? Where.OffMap : Where.Inside;
             Count(p, 1);
@@ -464,6 +479,7 @@ namespace Porchlight.Life
         {
             var trip = p.trip;
             if (trip == null) return;
+            trip.failed = why;
             stats.Failed(trip, why, Now);
             LeaveBus(p);
             if (p.car >= 0 && trip.mode == Mode.Drive)

@@ -60,3 +60,13 @@ export async function buildingLife(key: string, i: number): Promise<import('./li
   if (!res.ok) return null;
   return (await res.json()) as import('./life.ts').BuildingLife;
 }
+
+/**
+ * Manage's focus on a car or townsperson: found where it's drawn (`slot`, its place in the feed's records) or
+ * followed by who it is (`id`, from an earlier answer). Null if there's nobody (or the town isn't running).
+ */
+export async function focusOn(town: string, kind: 'car' | 'person', by: 'slot' | 'id', i: number): Promise<import('./life.ts').FocusAnswer | null> {
+  const res = await fetch(`/mp/sim/focus?town=${encodeURIComponent(town)}&kind=${kind}&${by}=${i}`, { cache: 'no-store', credentials: 'same-origin' });
+  if (!res.ok) return null;
+  return (await res.json()) as import('./life.ts').FocusAnswer;
+}

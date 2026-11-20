@@ -44,6 +44,13 @@ namespace Porchlight.Life
             return $"{t / 60:00}:{t % 60:00}";
         }
 
+        /// <summary>"08:05:30" for a moment.</summary>
+        public static string FormatSeconds(long moment)
+        {
+            long t = TimeOfDay(moment) / 1000;
+            return $"{t / 3600:00}:{t / 60 % 60:00}:{t % 60:00}";
+        }
+
         static long Mod(long a, long m) => ((a % m) + m) % m;
 
         static long FloorDiv(long a, long m) => (a - Mod(a, m)) / m;

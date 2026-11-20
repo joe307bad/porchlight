@@ -275,8 +275,12 @@ export class SimPool {
     this.workers[this.workerOf(town.id)].send(IN_TAKEN, json({ id: town.id, taken: list }));
   }
 
-  /** About one car (traffic slot), person (townsfolk index) or building (zoning index) in a town now; null if there's none or no answer. */
-  ask(key: string, kind: 'car' | 'person' | 'building', i: number): Promise<unknown> {
+  /**
+   * About one car (traffic slot), person (townsfolk index) or building (zoning index) in a town now; or Manage's
+   * focus on a car or person (its decision tree and queue), found by where it's drawn (`by` 'slot') or who it is
+   * ('id'). Null if there's none or no answer.
+   */
+  ask(key: string, kind: 'car' | 'person' | 'building' | 'focus-car' | 'focus-person', i: number, by?: 'slot' | 'id'): Promise<unknown> {
     const town = this.byKey.get(key);
     if (!town || !town.ready) return Promise.resolve(null);
     const ask = this.nextAsk++;
@@ -290,7 +294,7 @@ export class SimPool {
         clearTimeout(timer);
         resolve(answer);
       });
-      this.workers[this.workerOf(town.id)].send(IN_ASK, json({ ask, town: town.id, kind, i }));
+      this.workers[this.workerOf(town.id)].send(IN_ASK, json({ ask, town: town.id, kind, i, by }));
     });
   }
 

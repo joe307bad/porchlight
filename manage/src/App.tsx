@@ -4,8 +4,8 @@
 // few times a second, from the same World.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { buildingLife, county, inDesktopApp, me, signInUrl, townLife, type CountyMap, type Me } from './api.ts';
-import type { BuildingLife, TownLife } from './life.ts';
+import { buildingLife, county, focusOn, inDesktopApp, me, signInUrl, townLife, type CountyMap, type Me } from './api.ts';
+import { isFocus, type BuildingLife, type EntityFocus, type FocusAnswer, type FocusTarget, type TownLife } from './life.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
 import { backToApp, backToGame, embedded } from './embed.ts';
@@ -17,6 +17,14 @@ type Phase = { state: 'loading' } | { state: 'signedOut' } | { state: 'error'; w
 const LAYERS_KEY = 'porchlight.manage.traffic.layers';
 /** How often each town's life is asked for (ms). */
 const LIFE_MS = 5_000;
+/** How often the car or person focused on is asked about again (ms). */
+const FOCUS_MS = 1_000;
+
+/** What to say when a click finds nobody with a day to explain. */
+function nobody(a: FocusAnswer | null): string {
+  if (a && 'wanderer' in a) return 'A wanderer: they stroll the pavements with no day of their own, so there are no decisions to show.';
+  return "Nobody's there now (or the server isn't running that town).";
+}
 
 function savedLayers(): Layers {
   try {
@@ -100,6 +108,11 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   const [feed, setFeed] = useState<Feed | null>(null);
   const [lives, setLives] = useState<Map<string, TownLife>>(new Map());
   const [building, setBuilding] = useState<BuildingLife | null>(null);
+  // The car or townsperson focused on: who (followed by id), what the simulation last said, and whether the map follows them.
+  const [target, setTarget] = useState<FocusTarget | null>(null);
+  const [focus, setFocus] = useState<EntityFocus | null>(null);
+  const [focusNote, setFocusNote] = useState<string | null>(null);
+  const [followingFocus, setFollowingFocus] = useState(false);
 
   useEffect(() => {
     const r = new MapRenderer(canvas.current!, world, map);
@@ -110,6 +123,20 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
       r.select(sid);
     };
     r.onFollowEnd = () => setFollowing(null);
+    r.onFocusFollowEnd = () => setFollowingFocus(false);
+    r.onEntity = (e) => {
+      void focusOn(e.key, e.kind, 'slot', e.slot).then((a) => {
+        if (!isFocus(a)) {
+          setTarget(null);
+          setFocus(null);
+          setFocusNote(nobody(a));
+          return;
+        }
+        setFocusNote(null);
+        setFocus(a);
+        setTarget({ town: e.key, kind: a.kind, id: a.id });
+      });
+    };
     r.onHover = setHover;
     r.onBuilding = (b) => {
       if (!b) return setBuilding(null);
@@ -159,10 +186,69 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     }
   }, [renderer, layers]);
 
+  // The focus, asked about again every second while there is one.
+  useEffect(() => {
+    if (!target) return;
+    let stopped = false;
+    const once = async () => {
+      const a = await focusOn(target.town, target.kind, 'id', target.id).catch(() => null);
+      if (stopped) return;
+      if (isFocus(a)) {
+        setFocus(a);
+        setFocusNote(null);
+      } else setFocusNote("Lost track of them: the server isn't running that town now.");
+    };
+    void once();
+    const t = setInterval(() => void once(), FOCUS_MS);
+    return () => {
+      stopped = true;
+      clearInterval(t);
+    };
+  }, [target]);
+
+  useEffect(() => {
+    renderer?.setFocus(focus);
+  }, [renderer, focus]);
+
+  /** Focus on someone by who they are (from the panel: a driver, their car, someone in a building), and follow them there. */
+  const focusTo = useCallback(
+    (t: FocusTarget) => {
+      setFocus(null);
+      setFocusNote(null);
+      setTarget(t);
+      setFollowing(null);
+      renderer?.follow(null);
+      setFollowingFocus(true);
+      renderer?.followFocus(true);
+    },
+    [renderer],
+  );
+
+  const followFocus = useCallback(
+    (on: boolean) => {
+      setFollowingFocus(on);
+      if (on) setFollowing(null);
+      renderer?.followFocus(on);
+    },
+    [renderer],
+  );
+
+  const closeFocus = useCallback(() => {
+    setTarget(null);
+    setFocus(null);
+    setFocusNote(null);
+    setFollowingFocus(false);
+    renderer?.setFocus(null);
+  }, [renderer]);
+
   const follow = useCallback(
     (sid: string | null) => {
       setFollowing(sid);
       setSelected(sid);
+      if (sid) {
+        setFollowingFocus(false);
+        renderer?.followFocus(false);
+      }
       renderer?.follow(sid);
     },
     [renderer],
@@ -208,6 +294,12 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         onCloseBuilding={() => setBuilding(null)}
         following={following}
         onFollow={follow}
+        focus={focus}
+        focusNote={focusNote}
+        followingFocus={followingFocus}
+        onFollowFocus={followFocus}
+        onCloseFocus={closeFocus}
+        onFocus={focusTo}
         onTown={(t) => {
           follow(null);
           renderer?.fit(t.x0, t.y0, t.width, t.height);

@@ -56,6 +56,9 @@ static class LifeCheck
     {
         yield return ("a car stops for a player standing in its way", StopsForPlayer);
         yield return ("nobody's run over: a player stepping out in front of any car, anywhere", NobodyRunOver);
+        yield return ("Manage's focus: every person and car out explained, its queue in order, its way drawn from where it is", Focus);
+        yield return ("Manage's focus only looks: a morning watched closely comes out the same as one not", FocusOnlyLooks);
+        yield return ("turns are named the driver's way: right turns are the tight ones", TurnNames);
         yield return ("no car drives through a player standing in a junction", JunctionPlayer);
         yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
         yield return ("with parking everywhere, nobody hunts for a spot", InfiniteParking);
@@ -264,6 +267,144 @@ static class LifeCheck
             }
         }
         return "no car on the move to stand in front of";
+    }
+
+    /// <summary>
+    /// Given the morning rush, when every person on a trip and every car on the road is focused on, a minute at a
+    /// time, then each has a decision tree whose way-of-getting-there answer is the mode the trip really took (and
+    /// a waiting car's tree has the junction's own questions), a queue with the step under way first and the
+    /// day's plan in time order after, and a way ahead that starts where they are and (a car's) ends where it's
+    /// going; and the slot each is drawn in leads back to them.
+    /// </summary>
+    static string Focus(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var t = Rush(model, layout, zoning);
+        var life = t.life;
+        int people = 0, carsSeen = 0, waiting = 0;
+        var modes = new Dictionary<Mode, string> { [Mode.Walk] = "By foot", [Mode.Drive] = "By car", [Mode.Bus] = "By bus" };
+        for (int minute = 0; minute < 20; minute++)
+        {
+            for (int f = 0; f < 600; f++) t.Update(0.1, null);
+            foreach (var p in life.people)
+            {
+                var o = life.FocusPerson(p.id);
+                if (o == null) return $"person {p.id}: no focus";
+                Json(o);
+                var tree = (List<Dictionary<string, object>>)o["tree"];
+                if (tree.Count == 0) return $"person {p.id}: an empty decision tree";
+                var queue = (List<Dictionary<string, object>>)o["queue"];
+                if (p.trip == null) continue;
+                people++;
+                var how = tree.FirstOrDefault(w => (string)w["q"] == "How are they getting there?");
+                if (how == null) return $"person {p.id}: no way-of-getting-there in their tree";
+                if ((string)how["a"] != modes[p.trip.mode]) return $"person {p.id}: the tree says \"{how["a"]}\" but the trip is by {p.trip.mode}";
+                if (queue.Count == 0 || !(bool)queue[0]["now"]) return $"person {p.id}: the queue doesn't start with what they're doing now";
+                long last = long.MinValue;
+                foreach (var item in queue)
+                {
+                    if (!(item["at"] is long at)) continue;
+                    if (at < last) return $"person {p.id}: the queue's out of order ({item["what"]} at {item["time"]})";
+                    last = at;
+                }
+                if (p.slot >= 0 && life.personSlots[p.slot].shown && life.PersonInSlot(p.slot) != p.id) return $"person {p.id}: slot {p.slot} leads to {life.PersonInSlot(p.slot)}";
+                if (p.slot >= 0 && life.personSlots[p.slot].shown && p.walk != null)
+                {
+                    var path = (List<double[]>)o["path"];
+                    if (path.Count == 0) return $"person {p.id}: walking, but no way ahead";
+                    var here = life.PersonPoint(p).at;
+                    if (Numbers.Hypot(path[0][0] - here.x, path[0][1] - here.y) > 0.05) return $"person {p.id}: their way starts {Numbers.Hypot(path[0][0] - here.x, path[0][1] - here.y):0.00} tiles from them";
+                }
+            }
+            foreach (var c in life.cars)
+            {
+                if (c.seg < 0) continue;
+                var o = life.FocusCar(c.id);
+                Json(o);
+                carsSeen++;
+                var tree = (List<Dictionary<string, object>>)o["tree"];
+                long before = long.MinValue;
+                foreach (var item in (List<Dictionary<string, object>>)o["queue"])
+                {
+                    if (!(item["at"] is long at)) continue;
+                    if (at < before) return $"car {c.id}: the queue's out of order ({item["what"]} at {item["time"]})";
+                    before = at;
+                }
+                if (c.state == CarState.Waiting && c.seg < life.net.lanes.Count)
+                {
+                    waiting++;
+                    var may = tree.FirstOrDefault(w => (string)w["q"] == "May it take its turn?");
+                    if (may == null || !may.ContainsKey("under")) return $"car {c.id}: waiting, but its tree doesn't have the junction's questions";
+                }
+                var path = (List<double[]>)o["path"];
+                if (c.route != null && path.Count > 0)
+                {
+                    var here = life.CarPoint(c).at;
+                    double off = Numbers.Hypot(path[0][0] - here.x, path[0][1] - here.y);
+                    if (off > 0.05) return $"car {c.id}: its way starts {off:0.00} tiles from it";
+                    if (o["dest"] is double[] d && path.Count < 400)
+                    {
+                        double end = Numbers.Hypot(path[^1][0] - d[0], path[^1][1] - d[1]);
+                        if (end > 1.5) return $"car {c.id}: its way ends {end:0.00} tiles from where it's going";
+                    }
+                }
+                if (c.slot >= 0 && life.carSlots[c.slot].shown && life.CarInSlot(c.slot) != c.id) return $"car {c.id}: slot {c.slot} leads to {life.CarInSlot(c.slot)}";
+            }
+        }
+        if (people < 50 || carsSeen < 10) return $"too few looked at ({people} people on trips, {carsSeen} cars)";
+        return null;
+    }
+
+    static void Json(object o) => JsonSerializer.Serialize(o);
+
+    /// <summary>
+    /// Given the same town twice through the same two hours of the morning, when one is focused on (every person
+    /// and car on the road, every ten seconds) and the other isn't, then both end the same: the same trips made,
+    /// the same people out, every car where the other's is.
+    /// </summary>
+    static string FocusOnlyLooks(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var a = Rush(model, layout, zoning);
+        var b = Rush(model, layout, zoning);
+        for (int s = 0; s < 720; s++)
+        {
+            for (int f = 0; f < 100; f++)
+            {
+                a.Update(0.1, null);
+                b.Update(0.1, null);
+            }
+            foreach (var p in b.life.people) if (p.trip != null) b.life.FocusPerson(p.id);
+            foreach (var c in b.life.cars) if (c.seg >= 0) b.life.FocusCar(c.id);
+        }
+        if (a.life.stats.started != b.life.stats.started || a.life.stats.finished != b.life.stats.finished)
+            return $"looked at, {b.life.stats.started} trips started and {b.life.stats.finished} made; not, {a.life.stats.started} and {a.life.stats.finished}";
+        for (int i = 0; i < a.life.cars.Count; i++)
+        {
+            var x = a.life.cars[i];
+            var y = b.life.cars[i];
+            if (x.seg != y.seg || Math.Abs(a.life.Front(x) - b.life.Front(y)) > 1e-9 || x.state != y.state)
+                return $"car {i}: {y.state} on {y.seg} at {b.life.Front(y):0.000} looked at, {x.state} on {x.seg} at {a.life.Front(x):0.000} not";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Given every turn in the town, when each is named the driver's way, then the right turns are the tight ones
+    /// (shorter on average than the left: traffic keeps right), and there are some of each.
+    /// </summary>
+    static string TurnNames(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var life = new TownLife(model, layout, zoning);
+        var right = new List<double>();
+        var left = new List<double>();
+        foreach (var m in life.net.movements)
+        {
+            string name = life.TurnText(m);
+            if (name == "turn right") right.Add(m.length);
+            else if (name == "turn left") left.Add(m.length);
+        }
+        if (right.Count == 0 || left.Count == 0) return $"{right.Count} right turns and {left.Count} left";
+        if (right.Average() >= left.Average()) return $"right turns average {right.Average():0.00} tiles, left {left.Average():0.00}: named the wrong way round";
+        return null;
     }
 
     /// <summary>

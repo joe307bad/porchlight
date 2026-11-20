@@ -122,3 +122,103 @@ export function describeInside(b: BuildingLife): string[] {
     return `#${p.id} · ${kind} · ${next}`;
   });
 }
+
+// --- Focus: one car or townsperson (GET /mp/sim/focus; sim's Life/Focus.cs) -------------------
+
+/** One question in a decision tree: its answer, which way it went (a yes-or-no decision; none for a fact), and what it went by. */
+export interface Why {
+  q: string;
+  a: string;
+  yes?: boolean;
+  note?: string;
+  under?: Why[];
+}
+
+/** A step in a decision queue, and when it starts (unix ms; null: not known yet). */
+export interface QueueItem {
+  at: number | null;
+  time: string | null;
+  what: string;
+  /** The step under way now. */
+  now: boolean;
+}
+
+/** GET /mp/sim/focus: one car or person, followed by who it is. */
+export interface EntityFocus {
+  town: string;
+  kind: 'car' | 'person';
+  id: number;
+  /** The town clock when asked (unix ms), and as hh:mm. */
+  clock: number;
+  time: string;
+  /** Who they are ("Works, and lives in town"; "A car"). */
+  who: string;
+  /** What they're doing, in a line. */
+  doing: string;
+  /** A person: Inside, OnTrip or OffMap; their car (-1: none). */
+  where?: string;
+  car?: number;
+  /** A car: whose (-1: the bus), which bus (-1: none), its state. */
+  owner?: number;
+  bus?: number;
+  state?: string;
+  /** What they're drawn as now (a person driving is drawn as their car), and its place in the feed's records. */
+  drawn: 'car' | 'person' | 'none';
+  slot: number;
+  /** Where they are (town frame, tiles). */
+  at: [number, number];
+  tree: Why[];
+  queue: QueueItem[];
+  /** The way ahead (town frame), and where it ends. */
+  path: [number, number][];
+  dest: [number, number] | null;
+  /** A person's last few trips. */
+  recent?: { purpose: string; mode: string; to: string; started: string; ended: string | null; made: boolean; failed: string | null }[];
+}
+
+/** What's focused on: a town's car or person, by who it is. */
+export interface FocusTarget {
+  town: string;
+  kind: 'car' | 'person';
+  id: number;
+}
+
+/** What a click found that has no day to explain. */
+export type FocusAnswer = EntityFocus | { wanderer: true } | { empty: true };
+
+export const isFocus = (a: FocusAnswer | null): a is EntityFocus => !!a && 'id' in a;
+
+/** A decision's mark: ✓ yes (passed), ✗ no, nothing for a fact. */
+export function mark(w: Why): string {
+  return w.yes === undefined ? '' : w.yes ? '✓' : '✗';
+}
+
+/** When a queued step starts, from the town clock `clock`: now, in so long, or at a time of day. */
+export function untilText(item: QueueItem, clock: number): string {
+  if (item.now) return 'now';
+  if (item.at === null) return 'then';
+  const s = Math.round((item.at - clock) / 1000);
+  if (s <= 0) return 'now';
+  if (s < 90) return `in ${s} s`;
+  if (s < 60 * 60) return `in ${Math.round(s / 60)} min`;
+  return `at ${item.time}`;
+}
+
+/** The records a focus can be drawn from: a room's cars and people (county frame), as the feed has them now. */
+export interface FocusRoom {
+  ox: number;
+  oy: number;
+  cars: { n: number; shown: Uint8Array; x: Float32Array; y: Float32Array };
+  people: { n: number; shown: Uint8Array; x: Float32Array; y: Float32Array };
+}
+
+/**
+ * Where a focus is now, on the county map: where it's drawn (its car's or its own record, moving smoothly), or
+ * where the simulation last said (indoors, parked, or its town not in the feed).
+ */
+export function focusPoint(f: EntityFocus, room: FocusRoom | null | undefined): { x: number; y: number; live: boolean } | null {
+  if (!room) return null;
+  const layer = f.drawn === 'car' ? room.cars : f.drawn === 'person' ? room.people : null;
+  if (layer && f.slot >= 0 && f.slot < layer.n && layer.shown[f.slot]) return { x: layer.x[f.slot], y: layer.y[f.slot], live: true };
+  return { x: room.ox + f.at[0], y: room.oy + f.at[1], live: false };
+}

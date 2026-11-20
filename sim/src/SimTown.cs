@@ -156,6 +156,36 @@ namespace Porchlight.Sim
             summary = traffic.life.Summary(),
         };
 
+        /// <summary>
+        /// Manage's focus view (Life/Focus.cs) on one car or person: by who they are (`bySlot` false: the life's
+        /// own id), or by where they're drawn now (a place in the tick's car or person records). A wanderer, or
+        /// an empty slot, has no day to explain. Buildings are given as Manage knows them (zoning's order).
+        /// </summary>
+        public object Focus(bool car, bool bySlot, int i)
+        {
+            var life = traffic.life;
+            int id = i;
+            if (bySlot)
+            {
+                if (car) id = life.CarInSlot(i);
+                else
+                {
+                    // The townsfolk records: the wanderers, then the life's people slots, then drivers put out of cars someone took.
+                    int slot = i - (basePeople - life.personSlots.Length);
+                    if (slot < 0 || slot >= life.personSlots.Length) return new { wanderer = true };
+                    id = life.PersonInSlot(slot);
+                }
+                if (id < 0) return new { empty = true };
+            }
+            var index = BuildingIndex();
+            Func<int, int> building = b => index.TryGetValue(b, out int k) ? k : -1;
+            object o = car ? life.FocusCar(id, building) : life.FocusPerson(id, building);
+            if (o is Dictionary<string, object> d && !car && d["drawn"] is string drawn && drawn == "person")
+                // Their place in the tick's records (past the wanderers), for Manage to follow.
+                d["slot"] = (int)d["slot"] + basePeople - life.personSlots.Length;
+            return o;
+        }
+
         Dictionary<int, int> buildingIndex;
 
         /// <summary>Each building id's place in Zoning.Encode's list: Manage knows buildings by that.</summary>

@@ -213,6 +213,7 @@ namespace Porchlight.Sim
                     int slot = q.i - (town.basePeople - life.personSlots.Length);
                     answer = slot >= 0 ? life.AboutPersonSlot(slot) : new { wanderer = true };
                 }
+                else if (q.kind == "focus-car" || q.kind == "focus-person") answer = town.Focus(q.kind == "focus-car", q.by == "slot", q.i);
                 else if (q.kind == "building")
                 {
                     int id = q.i >= 0 && q.i < town.zoning.buildings.Count ? town.zoning.buildings[q.i].buildingId : -1;
@@ -228,6 +229,8 @@ namespace Porchlight.Sim
             public int town { get; set; }
             public string kind { get; set; }
             public int i { get; set; }
+            /// <summary>focus-*: "slot" (`i` is where it's drawn: a car's or person's place in the tick's records) or "id" (who: the town's life's own).</summary>
+            public string by { get; set; }
         }
 
         /// <summary>Every town a tenth of a second on, and what each now is sent.</summary>

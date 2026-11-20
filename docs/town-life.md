@@ -30,6 +30,7 @@ run the same code.
 | `Life/Walking.cs` | Walkers, crossings and crowding. |
 | `Life/Buses.cs` | The bus loop, stops and riders. |
 | `Life/Analytics.cs` | Figures for Manage, and who's indoors where. |
+| `Life/Focus.cs` | Manage's focus on one car or person: its decision tree, its queue, and its way ahead. |
 | `Life/TownKey.cs` | Parses a town's key (shared with the server worker). |
 | `Explore/Traffic.cs` | What the game draws: the slots as cars and walkers, plus the boats. |
 
@@ -188,7 +189,12 @@ box": nobody stops on a junction because the lane beyond is full.
 
 ### Junctions
 
-A car at the front asks to go (`Ask`). It's refused if any of these hold:
+A car at the front asks to go (`Ask`). The junction's rules are one
+function, `Judge`, that changes nothing: it asks its questions in order and
+returns go, or why not and when to ask again. `Ask` acts on that verdict.
+Manage's focus view calls the same function, so the reasons it shows are
+the rule that ran (§10). A car is refused if any of these hold, in this
+order:
 
 - it hasn't made its stop yet (stop signs);
 - its turn isn't green, or can't be finished on this green (signals);
@@ -486,6 +492,66 @@ serves:
 
 Hidden slots aren't drawn, hovered or counted.
 
+### Focus: one car or person
+
+Clicking a car or townsperson on the map focuses on them; so does clicking
+someone in a building's list, or a focus's "Its driver" or "Their car"
+button. A focus follows **who** it is, not the slot it's drawn in: a person
+walking to their car, driving, then indoors stays in focus throughout. Its
+panel is asked for again every second:
+
+| Route | What it returns |
+| --- | --- |
+| `GET /mp/sim/focus?town=<key>&kind=car\|person&slot=<n>` | Who's drawn at that place in the feed's records (a click), and their focus. A wanderer or an empty slot: `{ wanderer: true }` or `{ empty: true }`. |
+| `GET /mp/sim/focus?town=<key>&kind=car\|person&id=<n>` | The same, by who it is (the `id` an earlier answer gave). |
+
+A focus (`Life/Focus.cs`, read-only) has three parts.
+
+**The decision tree** is each question that got them doing what they're
+doing now, with its answer and what it went by. A yes-or-no decision is
+marked ✓ or ✗; a fact (how long, how fast, which way) is unmarked.
+
+- *Why are they out?* The trip, and the rule their day was drawn up by
+  (§6, `PlanDay`), by who they are.
+- *How are they getting there?* The mode choice with its figures, kept on
+  the trip when it was made (`Trip.why`): through a gate (needs a car),
+  has a car, further than 60 tiles, car parked here, then the bus weighed
+  against walking (to the stop, the timetable's wait, the ride, from the
+  stop; it must be a fifth quicker).
+- *What are they doing now?* The leg, and its own questions: waiting to
+  cross, the next bus, or their car's tree.
+- A car's tree: who's driving where, the route (its free-flow time as the
+  router reckoned it), what it's doing (behind which car, a player in the
+  way), and where it'll stop (driveway, the kerb spot it holds, hunting).
+  A car waiting at a junction gets `Judge`'s questions, each answered.
+
+**The decision queue** is what comes next, in order, each with when it
+starts where that's known:
+
+- a person: the rest of this trip's legs (the one under way first; when it
+  ends, about, for a walk at their pace or a drive at the limits), arriving,
+  then the rest of the day's plan. A trip due before they're back goes as
+  soon as they are (it's shown then, with when it was due);
+- a car: what it's doing now, each junction ahead (up to 12) with the turn
+  it takes and the junction's control, then where it parks or the gate it
+  leaves by. The times wait out the junction it's at (by `Judge`), each stop
+  sign's stop, and each signal to its turn's green (signals keep time, so
+  their greens are known); traffic ahead isn't counted.
+
+**The way ahead** is drawn on the map from where it is: the car's lanes
+and turns to where it'll stop, or the walker's pieces of sidewalk and
+crossings. A ring marks the focus, dashed when it isn't out (indoors, or
+parked), and a cross marks where it's going. **Follow** keeps it in the
+middle of the map.
+
+Turns are named the driver's way. Lane +1 runs on the side `SideLane` calls
+left of the road's direction, because the tile frame is mirrored; that is
+the driver's right, so a turn towards it is a right turn.
+
+Looking never changes the town: a focus reads, and the only thing kept for
+it is each trip's mode figures and each person's last three trips (without
+their legs).
+
 ---
 
 ## 11. Checks
@@ -535,6 +601,17 @@ given/when/then:
   lane, on a turn, about to take one), then over the next three seconds
   no car drives into them. This is tried 200 times a town. With players
   ignored, it fails in every town.
+- **Manage's focus.** Given the morning rush, when every person on a trip
+  and every car on the road is focused on, a minute at a time, then each
+  tree's way of getting there is the mode the trip took. A waiting car's
+  tree has the junction's questions. Each queue is in time order, with the
+  step under way first. The way ahead starts where they are and ends where
+  a car will stop. The slot each is drawn in leads back to them.
+- **Focus only looks.** Given the same town twice through two hours of the
+  morning, when one is focused on (everyone out, every ten seconds), then
+  both come out the same: the same trips, every car where the other's is.
+- **Turn names.** Given every turn in a town, right turns are on average
+  shorter than left (traffic keeps right), and there are some of each.
 - **A player in a junction.** Given a player in the middle of the busiest
   junction through the rush, then no car on a turn there reaches them,
   cars do wait, and the waiting cars go once the player leaves.

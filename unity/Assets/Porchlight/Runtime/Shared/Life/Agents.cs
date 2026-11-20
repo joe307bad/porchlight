@@ -70,6 +70,9 @@ namespace Porchlight.Life
         public Place dest;
         /// <summary>The spot it's holding to park in (-1: none yet).</summary>
         public int target = -1;
+        /// <summary>Its way's free-flow time as the router reckoned it (s), and when it was worked out.</summary>
+        public double routeS;
+        public long routed = -1;
         /// <summary>Where it gets onto the road: a lane, and how far along its queue.</summary>
         public int startLane;
         public double startD;
@@ -144,6 +147,26 @@ namespace Porchlight.Life
         public int route = -1, board, alight;
     }
 
+    /// <summary>
+    /// How a trip's way of getting there was chosen (People.StartTrip), the figures it went by: kept with the
+    /// trip so Manage's focus view can say why, long after (the bus's wait was the timetable's at the time).
+    /// </summary>
+    public struct ModeWhy
+    {
+        /// <summary>From or to a gate (that needs a car), and whether one was waiting there for them because they had none.</summary>
+        public bool gate, given;
+        public bool hasCar;
+        /// <summary>Their car's parked where they're setting off from (not off the map, not elsewhere).</summary>
+        public bool carHere;
+        /// <summary>Door to door, as the crow flies (tiles).</summary>
+        public double dist;
+        /// <summary>The bus was weighed against walking (else: no route, or the same stop both ends).</summary>
+        public bool busWeighed;
+        /// <summary>Walking all the way, and by bus: to the stop, the wait by the timetable, the ride, from the stop (s).</summary>
+        public double walkS, toStopS, waitS, rideS, fromStopS;
+        public int board, alight;
+    }
+
     public sealed class Trip
     {
         public int id;
@@ -153,6 +176,11 @@ namespace Porchlight.Life
         public readonly List<Leg> legs = new List<Leg>();
         public int leg = -1;
         public long started;
+        public ModeWhy why;
+        /// <summary>When it ended (-1: under way), whether it was made, and if not why.</summary>
+        public long ended = -1;
+        public bool made;
+        public string failed;
     }
 
     public sealed class Person
@@ -190,5 +218,7 @@ namespace Porchlight.Life
         public Vec2 standing;
         /// <summary>The wire slot they're drawn in, or -1.</summary>
         public int slot = -1;
+        /// <summary>Their last few trips, newest last (Manage's focus view); made when the first ends.</summary>
+        public List<Trip> recent;
     }
 }

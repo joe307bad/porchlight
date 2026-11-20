@@ -196,6 +196,86 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
   }
 });
 
+interface Why { q: string; a: string; yes: boolean; note?: string; under?: Why[] }
+interface Focus {
+  kind: string;
+  id: number;
+  where?: string;
+  doing: string;
+  drawn: string;
+  slot: number;
+  tree: Why[];
+  queue: { at: number | null; time: string | null; what: string; now: boolean }[];
+  path: number[][];
+  empty?: boolean;
+  wanderer?: boolean;
+}
+
+test('Manage focuses on a car or townsperson: found where it\'s drawn, followed by who it is, its tree and queue', { skip, timeout: 60_000 }, async () => {
+  const pool = new SimPool(worker!, 1);
+  pool.log = () => {};
+  pool.start();
+  const key = STARTER_TOWNS[0].key;
+  try {
+    pool.setTowns([key]);
+    await until(pool, (t) => t.length > 0 && t[0].life !== null && t[0].zoning !== null);
+    const town = pool.town(key)!;
+    const focus = async (kind: 'car' | 'person', by: 'slot' | 'id', i: number) =>
+      (await pool.ask(key, kind === 'car' ? 'focus-car' : 'focus-person', i, by)) as Focus | null;
+
+    // A car on the road, clicked where it's drawn: who it is, why it's doing what it's doing, what's next.
+    const cars = new DataView(town.cars.buffer, town.cars.byteOffset, town.cars.byteLength);
+    let car: Focus | null = null;
+    for (let i = 0; i < town.cars.byteLength / RECORD && !car; i++) {
+      if (hidden(cars, i)) {
+        const none = await focus('car', 'slot', i);
+        assert.equal(none?.empty, true, 'an empty slot has nobody to focus on');
+        continue;
+      }
+      const f = await focus('car', 'slot', i);
+      if (f && !f.empty) car = f;
+    }
+    if (car) {
+      assert.equal(car.kind, 'car');
+      assert.ok(car.tree.length > 0 && car.tree.every((w) => typeof w.q === 'string' && typeof w.a === 'string'), 'a decision tree of questions and answers');
+      assert.ok(car.queue.length > 0 && car.queue[0].now, 'its queue starts with what it does now');
+      const again = await focus('car', 'id', car.id);
+      assert.equal(again?.id, car.id, 'followed by who it is');
+    }
+
+    // Someone indoors, by who they are (from the building they're in): where they are and when they go out next.
+    const life = town.life!;
+    const [fullest] = [...life.inside].sort((a, b) => b[1] - a[1])[0];
+    const inside = (await pool.ask(key, 'building', fullest)) as { inside: { id: number }[] };
+    const person = await focus('person', 'id', inside.inside[0].id);
+    assert.ok(person, 'a person indoors');
+    assert.equal(person!.doing, 'Indoors');
+    assert.equal(person!.tree[0].q, 'Where are they?');
+    assert.match(person!.tree[0].a, new RegExp(`building ${fullest}\\b`), 'the building as Manage knows it (zoning\'s order)');
+    assert.ok(person!.queue.some((x) => x.what.startsWith('Set off')), 'their next trip is in their queue');
+
+    // The first townsfolk records are the wanderers: they've no day to explain.
+    const first = await focus('person', 'slot', 0);
+    assert.ok(first?.wanderer || first?.kind === 'person' || first?.empty, 'a wanderer, or someone of the town\'s life');
+
+    // Someone out and drawn: found by where, and back again by who.
+    const people = new DataView(town.people.buffer, town.people.byteOffset, town.people.byteLength);
+    for (let i = town.people.byteLength / RECORD - 1; i >= 0; i--) {
+      if (hidden(people, i)) continue;
+      const f = await focus('person', 'slot', i);
+      if (!f || f.wanderer || f.empty) continue;
+      assert.equal(f.where, 'OnTrip');
+      assert.ok(f.tree.some((w) => w.q === 'How are they getting there?'), 'how they chose to get there');
+      const again = await focus('person', 'id', f.id);
+      assert.equal(again?.id, f.id);
+      break;
+    }
+    assert.equal(await pool.ask('no-such-town', 'focus-car', 0, 'slot'), null);
+  } finally {
+    pool.close();
+  }
+});
+
 test('a worker that stops is started again, and given its towns', { skip, timeout: 60_000 }, async () => {
   const pool = new SimPool(worker!, 1);
   pool.log = () => {};

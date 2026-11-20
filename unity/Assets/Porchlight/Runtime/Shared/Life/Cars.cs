@@ -303,82 +303,142 @@ namespace Porchlight.Life
             if (!waitingAt.TryGetValue(j.node, out var waiting)) waitingAt[j.node] = waiting = new List<int>();
             if (!waiting.Contains(c.id)) waiting.Add(c.id);
             blockedBy.Remove(c.id);
-            if (m.stops && !c.stopped)
+            var verdict = Judge(c, m, j, out long again, out var by, out bool knot, null);
+            if (m.stops && !c.stopped && verdict != Verdict.StopFirst) c.stopped = true;
+            if (by != null) blockedBy[c.id] = by;
+            if (verdict != Verdict.Go)
             {
-                if (Now < c.arrived + STOP_MS)
+                Schedule(K_CAR, c.id, again);
+                return;
+            }
+            if (by != null)
+            {
+                if (knot) stats.gridlockBroken++;
+                else stats.waitedTooLong++;
+            }
+            var going = underway.TryGetValue(j.node, out var g) ? g : null;
+            // Let round.
+            waiting.Remove(c.id);
+            blockedBy.Remove(c.id);
+            if (going == null) underway[j.node] = going = new List<(int, int)>();
+            going.Add((c.id, m.local));
+            Commit(m.to, c);
+            stats.Delay(j.node, Now - c.arrived, car: true);
+            Advance(c, Lanes + mid);
+        }
+
+        /// <summary>What a junction says to a car at the front of its lane asking to take a turn.</summary>
+        public enum Verdict
+        {
+            Go,
+            /// <summary>A stop sign: it stands a moment first.</summary>
+            StopFirst,
+            /// <summary>A signal, and its turn's stage isn't green.</summary>
+            Red,
+            /// <summary>Green, but not for long enough to get round before it changes.</summary>
+            TooLateOnGreen,
+            /// <summary>A player's standing on the turn.</summary>
+            PlayerOnTurn,
+            /// <summary>Townsfolk are crossing the road it's turning into or out of.</summary>
+            PeopleCrossing,
+            /// <summary>A crossing turn's under way, or there's no room beyond.</summary>
+            Blocked,
+        }
+
+        /// <summary>
+        /// The junction's rules, in the order it asks them, for car `c` (at the front of its lane) wanting turn `m`:
+        /// Go, or why not and when to ask again. Changes nothing: Ask acts on it, and the focus view (`explain`
+        /// given) shows it, each question and its answer, so what's shown is the very rule that ran. `by`: the cars
+        /// it's waiting on (crossing turns under way, whoever filled the lane beyond), when it got that far; `knot`:
+        /// they wait on it in turn (gridlock), so it goes anyway.
+        /// </summary>
+        Verdict Judge(Car c, Movement m, Junction j, out long again, out List<int> by, out bool knot, List<Why> explain)
+        {
+            again = Now;
+            by = null;
+            knot = false;
+            if (m.stops)
+            {
+                bool served = c.stopped || Now >= c.arrived + STOP_MS;
+                explain?.Add(new Why("Must it stop first?", served ? "Yes, and it has" : $"Yes: stopping until {TownClock.FormatSeconds(c.arrived + STOP_MS)}", served,
+                    j.control == Control.AllWayStop ? "An all-way stop: every car stops." : "A stop sign onto a bigger road."));
+                if (!served)
                 {
-                    Schedule(K_CAR, c.id, c.arrived + STOP_MS);
-                    return;
+                    again = c.arrived + STOP_MS;
+                    return Verdict.StopFirst;
                 }
-                c.stopped = true;
             }
             if (j.control == Control.Signal)
             {
                 var (stage, ends) = RoadNet.Stage(j, Now);
                 long through = (long)Math.Ceiling((m.length + c.length + FOLLOWING) / m.speed * 1000);
-                if (stage != m.stage)
+                bool green = stage == m.stage;
+                explain?.Add(new Why("Is its light green?", green ? $"Yes, until {TownClock.FormatSeconds(ends)}" : $"No: green at {TownClock.FormatSeconds(ends)}", green,
+                    $"Two stages of {RoadNet.STAGE_MS / 1000} s; its turn goes in stage {m.stage + 1}, now it's stage {stage + 1}."));
+                if (!green)
                 {
-                    Schedule(K_CAR, c.id, ends + 1);
-                    return;
+                    again = ends + 1;
+                    return Verdict.Red;
                 }
-                // Never start what can't be finished on this green.
-                if (Now + through > ends)
+                bool time = Now + through <= ends;
+                explain?.Add(new Why("Can it get round before red?", time ? $"Yes: {through / 1000.0:0.0} s, {(ends - Now) / 1000.0:0.0} s left" : $"No: {through / 1000.0:0.0} s, {(ends - Now) / 1000.0:0.0} s left; its next green", time,
+                    "Never start what can't be finished on this green."));
+                if (!time)
                 {
-                    Schedule(K_CAR, c.id, ends + RoadNet.STAGE_MS + 1);
-                    return;
+                    again = ends + RoadNet.STAGE_MS + 1;
+                    return Verdict.TooLateOnGreen;
                 }
             }
-            // Someone's stood on this turn (a player): wait for them to go (they wake the junction going).
-            if (!double.IsNaN(queues[Lanes + mid].blockAt))
+            bool player = !double.IsNaN(queues[Lanes + m.id].blockAt);
+            explain?.Add(new Why("Is a player standing on the turn?", player ? "Yes: it waits for them to go" : "No", !player));
+            if (player)
             {
-                Schedule(K_CAR, c.id, Now + ASK_AGAIN_MS);
-                return;
+                again = Now + ASK_AGAIN_MS;
+                return Verdict.PlayerOnTurn;
             }
-            if (CrossingInTheWay(j, m))
+            bool crossing = CrossingInTheWay(j, m);
+            explain?.Add(new Why("Are townsfolk crossing in its way?", crossing ? "Yes: it waits for them" : "No", !crossing));
+            if (crossing)
             {
-                Schedule(K_CAR, c.id, Now + ASK_AGAIN_MS);
-                return;
+                again = Now + ASK_AGAIN_MS;
+                return Verdict.PeopleCrossing;
             }
-            List<int> by = null;
+            List<int> crossers = null;
             if (underway.TryGetValue(j.node, out var going))
             {
                 foreach (var (car, local) in going)
                 {
                     if (car == c.id || !j.conflicts[m.local][local]) continue;
                     (by = by ?? new List<int>()).Add(car);
+                    if (explain != null) (crossers = crossers ?? new List<int>()).Add(car);
                 }
             }
-            if (!Room(m.to, c))
+            explain?.Add(new Why("Is a crossing turn under way?", crossers == null ? "No" : $"Yes: car{(crossers.Count > 1 ? "s" : "")} {string.Join(", ", crossers)}", crossers == null,
+                "Turns whose paths cross can't both be under way."));
+            bool room = Room(m.to, c);
+            if (!room)
             {
                 int filler = queues[m.to].lastIn;
                 if (filler >= 0) (by = by ?? new List<int>()).Add(filler);
                 else by = by ?? new List<int>();
             }
-            if (by != null)
+            if (explain != null)
             {
-                blockedBy[c.id] = by;
-                // Gridlock: no room beyond, and the cars waiting on each other all the way round to this one. Let
-                // it go anyway (it waits on its turn, in the box), and the knot comes undone. (So too, last of all,
-                // for a car that's waited far too long.)
-                bool knot = false;
-                foreach (int b in by) knot |= WaitsOn(b, c.id);
-                bool tooLong = Now - c.arrived > GIVE_WAY_MS;
-                if (!knot && !tooLong)
-                {
-                    Schedule(K_CAR, c.id, Now + ASK_AGAIN_MS);
-                    return;
-                }
-                if (knot) stats.gridlockBroken++;
-                else stats.waitedTooLong++;
+                var q = queues[m.to];
+                explain.Add(new Why("Is there room for it beyond?", room ? "Yes" : $"No: car {q.lastIn} filled it", room,
+                    $"Lane {m.to} holds {net.lanes[m.to].Span:0.0} tiles; {q.committed:0.0} are kept for the cars on it or let into it, and it needs {c.length + FOLLOWING:0.0}. Don't block the box."));
             }
-            // Let round.
-            waiting.Remove(c.id);
-            blockedBy.Remove(c.id);
-            if (!underway.TryGetValue(j.node, out going)) underway[j.node] = going = new List<(int, int)>();
-            going.Add((c.id, m.local));
-            Commit(m.to, c);
-            stats.Delay(j.node, Now - c.arrived, car: true);
-            Advance(c, Lanes + mid);
+            if (by == null) return Verdict.Go;
+            foreach (int b in by) knot |= WaitsOn(b, c.id);
+            bool tooLong = Now - c.arrived > GIVE_WAY_MS;
+            explain?.Add(new Why("Gridlock: do they wait on it, all the way round?", knot ? "Yes: it goes anyway, and the knot comes undone" : "No", knot));
+            if (!knot) explain?.Add(new Why($"Has it waited over {GIVE_WAY_MS / TownClock.MINUTE} minutes?", tooLong ? "Yes: it goes anyway" : $"No: {(Now - c.arrived) / 1000} s", tooLong));
+            if (!knot && !tooLong)
+            {
+                again = Now + ASK_AGAIN_MS;
+                return Verdict.Blocked;
+            }
+            return Verdict.Go;
         }
 
         /// <summary>Why a waiting car hasn't gone (for the checks and the debug view): its turn, the room beyond, and who's in the way.</summary>
@@ -616,9 +676,11 @@ namespace Porchlight.Life
                 }
             }
             if (targets.Count == 0) return false;
-            var route = router.Route(lane, d, targets, out int k, out _);
+            var route = router.Route(lane, d, targets, out int k, out double seconds);
             if (route == null) return false;
             c.route = route;
+            c.routeS = seconds;
+            c.routed = Now;
             c.step = 0;
             c.goal = targets[k].Item2;
             c.startLane = lane;

@@ -2,13 +2,13 @@
 // towns with anything going on, and everyone playing (what they're doing, and
 // who and what is round them). Read from the World four times a second.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CountyMap, Me } from './api.ts';
 import type { Feed, FeedStatus } from './feed.ts';
 import { KMH, PERSON, SPEEDS, type Layers, type MapRenderer } from './render.ts';
 import { REACH, STOPPED, doing, type World } from './world.ts';
 import { BALANCED, JOBS_PER_HOME, ZONES, landUse } from './zoning.ts';
-import { MODES, describeInside, figures, type BuildingLife, type TownLife } from './life.ts';
+import { MODES, describeInside, figures, mark, untilText, type BuildingLife, type EntityFocus, type FocusTarget, type TownLife, type Why } from './life.ts';
 
 const REFRESH_MS = 250;
 
@@ -30,6 +30,14 @@ interface Props {
   following: string | null;
   onFollow: (sid: string | null) => void;
   onTown: (t: CountyMap['towns'][number]) => void;
+  /** The car or townsperson focused on (the simulation's latest on them), or a word on why there's none. */
+  focus: EntityFocus | null;
+  focusNote: string | null;
+  followingFocus: boolean;
+  onFollowFocus: (on: boolean) => void;
+  onCloseFocus: () => void;
+  /** Focus on someone by who they are (a driver, their car, someone in a building). */
+  onFocus: (t: FocusTarget) => void;
 }
 
 const LAYER_NAMES: [keyof Layers, string][] = [
@@ -69,6 +77,17 @@ export function Panel(p: Props) {
       </header>
       {open && (
         <div className="panel-body">
+          {(p.focus || p.focusNote) && (
+            <FocusView
+              f={p.focus}
+              note={p.focusNote}
+              town={p.focus ? (p.map.towns.find((t) => t.key === p.focus!.town)?.name ?? '') : ''}
+              following={p.followingFocus}
+              onFollow={p.onFollowFocus}
+              onClose={p.onCloseFocus}
+              onFocus={p.onFocus}
+            />
+          )}
           <section className="stats" aria-label="The county now">
             <Stat label="Players" value={totals.players} />
             <Stat label="Cars" value={totals.cars} />
@@ -136,7 +155,7 @@ export function Panel(p: Props) {
             </ul>
           </section>
 
-          <Life map={p.map} lives={p.lives} building={p.building} onClose={p.onCloseBuilding} onTown={p.onTown} />
+          <Life map={p.map} lives={p.lives} building={p.building} onClose={p.onCloseBuilding} onTown={p.onTown} onFocus={p.onFocus} />
           <LandUse map={p.map} onTown={p.onTown} />
 
           <section>
@@ -175,7 +194,21 @@ export function Panel(p: Props) {
 }
 
 /** Each town's day so far, as the simulation has it: who's where, how they got about, and who's in the building clicked. */
-function Life({ map, lives, building, onClose, onTown }: { map: CountyMap; lives: Map<string, TownLife>; building: BuildingLife | null; onClose: () => void; onTown: (t: CountyMap['towns'][number]) => void }) {
+function Life({
+  map,
+  lives,
+  building,
+  onClose,
+  onTown,
+  onFocus,
+}: {
+  map: CountyMap;
+  lives: Map<string, TownLife>;
+  building: BuildingLife | null;
+  onClose: () => void;
+  onTown: (t: CountyMap['towns'][number]) => void;
+  onFocus: (t: FocusTarget) => void;
+}) {
   const towns = map.towns.filter((t) => lives.has(t.key));
   const name = (key: string) => map.towns.find((t) => t.key === key)?.name ?? key;
   return (
@@ -222,15 +255,130 @@ function Life({ map, lives, building, onClose, onTown }: { map: CountyMap; lives
               Close
             </button>
           </p>
-          <ul className="sub">
-            {describeInside(building).map((line) => (
-              <li key={line}>{line}</li>
+          <ul className="sub inside">
+            {describeInside(building).map((line, i) => (
+              <li key={line}>
+                <button className="link" onClick={() => onFocus({ town: building.town, kind: 'person', id: building.inside[i].id })} title="Focus on them: why they do what they do, and what's next">
+                  {line}
+                </button>
+              </li>
             ))}
           </ul>
         </div>
       )}
-      <p className="muted small">The discs on the buildings are the people inside; click one to see who.</p>
+      <p className="muted small">The discs on the buildings are the people inside; click one to see who. Click a car or townsperson on the map (or someone listed) to focus on them.</p>
     </section>
+  );
+}
+
+/**
+ * One car or townsperson, followed by who they are: what they're doing, why (their decision tree: each question
+ * their day and the town's rules asked, the answer, and what it went by) and what's next (their decision queue).
+ */
+function FocusView({
+  f,
+  note,
+  town,
+  following,
+  onFollow,
+  onClose,
+  onFocus,
+}: {
+  f: EntityFocus | null;
+  note: string | null;
+  town: string;
+  following: boolean;
+  onFollow: (on: boolean) => void;
+  onClose: () => void;
+  onFocus: (t: FocusTarget) => void;
+}) {
+  // Someone new focused on (from a list further down, say): bring them into view.
+  const ref = useRef<HTMLElement>(null);
+  const who = f ? `${f.town}|${f.kind}|${f.id}` : note;
+  useEffect(() => {
+    ref.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+  }, [who]);
+  if (!f)
+    return (
+      <section className="focus" aria-label="Focus" ref={ref}>
+        <p className="small">{note ?? 'Looking…'}</p>
+        <button className="btn btn-small" onClick={onClose}>
+          Close
+        </button>
+      </section>
+    );
+  const title = f.kind === 'person' ? `Person #${f.id}` : f.bus !== undefined && f.bus >= 0 ? 'The bus' : `Car #${f.id}`;
+  return (
+    <section className="focus" aria-label="Focus" ref={ref}>
+      <h2>{title}</h2>
+      <p className="sub">
+        {f.who} · {town} · {f.time}
+      </p>
+      <p className="doing">{f.doing}</p>
+      {note && <p className="small bad">{note}</p>}
+      <div className="focus-buttons">
+        <button className={`btn btn-small ${following ? 'btn-primary' : ''}`} onClick={() => onFollow(!following)} aria-pressed={following}>
+          {following ? 'Following' : 'Follow'}
+        </button>
+        {f.kind === 'person' && f.car !== undefined && f.car >= 0 && (
+          <button className="btn btn-small" onClick={() => onFocus({ town: f.town, kind: 'car', id: f.car! })}>
+            Their car
+          </button>
+        )}
+        {f.kind === 'car' && f.owner !== undefined && f.owner >= 0 && (
+          <button className="btn btn-small" onClick={() => onFocus({ town: f.town, kind: 'person', id: f.owner! })}>
+            Its driver
+          </button>
+        )}
+        <button className="btn btn-small" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <h3>Why</h3>
+      <Tree items={f.tree} />
+      <h3>Next</h3>
+      <ol className="queue">
+        {f.queue.map((item, i) => (
+          <li key={i} className={item.now ? 'now' : ''}>
+            <span className="when">{untilText(item, f.clock)}</span>
+            <span className="what">{item.what}</span>
+          </li>
+        ))}
+      </ol>
+      {f.recent && f.recent.length > 0 && (
+        <>
+          <h3>Earlier</h3>
+          <ul className="sub recent">
+            {[...f.recent].reverse().map((t, i) => (
+              <li key={i}>
+                {t.started}–{t.ended ?? '…'} · {t.purpose.toLowerCase()} by {t.mode}: {t.to}
+                {!t.made && <span className="bad"> · couldn't be made{t.failed ? ` (${t.failed})` : ''}</span>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  );
+}
+
+/** A decision tree: each question, its answer (✓ yes, ✗ no; a fact unmarked), what it went by, and the questions under it. */
+function Tree({ items }: { items: Why[] }) {
+  return (
+    <ul className="tree">
+      {items.map((w, i) => (
+        <li key={i}>
+          <span className={`mark ${w.yes === undefined ? '' : w.yes ? 'good' : 'bad'}`} aria-label={w.yes === undefined ? undefined : w.yes ? 'yes' : 'no'}>
+            {mark(w)}
+          </span>
+          <div>
+            <span className="q">{w.q}</span> <span className="a">{w.a}</span>
+            {w.note && <span className="note">{w.note}</span>}
+            {w.under && <Tree items={w.under} />}
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

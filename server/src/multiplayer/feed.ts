@@ -17,6 +17,11 @@
 //                            map at each gate, and the day's figures (JSON)
 //   GET /mp/sim/building?town=<key>&i=<n>
 //                            who's in that building (zoning's order) and when each next goes out
+//   GET /mp/sim/focus?town=<key>&kind=car|person&slot=<n> (or &id=<n>)
+//                            one car or townsperson, found by where it's drawn (its place in
+//                            the positions frame) or who it is (the id an earlier answer gave):
+//                            its decision tree, its queue of what's next, and its way ahead
+//                            (docs/town-life.md §10; JSON)
 //
 // One timer serves every viewer: each tick packs each town once (its players,
 // and its cars and townsfolk exactly as the game packs them, WorldSync.cs: the
@@ -61,6 +66,7 @@ const FOCUS = '/mp/traffic/focus';
 const WHERE = '/mp/sim/where';
 const LIFE = '/mp/sim/life';
 const BUILDING = '/mp/sim/building';
+const SIM_FOCUS = '/mp/sim/focus';
 /** A town not looked at closely: its traffic once in this many ticks. */
 export const QUIET_EVERY = 10;
 
@@ -325,7 +331,7 @@ export class TrafficFeed {
   /** Handles the traffic routes; false if the request isn't one of them. */
   routes = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const [path, query = ''] = (req.url ?? '/').split('?');
-    if (path !== COUNTY && path !== FEED && path !== FOCUS && path !== WHERE && path !== LIFE && path !== BUILDING) return false;
+    if (path !== COUNTY && path !== FEED && path !== FOCUS && path !== WHERE && path !== LIFE && path !== BUILDING && path !== SIM_FOCUS) return false;
     const send = (status: number, body: unknown): true => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
@@ -390,6 +396,21 @@ export class TrafficFeed {
         at: town.at,
         about,
       });
+    }
+
+    if (path === SIM_FOCUS) {
+      const q = new URLSearchParams(query);
+      const key = q.get('town') ?? '';
+      const kind = q.get('kind');
+      const by = q.has('id') ? 'id' : 'slot';
+      const i = Number(q.get(by));
+      if (!(await this.deps.persistence.mayEnter(account.id, key))) return send(403, { error: "That town is someone else's." });
+      if ((kind !== 'car' && kind !== 'person') || !Number.isInteger(i) || i < 0) return send(400, { error: 'Say kind=car or person, and slot= or id=.' });
+      const sim = this.sim?.running(key, Date.now()) ?? null;
+      if (!sim) return send(404, { error: "The simulation isn't running that town." });
+      const answer = await this.sim!.pool.ask(key, kind === 'car' ? 'focus-car' : 'focus-person', i, by);
+      if (!answer) return send(404, { error: kind === 'car' ? 'No such car.' : 'No such townsperson.' });
+      return send(200, { town: key, ...(answer as object) });
     }
 
     if (path === LIFE || path === BUILDING) {

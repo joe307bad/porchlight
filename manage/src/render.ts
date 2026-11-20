@@ -7,7 +7,7 @@
 import type { CountyMap } from './api.ts';
 import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
 import { ZONES, buildingIndexAt, describe } from './zoning.ts';
-import { indoorRadius, indoors, type TownLife } from './life.ts';
+import { focusPoint, indoorRadius, indoors, type EntityFocus, type TownLife } from './life.ts';
 
 export interface Layers {
   roads: boolean;
@@ -31,6 +31,8 @@ export const SPEEDS = [
   { under: Infinity, color: '#38bdf8', label: 'Fast' },
 ];
 export const PERSON = '#e9e4ff';
+/** The focus's ring and its way ahead. */
+export const FOCUS = '#ffcf4a';
 /** People indoors, drawn on their buildings. */
 export const INDOORS = '#f4f1e8';
 const PERSON_PX = pixel(PERSON, 0.9);
@@ -160,6 +162,13 @@ export class MapRenderer {
   /** A building clicked (its town's key and index), or null (somewhere else). */
   onBuilding: (b: { key: string; i: number } | null) => void = () => {};
   onHover: (h: Hover | null) => void = () => {};
+  /** A car or townsperson clicked: its town, and its place in the feed's records. */
+  onEntity: (e: { key: string; kind: 'car' | 'person'; slot: number }) => void = () => {};
+  /** The camera's stopped following the focus (the map was dragged). */
+  onFocusFollowEnd: () => void = () => {};
+  /** The car or townsperson focused on (Manage's focus view), drawn with its way ahead; followed, if `followingFocus`. */
+  private focused: EntityFocus | null = null;
+  private followingFocus = false;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly world: World;
@@ -233,6 +242,35 @@ export class MapRenderer {
 
   select(sid: string | null): void {
     this.selected = sid;
+  }
+
+  /** The car or townsperson focused on, as the simulation last said (null: none). */
+  setFocus(f: EntityFocus | null): void {
+    this.focused = f;
+    if (!f) this.followingFocus = false;
+  }
+
+  /** Keep the focus in the middle of the map (and close enough in to see it), or stop. */
+  followFocus(on: boolean): void {
+    this.followingFocus = on;
+    if (on) {
+      this.following = null;
+      this.cam.scale = Math.max(this.cam.scale, 8);
+    }
+  }
+
+  /** The room a town's in, in the feed (null: not open). */
+  private roomOf(key: string) {
+    for (const r of this.world.order) if (r.meta.key === key) return r;
+    return null;
+  }
+
+  /** Where the focus is now (county frame), or null. */
+  focusAt(): { x: number; y: number; live: boolean } | null {
+    const f = this.focused;
+    if (!f) return null;
+    const r = this.roomOf(f.town);
+    return focusPoint(f, r ? { ox: r.meta.ox, oy: r.meta.oy, cars: r.cars, people: r.people } : null);
   }
 
   private fitCanvas(): void {
@@ -314,6 +352,10 @@ export class MapRenderer {
       this.following = null;
       this.onFollowEnd();
     }
+    if (this.followingFocus) {
+      this.followingFocus = false;
+      this.onFocusFollowEnd();
+    }
     this.cam.cx -= dx / this.cam.scale;
     this.cam.cy -= dy / this.cam.scale;
   };
@@ -326,14 +368,38 @@ export class MapRenderer {
       const hit = this.playerAt(p.x, p.y, 14);
       this.selected = hit?.sid ?? null;
       this.onSelect(this.selected);
-      // No player there: a building with its town's life known, to see who's in it.
-      if (!hit) this.onBuilding(this.hoverBuilding);
+      if (hit) return;
+      // No player there: a car or townsperson to focus on; or else a building with its town's life known, to see who's in it.
+      const e = this.entityAt(p.x, p.y, 10);
+      if (e) this.onEntity(e);
+      else this.onBuilding(this.hoverBuilding);
     }
   };
 
   private readonly leave = () => {
     if (!this.pointers.size) this.onHover(null);
   };
+
+  /** The car or townsperson drawn nearest the pointer, within `within` pixels (of the layers shown). */
+  private entityAt(px: number, py: number, within: number): { key: string; kind: 'car' | 'person'; slot: number } | null {
+    const w = this.toWorld(px, py);
+    let best = (within / this.cam.scale) ** 2;
+    let hit: { key: string; kind: 'car' | 'person'; slot: number } | null = null;
+    for (const r of this.world.order) {
+      for (const [kind, l, on] of [['car', r.cars, this.layers.cars], ['person', r.people, this.layers.people]] as const) {
+        if (!on) continue;
+        for (let i = 0; i < l.n; i++) {
+          if (!l.shown[i]) continue;
+          const d = (l.x[i] - w.x) ** 2 + (l.y[i] - w.y) ** 2;
+          if (d < best) {
+            best = d;
+            hit = { key: r.meta.key, kind, slot: i };
+          }
+        }
+      }
+    }
+    return hit;
+  }
 
   private playerAt(px: number, py: number, within: number): PlayerView | null {
     let best: PlayerView | null = null;
@@ -420,6 +486,12 @@ export class MapRenderer {
       if (p && p.seen) {
         this.cam.cx = p.x;
         this.cam.cy = p.y;
+      }
+    } else if (this.followingFocus) {
+      const at = this.focusAt();
+      if (at) {
+        this.cam.cx = at.x;
+        this.cam.cy = at.y;
       }
     }
     this.draw();
@@ -545,7 +617,64 @@ export class MapRenderer {
       if (this.layers.people) this.drawPeople(ctx, view, px, dim);
       if (this.layers.cars) this.drawCars(ctx, view, px, dim);
     }
+    this.drawFocus(ctx, px);
     if (this.layers.players) this.drawPlayers(ctx, view, px);
+  }
+
+  /** The focus: its way ahead, where it's going, and a ring round it where it is now. */
+  private drawFocus(ctx: CanvasRenderingContext2D, px: number): void {
+    const f = this.focused;
+    const at = this.focusAt();
+    if (!f || !at) return;
+    const r = this.roomOf(f.town);
+    const ox = r ? r.meta.ox : 0, oy = r ? r.meta.oy : 0;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (f.path.length > 1) {
+      // From where it's drawn now along the way the simulation gave (skipping what's already behind it).
+      let from = 0, best = Infinity;
+      for (let i = 0; i < Math.min(f.path.length, 40); i++) {
+        const d = (f.path[i][0] + ox - at.x) ** 2 + (f.path[i][1] + oy - at.y) ** 2;
+        if (d < best) {
+          best = d;
+          from = i;
+        }
+      }
+      ctx.strokeStyle = FOCUS;
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = Math.max(0.25, 3 * px);
+      ctx.setLineDash([6 * px, 4 * px]);
+      ctx.beginPath();
+      ctx.moveTo(at.x, at.y);
+      for (let i = from + 1; i < f.path.length; i++) ctx.lineTo(f.path[i][0] + ox, f.path[i][1] + oy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+    if (f.dest) {
+      const x = f.dest[0] + ox, y = f.dest[1] + oy, s = Math.max(0.5, 6 * px);
+      ctx.strokeStyle = FOCUS;
+      ctx.lineWidth = Math.max(0.2, 2.5 * px);
+      ctx.beginPath();
+      ctx.moveTo(x - s, y - s);
+      ctx.lineTo(x + s, y + s);
+      ctx.moveTo(x + s, y - s);
+      ctx.lineTo(x - s, y + s);
+      ctx.stroke();
+    }
+    const R = Math.max(1.2, 10 * px);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.5 * px;
+    ctx.setLineDash(at.live ? [] : [3 * px, 3 * px]);
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = FOCUS;
+    ctx.lineWidth = 1.5 * px;
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, R + 3 * px, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   private readonly dots = document.createElement('canvas');

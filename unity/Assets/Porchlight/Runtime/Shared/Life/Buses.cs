@@ -264,8 +264,11 @@ namespace Porchlight.Life
             SetInterval(c, Front(c), c.route.Count == 1 ? c.goal : SegLength(c.seg));
         }
 
+        /// <summary>The bus is taken only if it's at least this much quicker than walking (a fifth).</summary>
+        public const double BUS_EDGE = 0.8;
+
         /// <summary>Is the bus quicker than walking from `from` to `to` (stop to stop the nearest each end)?</summary>
-        bool BusBetter(Person p, Vec2 from, Vec2 to, out int board, out int alight)
+        bool BusBetter(Person p, Vec2 from, Vec2 to, out int board, out int alight, ref ModeWhy why)
         {
             board = alight = -1;
             if (busStops.Count < 2 || buses.Count == 0) return false;
@@ -279,8 +282,17 @@ namespace Porchlight.Life
             double toStop = Geo.Dist(from, busStops[board].at) / p.pace;
             long there = Now + (long)(toStop * 1000);
             double wait = (NextAt(board, there) - there) / 1000.0;
-            double bus = toStop + wait + ride + Geo.Dist(busStops[alight].at, to) / p.pace;
-            return bus < walk * 0.8;
+            double fromStop = Geo.Dist(busStops[alight].at, to) / p.pace;
+            double bus = toStop + wait + ride + fromStop;
+            why.busWeighed = true;
+            why.walkS = walk;
+            why.toStopS = toStop;
+            why.waitS = wait;
+            why.rideS = ride;
+            why.fromStopS = fromStop;
+            why.board = board;
+            why.alight = alight;
+            return bus < walk * BUS_EDGE;
         }
 
         /// <summary>When the next bus is due at stop `stop` at or after `t`, by the timetable.</summary>

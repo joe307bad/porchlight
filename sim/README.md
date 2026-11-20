@@ -28,6 +28,8 @@ copies that state for each viewer:
   is run here too. The server keeps each town's latest (its clock, who's indoors where,
   who's off the map at each gate, the day's figures): `GET /mp/sim/life?town=<key>`, and who's
   in one building: `GET /mp/sim/building?town=<key>&i=<n>`. Manage shows both.
+- **One car or townsperson in focus** (Manage): why it's doing what it's doing and what's
+  next, followed by who it is: `GET /mp/sim/focus?town=<key>&kind=car|person&slot=<n>` (or `&id=<n>`).
 
 If the worker isn't there (no build of it, or `SIM=off`), or it stops, or someone
 in the town is on a game too old to follow the server (the game says it can when it
@@ -45,7 +47,7 @@ then the body. Log lines go to stderr.
 | 1 TOWNS   | JSON `[{ id, key }]`: every town to run (the rest stop) |
 | 2 PLAYERS | u16 towns, then for each: u32 id, u16 n, n × (f32 x, f32 y), little-endian |
 | 3 TAKEN   | JSON `{ id, taken: ["t3", "p12"] }` |
-| 4 ASK     | JSON `{ ask, town, kind: "car" \| "person" \| "building", i }`: about one car slot, person (townsfolk index) or building (zoning's index) now |
+| 4 ASK     | JSON `{ ask, town, kind: "car" \| "person" \| "building" \| "focus-car" \| "focus-person", i, by? }`: about one car slot, person (townsfolk index) or building (zoning's index) now; or Manage's focus on a car or person (its decision tree, queue and way ahead: [docs/town-life.md](../docs/town-life.md) §10), `i` being where it's drawn (`by: "slot"`) or who it is (`by: "id"`) |
 
 | Out | Body |
 | --- | --- |
