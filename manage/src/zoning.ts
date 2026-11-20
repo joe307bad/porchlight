@@ -72,6 +72,16 @@ export function describe(b: number[]): string {
 
 /** The building of this town at (x, y), the town's frame; or null. */
 export function buildingAt(t: Pick<Town, 'buildings'>, x: number, y: number): number[] | null {
-  for (const b of t.buildings ?? []) if (x >= b[1] && x < b[3] && y >= b[2] && y < b[4]) return b;
-  return null;
+  const i = buildingIndexAt(t, x, y);
+  return i < 0 ? null : t.buildings![i];
+}
+
+/** Which of this town's buildings is at (x, y) (its place in the list the server sent), or -1. */
+export function buildingIndexAt(t: Pick<Town, 'buildings'>, x: number, y: number): number {
+  const list = t.buildings ?? [];
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    if (x >= b[1] && x < b[3] && y >= b[2] && y < b[4]) return i;
+  }
+  return -1;
 }

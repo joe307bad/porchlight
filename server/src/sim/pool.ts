@@ -5,6 +5,10 @@
 // someone arriving, Manage, and anyone asking where something is) and the delta
 // since the last (for the players already there). Its wire is sim/src/Program.cs's.
 //
+// It also keeps each town's life (LIFE, once a second: its clock, who's indoors
+// where and off the map at each gate, the day's figures; ../../docs/town-life.md)
+// and asks it about one car, person or building for the debug view (ASK/ANSWER).
+//
 // A worker that stops is started again (after a pause that grows if it keeps
 // stopping), and told everything again. With no worker to start (SIM=off, or no
 // build of it), there's no simulation and the towns' players run them as before.
@@ -13,8 +17,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const IN_TOWNS = 1, IN_PLAYERS = 2, IN_TAKEN = 3;
-const OUT_READY = 1, OUT_TICK = 2, OUT_LOOKS = 3, OUT_STATS = 4;
+const IN_TOWNS = 1, IN_PLAYERS = 2, IN_TAKEN = 3, IN_ASK = 4;
+const OUT_READY = 1, OUT_TICK = 2, OUT_LOOKS = 3, OUT_STATS = 4, OUT_LIFE = 5, OUT_ANSWER = 6;
+/** How long an ASK waits for its ANSWER (ms). */
+const ASK_MS = 2_000;
 const RECORD = 7;
 const RESTART_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 
@@ -48,6 +54,24 @@ export interface SimTown {
   error: string | null;
   /** Its townsfolk changed (LOOKS): this tick goes to its players whole, not as a delta (their counts differ). */
   fullDue: boolean;
+  /** Its life (LIFE), once the worker's said. */
+  life: TownLife | null;
+}
+
+/** A town's life as the worker last said (SimTown.Life in sim/src/SimTown.cs). */
+export interface TownLife {
+  /** The town clock (unix ms) and as hh:mm. */
+  clock: number;
+  time: string;
+  /** [building (its place in zoning.buildings), people inside]. */
+  inside: [number, number][];
+  /** People off the map at each gate (gates' order). */
+  offMap: number[];
+  /** Each gate's and bus stop's place: [x, y] (tiles, the town's frame). */
+  gates: [number, number][];
+  stops: [number, number][];
+  /** The day's figures (TownLife.Summary). */
+  summary: Record<string, unknown>;
 }
 
 export interface SimPlayer {
@@ -171,6 +195,8 @@ export class SimPool {
   private readonly byKey = new Map<string, SimTown>();
   private readonly taken = new Map<number, string[]>();
   private nextId = 1;
+  private nextAsk = 1;
+  private readonly asks = new Map<number, (answer: unknown) => void>();
   /** Called after each tick with the towns it moved on. */
   onTick: (towns: SimTown[]) => void = () => {};
   log: (line: string) => void = (line) => console.log(line);
@@ -192,7 +218,7 @@ export class SimPool {
     const want = new Set(keys);
     for (const key of want) {
       if (this.byKey.has(key)) continue;
-      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, zoning: null, error: null, fullDue: false };
+      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, zoning: null, error: null, fullDue: false, life: null };
       this.towns.set(town.id, town);
       this.byKey.set(key, town);
     }
@@ -249,6 +275,25 @@ export class SimPool {
     this.workers[this.workerOf(town.id)].send(IN_TAKEN, json({ id: town.id, taken: list }));
   }
 
+  /** About one car (traffic slot), person (townsfolk index) or building (zoning index) in a town now; null if there's none or no answer. */
+  ask(key: string, kind: 'car' | 'person' | 'building', i: number): Promise<unknown> {
+    const town = this.byKey.get(key);
+    if (!town || !town.ready) return Promise.resolve(null);
+    const ask = this.nextAsk++;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.asks.delete(ask);
+        resolve(null);
+      }, ASK_MS);
+      timer.unref?.();
+      this.asks.set(ask, (answer) => {
+        clearTimeout(timer);
+        resolve(answer);
+      });
+      this.workers[this.workerOf(town.id)].send(IN_ASK, json({ ask, town: town.id, kind, i }));
+    });
+  }
+
   private workerOf(id: number): number {
     return id % this.workers.length;
   }
@@ -288,6 +333,22 @@ export class SimPool {
       if (!town) return;
       town.looks = m.looks.filter((l) => typeof l === 'string' && l.length < 64).slice(0, 256);
       town.fullDue = true; // the tick right after has the new count
+      return;
+    }
+    if (type === OUT_LIFE) {
+      const m = JSON.parse(body.toString()) as TownLife & { id: number };
+      const town = this.towns.get(m.id);
+      if (!town) return;
+      const { id: _, ...life } = m;
+      town.life = life;
+      return;
+    }
+    if (type === OUT_ANSWER) {
+      const m = JSON.parse(body.toString()) as { ask: number; answer: unknown };
+      const done = this.asks.get(m.ask);
+      if (!done) return;
+      this.asks.delete(m.ask);
+      done(m.answer ?? null);
       return;
     }
     if (type === OUT_STATS) {

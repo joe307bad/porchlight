@@ -13,6 +13,8 @@ const worker = findWorker({ ...process.env, SIM: undefined });
 const skip = worker ? false : 'no build of the simulation worker (sim/)';
 
 const RECORD = 7;
+/** An empty slot (WorldSync.HIDDEN: nobody out in it now). */
+const hidden = (v: DataView, i: number) => v.getUint16(i * RECORD) === 0xffff && v.getUint16(i * RECORD + 2) === 0xffff;
 
 /** Waits until `ok` holds after a tick, or fails after `ms`. */
 function until(pool: SimPool, ok: (towns: SimTown[]) => boolean, ms = 20_000): Promise<SimTown[]> {
@@ -93,8 +95,13 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
 
     // A car taken after the town's first word on it: out of the traffic, its driver onto the pavement.
     pool.setTaken(key, []);
-    const before = town.people.byteLength / RECORD;
-    pool.setTaken(key, ['t0']);
+    const [now] = await until(pool, (ts) => ts.length > 0);
+    const before = now.people.byteLength / RECORD;
+    const cv = new DataView(now.cars.buffer, now.cars.byteOffset, now.cars.byteLength);
+    let shown = -1;
+    for (let i = 0; i < now.cars.byteLength / RECORD && shown < 0; i++) if (!hidden(cv, i)) shown = i;
+    assert.ok(shown >= 0, 'a car on the road to take');
+    pool.setTaken(key, [`t${shown}`]);
     const [after] = await until(pool, (ts) => ts.length > 0 && ts[0].fullDue);
     assert.equal(after.people.byteLength / RECORD, before + 1, 'the driver is out');
     assert.equal(after.looks.length, 1);
@@ -107,6 +114,46 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
     pool.close();
   }
   assert.ok(!lines.some((l) => /couldn't|Exception/.test(l)), lines.join('\n'));
+});
+
+test('the town has a life: a clock, people indoors, a day\'s figures, and the worker answers about one of them', { skip, timeout: 60_000 }, async () => {
+  const pool = new SimPool(worker!, 1);
+  pool.log = () => {};
+  pool.start();
+  const key = STARTER_TOWNS[0].key;
+  try {
+    pool.setTowns([key]);
+    await until(pool, (t) => t.length > 0 && t[0].life !== null && t[0].zoning !== null);
+    const town = pool.town(key)!;
+    const life = town.life!;
+    assert.ok(Math.abs(life.clock - Date.now()) < 5_000, 'its clock is the time now');
+    assert.match(life.time, /^\d\d:\d\d$/);
+    const indoors = life.inside.reduce((n, [, k]) => n + k, 0);
+    const people = life.summary.people as number;
+    assert.ok(people > 100, `a town of people (${people})`);
+    // Everyone's somewhere: indoors, off the map, or out.
+    const off = life.offMap.reduce((n, k) => n + k, 0);
+    assert.equal(indoors + off + (life.summary.out as number), people, 'everyone indoors, off the map or out');
+    for (const [b] of life.inside) assert.ok(b >= 0 && b < town.zoning!.buildings.length, `building ${b} is one of the town's`);
+    // Who's in the fullest building, and when each next goes out.
+    const [fullest, n] = [...life.inside].sort((a, b) => b[1] - a[1])[0];
+    const answer = (await pool.ask(key, 'building', fullest)) as { inside: { id: number; kind: string }[] } | null;
+    assert.ok(answer, 'the worker answers');
+    assert.equal(answer!.inside.length, Math.min(50, n), 'everyone inside (up to 50) listed');
+    // A car on the road: who's driving and what they're up to; an empty slot: nobody.
+    const v = new DataView(town.cars.buffer, town.cars.byteOffset, town.cars.byteLength);
+    for (let i = 0; i < town.cars.byteLength / RECORD; i++) {
+      const about = (await pool.ask(key, 'car', i)) as { state: string } | null;
+      if (hidden(v, i)) continue;
+      if (about) {
+        assert.ok(typeof about.state === 'string');
+        break;
+      }
+    }
+    assert.equal(await pool.ask('no-such-town', 'car', 0), null);
+  } finally {
+    pool.close();
+  }
 });
 
 test('a worker that stops is started again, and given its towns', { skip, timeout: 60_000 }, async () => {

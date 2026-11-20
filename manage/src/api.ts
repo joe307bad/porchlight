@@ -46,3 +46,17 @@ export async function county(): Promise<CountyMap> {
 export const inDesktopApp = (): boolean => location.hostname === '127.0.0.1';
 
 export const signInUrl = (): string => `/auth/login?returnTo=${encodeURIComponent(location.pathname + location.search)}`;
+
+/** A town's life (the simulation's), or null if it isn't running that town. */
+export async function townLife(key: string): Promise<import('./life.ts').TownLife | null> {
+  const res = await fetch(`/mp/sim/life?town=${encodeURIComponent(key)}`, { cache: 'no-store', credentials: 'same-origin' });
+  if (!res.ok) return null;
+  return (await res.json()) as import('./life.ts').TownLife;
+}
+
+/** Who's in one of a town's buildings (its index in the town's buildings), or null. */
+export async function buildingLife(key: string, i: number): Promise<import('./life.ts').BuildingLife | null> {
+  const res = await fetch(`/mp/sim/building?town=${encodeURIComponent(key)}&i=${i}`, { cache: 'no-store', credentials: 'same-origin' });
+  if (!res.ok) return null;
+  return (await res.json()) as import('./life.ts').BuildingLife;
+}

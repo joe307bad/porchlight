@@ -110,7 +110,6 @@ namespace Porchlight.App
         /// </summary>
         const double ATTRACT_ZOOM = 1.1;
         const double ATTRACT_PITCH = 30 * Math.PI / 180;
-        const int MAX_PEDESTRIANS = 70;
         /// <summary>How far back the orthographic camera sits (the view doesn't change with it; URP's shadows reach this far and more).</summary>
         const double CAMERA_DISTANCE = 60;
         const double SIGHT_HEIGHT = 0.26;
@@ -526,12 +525,14 @@ namespace Porchlight.App
                 basePeople = 0;
                 return;
             }
-            traffic = new Traffic(world.layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
+            // The town's life: its people's days (their cars and walks drawn in the traffic's slots), by the
+            // town clock, the same in every player's game and on the server (sim/SimTown.cs, in this order).
+            traffic = new Traffic(model, world.layout, null, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             fleet = new Fleet(traffic, library, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
-            int count = paths.Count > 0 ? Math.Min(MAX_PEDESTRIANS, (int)Math.Floor(walkable / 12)) : 0;
+            int count = paths.Count > 0 ? Porchlight.Life.TownLife.Wanderers(walkable) : 0;
             // Everyone's there at once, but drawn a few a frame (MakeAvatars): all of them at once, driving
             // into a town, stalls a frame. Their random numbers are drawn now, in the same order as ever.
             for (int k = 0; k < count; k++)
@@ -539,6 +540,14 @@ namespace Porchlight.App
                 var p = Pedestrian.Create(Catalog.RandomLook(rng), world.sidewalks, rng);
                 unmade.Add((people.Count, rng.Next()));
                 people.Add(p);
+                avatars.Add(null);
+            }
+            // Then those on their way somewhere (hidden while indoors).
+            var seeds = new Rng($"{model.seed}::walker-avatars");
+            foreach (var w in traffic.walkers)
+            {
+                unmade.Add((people.Count, seeds.Next()));
+                people.Add(w);
                 avatars.Add(null);
             }
             basePeople = people.Count;
@@ -709,10 +718,10 @@ namespace Porchlight.App
             foreach (var c in cars)
                 if (Math.Abs(c.car.speed) > 0.05) movers.Add(Wheels(c.car.x, c.car.y, c.car.heading));
             foreach (var p in people)
-                if (p.speed > 0.05) movers.Add(Foot(p));
+                if (p.speed > 0.05 && !p.hidden) movers.Add(Foot(p));
             if (traffic != null)
                 foreach (var c in traffic.cars)
-                    if (c.speed > 0.05) movers.Add(Wheels(c.x, c.y, c.heading));
+                    if (c.speed > 0.05 && !c.hidden && !c.taken) movers.Add(Wheels(c.x, c.y, c.heading));
             remotes?.Movers(movers);
             float span = camera.orthographic ? camera.orthographicSize * 2 * (float)Aspect : 30;
             weather.Update(dt, WorldOf(focus.x, focus.y, focus.z), span, (float)dusk, movers);
@@ -1033,7 +1042,8 @@ namespace Porchlight.App
             authority = host;
             if (!authority || world == null) return;
             // Carry on from where the host had everyone.
-            if (traffic != null) foreach (var c in traffic.cars) if (!c.taken) traffic.Adopt(c);
+            // The town's life from everyone's day at the time now (the cars and walkers start from where their days have them).
+            traffic?.Restart(Porchlight.Life.TownClock.Now());
             foreach (var q in people) q.Rejoin(world.sidewalks);
             sync.Clear();
         }
@@ -1097,8 +1107,10 @@ namespace Porchlight.App
             }
             else if (id[0] == 't' && traffic != null && i < traffic.cars.Count && !traffic.cars[i].taken)
             {
+                bool empty = traffic.cars[i].hidden;
                 var c = traffic.Take(i);
-                if (eject && Catalog.IsCar(c.model)) EjectDriver(c.x, c.y, c.heading);
+                // As the server (sim/src/SimTown.cs): an empty slot has nobody to put out.
+                if (eject && !empty && Catalog.IsCar(c.model)) EjectDriver(c.x, c.y, c.heading);
             }
         }
 
@@ -1847,7 +1859,8 @@ namespace Porchlight.App
                 foreach (var q in people)
                 {
                     if (q.aloof > 0) q.aloof -= dt;
-                    if (q.following || q.aloof > 0) continue;
+                    // Not one of the town's on their way somewhere: they've somewhere to be (and indoors, nobody's there).
+                    if (q.following || q.aloof > 0 || q.puppet) continue;
                     double d = Numbers.Hypot(q.x - p.x, q.y - p.y);
                     if (d < bestD)
                     {
@@ -2859,7 +2872,7 @@ namespace Porchlight.App
             {
                 var q = people[k];
                 if (avatars[k] == null) continue;
-                avatars[k].Visible = !(followersAboard && q.following) && !Deserted;
+                avatars[k].Visible = !(followersAboard && q.following) && !Deserted && !q.hidden;
                 if (!avatars[k].Visible) continue;
                 avatars[k].Update(q, dt);
                 avatars[k].SetWaving(q.waving > 0);

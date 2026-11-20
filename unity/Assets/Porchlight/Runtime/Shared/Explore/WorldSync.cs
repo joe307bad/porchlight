@@ -30,7 +30,11 @@ namespace Porchlight.Explore
         struct Target
         {
             public double x, y, heading, speed;
+            public bool hidden;
         }
+
+        /// <summary>An empty slot on the wire (nobody out in it): x and y both 0xFFFF.</summary>
+        public const int HIDDEN = 0xFFFF;
 
         Target[] cars = new Target[0];
         Target[] people = new Target[0];
@@ -48,7 +52,8 @@ namespace Porchlight.Explore
             for (int i = 0; i < list.Count; i++)
             {
                 var c = list[i];
-                Put(o, i * RECORD, c.x, c.y, c.heading, Math.Abs(c.speed));
+                if (c.hidden && !c.taken) PutHidden(o, i * RECORD);
+                else Put(o, i * RECORD, c.x, c.y, c.heading, Math.Abs(c.speed));
             }
             return o;
         }
@@ -59,15 +64,25 @@ namespace Porchlight.Explore
             for (int i = 0; i < list.Count; i++)
             {
                 var p = list[i];
-                Put(o, i * RECORD, p.x, p.y, p.heading, p.speed);
+                if (p.hidden) PutHidden(o, i * RECORD);
+                else Put(o, i * RECORD, p.x, p.y, p.heading, p.speed);
             }
             return o;
         }
 
+        static void PutHidden(byte[] o, int at)
+        {
+            U16(o, at, HIDDEN);
+            U16(o, at + 2, HIDDEN);
+            U16(o, at + 4, 0);
+            o[at + 6] = 0;
+        }
+
         static void Put(byte[] o, int at, double x, double y, double heading, double speed)
         {
-            U16(o, at, Math.Max(0, Math.Min(65535, Numbers.RoundInt(x * SCALE))));
-            U16(o, at + 2, Math.Max(0, Math.Min(65535, Numbers.RoundInt(y * SCALE))));
+            // Never the hidden sentinel by accident: the far corner's a hundredth of a tile in.
+            U16(o, at, Math.Max(0, Math.Min(HIDDEN - 1, Numbers.RoundInt(x * SCALE))));
+            U16(o, at + 2, Math.Max(0, Math.Min(HIDDEN - 1, Numbers.RoundInt(y * SCALE))));
             double turn = heading / (2 * Math.PI);
             U16(o, at + 4, Numbers.RoundInt((turn - Math.Floor(turn)) * 65536) & 0xffff);
             o[at + 6] = (byte)Math.Max(0, Math.Min(255, Numbers.RoundInt(speed * SPEED_SCALE)));
@@ -86,15 +101,23 @@ namespace Porchlight.Explore
             for (int i = 0; i < n; i++)
             {
                 int at = i * RECORD;
-                o[i] = new Target
-                {
-                    x = ((b[at] << 8) | b[at + 1]) / SCALE,
-                    y = ((b[at + 2] << 8) | b[at + 3]) / SCALE,
-                    heading = ((b[at + 4] << 8) | b[at + 5]) / 65536.0 * 2 * Math.PI,
-                    speed = b[at + 6] / SPEED_SCALE,
-                };
+                o[i] = Decode(b, at, o[i]);
             }
             return o;
+        }
+
+        /// <summary>A record: where, or (the hidden sentinel) nobody, keeping where it was last.</summary>
+        static Target Decode(byte[] b, int at, Target was)
+        {
+            int x = (b[at] << 8) | b[at + 1], y = (b[at + 2] << 8) | b[at + 3];
+            if (x == HIDDEN && y == HIDDEN) return new Target { x = was.x, y = was.y, heading = was.heading, hidden = true };
+            return new Target
+            {
+                x = x / SCALE,
+                y = y / SCALE,
+                heading = ((b[at + 4] << 8) | b[at + 5]) / 65536.0 * 2 * Math.PI,
+                speed = b[at + 6] / SPEED_SCALE,
+            };
         }
 
         /// <summary>The host's latest.</summary>
@@ -133,13 +156,7 @@ namespace Porchlight.Explore
                 int i = (d[at] << 8) | d[at + 1];
                 if (i >= into.Length) continue;
                 int r = at + 2;
-                into[i] = new Target
-                {
-                    x = ((d[r] << 8) | d[r + 1]) / SCALE,
-                    y = ((d[r + 2] << 8) | d[r + 3]) / SCALE,
-                    heading = ((d[r + 4] << 8) | d[r + 5]) / 65536.0 * 2 * Math.PI,
-                    speed = d[r + 6] / SPEED_SCALE,
-                };
+                into[i] = Decode(d, r, into[i]);
             }
             return true;
         }
@@ -179,13 +196,23 @@ namespace Porchlight.Explore
             for (int i = 0; i < Math.Min(cars.Length, traffic.Count); i++)
             {
                 ref var t = ref cars[i];
+                var c = traffic[i];
+                bool appears = c.hidden && !t.hidden;
+                c.hidden = t.hidden;
+                if (t.hidden) continue;
+                if (appears)
+                {
+                    // Out on the road just now: straight there, not eased from where the slot was last.
+                    c.x = t.x;
+                    c.y = t.y;
+                    c.heading = t.heading;
+                }
                 // Cars face (cos h, sin h).
                 if (going && !Waits(t))
                 {
                     t.x += Math.Cos(t.heading) * t.speed * dt;
                     t.y += Math.Sin(t.heading) * t.speed * dt;
                 }
-                var c = traffic[i];
                 Follow(ref c.x, ref c.y, t.x, t.y, k);
                 c.heading += Orbit.ShortestTurn(c.heading, t.heading) * k;
                 c.speed = going ? t.speed : 0;
@@ -193,13 +220,22 @@ namespace Porchlight.Explore
             for (int i = 0; i < Math.Min(people.Length, walkers.Count); i++)
             {
                 ref var t = ref people[i];
+                var w = walkers[i];
+                bool appears = w.hidden && !t.hidden;
+                w.hidden = t.hidden;
+                if (t.hidden) continue;
+                if (appears)
+                {
+                    w.x = t.x;
+                    w.y = t.y;
+                    w.heading = t.heading;
+                }
                 // People face (sin h, cos h).
                 if (going)
                 {
                     t.x += Math.Sin(t.heading) * t.speed * dt;
                     t.y += Math.Cos(t.heading) * t.speed * dt;
                 }
-                var w = walkers[i];
                 Follow(ref w.x, ref w.y, t.x, t.y, k);
                 w.heading += Orbit.ShortestTurn(w.heading, t.heading) * k;
                 w.speed += ((going ? t.speed : 0) - w.speed) * k;

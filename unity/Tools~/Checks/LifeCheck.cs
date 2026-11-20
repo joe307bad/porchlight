@@ -1,0 +1,306 @@
+// The town's life (Life/), piece by piece: scenarios each set up to show one rule of
+// the traffic and the townsfolk holding, run on the starter towns (and a generated
+// one) at the morning rush. Each prints ok or FAIL and why.
+//
+//   dotnet run --project "unity/Tools~/Checks" -c Release -- life [towns dir]
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using Porchlight.Core;
+using Porchlight.Explore;
+using Porchlight.Gen;
+using Porchlight.Life;
+using Porchlight.Model;
+
+static class LifeCheck
+{
+    public static int Run(string dir)
+    {
+        var keys = new List<(string name, string key)>();
+        foreach (var f in Directory.GetFiles(dir, "*.json").Where(f => !f.EndsWith(".roads.json")).OrderBy(f => f))
+            keys.Add((Path.GetFileNameWithoutExtension(f), JsonDocument.Parse(File.ReadAllText(f)).RootElement.GetProperty("key").GetString()));
+        int fails = 0;
+        foreach (var (what, check) in Units())
+        {
+            string err;
+            try { err = check(); }
+            catch (Exception e) { err = e.ToString(); }
+            Console.WriteLine(err == null ? $"ok   {what}" : $"FAIL {what}: {err}");
+            if (err != null) fails++;
+        }
+        foreach (var (name, key) in keys)
+        {
+            var (seed, p) = TownKey.Parse(key);
+            var model = Generator.Generate(seed, p);
+            var layout = Layout.Build(model);
+            var zoning = Zoning.Plan(model, layout);
+            foreach (var (what, check) in Scenarios())
+            {
+                string err;
+                try { err = check(model, layout, zoning); }
+                catch (Exception e) { err = e.ToString(); }
+                Console.WriteLine(err == null ? $"ok   {name}: {what}" : $"FAIL {name}: {what}: {err}");
+                if (err != null) fails++;
+            }
+        }
+        Console.WriteLine(fails == 0 ? "life: all ok" : $"life: {fails} failure(s)");
+        return fails == 0 ? 0 : 1;
+    }
+
+    delegate string Check(TownModel model, IsoLayout layout, TownZoning zoning);
+
+    static IEnumerable<(string, Check)> Scenarios()
+    {
+        yield return ("a car stops for a player standing in its way", StopsForPlayer);
+        yield return ("no car drives through a player standing in a junction", JunctionPlayer);
+        yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
+        yield return ("with parking everywhere, nobody hunts for a spot", InfiniteParking);
+    }
+
+    static IEnumerable<(string, Func<string>)> Units()
+    {
+        yield return ("the event queue: in time order, ties by key, cancelled and moved events never fire", Events);
+        yield return ("the wire: an empty slot goes as the hidden sentinel and comes back hidden; a shown one where it was", Wire);
+    }
+
+    /// <summary>Given events scheduled out of order, some moved and some cancelled, when popped, then in time (and key) order, each once.</summary>
+    static string Events()
+    {
+        var q = new EventQueue();
+        var rng = new Rng("events");
+        var want = new Dictionary<long, long>();
+        for (int i = 0; i < 2000; i++)
+        {
+            long key = rng.Int(0, 300), at = rng.Int(0, 10_000);
+            switch (rng.Int(0, 4))
+            {
+                case 0:
+                    q.Cancel(key);
+                    want.Remove(key);
+                    break;
+                default:
+                    q.Schedule(key, at);
+                    want[key] = at;
+                    break;
+            }
+        }
+        if (q.Count != want.Count) return $"{q.Count} due, {want.Count} scheduled";
+        long lastAt = long.MinValue, lastKey = long.MinValue;
+        int n = 0;
+        while (q.TryPop(long.MaxValue, out long k, out long t))
+        {
+            if (!want.TryGetValue(k, out long w)) return $"key {k} fired but was cancelled";
+            if (w != t) return $"key {k} fired at {t}, last moved to {w}";
+            if (t < lastAt || (t == lastAt && k <= lastKey)) return $"key {k} at {t} after key {lastKey} at {lastAt}";
+            lastAt = t;
+            lastKey = k;
+            want.Remove(k);
+            n++;
+        }
+        if (want.Count > 0) return $"{want.Count} never fired";
+        if (q.HeapSize > 0) return "left over in the heap";
+        return n > 0 ? null : "nothing fired";
+    }
+
+    /// <summary>Given a host with some car and walker slots empty, when packed and followed, then the empty ones are hidden there too and the rest where the host has them.</summary>
+    static string Wire()
+    {
+        var cars = new List<TrafficCar>
+        {
+            new TrafficCar { x = 10, y = 20, heading = 1, speed = 2 },
+            new TrafficCar { hidden = true, x = 5, y = 5 },
+            new TrafficCar { x = 655.35, y = 655.35 }, // the far corner: shown, never mistaken for hidden
+        };
+        var people = new List<Walker> { new Walker("a", 3, 4), new Walker("b", 7, 8) { hidden = true } };
+        var sync = new WorldSync();
+        sync.Receive(WorldSync.EncodeCars(cars), WorldSync.EncodePeople(people));
+        var theirCars = cars.Select(_ => new TrafficCar()).ToList();
+        var theirPeople = people.Select(p => new Walker(p.look, 0, 0)).ToList();
+        sync.Step(0.0, theirCars, theirPeople);
+        for (int i = 0; i < cars.Count; i++)
+        {
+            if (theirCars[i].hidden != cars[i].hidden) return $"car {i}: hidden {theirCars[i].hidden}, the host's {cars[i].hidden}";
+            if (!cars[i].hidden && (Math.Abs(theirCars[i].x - cars[i].x) > 0.02 || Math.Abs(theirCars[i].y - cars[i].y) > 0.02)) return $"car {i} at ({theirCars[i].x}, {theirCars[i].y})";
+        }
+        for (int i = 0; i < people.Count; i++)
+            if (theirPeople[i].hidden != people[i].hidden) return $"person {i}: hidden {theirPeople[i].hidden}, the host's {people[i].hidden}";
+        // Out again: shown, straight where they are (not eased from where the slot was).
+        cars[1].hidden = false;
+        cars[1].x = 40;
+        cars[1].y = 41;
+        sync.Receive(WorldSync.EncodeCars(cars), WorldSync.EncodePeople(people));
+        sync.Step(0.0, theirCars, theirPeople);
+        if (theirCars[1].hidden || Math.Abs(theirCars[1].x - 40) > 0.02) return $"car 1 out again at ({theirCars[1].x}, {theirCars[1].y}), hidden {theirCars[1].hidden}";
+        return null;
+    }
+
+    /// <summary>
+    /// Given a town's whole day, then: no car starts a turn at a signal on red; no two parked cars share a
+    /// spot, and each spot's holder is the car parked in it; a bus at a stop waits its dwell; at every minute
+    /// everyone's indoors, off the map or out (the counts Manage shows add up); and at three in the morning
+    /// everyone who lives in town is home.
+    /// </summary>
+    static string Day(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var life = new TownLife(model, layout, zoning);
+        long start = TrafficDay.Morning - (8 * TownClock.HOUR + 15 * TownClock.MINUTE);
+        life.Start(start);
+        int L = life.net.lanes.Count;
+        var seen = new int[life.cars.Count];
+        for (int i = 0; i < seen.Length; i++) seen[i] = -1;
+        var atStopSince = new Dictionary<int, long>();
+        int turnsChecked = 0;
+        for (long t = start; t <= start + 27 * TownClock.HOUR; t += 500)
+        {
+            life.RunUntil(t);
+            foreach (var c in life.cars)
+            {
+                // Onto a turn since last look: at a signal, on its green.
+                if (c.seg >= L && c.seg != seen[c.id])
+                {
+                    var m = life.net.movements[c.seg - L];
+                    var j = life.net.junctions[m.node];
+                    if (j.control == Control.Signal && !m.uturn)
+                    {
+                        // The moment it started: its interval's start, if that's still the turn's first.
+                        long began = c.t0;
+                        if (life.Front(c) < m.length && RoadNet.Stage(j, began).stage != m.stage)
+                            return $"car {c.id} started turn {m.id} (stage {m.stage}) at {TownClock.Format(began)}, stage {RoadNet.Stage(j, began).stage} green";
+                        turnsChecked++;
+                    }
+                }
+                seen[c.id] = c.seg;
+                if (c.bus >= 0)
+                {
+                    if (c.state == CarState.AtStop) { if (!atStopSince.ContainsKey(c.id)) atStopSince[c.id] = t; }
+                    else if (atStopSince.TryGetValue(c.id, out long since))
+                    {
+                        atStopSince.Remove(c.id);
+                        // Seen at a stop at `since` (up to half a second after it got there), and gone by `t`.
+                        if (t - since + 500 < Life_DWELL) return $"bus {c.bus} at a stop only {(t - since) / 1000.0:0.0} s";
+                    }
+                }
+            }
+            if (t % TownClock.MINUTE == 0)
+            {
+                int inside = life.inside.Values.Sum(), off = life.offMap?.Sum() ?? 0;
+                if (inside + off + life.OutNow() != life.people.Count)
+                    return $"at {TownClock.Format(t)}: {inside} indoors + {off} off the map + {life.OutNow()} out isn't the {life.people.Count} people";
+            }
+            if (t % TownClock.HOUR == 0)
+            {
+                var spots = new Dictionary<int, int>();
+                foreach (var c in life.cars)
+                {
+                    if (c.state != CarState.Parked || c.spot < 0 || c.offMap) continue;
+                    if (spots.TryGetValue(c.spot, out int other)) return $"cars {other} and {c.id} both parked in spot {c.spot}";
+                    spots[c.spot] = c.id;
+                    if (life.SpotHolder(c.spot) != c.id) return $"car {c.id} parked in spot {c.spot}, held by {life.SpotHolder(c.spot)}";
+                }
+            }
+        }
+        var away = life.people.Where(p => (p.kind == PersonKind.Worker || p.kind == PersonKind.Student || p.kind == PersonKind.AtHome) && !(p.where == Where.Inside && p.at.Same(p.home))).ToList();
+        if (away.Count > life.people.Count / 200 + 1)
+            return $"{away.Count} townsfolk not home at 03:00, e.g. #{away[0].id} ({away[0].kind}) {away[0].where} at {away[0].at}";
+        if (life.net.junctions.Values.Any(j => j.control == Control.Signal) && turnsChecked == 0) return "no car went through a signal all day";
+        return null;
+    }
+
+    const long Life_DWELL = TownLife.DWELL;
+
+    /// <summary>Given the infinite-parking option, when a day's run, then no car hunts for a spot or finds none, and the day still ends with everyone home.</summary>
+    static string InfiniteParking(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var life = new TownLife(model, layout, zoning, new LifeOptions { infiniteParking = true });
+        long start = TrafficDay.Morning - (8 * TownClock.HOUR + 15 * TownClock.MINUTE);
+        life.Start(start);
+        life.RunUntil(start + 27 * TownClock.HOUR);
+        if (life.stats.hunts > 0 || life.stats.noSpot > 0) return $"{life.stats.hunts} hunts, {life.stats.noSpot} found no spot";
+        if (life.stats.finishedBy[1] == 0) return "nobody drove";
+        if (life.OutNow() > Math.Max(2, life.people.Count / 500)) return $"{life.OutNow()} still out at 03:00";
+        return null;
+    }
+
+    static Traffic Rush(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var t = new Traffic(model, layout, zoning, new Rng("life"), r => 0);
+        t.StartAt(TrafficDay.Morning);
+        return t;
+    }
+
+    /// <summary>Given a car going along a lane, when a player stands in front of it, then within two seconds it's stopped short of them, and goes again once they've gone.</summary>
+    static string StopsForPlayer(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var t = Rush(model, layout, zoning);
+        var life = t.life;
+        for (int tries = 0; tries < 6000; tries++)
+        {
+            t.Update(0.1, null);
+            for (int k = 0; k < life.busSlotsFrom; k++)
+            {
+                var c = t.cars[k];
+                if (c.hidden || c.speed < 0.5) continue;
+                var car = life.cars[life.carSlots[k].who];
+                if (car.seg < 0 || car.seg >= life.net.lanes.Count) continue;
+                var lane = life.net.lanes[car.seg];
+                double front = life.Front(car);
+                if (front + 3 > lane.Span) continue;
+                // On the lane, 1.5 ahead of its nose.
+                var stand = life.net.LanePoint(lane, lane.start + front + 1.5).at;
+                var you = new List<Vec2> { stand };
+                int who = car.id;
+                for (int f = 0; f < 20; f++) t.Update(0.1, you);
+                double nose = life.Front(car);
+                if (car.seg != lane.id) return $"car {who} drove on through the player (now on segment {car.seg})";
+                if (nose > front + 1.5 - 0.2) return $"car {who} at {nose:0.00} reached the player at {front + 1.5:0.00}";
+                if (c.speed > 0.05) return $"car {who} still going at {c.speed:0.00} tiles a second";
+                for (int f = 0; f < 50; f++) t.Update(0.1, null);
+                if (car.seg == lane.id && life.Front(car) <= nose + 1e-6 && car.state != CarState.Queued && car.state != CarState.Waiting) return $"car {who} didn't go again ({car.state})";
+                return null;
+            }
+        }
+        return "no car on the move to stand in front of";
+    }
+
+    /// <summary>
+    /// Given a player standing in the middle of the town's busiest junction through the morning rush, then
+    /// no car on a turn there comes within a car's half-width of them, cars do wait for them, and once
+    /// they've gone the waiting cars carry on through.
+    /// </summary>
+    static string JunctionPlayer(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var t = Rush(model, layout, zoning);
+        var life = t.life;
+        // The junction most cars went through in five minutes of it.
+        for (int f = 0; f < 3000; f++) t.Update(0.1, null);
+        if (life.stats.carWaits.Count == 0) return "no car went through a junction";
+        int busiest = life.stats.carWaits.OrderByDescending(kv => kv.Value.count).ThenBy(kv => kv.Key).First().Key;
+        var j = life.net.junctions[busiest];
+        var you = new List<Vec2> { j.at };
+        var waited = new HashSet<int>();
+        int L = life.net.lanes.Count;
+        for (int f = 0; f < 6000 && waited.Count < 3; f++)
+        {
+            t.Update(0.1, you);
+            foreach (var car in life.cars)
+            {
+                if (car.seg < 0) continue;
+                if (car.seg >= L && life.net.movements[car.seg - L].node == j.node)
+                {
+                    var m = life.net.movements[car.seg - L];
+                    var nose = life.net.MovementPoint(m, life.Front(car)).at;
+                    if (Geo.Dist(nose, j.at) < 0.25) return $"car {car.id} drove into the player at {TownClock.Format(life.Now)}";
+                }
+                if (car.seg < L && car.state == CarState.Waiting && life.net.lanes[car.seg].toNode == j.node) waited.Add(car.id);
+            }
+        }
+        if (waited.Count == 0) return "no car came to the junction to wait";
+        for (int f = 0; f < 1200; f++) t.Update(0.1, null);
+        var still = waited.Where(id => life.cars[id].seg >= 0 && life.cars[id].seg < L && life.net.lanes[life.cars[id].seg].toNode == j.node && life.cars[id].state == CarState.Waiting).ToList();
+        if (still.Count > 0) return $"cars {string.Join(", ", still)} still waiting two minutes after the player went";
+        return null;
+    }
+}

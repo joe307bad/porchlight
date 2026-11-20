@@ -8,7 +8,7 @@ The server is `server/`, Node and Colyseus. It handles sign-in, the characters, 
 
 | Folder | What's in it |
 | --- | --- |
-| `Assets/Porchlight/Runtime/Shared` | Engine-free C#: the town generator, the county the towns make (`County/`: where each goes, the highways between them, which room owns which ground, and each road space as a town of its own), the explore simulation (walking, driving, traffic, directions), the network client (msgpack, the Colyseus schema decoder, rooms), and missions as they play (`Missions/`, running ink). It builds on plain .NET too, so `Tools~/Checks` can test it without Unity. |
+| `Assets/Porchlight/Runtime/Shared` | Engine-free C#: the town generator, the county the towns make (`County/`: where each goes, the highways between them, which room owns which ground, and each road space as a town of its own), the explore simulation (walking, driving, traffic, directions), the town's life (`Life/`: its people's days by the county clock, their cars queueing and parking, the bus; [docs/town-life.md](../docs/town-life.md)), the network client (msgpack, the Colyseus schema decoder, rooms), and missions as they play (`Missions/`, running ink). It builds on plain .NET too, so `Tools~/Checks` can test it without Unity. |
 | `Assets/Porchlight/Runtime/Game` | The Unity side. `Rendering`: the 3D town as GameObjects, people, cars, the sky and lights. `UI`: the blueprint, sidebar, overlay, sign-in, character picker and a mission's conversation (UI Toolkit). `App`: the explore view, input, a mission's people and parking spots (`MissionPlay`), driving the county from town to town (`CountyDrive`), and the app itself (`PorchlightApp`). `Net`: multiplayer, accounts, the mission list, and the platform layer. |
 | `Assets/Ink` | ink's runtime engine, as it is upstream (MIT), which plays the missions. |
 | `Assets/Porchlight/Models` | The Kenney and RG Poly models (glTF), imported by glTFast. |
@@ -66,6 +66,8 @@ This starts Keycloak, the database and the server. It builds the game if there's
 ```
 dotnet run --project "unity/Tools~/Checks" -- towns 60     # towns grow with every invariant checked, and repeat exactly
 dotnet run --project "unity/Tools~/Checks" -- plan         # towns planned like real ones: road hierarchy, ring road, eras, transect, neighbourhoods, second centre (docs/city-research.md §1)
+dotnet run --project "unity/Tools~/Checks" -c Release -- traffic-day server/towns 2   # a whole day of each town's life: nobody stuck, the same twice
+dotnet run --project "unity/Tools~/Checks" -c Release -- life server/towns            # the town's life rule by rule (docs/town-life.md §11)
 dotnet run --project "unity/Tools~/Checks" -- county server/test/county-vectors.json   # the county lays out, drives end to end, and the server's copy agrees
 
 node unity/Tools~/net/server.ts                              # a game server; prints a line of JSON

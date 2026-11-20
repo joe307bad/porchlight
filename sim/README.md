@@ -22,8 +22,12 @@ copies that state for each viewer:
   or not. It gets the towns on screen close up ten times a second (it says which:
   `POST /mp/traffic/focus`), and the rest's traffic once a second. While a player
   runs a town instead (see below), Manage shows theirs, since that's what the players see.
-- **Anyone** can ask where a car or townsperson is right now:
-  `GET /mp/sim/where?town=<key>&kind=car|person&i=<n>`.
+- **Anyone** can ask where a car or townsperson is right now, and who it is
+  and what it's doing: `GET /mp/sim/where?town=<key>&kind=car|person&i=<n>`.
+- **The town's life** (everyone's day, by the county clock: [docs/town-life.md](../docs/town-life.md))
+  is run here too. The server keeps each town's latest (its clock, who's indoors where,
+  who's off the map at each gate, the day's figures): `GET /mp/sim/life?town=<key>`, and who's
+  in one building: `GET /mp/sim/building?town=<key>&i=<n>`. Manage shows both.
 
 If the worker isn't there (no build of it, or `SIM=off`), or it stops, or someone
 in the town is on a game too old to follow the server (the game says it can when it
@@ -41,6 +45,7 @@ then the body. Log lines go to stderr.
 | 1 TOWNS   | JSON `[{ id, key }]`: every town to run (the rest stop) |
 | 2 PLAYERS | u16 towns, then for each: u32 id, u16 n, n × (f32 x, f32 y), little-endian |
 | 3 TAKEN   | JSON `{ id, taken: ["t3", "p12"] }` |
+| 4 ASK     | JSON `{ ask, town, kind: "car" \| "person" \| "building", i }`: about one car slot, person (townsfolk index) or building (zoning's index) now |
 
 | Out | Body |
 | --- | --- |
@@ -48,6 +53,12 @@ then the body. Log lines go to stderr.
 | 2 TICK  | f64 time (unix ms), u16 towns, then for each: u32 id, u16 cars, u16 people, the records (7 bytes each, `WorldSync`'s), u32 delta length, delta |
 | 3 LOOKS | JSON `{ id, looks }`: the townsfolk added since the town was made (drivers put out of taken cars). The next tick goes out whole. |
 | 4 STATS | JSON `{ towns, ticks, avgMs, maxMs }`, once a minute |
+| 5 LIFE  | JSON `{ id, clock, time, inside: [[building, n]], offMap, gates, stops, summary }`: each town's life, once a second (`SimTown.Life`) |
+| 6 ANSWER | JSON `{ ask, answer }`: to ASK; `answer` is null if there's no such town, car, person or building |
+
+A car or person record whose x and y are both 0xFFFF is an **empty slot**: nobody's
+out in it now (`WorldSync.HIDDEN`). The traffic is drawn through a fixed set of
+slots, filled as people come out and emptied as they go in.
 
 ## Building, running, measuring
 
@@ -58,11 +69,12 @@ dotnet sim/bin/Release/net8.0/porchlight-sim.dll --bench server/towns 10 1.0
 
 `--follow server/towns` runs each starter town twice, once as the server does
 and once as a player's game following its deltas, and fails if what's drawn
-strays from the server's (it's about 0.03 tiles off on average).
+strays from the server's (it's about 0.02 tiles off on average), or if a car or person is
+shown on one side and hidden on the other.
 
-The bench makes the starter towns ten times over (40 towns), ticks them all for a
-minute's worth, and prints the cost of a tick and how much the deltas save. It fails
-if a town's tick averages more than the budget (1 ms; here it's about 0.14) or if
+The bench makes the starter towns ten times over (40 towns), at the morning rush
+(08:15 on a fixed weekday), ticks them all for a minute's worth, and prints the cost of a tick and how much the deltas save. It fails
+if a town's tick averages more than the budget (1 ms; here it's about 0.18) or if
 the deltas save too little. CI runs it, and also runs the real worker through the
 real server (`server/test/sim.test.ts`, `sim-room.test.ts`). CI then publishes the
 worker as a self-contained binary for the box (linux-musl-arm64) into `server/sim/`,

@@ -1,11 +1,14 @@
 // One town's traffic and townsfolk, as the game runs them (ExploreView.Populate and
 // its Tick), so the town here is the one every player's game makes from the same key:
-// the same cars and people in the same order, started from the same seeds.
+// the same slots in the same order, started from the same seeds. The traffic is the
+// town's life (Life/TownLife.cs: its people's days, run by the town clock); the
+// wanderers stroll as ever.
 //
-// Each tick it's stepped a tenth of a second (two 0.05 s slices, as the game steps),
-// with the players in it as obstacles, and packed twice: in full (7 bytes a car or
-// person, WorldSync's records) and as a delta of only what a client carrying each
-// one on along its heading at its speed would now have wrong (Delta below).
+// Each tick the town's life is run up to the clock (the players in it obstacles) and
+// the wanderers stepped a tenth of a second, and it's all packed twice: in full (7
+// bytes a car or person, WorldSync's records; an empty slot is the hidden sentinel)
+// and as a delta of only what a client carrying each one on along its heading at its
+// speed would now have wrong (Delta below).
 
 using System;
 using System.Collections.Generic;
@@ -14,14 +17,13 @@ using System.Linq;
 using Porchlight.Core;
 using Porchlight.Explore;
 using Porchlight.Gen;
+using Porchlight.Life;
 using Porchlight.Model;
 
 namespace Porchlight.Sim
 {
     public sealed class SimTown
     {
-        /// <summary>As ExploreView: the most townsfolk a town has.</summary>
-        const int MAX_PEDESTRIANS = 70;
         /// <summary>A tick's time, in the slices the game steps a town by.</summary>
         public const double TICK = 0.1, SLICE = 0.05;
 
@@ -45,7 +47,8 @@ namespace Porchlight.Sim
         /// <summary>The townsfolk's looks past `basePeople`, changed since last asked.</summary>
         public bool looksChanged;
 
-        public SimTown(int id, string key)
+        /// <summary>The town as the game makes it from `key`; its life starts at `start` (ms since 1970), or by the clock at the first step.</summary>
+        public SimTown(int id, string key, long? start = null)
         {
             this.id = id;
             this.key = key;
@@ -54,38 +57,26 @@ namespace Porchlight.Sim
             layout = Layout.Build(model);
             zoning = Zoning.Plan(model, layout);
             // ExploreView.Populate, in the same order, so each car and person here is the game's.
-            traffic = new Traffic(layout, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
+            traffic = new Traffic(model, layout, zoning, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = layout.sidewalks.paths;
             double walkable = paths.Sum(x => x.Length);
-            int count = paths.Count > 0 ? Math.Min(MAX_PEDESTRIANS, (int)Math.Floor(walkable / 12)) : 0;
+            int count = paths.Count > 0 ? TownLife.Wanderers(walkable) : 0;
             for (int k = 0; k < count; k++)
             {
                 people.Add(Pedestrian.Create(Catalog.RandomLook(rng), layout.sidewalks, rng));
                 rng.Next(); // the game draws each one's avatar seed here
             }
+            people.AddRange(traffic.walkers);
             basePeople = people.Count;
+            if (start != null) traffic.StartAt(start.Value);
         }
 
+        /// <summary>The town's life (people, trips, the clock).</summary>
+        public TownLife life => traffic.life;
+
         /// <summary>A town's key (its room's name: "seed=porchlight&amp;width=256&amp;…") as the game reads it (PorchlightApp.ParseUrlState).</summary>
-        public static (string seed, GenParams p) ParseKey(string key)
-        {
-            var q = new Dictionary<string, string>();
-            foreach (var part in (key ?? "").Split('&'))
-            {
-                if (part.Length == 0) continue;
-                int eq = part.IndexOf('=');
-                string k = Uri.UnescapeDataString((eq < 0 ? part : part.Substring(0, eq)).Replace('+', ' '));
-                string v = Uri.UnescapeDataString((eq < 0 ? "" : part.Substring(eq + 1)).Replace('+', ' '));
-                if (!q.ContainsKey(k)) q[k] = v;
-            }
-            var partial = new Dictionary<string, double>();
-            foreach (var spec in ParamSpec.All)
-                if (q.TryGetValue(spec.key, out var raw)) partial[spec.key] = Numbers.ParseNumber(raw);
-            q.TryGetValue("seed", out var s);
-            s = s?.Trim();
-            return (string.IsNullOrEmpty(s) ? null : s, GenParams.Normalize(partial));
-        }
+        public static (string seed, GenParams p) ParseKey(string key) => TownKey.Parse(key);
 
         /// <summary>Where the players here are now (tiles, the town's frame).</summary>
         public void SetObstacles(List<Vec2> at) => obstacles = at;
@@ -102,7 +93,7 @@ namespace Porchlight.Sim
             var now = new HashSet<string>(list);
             if (now.Count == 0 && taken.Count > 0)
             {
-                foreach (var c in traffic.cars) c.taken = false;
+                traffic.ReleaseAll();
                 taken.Clear();
                 if (people.Count > basePeople)
                 {
@@ -115,8 +106,10 @@ namespace Porchlight.Sim
             {
                 if (id.Length < 2 || !taken.Add(id) || id[0] != 't' || !int.TryParse(id.Substring(1), NumberStyles.None, CultureInfo.InvariantCulture, out int i)) continue;
                 if (i < 0 || i >= traffic.cars.Count || traffic.cars[i].taken) continue;
+                bool empty = traffic.cars[i].hidden;
                 var c = traffic.Take(i);
-                if (!first && Catalog.IsCar(c.model) && layout.sidewalks.paths.Count > 0)
+                // An empty slot (nobody driving it just now) has nobody to put out.
+                if (!first && !empty && Catalog.IsCar(c.model) && layout.sidewalks.paths.Count > 0)
                 {
                     // ExploreView.EjectDriver: out of the driver's door.
                     var look = Catalog.RandomLook(autoRng);
@@ -130,15 +123,48 @@ namespace Porchlight.Sim
         /// <summary>The looks of the townsfolk past those the town came with (each client makes the same ones).</summary>
         public List<string> ExtraLooks() => people.Skip(basePeople).Select(p => p.look).ToList();
 
-        /// <summary>A tick: a tenth of a second of the town.</summary>
-        public void Step()
+        /// <summary>
+        /// A tick: the town's life up to `moment` (ms since 1970; null: a tenth of a second on), the wanderers
+        /// a tenth of a second on. Fallen a long way behind (the box slept), it starts again from everyone's day.
+        /// </summary>
+        public void Step(long? moment = null)
         {
+            if (moment != null && traffic.life.Started && moment.Value - traffic.Clock > CATCH_UP_MS) traffic.Restart(moment.Value);
             for (double left = TICK; left > 1e-9; left -= SLICE)
             {
                 double dt = Math.Min(SLICE, left);
                 foreach (var p in people) p.Update(dt);
-                traffic.Update(dt, obstacles);
             }
+            long to = moment ?? (traffic.life.Started ? traffic.Clock + (long)(TICK * 1000) : TownClock.Now());
+            traffic.RunTo(to, obstacles, TICK);
+        }
+
+        /// <summary>Behind the clock by more than this, start again rather than run every event since.</summary>
+        const long CATCH_UP_MS = 10 * TownClock.MINUTE;
+
+        /// <summary>Who's indoors where, and off the map at each gate (for Manage), and the day's figures.</summary>
+        public object Life() => new
+        {
+            id,
+            clock = traffic.Clock,
+            time = TownClock.Format(traffic.Clock),
+            // [building (its place in Zoning.Encode's list, as Manage has them), people inside]
+            inside = traffic.life.inside.Where(kv => BuildingIndex().ContainsKey(kv.Key)).Select(kv => new[] { BuildingIndex()[kv.Key], kv.Value }).OrderBy(x => x[0]).ToList(),
+            offMap = traffic.life.offMap ?? new int[0],
+            gates = traffic.life.net.borders.Select(b => new[] { Math.Round(b.at.x, 1), Math.Round(b.at.y, 1) }).ToList(),
+            stops = traffic.life.busStops.Select(b => new[] { Math.Round(b.at.x, 1), Math.Round(b.at.y, 1) }).ToList(),
+            summary = traffic.life.Summary(),
+        };
+
+        Dictionary<int, int> buildingIndex;
+
+        /// <summary>Each building id's place in Zoning.Encode's list: Manage knows buildings by that.</summary>
+        public Dictionary<int, int> BuildingIndex()
+        {
+            if (buildingIndex != null) return buildingIndex;
+            buildingIndex = new Dictionary<int, int>();
+            for (int i = 0; i < zoning.buildings.Count; i++) buildingIndex[zoning.buildings[i].buildingId] = i;
+            return buildingIndex;
         }
 
         /// <summary>

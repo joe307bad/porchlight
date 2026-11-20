@@ -423,3 +423,23 @@ p {
 .sub.bad {
   color: var(--bad);
 }
+
+/* Who's in the building clicked (Town life). */
+.building {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.building .name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.building ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 180px;
+  overflow-y: auto;
+}

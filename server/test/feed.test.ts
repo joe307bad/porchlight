@@ -39,7 +39,7 @@ interface Rooms {
 }
 interface Positions {
   time: number;
-  rooms: { id: number; age: number; players: { x: number; z: number; car: number; ride: number }[]; cars: { x: number; y: number; speed: number }[]; people: number }[];
+  rooms: { id: number; age: number; players: { x: number; z: number; car: number; ride: number }[]; cars: ({ x: number; y: number; speed: number } | null)[]; people: number }[];
 }
 
 test("the app reads the server's frames", () => {
@@ -72,8 +72,9 @@ async function watch(sub: string) {
             age: r.age,
             players: Array.from({ length: r.players }, (_, i) => readPlayer(f.bytes, r.playersAt + i * PLAYER_BYTES)),
             cars: Array.from({ length: r.cars }, (_, i) => {
+              // An empty slot (nobody out in it) reads as null.
               const c = readRecord(f.bytes, r.carsAt + i * RECORD);
-              return { x: c.x, y: c.y, speed: c.speed };
+              return c ? { x: c.x, y: c.y, speed: c.speed } : null;
             }),
             people: r.people,
           })),

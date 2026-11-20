@@ -8,6 +8,7 @@ import type { Feed, FeedStatus } from './feed.ts';
 import { KMH, PERSON, SPEEDS, type Layers, type MapRenderer } from './render.ts';
 import { REACH, STOPPED, doing, type World } from './world.ts';
 import { BALANCED, JOBS_PER_HOME, ZONES, landUse } from './zoning.ts';
+import { MODES, describeInside, figures, type BuildingLife, type TownLife } from './life.ts';
 
 const REFRESH_MS = 250;
 
@@ -21,6 +22,11 @@ interface Props {
   layers: Layers;
   onLayers: (l: Layers) => void;
   selected: string | null;
+  /** Each town's life the simulation's running, by key. */
+  lives: Map<string, TownLife>;
+  /** The building clicked, and who's in it. */
+  building: BuildingLife | null;
+  onCloseBuilding: () => void;
   following: string | null;
   onFollow: (sid: string | null) => void;
   onTown: (t: CountyMap['towns'][number]) => void;
@@ -109,9 +115,9 @@ export function Panel(p: Props) {
               {p.map.towns.map((t) => {
                 const live = towns.filter((r) => r.meta.key === t.key);
                 const n = (f: (r: (typeof live)[number]) => number) => live.reduce((a, r) => a + f(r), 0);
-                const cars = n((r) => r.cars.n);
+                const cars = n((r) => r.cars.out);
                 let stopped = 0;
-                for (const r of live) for (let i = 0; i < r.cars.n; i++) if (r.cars.ts[i] < STOPPED) stopped++;
+                for (const r of live) for (let i = 0; i < r.cars.n; i++) if (r.cars.shown[i] && r.cars.ts[i] < STOPPED) stopped++;
                 return (
                   <li key={t.key}>
                     <button className="row" onClick={() => p.onTown(t)} title="Show it on the map">
@@ -120,7 +126,7 @@ export function Panel(p: Props) {
                         <span className="sub">
                           {live.length === 0
                             ? 'Nobody there'
-                            : `${n((r) => r.players.length)} playing · ${cars} cars${cars ? ` (${stopped} stopped)` : ''} · ${n((r) => r.people.n)} townsfolk`}
+                            : `${n((r) => r.players.length)} playing · ${cars} cars${cars ? ` (${stopped} stopped)` : ''} · ${n((r) => r.people.out)} townsfolk out`}
                         </span>
                       </span>
                     </button>
@@ -130,6 +136,7 @@ export function Panel(p: Props) {
             </ul>
           </section>
 
+          <Life map={p.map} lives={p.lives} building={p.building} onClose={p.onCloseBuilding} onTown={p.onTown} />
           <LandUse map={p.map} onTown={p.onTown} />
 
           <section>
@@ -164,6 +171,66 @@ export function Panel(p: Props) {
         </div>
       )}
     </aside>
+  );
+}
+
+/** Each town's day so far, as the simulation has it: who's where, how they got about, and who's in the building clicked. */
+function Life({ map, lives, building, onClose, onTown }: { map: CountyMap; lives: Map<string, TownLife>; building: BuildingLife | null; onClose: () => void; onTown: (t: CountyMap['towns'][number]) => void }) {
+  const towns = map.towns.filter((t) => lives.has(t.key));
+  const name = (key: string) => map.towns.find((t) => t.key === key)?.name ?? key;
+  return (
+    <section aria-label="Town life">
+      <h2>Town life</h2>
+      {towns.length === 0 ? (
+        <p className="muted small">Shown when the server's running the towns: everyone's day, by the county clock.</p>
+      ) : (
+        <ul className="list">
+          {towns.map((t) => {
+            const life = lives.get(t.key)!;
+            const f = figures(life);
+            return (
+              <li key={t.key}>
+                <button className="row" onClick={() => onTown(t)} title="Show it on the map">
+                  <span className="grow">
+                    <span className="name">
+                      {t.name} · {life.time}
+                    </span>
+                    <span className="sub">
+                      {f.people.toLocaleString()} people: {f.indoors.toLocaleString()} indoors · {f.out.toLocaleString()} out · {f.offMap.toLocaleString()} out of town
+                    </span>
+                    <span className="sub">
+                      {f.made.toLocaleString()} trips made{f.failed ? `, ${f.failed.toLocaleString()} couldn't be` : ''} ·{' '}
+                      {MODES.map((m, i) => `${m} ${Math.round(f.shares[i] * 100)}%${f.meanMinutes[i] !== null ? ` (${f.meanMinutes[i]!.toFixed(1)} min)` : ''}`).join(' · ')}
+                    </span>
+                    <span className="sub">
+                      {f.busiestHour >= 0 ? `busiest ${String(f.busiestHour).padStart(2, '0')}:00 · ` : ''}
+                      {Math.round(f.parked * 100)}% of kerb spots taken
+                      {life.summary.waits.length ? ` · ${life.summary.waits.length} slow junction${life.summary.waits.length === 1 ? '' : 's'}` : ''}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {building && (
+        <div className="building" aria-label="Who's in the building">
+          <p className="name">
+            {building.inside.length === 0 ? 'Nobody in' : `${building.inside.length}${building.inside.length >= 50 ? '+' : ''} inside`} · {name(building.town)}{' '}
+            <button className="btn btn-small" onClick={onClose}>
+              Close
+            </button>
+          </p>
+          <ul className="sub">
+            {describeInside(building).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p className="muted small">The discs on the buildings are the people inside; click one to see who.</p>
+    </section>
   );
 }
 

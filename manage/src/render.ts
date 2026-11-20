@@ -6,7 +6,8 @@
 
 import type { CountyMap } from './api.ts';
 import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
-import { ZONES, buildingAt, describe } from './zoning.ts';
+import { ZONES, buildingIndexAt, describe } from './zoning.ts';
+import { indoorRadius, indoors, type TownLife } from './life.ts';
 
 export interface Layers {
   roads: boolean;
@@ -30,6 +31,8 @@ export const SPEEDS = [
   { under: Infinity, color: '#38bdf8', label: 'Fast' },
 ];
 export const PERSON = '#e9e4ff';
+/** People indoors, drawn on their buildings. */
+export const INDOORS = '#f4f1e8';
 const PERSON_PX = pixel(PERSON, 0.9);
 const PERSON_DIM_PX = pixel(PERSON, 0.35);
 const SPEED_PX = SPEEDS.map((s) => pixel(s.color, 1));
@@ -123,6 +126,17 @@ export class MapRenderer {
   private readonly trail = document.createElement('canvas');
   private stillKey = '';
   private paths: StreetPaths;
+  /** Each town's life, by key (the simulation's: who's indoors where), once known. */
+  readonly life = new Map<string, TownLife>();
+  private lifeVersion = 0;
+
+  /** A town's life as the server last said: drawn on its buildings. */
+  setLife(key: string, life: TownLife): void {
+    this.life.set(key, life);
+    this.lifeVersion++;
+  }
+  /** The building under the pointer, if its town's life is known: [town key, its index]. */
+  hoverBuilding: { key: string; i: number } | null = null;
   private cam: Camera = { cx: 0, cy: 0, scale: 1 };
   private readonly map: CountyMap;
   private width = 0;
@@ -143,6 +157,8 @@ export class MapRenderer {
   private fpsAt = 0;
   onSelect: (sid: string | null) => void = () => {};
   onFollowEnd: () => void = () => {};
+  /** A building clicked (its town's key and index), or null (somewhere else). */
+  onBuilding: (b: { key: string; i: number } | null) => void = () => {};
   onHover: (h: Hover | null) => void = () => {};
 
   private readonly canvas: HTMLCanvasElement;
@@ -310,6 +326,8 @@ export class MapRenderer {
       const hit = this.playerAt(p.x, p.y, 14);
       this.selected = hit?.sid ?? null;
       this.onSelect(this.selected);
+      // No player there: a building with its town's life known, to see who's in it.
+      if (!hit) this.onBuilding(this.hoverBuilding);
     }
   };
 
@@ -349,6 +367,7 @@ export class MapRenderer {
       if (this.layers.cars) {
         const c = r.cars;
         for (let i = 0; i < c.n; i++) {
+          if (!c.shown[i]) continue;
           const d = (c.x[i] - w.x) ** 2 + (c.y[i] - w.y) ** 2;
           if (d < best) {
             best = d;
@@ -359,6 +378,7 @@ export class MapRenderer {
       if (this.layers.people) {
         const c = r.people;
         for (let i = 0; i < c.n; i++) {
+          if (!c.shown[i]) continue;
           const d = (c.x[i] - w.x) ** 2 + (c.y[i] - w.y) ** 2;
           if (d < best) {
             best = d;
@@ -370,8 +390,12 @@ export class MapRenderer {
     if (!text) {
       for (const t of this.paths.towns) {
         if (w.x < t.x0 || w.y < t.y0 || w.x > t.x0 + t.width || w.y > t.y0 + t.height) continue;
-        const b = this.layers.zoning ? buildingAt(t, w.x - t.x0, w.y - t.y0) : null;
-        text = b ? `${describe(b)} · ${t.name}` : t.name;
+        const i = this.layers.zoning ? buildingIndexAt(t, w.x - t.x0, w.y - t.y0) : -1;
+        const b = i >= 0 ? t.buildings![i] : null;
+        const life = this.life.get(t.key);
+        const inside = life && i >= 0 ? (indoors(life).get(i) ?? 0) : null;
+        text = b ? `${describe(b)}${inside === null ? '' : ` · ${inside.toLocaleString()} inside`} · ${t.name}` : t.name;
+        this.hoverBuilding = b && life ? { key: t.key, i } : null;
       }
     }
     this.onHover(text ? { x: px, y: py, text } : null);
@@ -409,7 +433,7 @@ export class MapRenderer {
 
   /** The still parts, drawn again only when the view or what's shown changes. */
   private drawStill(): void {
-    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height},${this.layers.roads},${this.layers.zoning},${this.layers.names}`;
+    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height},${this.layers.roads},${this.layers.zoning},${this.layers.names},${this.lifeVersion}`;
     if (key === this.stillKey) return;
     this.stillKey = key;
     const ctx = this.still.getContext('2d', { alpha: false })!;
@@ -445,6 +469,26 @@ export class MapRenderer {
         ctx.fill(path);
       });
       ctx.globalAlpha = 1;
+      // Who's indoors: a disc on each building, its area as many as are inside.
+      if (this.life.size) {
+        ctx.fillStyle = INDOORS;
+        ctx.beginPath();
+        for (const t of this.paths.towns) {
+          const life = this.life.get(t.key);
+          if (!life || !t.buildings) continue;
+          for (const [i, n] of life.inside) {
+            const b = t.buildings[i];
+            if (!b) continue;
+            const r = indoorRadius(n);
+            const cx = t.x0 + (b[1] + b[3]) / 2, cy = t.y0 + (b[2] + b[4]) / 2;
+            ctx.moveTo(cx + r, cy);
+            ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+          }
+        }
+        ctx.globalAlpha = 0.55;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     }
     // The streets.
     if (this.layers.roads) {
@@ -532,7 +576,7 @@ export class MapRenderer {
     const plot = (l: Layer, n: number, s: number, near: number, color: (i: number) => number) => {
       const half = s >> 1;
       for (let i = 0; i < n; i++) {
-        if (near >= 0 && l.near[i] !== near) continue;
+        if (!l.shown[i] || (near >= 0 && l.near[i] !== near)) continue;
         const X = ((l.x[i] * k + ox) | 0) - half;
         const Y = ((l.y[i] * k + oy) | 0) - half;
         if (X < 0 || Y < 0 || X + s > W || Y + s > H) continue;
@@ -615,6 +659,7 @@ export class MapRenderer {
       t.fillStyle = color;
       t.beginPath();
       for (let i = 0; i < l.n; i++) {
+        if (!l.shown[i]) continue;
         const x = l.x[i];
         const y = l.y[i];
         if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;

@@ -8,7 +8,8 @@ to the door, and a full day that runs on a laptop. This doc goes through its
 code and says, for each part, **what it does**, **what Porchlight has
 today**, and **how to port it**. The phased plan is at the end, and it lines
 up with the to-do list in city-research.md
-([issue #17](https://github.com/joe307bad/porchlight/issues/17)).
+([issue #17](https://github.com/joe307bad/porchlight/issues/17)). All of
+it is now built: see [town-life.md](town-life.md).
 
 A/B Street is cloned at `../abstreet` (beside this repo). Its paths below are
 relative to that checkout. Scale: a tile is 4 m. A/B Street works in metres
@@ -778,80 +779,77 @@ today's wire with almost no change. 3 waits until it's needed.
 
 ## The plan
 
-Each step stands alone and is testable, and each lines up with a step of
+**Done.** All eight steps are in. [town-life.md](town-life.md) describes
+what was built, and how it's checked. Each step lines up with a step of
 city-research.md's list (in brackets).
 
-1. **Cheap fixes** [1]:
-   - walking pace 0.22–0.34 tiles/s;
-   - speed limits by `RoadKind`;
-   - car lengths from the catalog;
+1. **Cheap fixes** [1], done:
+   - walking pace 0.22–0.34 tiles/s, plus 5% joggers;
+   - speed limits by `RoadKind`, and slower on bends;
    - following distance 0.25 tiles.
-2. **The clock and the event queue** [2]:
-   - `Core/EventQueue.cs` and an integer town clock;
-   - the server sim runs events instead of slices;
-   - night is a time.
-3. **Cars as queues** [7, done early because it's the cheap one]:
-   - `Lane`s with intervals, laggy heads and reservations, behind
-     `Traffic`'s existing `Positions()` / `Take()` / `Adopt()`;
-   - cars still wander, choosing a random road at each junction;
-   - the bench must show the cost going down.
-4. **Junctions** [5]:
-   - the conflict table per junction;
-   - stop signs by rank, and first come first served;
-   - don't block the box, and break `blocked_by` cycles;
-   - fixed two-stage signals on Main × Main;
-   - `Checks traffic-day`.
-5. **People** [3]:
-   - `Population.cs` from zoning by the proletariat robot;
-   - `Person` states, and trips that start as events;
-   - the slot pool on the wire;
-   - walkers walk their trips; wanderers stay;
-   - Manage samples moving agents and shows who's indoors per building
-     (§9, "Manage: seeing every car and townsperson").
-6. **Trips by car** [4]:
-   - routes over (road, dir), with infinite parking;
-   - borders at the gates and highways.
-7. **Parking** [6]:
-   - kerb and driveway spots, the jittered search, park/unpark timings.
-8. **Richer days, buses, Manage** [3, 4, 10]:
-   - popdat-style activity chains;
-   - one bus loop;
-   - analytics in Manage.
 
-**Every step keeps the host fallback working.** With `SIM=off`, one player
-runs the town. All of this is in `Runtime/Shared`, so the host runs the same
-code; it just ticks its own clock.
+   Car lengths are 1.1–1.6 tiles per car, since the catalog doesn't carry
+   lengths yet.
+2. **The clock and the event queue** [2], done:
+   - `Core/EventQueue.cs`;
+   - the real-time county clock (`Life/Clock.cs`);
+   - the server worker runs each town's events to its clock every tick.
+
+   Night is still drawn by the client's own sky. The clock's `IsNight`
+   is there for the room.
+3. **Cars as queues** [7], done: intervals, laggy heads and committed room
+   (`Life/Cars.cs`), behind `Traffic`'s `Positions()` / `Take()`. The bench
+   costs 0.18 ms a town.
+4. **Junctions** [5], done:
+   - conflicts from crossing curves;
+   - Free, Stop, All-way stop and two-stage Signal;
+   - don't block the box, and `blockedBy` cycles broken;
+   - `Checks traffic-day`.
+5. **People** [3], done:
+   - the proletariat robot from zoning;
+   - person states;
+   - the slot pool on the wire, with the hidden sentinel;
+   - walkers walk their trips, and the wanderers stay;
+   - Manage shows who's indoors per building.
+6. **Trips by car** [4], done: routes over lanes, and gates at the borders.
+   `infiniteParking` is an option.
+7. **Parking** [6], done: kerb and driveway spots, the jittered hunt, and
+   park/unpark timings.
+8. **Richer days, buses, Manage** [3, 4, 10], done:
+   - activity chains (work, lunch, shops, school, visits);
+   - one bus loop, ridden by the timetable;
+   - the figures and problems in Manage's Town life panel.
+
+**The host fallback still works.** With `SIM=off`, one player's game runs
+the town's life from the clock (it's all in `Runtime/Shared`). A player
+taking over restarts it from everyone's day at the time now.
 
 ---
 
-## Open questions
+## Open questions, answered
 
-- **How long is a day?** A real 24 h means a player mostly sees one time of
-  day, while a fast clock (an hour a minute) makes rush hour a passing
-  thing. A/B Street runs real time and lets you speed it up. This decides
-  the departure windows and how many cars are out at once.
-- **Do all players share one clock,** or does each town keep its own?
-  Shared is simpler, and it makes night the same county-wide.
-- **How many people do we simulate?** Everyone, or a sample (§4)? Measure
-  at step 5.
-- **Does a stopped car snapping to cruise speed look fine up close?** If
-  not, ease the drawn speed on the client only (§2).
+- **How long is a day?** Real time: 24 hours, in the county's time zone
+  (UTC−5). Rush hour is when it's rush hour.
+- **Do all players share one clock?** Yes, one clock county-wide, so night
+  is the same everywhere.
+- **How many people do we simulate?** Everyone: 5,900 in Porchlight, a day
+  in 3.5 s. Only those out are drawn, through fixed slots.
+- **Does a stopped car snapping to cruise speed look fine up close?** Speed
+  changes stay instant in the simulation. Drawing eases a car's heading
+  (its back wheels follow its front). Turns are taken at the turn's speed
+  until the car's back is clear.
 
 ---
 
 ## Licence
 
-A/B Street is Apache-2.0. Porting its *ideas* (event queues, queue
-following, reservations) needs nothing. Where a file is a close translation
-of one of its files, such as the scheduler or the cycle check, do three
-things:
-
-- say so in the file's header comment, naming the A/B Street file;
-- keep a copy of the Apache licence in the repo (`THIRD_PARTY.md` or
-  `licenses/abstreet-LICENSE`);
-- note that we changed it.
-
-That is all Apache-2.0 asks.
+A/B Street is Apache-2.0. Porchlight took its **ideas** (event queues,
+queue following, reservations, cycle breaking, the proletariat robot) and
+no code. Nothing was copied or translated from its source. The code in
+`Runtime/Shared/Life/` is our own implementation, written from this doc's
+description of how the parts behave. Apache-2.0's terms for redistributing
+its code and derivatives therefore don't apply. We credit A/B Street
+anyway, in [town-life.md](town-life.md#credits).
 
 ## References
 

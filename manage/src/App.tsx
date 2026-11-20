@@ -4,7 +4,8 @@
 // few times a second, from the same World.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { county, inDesktopApp, me, signInUrl, type CountyMap, type Me } from './api.ts';
+import { buildingLife, county, inDesktopApp, me, signInUrl, townLife, type CountyMap, type Me } from './api.ts';
+import type { BuildingLife, TownLife } from './life.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
 import { backToApp, backToGame, embedded } from './embed.ts';
@@ -14,6 +15,8 @@ import { World } from './world.ts';
 type Phase = { state: 'loading' } | { state: 'signedOut' } | { state: 'error'; why: string } | { state: 'ready'; who: Me; map: CountyMap };
 
 const LAYERS_KEY = 'porchlight.manage.traffic.layers';
+/** How often each town's life is asked for (ms). */
+const LIFE_MS = 5_000;
 
 function savedLayers(): Layers {
   try {
@@ -95,6 +98,8 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   const [following, setFollowing] = useState<string | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [feed, setFeed] = useState<Feed | null>(null);
+  const [lives, setLives] = useState<Map<string, TownLife>>(new Map());
+  const [building, setBuilding] = useState<BuildingLife | null>(null);
 
   useEffect(() => {
     const r = new MapRenderer(canvas.current!, world, map);
@@ -106,6 +111,10 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     };
     r.onFollowEnd = () => setFollowing(null);
     r.onHover = setHover;
+    r.onBuilding = (b) => {
+      if (!b) return setBuilding(null);
+      void buildingLife(b.key, b.i).then(setBuilding);
+    };
     setRenderer(r);
     const f = new Feed(world, (s) => {
       setStatus(s);
@@ -115,7 +124,25 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     setFeed(f);
     // Which towns are looked at closely, said as it changes: those come ten times a second.
     const focus = setInterval(() => f.focus(r.townsInView()), 500);
+    // Each town's life (who's indoors, the day so far), every few seconds: it changes slowly.
+    let stopped = false;
+    const lifeOnce = async () => {
+      const got = new Map<string, TownLife>();
+      for (const t of map.towns) {
+        const life = await townLife(t.key).catch(() => null);
+        if (stopped) return;
+        if (life) {
+          got.set(t.key, life);
+          r.setLife(t.key, life);
+        }
+      }
+      setLives(got);
+    };
+    void lifeOnce();
+    const lifeTimer = setInterval(() => void lifeOnce(), LIFE_MS);
     return () => {
+      stopped = true;
+      clearInterval(lifeTimer);
       clearInterval(focus);
       f.stop();
       r.dispose();
@@ -176,6 +203,9 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         layers={layers}
         onLayers={setLayers}
         selected={selected}
+        lives={lives}
+        building={building}
+        onCloseBuilding={() => setBuilding(null)}
         following={following}
         onFollow={follow}
         onTown={(t) => {
