@@ -2,7 +2,7 @@
 // the traffic and the townsfolk holding, run on the starter towns (and a generated
 // one) at the morning rush. Each prints ok or FAIL and why.
 //
-//   dotnet run --project "unity/Tools~/Checks" -c Release -- life [towns dir]
+//   dotnet run --project "unity/Tools~/Checks" -c Release -- life [towns dir] [only scenarios naming this]
 
 using System;
 using System.Collections.Generic;
@@ -17,7 +17,8 @@ using Porchlight.Model;
 
 static class LifeCheck
 {
-    public static int Run(string dir)
+    /// <summary>`only`: just the units and scenarios whose name has it in, for working on one.</summary>
+    public static int Run(string dir, string only = null)
     {
         var keys = new List<(string name, string key)>();
         foreach (var f in Directory.GetFiles(dir, "*.json").Where(f => !f.EndsWith(".roads.json")).OrderBy(f => f))
@@ -25,6 +26,7 @@ static class LifeCheck
         int fails = 0;
         foreach (var (what, check) in Units())
         {
+            if (only != null && !what.Contains(only)) continue;
             string err;
             try { err = check(); }
             catch (Exception e) { err = e.ToString(); }
@@ -39,6 +41,7 @@ static class LifeCheck
             var zoning = Zoning.Plan(model, layout);
             foreach (var (what, check) in Scenarios())
             {
+                if (only != null && !what.Contains(only)) continue;
                 string err;
                 try { err = check(model, layout, zoning); }
                 catch (Exception e) { err = e.ToString(); }
@@ -64,12 +67,14 @@ static class LifeCheck
         yield return ("no car drives through a player standing in a junction", JunctionPlayer);
         yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
         yield return ("with parking everywhere, nobody hunts for a spot", InfiniteParking);
+        yield return ("cars drive smoothly: they brake into a turn and pull away out of it, never lurching, jumping or stalling on the curve", Smooth);
     }
 
     static IEnumerable<(string, Func<string>)> Units()
     {
         yield return ("the event queue: in time order, ties by key, cancelled and moved events never fire", Events);
         yield return ("the wire: an empty slot goes as the hidden sentinel and comes back hidden; a shown one where it was", Wire);
+        yield return ("the wire: a car going round a corner is drawn round it between the server's words, not cut across", WireCorner);
     }
 
     /// <summary>Given events scheduled out of order, some moved and some cancelled, when popped, then in time (and key) order, each once.</summary>
@@ -142,6 +147,52 @@ static class LifeCheck
         if (theirCars[1].hidden || Math.Abs(theirCars[1].x - 40) > 0.02) return $"car 1 out again at ({theirCars[1].x}, {theirCars[1].y}), hidden {theirCars[1].hidden}";
         return null;
     }
+
+    /// <summary>
+    /// Given a car going round a quarter circle (1.2 tiles' radius, at a turn's 1.3 tiles/s) and the server's word
+    /// on it ten times a second, when the game draws it sixty times a second, then it stays on the curve and faces
+    /// along it: carried round at the rate it was turning between words, its facing kept close.
+    /// </summary>
+    static string WireCorner()
+    {
+        const double R = 1.2, V = 1.3, SENT = 0.1, FRAME = 1 / 60.0;
+        var host = new List<TrafficCar> { new TrafficCar() };
+        var sync = new WorldSync();
+        var theirs = new List<TrafficCar> { new TrafficCar() };
+        var none = new List<Walker>();
+        double worst = 0, sinceSent = SENT, worstFacing = 0;
+        double end = Math.PI / 2 * R / V;
+        for (double time = 0; time < end; time += FRAME)
+        {
+            if (sinceSent >= SENT - 1e-9)
+            {
+                // Round the centre (0, 0) from (R, 0), anticlockwise: facing along the circle.
+                double a = time * V / R;
+                host[0].x = 50 + R * Math.Cos(a);
+                host[0].y = 50 + R * Math.Sin(a);
+                host[0].heading = a + Math.PI / 2;
+                host[0].speed = V;
+                sync.Receive(WorldSync.EncodeCars(host), WorldSync.EncodePeople(none));
+                sinceSent = 0;
+            }
+            sync.Step(FRAME, theirs, none);
+            sinceSent += FRAME;
+            // Judged once it's had two words (one alone can't say it's turning).
+            if (time > 2 * SENT)
+            {
+                worst = Math.Max(worst, Math.Abs(Numbers.Hypot(theirs[0].x - 50, theirs[0].y - 50) - R));
+                double along = Math.Atan2(theirs[0].y - 50, theirs[0].x - 50) + Math.PI / 2;
+                worstFacing = Math.Max(worstFacing, Math.Abs(Porchlight.Explore.Orbit.ShortestTurn(theirs[0].heading, along)));
+            }
+        }
+        Console.WriteLine($"     corner: drawn at most {worst:0.000} tiles off it, facing at most {worstFacing * 180 / Math.PI:0.0}° off its way");
+        if (worst > CORNER_OFF) return $"drawn {worst:0.000} tiles off the corner it's going round";
+        if (worstFacing * 180 / Math.PI > FACING_OFF) return $"facing {worstFacing * 180 / Math.PI:0.0}° off the way it's going: sliding round sideways";
+        return null;
+    }
+
+    /// <summary>How far a car drawn going round a corner may be off it (tiles), and facing off its way (degrees; before: 15°).</summary>
+    const double CORNER_OFF = 0.05, FACING_OFF = 8;
 
     /// <summary>
     /// Given a town's whole day, then: no car starts a turn at a signal on red; no two parked cars share a
@@ -238,6 +289,87 @@ static class LifeCheck
         t.StartAt(TrafficDay.Morning);
         return t;
     }
+
+    /// <summary>
+    /// Given the morning rush drawn ten times a second (as the server sends it), when every car's drawn speed is
+    /// followed frame to frame, then speed changes as a driver's does (no more than HARSH tiles/s² but rarely),
+    /// and a car that's started round a corner doesn't stop on it with nothing in its way.
+    /// </summary>
+    static string Smooth(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var t = Rush(model, layout, zoning);
+        var life = t.life;
+        for (int f = 0; f < 600; f++) t.Update(0.1, null);
+        const double DT = 0.1;
+        int n = Math.Min(t.cars.Count, life.busSlotsFrom);
+        // Each slot's car as drawn last frame: who, where, and how fast.
+        var who = new int[n];
+        var x = new double[n];
+        var y = new double[n];
+        var v = new double[n];
+        for (int i = 0; i < n; i++) who[i] = -1;
+        int moments = 0, harsh = 0, slams = 0, jumps = 0, onTurns = 0, harshOnTurns = 0, stalls = 0;
+        int L = life.net.lanes.Count;
+        for (int f = 0; f < 3000; f++)
+        {
+            t.Update(DT, null);
+            for (int i = 0; i < n; i++)
+            {
+                var c = t.cars[i];
+                var p = life.carSlots[i];
+                var car = p.shown ? life.cars[p.who] : null;
+                // On the road (pulling into or out of a spot has its own way of moving).
+                bool driving = car != null && !c.hidden && car.seg >= 0 && car.state != CarState.Parking && car.state != CarState.Unparking && car.state != CarState.Parked;
+                if (!driving || who[i] != p.who)
+                {
+                    who[i] = driving ? p.who : -1;
+                    x[i] = c.x;
+                    y[i] = c.y;
+                    v[i] = double.NaN;
+                    continue;
+                }
+                double now = Numbers.Hypot(c.x - x[i], c.y - y[i]) / DT;
+                x[i] = c.x;
+                y[i] = c.y;
+                if (now * DT > JUMPED) jumps++;
+                if (!double.IsNaN(v[i]))
+                {
+                    double a = Math.Abs(now - v[i]) / DT;
+                    moments++;
+                    if (a > HARSH) harsh++;
+                    if (a > SLAM) slams++;
+                    if (car.seg >= L)
+                    {
+                        onTurns++;
+                        if (a > HARSH) harshOnTurns++;
+                        if (now < 0.02 && v[i] > 0.3) stalls++;
+                    }
+                }
+                v[i] = now;
+            }
+        }
+        string Share(int k, int of) => $"{100.0 * k / Math.Max(1, of):0.00}%";
+        Console.WriteLine($"     smooth: {moments} moments driven; speed changing faster than {HARSH} tiles/s² {Share(harsh, moments)} (on turns {Share(harshOnTurns, onTurns)} of {onTurns}), faster than {SLAM} {Share(slams, moments)}; {jumps} jumps, {stalls} dead stops on a turn");
+        if (moments < 1000) return $"only {moments} moments driven";
+        if (jumps > 0) return $"{jumps} times a car jumped more than {JUMPED} tiles in a frame";
+        if (harshOnTurns > onTurns * MOST_HARSH_ON_TURNS) return $"{Share(harshOnTurns, onTurns)} of moments on turns changing speed faster than {HARSH} tiles/s²";
+        if (harsh > moments * MOST_HARSH) return $"{Share(harsh, moments)} of moments changing speed faster than {HARSH} tiles/s²";
+        if (slams > moments * MOST_SLAMS) return $"{Share(slams, moments)} of moments changing speed faster than {SLAM} tiles/s² (no car can)";
+        if (stalls > onTurns / 5000) return $"{stalls} times a car stopped dead on a turn";
+        return null;
+    }
+
+    /// <summary>Hard braking or pulling away, tiles/s²: about 0.4 g (a tile's 3.97 m). Cars plan for 0.25–0.3 g.</summary>
+    const double HARSH = 1.0;
+    /// <summary>Faster than any car changes speed (tiles/s², about 1.2 g): a lurch, not driving.</summary>
+    const double SLAM = 3;
+    /// <summary>
+    /// Shares of moments allowed over those: what's left is a car on the road through braking hard for a turn
+    /// across it or someone stepping out in its last second, or behind a car that did (before: 3.6% over HARSH).
+    /// </summary>
+    const double MOST_HARSH = 0.01, MOST_HARSH_ON_TURNS = 0.005, MOST_SLAMS = 0.002;
+    /// <summary>Further than this in a frame (tiles) isn't driving: a car put somewhere new.</summary>
+    const double JUMPED = 0.6;
 
     /// <summary>Given a car going along a lane, when a player stands in front of it, then within two seconds it's stopped short of them, and goes again once they've gone.</summary>
     static string StopsForPlayer(TownModel model, IsoLayout layout, TownZoning zoning)

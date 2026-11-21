@@ -327,7 +327,7 @@ namespace Porchlight.Gen
             }
             errors.AddRange(CheckRoadSlopes(model, RoadKind.Main));
             // One junction where the main roads meet, never a knot of them (RoadGraphOps.CollapseShortLinks).
-            errors.AddRange(RoadGraphOps.CheckKnots(graph, RoadGraphOps.JUNCTIONS_APART, graph.nodes[RoadGraphOps.NearestNode(graph, model.center)].at));
+            errors.AddRange(RoadGraphOps.CheckKnots(graph, RoadGraphOps.JUNCTIONS_APART, graph.nodes[RoadGraphOps.NearestNode(graph, model.center)].at, bent: true));
             errors.AddRange(RoadGraphOps.CheckBridges(model, Raster.WaterMask(model)));
             errors.AddRange(AirportStage.CheckRoadIn(model));
             return errors;

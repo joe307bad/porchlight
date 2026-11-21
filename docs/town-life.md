@@ -184,10 +184,38 @@ A car is 1.1–1.6 tiles long (fixed per car; a bus is 3.1). The catalog's
 models don't carry their lengths yet.
 
 A car on a lane or turn ("segment") holds an **interval**: it goes from
-`s0` at `t0` to `s1` at `t1`, at the segment's speed. Its front at any
-moment is interpolated, and capped where the car ahead's back is less
-`FOLLOWING` (0.25 tiles). A car never overlaps the one ahead, and nothing
-is stepped.
+`s0` at `t0` to `s1` at `t1`. Its front at any moment comes from a speed
+profile over the interval (below), capped where the car ahead's back is
+less `FOLLOWING` (0.25 tiles). A car never overlaps the one ahead, and
+nothing is stepped.
+
+### Braking into a turn, pulling away out of it
+
+Cars used to cover each interval at one speed: full speed down the lane,
+then the turn's speed the instant it began, and full speed again the
+instant it ended. Drawn, that was a car that lurched into every corner and
+hesitated round it. Now each interval is a profile of up to three parts
+(`Life/Cars.cs`, `Drive`):
+
+1. **Pull away** at `ACCEL` (0.6 tiles/s², about 2.4 m/s²) from the speed
+   the car has (`va`: 0 if it was standing, or held behind someone);
+2. **cruise** at the segment's speed (`vp`), if there's room to reach it;
+3. **brake** at `BRAKE` (0.75 tiles/s², about 3 m/s²) to the speed it should
+   leave the segment at (`vb`).
+
+If there's no room to cruise, the profile is a triangle (up, then straight
+down), or one even change of speed. `t1` is the sum of the parts.
+
+The speed it leaves a segment at (`ExitSpeed`) is 0 if it must stop at the
+end: the last step of its route, a stop sign, a light that isn't green (or
+turns within 3 s), or a junction that won't let it straight through
+(`Judge`). Otherwise it's the turn's speed (or, off a turn, the next lane's),
+no faster than it could stop from in the room it can see beyond. A car
+whose car ahead is stopped or stopping plans to stop behind it (`stopAt`),
+and is planned again when that car moves off, or parks and leaves the lane.
+
+A/B Street's cars cross each stretch at one speed, as ours used to; the
+profile is our own addition on top of its queue idea.
 
 **States:**
 
@@ -608,6 +636,12 @@ The slots go out exactly as cars and people always have (7 bytes each,
   instead of easing it from where it was last.
 - Deltas (`sim/src/Delta.cs`) send a slot when it empties or fills, and
   don't dead-reckon an empty one.
+- **Turning between updates.** Updates come 10 times a second; the game
+  draws at 60. A car drawn by easing its facing toward the last one sent lags
+  a corner, and turns in jerks. Instead `WorldSync` estimates each car's
+  turn rate from its last two updates and carries it round at that rate for
+  up to half a second (`TURN_FOR`, at most 3 rad/s), easing what's left
+  (`FACE`, 25/s).
 
 ---
 
@@ -817,6 +851,18 @@ given/when/then:
   vans are out, none has an owner or holds a parking spot, and Manage's
   focus and hover each say it's a van on its rounds. An hour on, at least
   half are on to another call.
+- **Smooth driving.** Given five minutes of the morning rush drawn 10
+  times a second, then cars brake into turns and pull away out of them: under
+  1% of moments brake or speed up harder than 1 tile/s² (0.5% on turns),
+  under 0.2% harder than 3 tiles/s², no car jumps more than 0.6 tiles
+  between frames, and almost none stall on a turn. With cars at one speed
+  per segment (as before), about 4% are harsh (7% on turns) and cars jump.
+  All four towns pass. Run one scenario alone with
+  `Checks life server/towns Smooth`.
+- **A corner on the wire.** Given a car going round a curve (1.2 tiles
+  radius, 1.3 tiles/s) sent 10 times a second and drawn at 60, then it's
+  drawn within 0.05 tiles of the curve and facing within 8° of it (0.014
+  tiles and 5.4° now; easing alone was 15° off).
 - **Turn names.** Given every turn in a town, right turns are on average
   shorter than left (traffic keeps right), and there are some of each.
 - **A player in a junction.** Given a player in the middle of the busiest

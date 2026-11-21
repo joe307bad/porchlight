@@ -68,9 +68,21 @@ What happens now (`Gen/Roads.cs`, `Gen/RoadGraph.cs`):
    - **Doubles.** Of two roads between the same two junctions, the shorter
      is kept (a main road over a street). A road that comes back to its own
      start goes.
-   - **Side by side.** Two roads that leave a junction the same way, within
-     3.5 tiles of each other, are zipped. The one that turns off first is
-     cut back and joined to the other where they part, as a T.
+   - **Side by side.** Two roads that leave a junction the same way (told by
+     where they are 6 tiles out, past any L), within 3.5 tiles of each
+     other, are zipped. The one that turns off first is cut back and joined
+     to the other where they part, as a T. One that runs beside the other
+     all the way to a dead end leaves it by a spur across, as near its end
+     as the land allows. Across a knot, two roads laid side by side out of
+     the knot's two junctions are zipped the same way, and the knot loses a
+     leg.
+   - **Steps at the mouth.** A road that turns within 3.5 tiles of a
+     junction (`MOUTH`) and then turns back the way it set off steps aside
+     in the junction's mouth: that was the east road at Ember Crossing's
+     centre. The step is slid further out, or the road turns at once and
+     drops the first run, or cuts across with a slant, whichever keeps to
+     land and leaves no step at either end. Rounding the corner inside the
+     junction itself (under 1 tile) doesn't count.
    - **Jogs.** A junction set a tile or three off the line its roads run on
      moves onto that line, and the others go straight to it. This is kept
      only if it means fewer bends.
@@ -81,7 +93,8 @@ What happens now (`Gen/Roads.cs`, `Gen/RoadGraph.cs`):
      tiles, whichever is allowed first. A merge must keep every road on land
      a main road may cross. It can't leave two roads meeting under 60°
      (AASHTO's least, [T48]) unless they already did, or a junction with
-     more than four legs.
+     more than four legs, or a new step at a mouth. If no merge passes,
+     40° is tried as a last resort: a sharp fork beats a knot.
    - **Forks.** If a knot can't become one junction (two roads head off the
      same way, or it would have five legs), the shortest such road goes,
      with any dead end it leaves. That happens only if every gate, the
@@ -98,11 +111,27 @@ What happens now (`Gen/Roads.cs`, `Gen/RoadGraph.cs`):
    where the block plan happened to put it.
 4. **Checks.** The generator's own checks fail a town (as `Checks towns`
    runs them) with two roads between the same two junctions, a road back
-   to its own start, main-road junctions under 4 tiles apart, or any two
-   junctions under 3 tiles apart along a street
-   (`RoadGraphOps.CheckKnots`).
+   to its own start, any two junctions under 3 tiles apart along a street
+   (`RoadGraphOps.CheckKnots`), or, for main roads (`Knotted`):
+   - junctions under 4 tiles apart along the road, or under 4 apart as the
+     crow flies (a road can't loop round to dodge the first rule);
+   - a link with a bend in it under 8 tiles long (a dog-leg between two
+     junctions, as at Ember Crossing's centre);
+   - a step within 3.5 tiles of a junction.
 
-How it measured:
+How it measured, with the stricter rules (PR #18):
+- **CI's `towns 60`:** 60 of 60 pass.
+- **`towns 300`:** 292 of 300, as before the stricter rules. The first
+  try at them passed 167 (every corner near a junction counted, not just
+  steps); zips across knots, spurs to dead ends and the 40° fallback
+  brought it back. Two knots are left: check-64's zoo spur (below) and
+  check-81, where the land blocks every merge. The other six failures are
+  the same as before.
+- **`plan`:** all 11 towns pass.
+- **Ember Crossing:** its centre is one junction, north, west and south;
+  the east road's step is 5 tiles out.
+
+How it measured first (PR #19):
 - **CI's `towns 60`:** 60 of 60 pass, with no knots. Before, 9 of them had
   main-road junctions under 4 tiles apart; nothing checked for it then.
 - **`towns 300`:** 292 of 300 pass, against 294 before. One knot is left
@@ -211,8 +240,9 @@ following them. `Checks plan` holds every town to it (below), and CI runs it.
   the pipeline than the plan, so it's the airport or the waterfront.)
 - [x] **Junctions, not knots:** main roads meet at one junction, never a
   tangle of junctions a car or two apart (osm2streets' idea [T51]; see
-  "Junctions: no knots" above, PR #19). One test town's zoo spur still
-  can't be untangled.
+  "Junctions: no knots" above, PR #19). Dog-legs between junctions and
+  steps in a junction's mouth too (PR #18). Two test towns' knots (check-64's
+  zoo spur, check-81) still can't be untangled.
 
 What `Checks plan` holds, for the county's towns, four big towns and three small
 ones: every road classed and the arterials reaching every gate; FHWA's shares

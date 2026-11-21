@@ -22,6 +22,8 @@ namespace Porchlight.Explore
         const int RECORD = 7;
         /// <summary>How quickly the drawn position closes on the sent one (per second).</summary>
         const double EASE = 8;
+        /// <summary>How quickly a car's drawn facing closes on the sent one (per second).</summary>
+        const double FACE = 25;
         /// <summary>Further off than this (tiles), jump straight there.</summary>
         const double JUMP = 3;
         /// <summary>Stop carrying on after this long without word (s): the host has gone quiet.</summary>
@@ -31,7 +33,17 @@ namespace Porchlight.Explore
         {
             public double x, y, heading, speed;
             public bool hidden;
+            /// <summary>The heading as last sent, how long ago (s), and how fast it was turning then (rad/s).</summary>
+            public double sent, age, turn;
+            public bool known;
         }
+
+        /// <summary>Carry on turning as it was for this long without word (s), then go straight.</summary>
+        const double TURN_FOR = 0.5;
+        /// <summary>The fastest anything turns, rad/s (a car round the tightest corner at a walk).</summary>
+        const double MOST_TURN = 3;
+        /// <summary>Records closer together than this (s) say little about turning.</summary>
+        const double LEAST_AGE = 0.05;
 
         /// <summary>An empty slot on the wire (nobody out in it): x and y both 0xFFFF.</summary>
         public const int HIDDEN = 0xFFFF;
@@ -111,12 +123,18 @@ namespace Porchlight.Explore
         {
             int x = (b[at] << 8) | b[at + 1], y = (b[at + 2] << 8) | b[at + 3];
             if (x == HIDDEN && y == HIDDEN) return new Target { x = was.x, y = was.y, heading = was.heading, hidden = true };
+            double heading = ((b[at + 4] << 8) | b[at + 5]) / 65536.0 * 2 * Math.PI;
+            // Turning since its last record: it'll be carried on round at that rate, not straight off the bend.
+            double turn = was.known && !was.hidden ? Orbit.ShortestTurn(was.sent, heading) / Math.Max(LEAST_AGE, was.age) : 0;
             return new Target
             {
                 x = x / SCALE,
                 y = y / SCALE,
-                heading = ((b[at + 4] << 8) | b[at + 5]) / 65536.0 * 2 * Math.PI,
+                heading = heading,
                 speed = b[at + 6] / SPEED_SCALE,
+                sent = heading,
+                turn = Math.Max(-MOST_TURN, Math.Min(MOST_TURN, turn)),
+                known = true,
             };
         }
 
@@ -207,14 +225,18 @@ namespace Porchlight.Explore
                     c.y = t.y;
                     c.heading = t.heading;
                 }
-                // Cars face (cos h, sin h).
+                // Cars face (cos h, sin h): on round a bend as it was turning, a little while, then straight on.
+                t.age += dt;
                 if (going && !Waits(t))
                 {
+                    if (t.age <= TURN_FOR) t.heading += t.turn * dt;
                     t.x += Math.Cos(t.heading) * t.speed * dt;
                     t.y += Math.Sin(t.heading) * t.speed * dt;
                 }
                 Follow(ref c.x, ref c.y, t.x, t.y, k);
-                c.heading += Orbit.ShortestTurn(c.heading, t.heading) * k;
+                // Its facing follows more closely than where it is: carried round with the turn, there's nothing to
+                // smooth, and lagging it shows a car sliding round a corner sideways.
+                c.heading += Orbit.ShortestTurn(c.heading, t.heading) * Math.Min(1, dt * FACE);
                 c.speed = going ? t.speed : 0;
             }
             for (int i = 0; i < Math.Min(people.Length, walkers.Count); i++)

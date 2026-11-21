@@ -65,11 +65,42 @@ namespace Porchlight.Life
 
         // --- Where a car is ---------------------------------------------------------------------
 
+        /// <summary>Where its interval has its front now: pulling away, at speed and braking as planned (SetInterval).</summary>
         double Lerp(Car c)
         {
-            if (Now >= c.t1 || c.t1 <= c.t0) return c.s1;
-            return c.s0 + (c.s1 - c.s0) * (Now - c.t0) / (double)(c.t1 - c.t0);
+            double to = double.IsNaN(c.stopAt) ? c.s1 : Math.Min(c.s1, c.stopAt);
+            if (Now >= c.t1 || c.t1 <= c.t0) return to;
+            double tau = (Now - c.t0) / 1000.0, d;
+            if (tau < c.p1) d = c.va * tau + c.a1 * tau * tau / 2;
+            else
+            {
+                double d1 = c.va * c.p1 + c.a1 * c.p1 * c.p1 / 2;
+                if (tau < c.p1 + c.p2) d = d1 + c.vp * (tau - c.p1);
+                else
+                {
+                    double u = Math.Min(c.p3, tau - c.p1 - c.p2);
+                    d = d1 + c.vp * c.p2 + c.vp * u + c.a3 * u * u / 2;
+                }
+            }
+            return Math.Min(to, c.s0 + Math.Max(0, d));
         }
+
+        /// <summary>How fast its interval has it going at `t` (tiles/s): what it carries into the next.</summary>
+        double PlanSpeed(Car c, long t)
+        {
+            if (t >= c.t1 || c.t1 <= c.t0) return c.vb;
+            double tau = (t - c.t0) / 1000.0;
+            if (tau < c.p1) return c.va + c.a1 * tau;
+            if (tau < c.p1 + c.p2) return c.vp;
+            return Math.Max(0, c.vp + c.a3 * Math.Min(c.p3, tau - c.p1 - c.p2));
+        }
+
+        /// <summary>Pulling away, tiles/s² (about 0.25 g: a driver in town, not a racer; a tile's 3.97 m).</summary>
+        public const double ACCEL = 0.6;
+        /// <summary>Braking, tiles/s² (about 0.3 g: comfortable, well short of an emergency stop).</summary>
+        public const double BRAKE = 0.75;
+        /// <summary>A car that's sat at its interval's end longer than this (ms) is starting from rest.</summary>
+        const long STILL_MS = 50;
 
         /// <summary>How far along its segment a car's front is now: its interval, held back behind what's ahead.</summary>
         public double Front(Car c)
@@ -105,14 +136,124 @@ namespace Porchlight.Life
 
         void SetInterval(Car c, double from, double to)
         {
+            // The speed it's doing now: what its last interval had it at, unless it's been standing (held at the end
+            // of it, or behind the car ahead).
+            double va = Now > c.t1 + STILL_MS ? 0 : PlanSpeed(c, Now);
+            if (va > 0 && c.seg >= 0 && Front(c) < Lerp(c) - 0.02) va = 0;
             c.s0 = from;
             c.s1 = Math.Max(from, to);
             c.t0 = Now;
             // No faster than the turn it's still coming out of (its back's there): it swings round, not snaps.
             double speed = Math.Max(0.05, c.laggy >= 0 ? Math.Min(SegSpeed(c.seg), SegSpeed(c.laggy)) : SegSpeed(c.seg));
-            c.t1 = Now + (long)Math.Ceiling((c.s1 - from) / speed * 1000);
+            // The car ahead stopped, or stopping: it brakes to stop behind it, rather than running up to its back.
+            var q = c.seg >= 0 ? queues[c.seg] : null;
+            int i = q != null ? q.cars.IndexOf(c.id) : -1;
+            c.stopAt = double.NaN;
+            if (i > 0)
+            {
+                var lead = cars[q.cars[i - 1]];
+                double at = StopsAt(lead, c.seg);
+                if (!double.IsNaN(at) && at - lead.length - FOLLOWING < c.s1 - 1e-6) c.stopAt = Math.Max(from, at - lead.length - FOLLOWING);
+            }
+            if (double.IsNaN(c.stopAt)) Drive(c, c.s1 - from, va, speed, Math.Min(speed, ExitSpeed(c)));
+            else Drive(c, c.stopAt - from, va, speed, 0);
+            c.t1 = Now + (long)Math.Ceiling((c.p1 + c.p2 + c.p3) * 1000);
             version++;
             Schedule(K_CAR, c.id, c.t1);
+            // The car behind sees this one go, or stop: it plans again (and so on back down the queue).
+            if (i >= 0 && i + 1 < q.cars.Count)
+            {
+                var f = cars[q.cars[i + 1]];
+                if (!double.IsNaN(f.stopAt) || c.vb <= 1e-9) Refresh(f);
+            }
+        }
+
+        /// <summary>Where a car on `seg` will be stood (its front): stopped now, or braking to stop. NaN: it's going on.</summary>
+        double StopsAt(Car lead, int seg)
+        {
+            if (lead.seg != seg) return double.NaN;
+            if (lead.state != CarState.Crossing || Now >= lead.t1) return Front(lead);
+            if (lead.vb > 1e-9) return double.NaN;
+            return double.IsNaN(lead.stopAt) ? lead.s1 : Math.Min(lead.s1, lead.stopAt);
+        }
+
+        /// <summary>
+        /// The speed a car means to be doing at the end of its interval: as fast as the turn it'll take there, or
+        /// stopped (a stop sign, a red light, where it parks, or short of the segment's end). A light that changes
+        /// for it, or a turn it's let round without stopping after all, it drives off from a crawl.
+        /// </summary>
+        double ExitSpeed(Car c)
+        {
+            if (c.route == null || c.step >= c.route.Count - 1 || c.s1 < SegLength(c.seg) - 1e-6) return 0;
+            int next = c.route[c.step + 1];
+            if (c.seg >= Lanes) return Math.Min(SegSpeed(next), Stoppable(RoomOn(next)));
+            var m = net.movements[next - Lanes];
+            double beyond = Stoppable(m.length + RoomOn(m.to));
+            if (m.stops) return 0;
+            var j = net.junctions[m.node];
+            if (j.control == Control.Signal)
+            {
+                var (stage, ends) = RoadNet.Stage(j, c.t1 > Now ? c.t1 : Now);
+                if (stage != m.stage || ends - Now < 3000) return 0;
+            }
+            // What it can see from here: a turn under way across its own, people crossing, no room beyond. It
+            // slows to stop rather than arriving at speed to be told to wait.
+            if (Judge(c, m, j, out _, out _, out _, null, out _) != Verdict.Go) return 0;
+            return Math.Min(m.speed, beyond);
+        }
+
+        /// <summary>How far along `seg` a car coming onto it can go before the back of a car stopped (or stopping) on it.</summary>
+        double RoomOn(int seg)
+        {
+            int last = LastOn(seg);
+            if (last < 0) return double.PositiveInfinity;
+            double at = StopsAt(cars[last], seg);
+            return double.IsNaN(at) ? double.PositiveInfinity : Math.Max(0, at - cars[last].length - FOLLOWING);
+        }
+
+        /// <summary>The fastest a car can be going and still stop, braking at BRAKE, within `room` tiles.</summary>
+        static double Stoppable(double room) => double.IsPositiveInfinity(room) ? double.MaxValue : Math.Sqrt(2 * BRAKE * room);
+
+        /// <summary>
+        /// Plan `d` tiles from `va` to `vb`, no faster than `top`: pull away at ACCEL, keep steady, brake at BRAKE.
+        /// Too short to get up to speed, it peaks lower; too short even to brake (or pull away) at those rates, it
+        /// changes speed evenly over the whole of it.
+        /// </summary>
+        static void Drive(Car c, double d, double va, double top, double vb)
+        {
+            // No faster at the end than pulling away gently gets it (it carries on speeding up after).
+            vb = Math.Min(vb, Math.Sqrt(va * va + 2 * ACCEL * Math.Max(0, d)));
+            c.va = va;
+            c.vb = vb;
+            c.p1 = c.p2 = c.p3 = c.a1 = c.a3 = 0;
+            c.vp = top;
+            if (d <= 1e-9) { c.vp = c.vb = va; return; }
+            double r1 = top >= va ? ACCEL : -BRAKE, r3 = vb <= top ? -BRAKE : ACCEL;
+            double d1 = (top * top - va * va) / (2 * r1), d3 = (vb * vb - top * top) / (2 * r3);
+            if (d1 + d3 <= d)
+            {
+                c.a1 = r1; c.p1 = (top - va) / r1;
+                c.p2 = (d - d1 - d3) / top;
+                c.a3 = r3; c.p3 = (vb - top) / r3;
+                return;
+            }
+            if (va <= top)
+            {
+                // Up and straight back down: the peak where pulling away meets braking.
+                double peak = Math.Sqrt((d + va * va / (2 * ACCEL) + vb * vb / (2 * BRAKE)) / (1 / (2 * ACCEL) + 1 / (2 * BRAKE)));
+                if (peak >= va && peak >= vb)
+                {
+                    c.vp = peak;
+                    c.a1 = ACCEL; c.p1 = (peak - va) / ACCEL;
+                    c.a3 = -BRAKE; c.p3 = (peak - vb) / BRAKE;
+                    return;
+                }
+            }
+            // Evenly from va to vb.
+            double t = 2 * d / Math.Max(0.05, va + vb);
+            c.vp = vb;
+            c.a1 = (vb - va) / t;
+            c.p1 = t;
         }
 
         /// <summary>A car held back gets a fresh interval from where it really is, so nothing jumps when what held it goes.</summary>
@@ -653,6 +794,8 @@ namespace Porchlight.Life
             c.laggy = -1;
             c.s0 = c.s1 = d;
             c.t0 = c.t1 = Now;
+            c.va = c.vp = c.vb = 0;
+            c.stopAt = double.NaN;
             c.offMap = false;
             c.laneSince = Now;
             c.laneFrom = d;
@@ -676,6 +819,9 @@ namespace Porchlight.Life
                 int seg = c.seg;
                 var q = queues[seg];
                 int i = q.cars.IndexOf(c.id);
+                // Where the car behind is held now: it goes on from there, not from where its interval's got to.
+                int behind = i >= 0 && i + 1 < q.cars.Count ? q.cars[i + 1] : -1;
+                double behindAt = behind >= 0 ? Front(cars[behind]) : double.NaN;
                 q.cars.Remove(c.id);
                 if (q.blockFirst == c.id) q.blockFirst = i < q.cars.Count && i >= 0 ? q.cars[i] : -1;
                 c.seg = -1;
@@ -689,7 +835,7 @@ namespace Porchlight.Life
                     Uncommit(m.to, c);
                     Wake(m.node);
                 }
-                if (i >= 0 && i < q.cars.Count) Refresh(cars[q.cars[i]]);
+                if (behind >= 0) Refresh(cars[behind], behindAt);
             }
             foreach (var w in waitingAt.Values) w.Remove(c.id);
             blockedBy.Remove(c.id);

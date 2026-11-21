@@ -240,6 +240,61 @@ namespace Porchlight.Gen
         /// through), and two junctions nearer along a road than `apart` (the one's roads moved onto the other: a
         /// pinned one stays where it is, else the pair meet half way). Until none's left.
         /// </summary>
+        /// <summary>
+        /// A link between two junctions that makes them one knot: shorter than `apart` along it; or, with `bent`
+        /// (main roads), its ends closer than ACROSS × `apart` as the crow flies however it winds between them, or a
+        /// dog-leg (a bend in it) shorter than twice `apart`. Ember Crossing's centre was the last two: a T, a
+        /// six-tile dog-leg, and another T four tiles across from the first.
+        /// </summary>
+        public static bool Knotted(List<Vec2> pts, double apart, bool bent)
+        {
+            double length = Geo.PolylineLength(pts);
+            if (length < apart) return true;
+            if (!bent) return false;
+            if (Geo.Dist(pts[0], pts[pts.Count - 1]) < ACROSS * apart) return true;
+            return length < 2 * apart && Bends(pts) > 0;
+        }
+
+        /// <summary>A main road leaves a junction straight for at least this far (tiles) before it bends.</summary>
+        public const double MOUTH = 3.5;
+
+        /// <summary>
+        /// A step at a junction's mouth: the road (from its end at the junction: `atEnd`, its last point, else its
+        /// first) turns within MOUTH of it and then turns back the way it set off, sidestepping as it leaves. A
+        /// single corner near a junction is a road turning off, and is fine.
+        /// </summary>
+        public static bool StepAtMouth(List<Vec2> pts, bool atEnd)
+        {
+            var p = atEnd ? Enumerable.Reverse(pts).ToList() : pts;
+            double run = 0;
+            Vec2 first = default;
+            bool turned = false;
+            for (int k = 1; k + 1 < p.Count; k++)
+            {
+                run += Geo.Dist(p[k - 1], p[k]);
+                var a = Geo.Sub(p[k], p[k - 1]);
+                var b = Geo.Sub(p[k + 1], p[k]);
+                double la = Math.Sqrt(Geo.Dot(a, a)), lb = Math.Sqrt(Geo.Dot(b, b));
+                if (la < 1e-9 || lb < 1e-9 || Geo.Dot(a, b) / (la * lb) >= 0.866) continue;
+                if (!turned)
+                {
+                    // Round the corner in the junction itself (it turns there, it doesn't step aside).
+                    if (run < 1) continue;
+                    if (run >= MOUTH - 1e-6) return false;
+                    turned = true;
+                    first = new Vec2(a.x / la, a.y / la);
+                    continue;
+                }
+                // The second corner: back to the way it set off (within 30°) is a step; on round is a U, a road's
+                // own business.
+                return Geo.Dot(first, new Vec2(b.x / lb, b.y / lb)) > 0.866;
+            }
+            return false;
+        }
+
+        /// <summary>Junctions on main roads no nearer than this many times JUNCTIONS_APART as the crow flies.</summary>
+        public const double ACROSS = 1;
+
         public static void CollapseShortLinks(GraphBuilder g, ISet<int> pinned, double apart, Func<List<Vec2>, List<Vec2>, bool> lineOk, int centre = -1)
         {
             var tried = new HashSet<int>();
@@ -248,16 +303,18 @@ namespace Porchlight.Gen
                 bool changed = DropDoubles(g) | DropNewDeadEnds(g, pinned, centre);
                 if (ZipSideBySide(g, pinned, centre, lineOk)) changed = true;
                 if (StraightenJogs(g, pinned, centre, lineOk)) changed = true;
+                if (StraightenMouths(g, lineOk, centre)) changed = true;
                 if (changed) MergePassThrough(g, centre >= 0 ? new HashSet<int>(pinned) { centre } : pinned);
                 var inc = Incidence(g);
                 int Degree(int n) => inc.TryGetValue(n, out var l) ? l.Count : 0;
                 // A junction: three roads or more, or the town's centre where two meet (it's where they all head).
                 bool Junction(int n) => Degree(n) >= 3 || ((pinned.Contains(n) || n == centre) && Degree(n) >= 2);
                 RoadEdge best = null;
-                double bestLength = apart;
+                double bestLength = double.MaxValue;
                 foreach (var e in LiveEdges(g))
                 {
                     if (tried.Contains(e.id) || !Junction(e.from) || !Junction(e.to) || (pinned.Contains(e.from) && pinned.Contains(e.to))) continue;
+                    if (!Knotted(e.points, apart, true)) continue;
                     double length = Geo.PolylineLength(e.points);
                     if (length < bestLength) { best = e; bestLength = length; }
                 }
@@ -281,14 +338,20 @@ namespace Porchlight.Gen
                 // off along the tiles (an L).
                 double sharpest = Sharpest(g, inc, best.from, best.id, -1);
                 sharpest = Math.Max(sharpest, Sharpest(g, inc, best.to, best.id, -1));
-                foreach (int bend in new[] { 0, 1, 2 })
+                // At 60° or more if it can (AASHTO's least); failing that a fork as sharp as KNOT_SHARPEST, which is
+                // still one junction, not a knot of them.
+                foreach (double least in new[] { COS_SHARPEST, COS_KNOT })
                 {
-                    foreach (var t in tries)
+                    foreach (int bend in new[] { 0, 1, 2 })
                     {
-                        var m = Moved(g, inc, best.id, t.keep, t.gone, t.at, lineOk, bend, sharpest);
-                        if (m == null) continue;
-                        (keep, gone, at, moved) = (t.keep, t.gone, t.at, m);
-                        break;
+                        foreach (var t in tries)
+                        {
+                            var m = Moved(g, inc, best.id, t.keep, t.gone, t.at, lineOk, bend, Math.Max(sharpest, least));
+                            if (m == null) continue;
+                            (keep, gone, at, moved) = (t.keep, t.gone, t.at, m);
+                            break;
+                        }
+                        if (moved != null) break;
                     }
                     if (moved != null) break;
                 }
@@ -370,6 +433,8 @@ namespace Porchlight.Gen
                 }
                 if (loop) continue;
                 if (!lineOk(e.points, pts)) return null;
+                // Out of the junction straight: no step right at its mouth (unless the road already had one there).
+                if ((atStart && StepAtMouth(pts, false) && !StepAtMouth(e.points, false)) || (atEnd && StepAtMouth(pts, true) && !StepAtMouth(e.points, true))) return null;
                 if (atStart) heads.Add(Heading(pts, false));
                 if (atEnd) heads.Add(Heading(pts, true));
                 moved[id] = pts;
@@ -377,7 +442,7 @@ namespace Porchlight.Gen
             // Four legs at most: a crossroads, not a star (MUTCD 2B, A/B Street: five-way junctions are their own trouble).
             if (heads.Count > 4) return null;
             // No two meeting sharply: under 60°, unless the pair were as sharp already (it's no worse for being one).
-            double limit = Math.Max(COS_SHARPEST, sharpestBefore + 1e-6);
+            double limit = Math.Max(COS_SHARPEST, sharpestBefore);
             for (int a = 0; a < heads.Count; a++)
                 for (int b = a + 1; b < heads.Count; b++)
                     if (Geo.Dot(heads[a], heads[b]) > limit) return null;
@@ -432,18 +497,40 @@ namespace Porchlight.Gen
                         var a = g.edges[list[i]];
                         var b = g.edges[list[j]];
                         var pa = Away(a, node);
-                        var pb = Away(b, node);
-                        if (Geo.Dot(Heading(pa, false), Heading(pb, false)) <= COS_SHARPEST) continue;
-                        // Where b leaves a: the last of b's points still beside a, and the place on a beside it.
+                        var pb = Densify(Away(b, node));
+                        if (Geo.Dot(Heading(pa, false, ZIP_HEADING_OVER), Heading(pb, false, ZIP_HEADING_OVER)) <= COS_SHARPEST) continue;
+                        // Where b leaves a: the last of b's points still beside a, and the place on a beside it (its
+                        // far end, if b runs beside it all the way: the two meet there).
                         int k = 0;
                         while (k + 1 < pb.Count && Geo.DistToPolyline(pb[k + 1], pa) <= SIDE_BY_SIDE) k++;
-                        if (k == 0 || k == pb.Count - 1) continue;
-                        double along = Geo.ArcPosition(pb[k], pa), length = Geo.PolylineLength(pa);
-                        if (along < 0.5 || along > length - 0.5) continue;
-                        var rest = new List<Vec2>();
-                        for (int m = k; m < pb.Count; m++) rest.Add(pb[m]);
-                        var at = Geo.ClosestOnPolyline(pb[k], pa).point;
-                        rest[0] = at;
+                        if (k < 2) continue;
+                        Vec2 at;
+                        List<Vec2> rest;
+                        if (k == pb.Count - 1)
+                        {
+                            // Beside a all the way to its end (a dead end: the zoo's gate, say): it leaves a by a spur
+                            // across, as near that end as the land lets it, and keeps its own way on from there.
+                            at = default;
+                            rest = null;
+                            for (int kk = k; kk >= 2 && rest == null; kk--)
+                            {
+                                var on = Geo.ClosestOnPolyline(pb[kk], pa).point;
+                                if (Geo.Dist(on, pb[kk]) < 0.5 || Geo.ArcPosition(pb[kk], pa) < 0.5) continue;
+                                var tryRest = new List<Vec2> { on };
+                                for (int m = kk; m < pb.Count; m++) tryRest.Add(pb[m]);
+                                tryRest = Geo.SimplifyRDP(tryRest, 0.01);
+                                if (!lineOk(pb, tryRest)) continue;
+                                at = on;
+                                rest = tryRest;
+                            }
+                            if (rest == null) continue;
+                        }
+                        else
+                        {
+                            if (Geo.ArcPosition(pb[k], pa) < 0.5) continue;
+                            at = Geo.ClosestOnPolyline(pb[k], pa).point;
+                            rest = Rest(pb, k, at);
+                        }
                         if (!lineOk(pb, rest)) continue;
                         int far = b.from == node ? b.to : b.from;
                         int t = SplitEdgeAt(g, a.id, at, 0.05);
@@ -459,7 +546,74 @@ namespace Porchlight.Gen
                         return true;
                     }
             }
+            // Across a knot: one road out of each of two junctions a knotted link joins, side by side the same way
+            // (two main roads laid a tile or two apart into it). The second is cut where it leaves the first, and joins
+            // it there as a T; what's left of the knot is then one junction fewer legs.
+            foreach (var link in LiveEdges(g).ToList())
+            {
+                if (link.from == link.to || !Knotted(link.points, JUNCTIONS_APART, true)) continue;
+                foreach (var (n1, n2) in new[] { (link.from, link.to), (link.to, link.from) })
+                {
+                    if (!inc.TryGetValue(n1, out var l1) || !inc.TryGetValue(n2, out var l2)) continue;
+                    foreach (int ia in l1)
+                        foreach (int ib in l2)
+                        {
+                            if (ia == link.id || ib == link.id || ia == ib) continue;
+                            var a = g.edges[ia];
+                            var b = g.edges[ib];
+                            if (g.dead.Contains(a.id) || g.dead.Contains(b.id)) continue;
+                            var pa = Away(a, n1);
+                            var pb = Densify(Away(b, n2));
+                            if (Geo.Dot(Heading(pa, false, ZIP_HEADING_OVER), Heading(pb, false, ZIP_HEADING_OVER)) <= COS_SHARPEST) continue;
+                            // b's run beside a: from the first of its points beside it to the last before it leaves.
+                            int k0 = 0;
+                            while (k0 < pb.Count && Geo.DistToPolyline(pb[k0], pa) > SIDE_BY_SIDE) k0++;
+                            if (k0 >= pb.Count - 1 || k0 > 2) continue;
+                            int k = k0;
+                            while (k + 1 < pb.Count && Geo.DistToPolyline(pb[k + 1], pa) <= SIDE_BY_SIDE) k++;
+                            if (k == pb.Count - 1 || k - k0 < 2) continue;
+                            if (Geo.ArcPosition(pb[k], pa) < 0.5) continue;
+                            var at = Geo.ClosestOnPolyline(pb[k], pa).point;
+                            var rest = Rest(pb, k, at);
+                            if (!lineOk(pb, rest)) continue;
+                            int far = b.from == n2 ? b.to : b.from;
+                            int t = SplitEdgeAt(g, a.id, at, 0.05);
+                            if (t == n1 || t == far || t == n2) continue;
+                            g.dead.Add(b.id);
+                            if (b.to == n2) AddEdge(g, t, far, b.kind, rest, b.cls);
+                            else
+                            {
+                                rest.Reverse();
+                                AddEdge(g, far, t, b.kind, rest, b.cls);
+                            }
+                            return true;
+                        }
+                }
+            }
             return false;
+        }
+
+        /// <summary>A road's points a tile apart at most (its corners kept), so how near it runs to another is seen all along.</summary>
+        static List<Vec2> Densify(List<Vec2> pts)
+        {
+            var o = new List<Vec2> { pts[0] };
+            for (int k = 1; k < pts.Count; k++)
+            {
+                double d = Geo.Dist(pts[k - 1], pts[k]);
+                int n = (int)Math.Ceiling(d);
+                for (int s = 1; s < n; s++) o.Add(Geo.Lerp(pts[k - 1], pts[k], s / (double)n));
+                o.Add(pts[k]);
+            }
+            return o;
+        }
+
+        /// <summary>A road's way on from its kth point, starting instead at `at`, its corners only.</summary>
+        static List<Vec2> Rest(List<Vec2> pb, int k, Vec2 at)
+        {
+            var rest = new List<Vec2> { at };
+            for (int m = k + 1; m < pb.Count; m++) rest.Add(pb[m]);
+            if (rest.Count < 2) rest.Add(pb[pb.Count - 1]);
+            return Geo.SimplifyRDP(rest, 0.01);
         }
 
         /// <summary>The longest jog (tiles) a road may take just out of a junction before it straightens it.</summary>
@@ -545,6 +699,96 @@ namespace Porchlight.Gen
         }
 
         /// <summary>An edge's points from `node` outward.</summary>
+        /// <summary>
+        /// A road that steps aside right at a junction's mouth (StepAtMouth: out a tile or three, round a corner,
+        /// round again): the step slid further out, so it leaves straight for MOUTH and a tile; or, if that can't
+        /// be, cut across with a slant from the junction to the step's far corner, if that meets the junction's
+        /// other roads at 60° or more. Either on land a main road may cross.
+        /// </summary>
+        static bool StraightenMouths(GraphBuilder g, Func<List<Vec2>, List<Vec2>, bool> lineOk, int centre)
+        {
+            bool any = false;
+            var inc = Incidence(g);
+            foreach (var e in LiveEdges(g).ToList())
+            {
+                foreach (bool atEnd in new[] { false, true })
+                {
+                    int node = atEnd ? e.to : e.from;
+                    // A junction: three roads or more, or the centre where two meet (as CheckKnots counts them).
+                    if (e.from == e.to || !inc.TryGetValue(node, out var legs) || legs.Count < (node == centre ? 2 : 3) || !StepAtMouth(e.points, atEnd)) continue;
+                    var p = new List<Vec2>(e.points);
+                    if (atEnd) p.Reverse();
+                    int a = -1, b = -1;
+                    for (int k = 1; k + 1 < p.Count; k++)
+                    {
+                        var u = Geo.Sub(p[k], p[k - 1]);
+                        var v = Geo.Sub(p[k + 1], p[k]);
+                        double lu = Math.Sqrt(Geo.Dot(u, u)), lv = Math.Sqrt(Geo.Dot(v, v));
+                        if (lu < 1e-9 || lv < 1e-9 || Geo.Dot(u, v) / (lu * lv) >= 0.866) continue;
+                        if (a < 0) a = k;
+                        else { b = k; break; }
+                    }
+                    if (a < 0 || b < 0) continue;
+                    var d = Geo.Sub(p[a], p[0]);
+                    double run = Math.Sqrt(Geo.Dot(d, d));
+                    if (run < 1e-9) continue;
+                    d = new Vec2(d.x / run, d.y / run);
+                    var tries = new List<List<Vec2>>();
+                    // Slid out: the step's two corners moved on along the way it set off, the run after it shortened.
+                    double shift = Math.Ceiling(MOUTH + 1 - run);
+                    if (b + 1 < p.Count)
+                    {
+                        var after = Geo.Sub(p[b + 1], p[b]);
+                        double la = Math.Sqrt(Geo.Dot(after, after));
+                        if (la > shift + 0.5 && Geo.Dot(after, d) / la > 0.99)
+                        {
+                            var slid = new List<Vec2>();
+                            for (int k = 0; k < a; k++) slid.Add(p[k]);
+                            slid.Add(new Vec2(p[a].x + d.x * shift, p[a].y + d.y * shift));
+                            slid.Add(new Vec2(p[b].x + d.x * shift, p[b].y + d.y * shift));
+                            for (int k = b + 1; k < p.Count; k++) slid.Add(p[k]);
+                            tries.Add(slid);
+                        }
+                    }
+                    // Turned at once: out of the junction straight the way the step went, its first run dropped (the
+                    // run after the step a little longer).
+                    if (b + 1 < p.Count)
+                    {
+                        var turned = new List<Vec2> { p[0], new Vec2(p[b].x - (p[a].x - p[0].x), p[b].y - (p[a].y - p[0].y)) };
+                        for (int k = b + 1; k < p.Count; k++) turned.Add(p[k]);
+                        if (Geo.Dot(Geo.Sub(turned[2], turned[1]), d) > 0) tries.Add(Geo.SimplifyRDP(turned, 0.01));
+                    }
+                    // Cut across: straight from the junction to the step's far corner.
+                    var cut = new List<Vec2> { p[0] };
+                    for (int k = b; k < p.Count; k++) cut.Add(p[k]);
+                    tries.Add(cut);
+                    int other = atEnd ? e.from : e.to;
+                    bool otherJunction = inc.TryGetValue(other, out var otherLegs) && otherLegs.Count >= (other == centre ? 2 : 3);
+                    foreach (var t in tries)
+                    {
+                        // No step at either end after (a road between two junctions mustn't trade one for another).
+                        if (StepAtMouth(t, false) || (otherJunction && StepAtMouth(t, true))) continue;
+                        var h = Heading(t, false);
+                        bool sharp = false;
+                        foreach (int id in legs)
+                        {
+                            if (id == e.id) continue;
+                            var o = Heading(Away(g.edges[id], node), false);
+                            if (Geo.Dot(h, o) > COS_SHARPEST) sharp = true;
+                        }
+                        if (sharp) continue;
+                        var now = new List<Vec2>(t);
+                        if (atEnd) now.Reverse();
+                        if (!lineOk(e.points, now)) continue;
+                        e.points = now;
+                        any = true;
+                        break;
+                    }
+                }
+            }
+            return any;
+        }
+
         static List<Vec2> Away(RoadEdge e, int node)
         {
             var pts = new List<Vec2>(e.points);
@@ -678,19 +922,26 @@ namespace Porchlight.Gen
 
         /// <summary>The sharpest two roads may meet at a junction a knot's undone into (cos 60°: AASHTO's least).</summary>
         const double COS_SHARPEST = 0.5;
+        /// <summary>The sharpest two roads may meet when that's the only way to make a knot one junction: 40°.</summary>
+        const double COS_KNOT = 0.766;
 
         /// <summary>How far along a road its way out of a junction is read (tiles): past a jog of a tile or two.</summary>
         const double HEADING_OVER = 3;
 
         /// <summary>The way a road leaves its start (or, `atEnd`, its end), as a unit vector, over its first HEADING_OVER tiles.</summary>
-        static Vec2 Heading(List<Vec2> pts, bool atEnd)
+        static Vec2 Heading(List<Vec2> pts, bool atEnd) => Heading(pts, atEnd, HEADING_OVER);
+
+        /// <summary>Roads side by side are told by where they're going over this far (tiles): past an L out of the junction.</summary>
+        const double ZIP_HEADING_OVER = 6;
+
+        static Vec2 Heading(List<Vec2> pts, bool atEnd, double over)
         {
             var from = atEnd ? pts[pts.Count - 1] : pts[0];
             Vec2 to = from;
             for (int k = 1; k < pts.Count; k++)
             {
                 to = atEnd ? pts[pts.Count - 1 - k] : pts[k];
-                if (Geo.Dist(from, to) >= HEADING_OVER) break;
+                if (Geo.Dist(from, to) >= over) break;
             }
             double d = Geo.Dist(from, to);
             return d < 1e-9 ? new Vec2(1, 0) : new Vec2((to.x - from.x) / d, (to.y - from.y) / d);
@@ -722,7 +973,7 @@ namespace Porchlight.Gen
         /// Knots: two roads between the same two junctions, a road back to where it began, and two junctions (three
         /// roads or more; or the centre, `pinned`, with two) nearer along a road than `apart`. None's allowed.
         /// </summary>
-        public static List<string> CheckKnots(RoadGraph g, double apart, Vec2? pinned = null)
+        public static List<string> CheckKnots(RoadGraph g, double apart, Vec2? pinned = null, bool bent = false)
         {
             var errors = new List<string>();
             var degree = new Dictionary<int, int>();
@@ -737,12 +988,21 @@ namespace Porchlight.Gen
                     errors.Add($"two roads between the same two junctions, near {Numbers.ToFixed(at.x, 1)},{Numbers.ToFixed(at.y, 1)}");
             }
             bool Junction(int n) => degree[n] >= 3 || (pinned != null && degree[n] >= 2 && Geo.Dist(g.nodes[n].at, pinned.Value) < 0.01);
+            if (bent)
+                foreach (var e in g.edges)
+                {
+                    if (e.from == e.to) continue;
+                    if (Junction(e.from) && StepAtMouth(e.points, false))
+                        errors.Add($"a road steps aside within {Numbers.ToFixed(MOUTH, 1)} tiles of the junction it leaves, near {Numbers.ToFixed(e.points[0].x, 1)},{Numbers.ToFixed(e.points[0].y, 1)}");
+                    if (Junction(e.to) && StepAtMouth(e.points, true))
+                        errors.Add($"a road steps aside within {Numbers.ToFixed(MOUTH, 1)} tiles of the junction it leaves, near {Numbers.ToFixed(e.points[e.points.Count - 1].x, 1)},{Numbers.ToFixed(e.points[e.points.Count - 1].y, 1)}");
+                }
             foreach (var e in g.edges)
             {
                 if (e.from == e.to || !Junction(e.from) || !Junction(e.to)) continue;
-                double length = Geo.PolylineLength(e.points);
-                if (length < apart)
-                    errors.Add($"junctions only {Numbers.ToFixed(length, 1)} apart (under {Numbers.ToFixed(apart, 1)}) near {Numbers.ToFixed(e.points[0].x, 1)},{Numbers.ToFixed(e.points[0].y, 1)}");
+                double length = Geo.PolylineLength(e.points), across = Geo.Dist(e.points[0], e.points[e.points.Count - 1]);
+                if (Knotted(e.points, apart, bent))
+                    errors.Add($"a knot of junctions: {Numbers.ToFixed(length, 1)} apart along the road, {Numbers.ToFixed(across, 1)} across{(Bends(e.points) > 0 ? ", with a bend between" : "")} (at least {Numbers.ToFixed(apart, 1)} along{(bent ? $", {Numbers.ToFixed(ACROSS * apart, 1)} across and {Numbers.ToFixed(2 * apart, 1)} if it bends" : "")}) near {Numbers.ToFixed(e.points[0].x, 1)},{Numbers.ToFixed(e.points[0].y, 1)}");
             }
             return errors;
         }

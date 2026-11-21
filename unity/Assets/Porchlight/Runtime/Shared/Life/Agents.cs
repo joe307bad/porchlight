@@ -39,6 +39,14 @@ namespace Porchlight.Life
         /// </summary>
         public long t0, t1;
         public double s0, s1;
+        /// <summary>
+        /// How it drives its interval, as a driver does: from speed `va` at `a1` (tiles/s², either sign) for `p1`
+        /// seconds, steady at `vp` for `p2`, then at `a3` for `p3` down (or up) to `vb`, the speed it means to be
+        /// doing at s1 (Cars.SetInterval).
+        /// </summary>
+        public double va, vp, vb, a1, a3, p1, p2, p3;
+        /// <summary>Where it means to stop short of s1, behind a car ahead that's stopped or stopping (NaN: none).</summary>
+        public double stopAt = double.NaN;
         /// <summary>The segment its back is still in (it's that one's laggy head), or -1.</summary>
         public int laggy = -1;
         /// <summary>The way it's going (segments), and which of them it's on.</summary>
