@@ -92,7 +92,10 @@ What happens now (`Gen/Roads.cs`, `Gen/RoadGraph.cs`):
      stub goes if all it is is a dead end off a junction.
 3. **Streets** (`Gen/Streets.cs`): after the dead ends are cut back, two
    streets between the same two junctions become one (the shorter), the
-   same as doubles above.
+   same as doubles above. A street laid within 4 tiles alongside a main
+   road (beside a step in it, say) goes, and the blocks either side become
+   one. The main road was routed there on purpose; the street was only
+   where the block plan happened to put it.
 4. **Checks.** The generator's own checks fail a town (as `Checks towns`
    runs them) with two roads between the same two junctions, a road back
    to its own start, main-road junctions under 4 tiles apart, or any two
@@ -102,12 +105,21 @@ What happens now (`Gen/Roads.cs`, `Gen/RoadGraph.cs`):
 How it measured:
 - **CI's `towns 60`:** 60 of 60 pass, with no knots. Before, 9 of them had
   main-road junctions under 4 tiles apart; nothing checked for it then.
-- **`towns 300`:** 291 of 300 pass. One knot is left (check-64). The zoo's
-  access road joins 3 tiles from another junction, and the zoo's own
-  boundary blocks every way of moving it. Three small towns now fail
-  pavement checks they passed before, because two main roads run side by
-  side there. One town that failed before passes. The other five failures
-  were there before.
+- **`towns 300`:** 292 of 300 pass, against 294 before. One knot is left
+  (check-64). The zoo's access road joins 3 tiles from another junction,
+  and the zoo's own boundary blocks every way of moving it. Two small towns
+  now fail pavement checks they passed before (a sidewalk loops where two
+  main roads run side by side). Two towns that failed before pass. The
+  other five failures were there before.
+- **`plan`:** all 11 towns pass. With the centre tidied, Porchlight has 4
+  T6 blocks rather than 2, enough for the lot-size check to look at T6. It
+  found T6 lots no smaller than T5's (6.5 against 6.4 tiles), which was
+  true before too (6.33 against 6.36). The cap on a lot was the larger of
+  30 tiles × the zone's scale and twice the smallest lot (16 tiles). For
+  T6 (0.55, so 16.5) the floor all but cancelled the scale. The floor is
+  now 1.5 × the smallest lot (12). Halving a piece still leaves at least
+  the smallest lot, since a cut falls near the middle. T6's scale is now
+  0.45 (13.5 tiles), against T5's 0.7 (21).
 - **Starter towns:** regenerated. The streets report finds 0 junctions of
   5+ legs, 0 under 60° and 0 pairs under 3 tiles apart in all four.
 - **Blue town** (the player's, `seed=35puey`): its centre is one
@@ -181,7 +193,7 @@ following them. `Checks plan` holds every town to it (below), and CI runs it.
   nearer centre plus a wobble. The town's own settings place the zones
   (`downtown`: T5, with T6 at its heart; `innerCity`: T4), so a key keeps its
   character, and `TownPlan.Rules` is the table: front yards (T3 only), lot size
-  (lotMaxSize × 1, 0.85, 0.7, 0.55), house heights, shops and towers (T5–T6),
+  (lotMaxSize × 1, 0.85, 0.7, 0.45), house heights, shops and towers (T5–T6),
   gardens and courtyards. It replaces the `innerCity`/`downtown` thresholds in
   the buildings stage and the street scene [P7].
 - [x] **Neighbourhood units.** The land the arterials and water cut the town
@@ -197,6 +209,10 @@ following them. `Checks plan` holds every town to it (below), and CI runs it.
   bay. It's a T5 centre of its own (half the main one's reach), with offices,
   their towers half as tall [P8]. (No station yet, and the docks come later in
   the pipeline than the plan, so it's the airport or the waterfront.)
+- [x] **Junctions, not knots:** main roads meet at one junction, never a
+  tangle of junctions a car or two apart (osm2streets' idea [T51]; see
+  "Junctions: no knots" above, PR #19). One test town's zoo spur still
+  can't be untangled.
 
 What `Checks plan` holds, for the county's towns, four big towns and three small
 ones: every road classed and the arterials reaching every gate; FHWA's shares
@@ -281,9 +297,12 @@ wouldn't give; and all of it the same again from the same key.
   outside the centre [P9].
 - [ ] **Industry in a wedge** along the main road out to the county highway,
   or by the docks and rail, not scattered round the edge [P8].
-- [ ] **Civic buildings:** a school per neighbourhood, a fire station, and
-  park land at ~10 acres per 1,000 residents (we have residents from
-  zoning) [P5][P14][P16]. Also car parks behind the high street.
+- [ ] **Civic buildings:**
+  - [x] a school and a park per neighbourhood (PR #18);
+  - [ ] a fire station;
+  - [ ] park land at ~10 acres per 1,000 residents (we have residents from
+    zoning) [P5][P14][P16];
+  - [ ] car parks behind the high street.
 - [ ] **Generate the Market landmark** (the plaza on market day: see §6).
 - [ ] **Planning checks** in `Checks zoning`:
   - parks per 1,000 residents
@@ -464,7 +483,9 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
 - [ ] **Vehicles with jobs:**
   - [x] buses on a timetable that stop and hold up the lane (PR #19: one
     loop a town, every 20 minutes, ridden by the timetable)
-  - [ ] delivery vans in the morning
+  - [x] delivery vans and taxis, more or fewer by the hour as real
+    commercial traffic runs, day and night, out of the rushes (PR #19:
+    [town-life.md](town-life.md) §9, [T52])
   - [ ] bin lorries by zone and weekday
   - [ ] emergency vehicles that make others pull over
 

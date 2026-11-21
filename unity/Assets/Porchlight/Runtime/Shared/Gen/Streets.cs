@@ -246,6 +246,26 @@ namespace Porchlight.Gen
             // Cutting dead ends back can leave two streets between the same junctions again: the shorter kept.
             if (RoadGraphOps.DropDoubles(g)) RoadGraphOps.MergePassThrough(g, keep);
             var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
+            // A street laid alongside a main road nearer than MIN_APART (beside a bend in it, say): it goes,
+            // the stretch of it between two junctions, and the blocks either side are one. The main roads are where
+            // they had to be; the street was only where the plan put it.
+            for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
+            {
+                var close = CloseParallels(roads, MIN_APART).FindAll(c => (roads.edges[c.a].kind == RoadKind.Main) != (roads.edges[c.b].kind == RoadKind.Main));
+                if (close.Count == 0) break;
+                var (ea, eb) = (roads.edges[close[0].a], roads.edges[close[0].b]);
+                var drop = ea.kind == RoadKind.Main ? eb : ea;
+                var again = RoadGraphOps.BuilderFrom(roads);
+                again.dead.Add(drop.id);
+                var keepAgain = new HashSet<int>();
+                foreach (var n in again.nodes)
+                {
+                    if (Geo.Dist(C, n.at) < 0.01) keepAgain.Add(n.id);
+                    foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) keepAgain.Add(n.id);
+                }
+                RoadGraphOps.MergePassThrough(again, keepAgain);
+                roads = KeepConnected(RoadGraphOps.Compact(again), model.center);
+            }
             Classify(roads, model, plan.collectors);
             yield return "/compact";
             var next = model.With();
