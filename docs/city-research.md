@@ -29,6 +29,8 @@ Scale: a tile is 4 m, a town about 256 × 256 tiles (1 km square).
 - **Radial main roads.** A\* runs from each gate (and the airport and zoo)
   to the centre, merging where routes overlap (`Gen/Roads.cs`). That makes a
   star with no ring road or bypass.
+- **One junction where roads meet, never a knot.** See "Junctions: no
+  knots" below.
 - **Streets by hierarchical domain splitting** (`Gen/StreetPlan.cs`, Yang et
   al. 2013 [P24]). Blocks are 9 tiles deep and grow up to 40% larger towards
   the edge; the outskirts get courts and cul-de-sacs.
@@ -42,6 +44,74 @@ Scale: a tile is 4 m, a town about 256 × 256 tiles (1 km square).
 - **Missing:** neighbourhoods, schools, parks (only leftover green lots and
   community gardens), parking lots, transit, a second centre, and any sense
   of the town's age.
+
+### Junctions: no knots
+
+Main roads used to meet in knots. Each is pathfound to the centre on its
+own, and a later road joins an earlier one wherever is cheapest, often a
+tile or three from an existing junction. In one player's town the middle
+was a T, a 3-tile stub, and two curved roads looping back to the next
+junction: four junctions in 4 tiles, with a lamp post on the island
+between them. Real street networks avoid this, and osm2streets cleans the
+same shapes out of OpenStreetMap: `CollapseShortRoads` merges a road
+shorter than its junctions into one junction, and
+`CollapseDegenerateIntersections` removes junctions that only join two
+roads [T51]. We borrow the idea, not the code.
+
+What happens now (`Gen/Roads.cs`, `Gen/RoadGraph.cs`):
+
+1. **Routing.** A main road joining another within 4 tiles of one of its
+   junctions pays a penalty of 30 (`JOIN_PENALTY`; a turn costs 10). So it
+   meets the road at the junction itself, or well clear of it.
+2. **Clean-up** (`RoadGraphOps.CollapseShortLinks`), repeated until nothing
+   changes:
+   - **Doubles.** Of two roads between the same two junctions, the shorter
+     is kept (a main road over a street). A road that comes back to its own
+     start goes.
+   - **Side by side.** Two roads that leave a junction the same way, within
+     3.5 tiles of each other, are zipped. The one that turns off first is
+     cut back and joined to the other where they part, as a T.
+   - **Jogs.** A junction set a tile or three off the line its roads run on
+     moves onto that line, and the others go straight to it. This is kept
+     only if it means fewer bends.
+   - **Short links.** Two junctions closer than 4 tiles along a road
+     (`JUNCTIONS_APART`, a junction's mouth) become one. One stays where it
+     is, or failing that they meet half way. The other's roads are swung
+     whole to it, bent over their last 4 tiles, or squared off along the
+     tiles, whichever is allowed first. A merge must keep every road on land
+     a main road may cross. It can't leave two roads meeting under 60°
+     (AASHTO's least, [T48]) unless they already did, or a junction with
+     more than four legs.
+   - **Forks.** If a knot can't become one junction (two roads head off the
+     same way, or it would have five legs), the shortest such road goes,
+     with any dead end it leaves. That happens only if every gate, the
+     airport and the zoo stay joined up.
+   - **Leftovers.** A dead end the clean-up left behind goes. Every dead end
+     from before (gates, the airport's car park, the zoo's gate) is pinned.
+     The centre can move a few tiles to become a merged junction, and its
+     stub goes if all it is is a dead end off a junction.
+3. **Streets** (`Gen/Streets.cs`): after the dead ends are cut back, two
+   streets between the same two junctions become one (the shorter), the
+   same as doubles above.
+4. **Checks.** The generator's own checks fail a town (as `Checks towns`
+   runs them) with two roads between the same two junctions, a road back
+   to its own start, main-road junctions under 4 tiles apart, or any two
+   junctions under 3 tiles apart along a street
+   (`RoadGraphOps.CheckKnots`).
+
+How it measured:
+- **CI's `towns 60`:** 60 of 60 pass, with no knots. Before, 9 of them had
+  main-road junctions under 4 tiles apart; nothing checked for it then.
+- **`towns 300`:** 291 of 300 pass. One knot is left (check-64). The zoo's
+  access road joins 3 tiles from another junction, and the zoo's own
+  boundary blocks every way of moving it. Three small towns now fail
+  pavement checks they passed before, because two main roads run side by
+  side there. One town that failed before passes. The other five failures
+  were there before.
+- **Starter towns:** regenerated. The streets report finds 0 junctions of
+  5+ legs, 0 under 60° and 0 pairs under 3 tiles apart in all four.
+- **Blue town** (the player's, `seed=35puey`): its centre is one
+  crossroads.
 
 ### What real towns do
 

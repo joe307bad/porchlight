@@ -34,6 +34,8 @@ namespace Porchlight.Gen
         const int MAX_PRUNE_PASSES = 50;
         /// <summary>No street runs alongside another road nearer than this, centre to centre (tiles): the Check's limit, with no land at all between them.</summary>
         public const double MIN_APART = 4;
+        /// <summary>The nearest two junctions may be along any street (tiles): a car or two apart, they're a knot, not two junctions.</summary>
+        const double CLOSE_JUNCTIONS = 3;
         /// <summary>Dead ends looked at between one share of the work and the next (Steps).</summary>
         const int DEAD_ENDS_A_STEP = 40;
 
@@ -221,6 +223,8 @@ namespace Porchlight.Gen
             RoadGraphOps.MergePassThrough(g, keep);
             yield return "/merge";
             foreach (var part in DropDuplicateStreets(g)) yield return part;
+            // Two streets between the same two junctions (a little loop): the shorter kept.
+            if (RoadGraphOps.DropDoubles(g)) RoadGraphOps.MergePassThrough(g, keep);
             yield return "/dedupe";
             // A dead end too short to serve anything, or without room for its bulb, is cut back, a stretch at a time.
             for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
@@ -239,6 +243,8 @@ namespace Porchlight.Gen
                 RoadGraphOps.MergePassThrough(g, keep);
                 yield return "/prune";
             }
+            // Cutting dead ends back can leave two streets between the same junctions again: the shorter kept.
+            if (RoadGraphOps.DropDoubles(g)) RoadGraphOps.MergePassThrough(g, keep);
             var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
             Classify(roads, model, plan.collectors);
             yield return "/compact";
@@ -417,6 +423,8 @@ namespace Porchlight.Gen
                 errors.Add("road graph is not a single connected component");
             errors.AddRange(CheckCrossings(graph));
             errors.AddRange(CheckDuplicates(graph));
+            // No knots: two roads between the same junctions, a loop on itself, or junctions a car or two apart.
+            errors.AddRange(RoadGraphOps.CheckKnots(graph, CLOSE_JUNCTIONS));
             foreach (var c in CloseParallels(graph, MIN_APART))
             {
                 errors.Add($"roads {c.a} and {c.b} run alongside each other {Numbers.ToFixed(c.apart, 1)} apart near {Numbers.ToFixed(c.at.x, 1)},{Numbers.ToFixed(c.at.y, 1)}");

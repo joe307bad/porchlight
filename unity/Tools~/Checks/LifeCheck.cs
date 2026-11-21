@@ -558,6 +558,9 @@ static class LifeCheck
         var you = new List<Vec2> { j.at };
         var waited = new HashSet<int>();
         int L = life.net.lanes.Count;
+        // Where each car on a lane into it was a second ago: one that hasn't moved since is waiting for them too
+        // (held short of the junction's mouth, where they stand in the way of the lane coming in).
+        var lastAt = new Dictionary<int, double>();
         for (int f = 0; f < 6000 && waited.Count < 3; f++)
         {
             t.Update(0.1, you);
@@ -570,12 +573,21 @@ static class LifeCheck
                     var nose = life.net.MovementPoint(m, life.Front(car)).at;
                     if (Geo.Dist(nose, j.at) < 0.25) return $"car {car.id} drove into the player at {TownClock.Format(life.Now)}";
                 }
-                if (car.seg < L && car.state == CarState.Waiting && life.net.lanes[car.seg].toNode == j.node) waited.Add(car.id);
+                if (car.seg < L && life.net.lanes[car.seg].toNode == j.node)
+                {
+                    if (car.state == CarState.Waiting) waited.Add(car.id);
+                    else if (f % 10 == 0)
+                    {
+                        double front = life.Front(car);
+                        if (lastAt.TryGetValue(car.id, out double was) && Math.Abs(front - was) < 0.01 && car.state == CarState.Crossing) waited.Add(car.id);
+                        lastAt[car.id] = front;
+                    }
+                }
             }
         }
         if (waited.Count == 0) return "no car came to the junction to wait";
         for (int f = 0; f < 1200; f++) t.Update(0.1, null);
-        var still = waited.Where(id => life.cars[id].seg >= 0 && life.cars[id].seg < L && life.net.lanes[life.cars[id].seg].toNode == j.node && life.cars[id].state == CarState.Waiting).ToList();
+        var still = waited.Where(id => life.cars[id].seg >= 0 && life.cars[id].seg < L && life.net.lanes[life.cars[id].seg].toNode == j.node && life.cars[id].state == CarState.Waiting && life.cars[id].arrived < life.Now - 110_000).ToList();
         if (still.Count > 0) return $"cars {string.Join(", ", still)} still waiting two minutes after the player went";
         return null;
     }
