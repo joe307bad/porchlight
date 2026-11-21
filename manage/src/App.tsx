@@ -195,7 +195,8 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     // waiting the other way), so once a second.
     const signalTimer = setInterval(() => {
       if (!r.showsSignals()) return;
-      for (const key of r.townsInView()) void signalsOf(key).then((s) => !stopped && r.setSignals(key, s));
+      // A town's stop signs come with its lights the first time (they don't change).
+      for (const key of r.townsInView()) void signalsOf(key, !r.hasStops(key)).then((s) => !stopped && r.setSignals(key, s));
     }, SIGNALS_MS);
     return () => {
       stopped = true;

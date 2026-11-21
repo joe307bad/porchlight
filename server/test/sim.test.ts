@@ -290,6 +290,11 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
       assert.ok(l.lamps.length >= 3 && l.lamps.every((p) => p.length === 3 && (p[2] === 0 || p[2] === 1)), 'a lamp on each way in');
       assert.ok(new Set(l.lamps.map((p) => p[2])).size === 2, 'some ways go on each stage');
     }
+    assert.equal((signals as { stops?: unknown }).stops, undefined, 'stop signs only when asked');
+    // The stop signs, asked for once: one on the kerb by each lane that stops, all-way or not.
+    const withStops = (await pool.ask(key, 'signals', 1)) as { stops: number[][] };
+    assert.ok(withStops.stops.length > 0, 'the town has stop signs');
+    assert.ok(withStops.stops.every((s) => s.length === 3 && (s[2] === 0 || s[2] === 1)));
   } finally {
     pool.close();
   }

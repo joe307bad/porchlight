@@ -159,16 +159,31 @@ namespace Porchlight.Life
         /// <summary>
         /// The town's traffic lights now, for Manage to draw: each signal's stage showing green and when it ends (ms;
         /// a light changing early for a car waiting the other way moves that), and a lamp on the kerb by the stop line
-        /// of each lane into it (x, y, the stage it goes on), where the cars waiting there don't hide it.
+        /// of each lane into it (x, y, the stage it goes on), where the cars waiting there don't hide it. With
+        /// `withStops`, the stop signs too (they don't change): one on the kerb by each lane that stops (x, y, 1 if all-way).
         /// </summary>
-        public Dictionary<string, object> Signals()
+        public Dictionary<string, object> Signals(bool withStops = false)
         {
             var lights = new List<object>();
+            var stops = new List<double[]>();
             var nodes = new List<int>(net.junctions.Keys);
             nodes.Sort();
             foreach (int node in nodes)
             {
                 var j = net.junctions[node];
+                if (withStops && (j.control == Control.Stop || j.control == Control.AllWayStop))
+                {
+                    // A stop sign on the kerb by the line of each lane that stops (1: an all-way stop).
+                    var at = new HashSet<int>();
+                    foreach (int id in j.movements)
+                    {
+                        var m = net.movements[id];
+                        if (!m.stops || !at.Add(m.from)) continue;
+                        var l = net.lanes[m.from];
+                        var (p, _) = net.LanePoint(l.road, l.dir, l.end, net.roads[l.road].width / 4 + 0.35);
+                        stops.Add(new[] { Math.Round(p.x, 2), Math.Round(p.y, 2), j.control == Control.AllWayStop ? 1 : 0 });
+                    }
+                }
                 if (j.control != Control.Signal) continue;
                 var (stage, ends) = RoadNet.Stage(j, Now);
                 var lamps = new List<double[]>();
@@ -183,7 +198,9 @@ namespace Porchlight.Life
                 }
                 lights.Add(new Dictionary<string, object> { ["node"] = node, ["stage"] = stage, ["ends"] = ends, ["lamps"] = lamps });
             }
-            return new Dictionary<string, object> { ["now"] = Now, ["stageMs"] = RoadNet.STAGE_MS, ["lights"] = lights };
+            var answer = new Dictionary<string, object> { ["now"] = Now, ["stageMs"] = RoadNet.STAGE_MS, ["lights"] = lights };
+            if (withStops) answer["stops"] = stops;
+            return answer;
         }
 
         public int CarsOnRoad()

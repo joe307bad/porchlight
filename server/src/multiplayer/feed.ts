@@ -23,10 +23,10 @@
 //                            its decision tree, its queue of what's next, its day, and its way
 //                            ahead (docs/town-life.md §11; JSON); &brief=1: just a line of who
 //                            and what they're doing, for the map's hover
-//   GET /mp/sim/signals?town=<key>
+//   GET /mp/sim/signals?town=<key>[&stops=1]
 //                            the town's traffic lights now: each signal's stage showing green
 //                            and when it ends, and a lamp at each stop line with the stage it
-//                            goes on (docs/town-life.md §11; JSON)
+//                            goes on; &stops=1: its stop signs too (docs/town-life.md §11; JSON)
 //
 // One timer serves every viewer: each tick packs each town once (its players,
 // and its cars and townsfolk exactly as the game packs them, WorldSync.cs: the
@@ -421,11 +421,12 @@ export class TrafficFeed {
     }
 
     if (path === SIM_SIGNALS) {
-      const key = new URLSearchParams(query).get('town') ?? '';
+      const q = new URLSearchParams(query);
+      const key = q.get('town') ?? '';
       if (!(await this.deps.persistence.mayEnter(account.id, key))) return send(403, { error: "That town is someone else's." });
       const sim = this.sim?.running(key, Date.now()) ?? null;
       if (!sim) return send(404, { error: "The simulation isn't running that town." });
-      const answer = await this.sim!.pool.ask(key, 'signals', 0);
+      const answer = await this.sim!.pool.ask(key, 'signals', q.get('stops') === '1' ? 1 : 0);
       if (!answer) return send(404, { error: "The simulation isn't running that town." });
       return send(200, { town: key, ...(answer as object) });
     }

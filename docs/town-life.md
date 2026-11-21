@@ -114,8 +114,15 @@ start.
 
 - Each turn is a cubic Bézier that leaves and arrives along each lane's
   direction, so the heading never jumps.
-- A straight-on turn keeps the slower lane's speed. A turn goes at 0.6 of
-  it, and no faster than `SWING` allows at the curve's tightest point.
+- A straight-on turn keeps the slower lane's speed. A turn goes at up to
+  0.6 of it, and no faster than a driver corners comfortably:
+  v = √(a / curvature), with a = 0.32 g (`CORNERING`, the side friction
+  AASHTO designs low-speed street curves for at 15 mph [T48](city-research.md#references)), at the curve's
+  tightest car's length. A tile's about 4 m (50 km/h is 3.5 tiles a
+  second). Turns run at about 38% of the road's limit (19 km/h off a
+  50 km/h road), the slowest tenth at about a third. Before this they were
+  held to a turn rate at the curve's sharpest point: 31% on average and 17%
+  for the slowest tenth, which looked like hesitating.
 - A U-turn at a dead end swings out (1.4 tiles across) at 0.6 tiles/s.
 
 ### Conflicts
@@ -126,16 +133,31 @@ start from the same lane don't.
 
 ### Junction controls
 
-Each junction's control is chosen by its legs:
+Each road has a **rank** by its functional class in the town's plan
+(FHWA's): an arterial 3, a collector 2, a local street 1. A/B Street ranks
+roads the same way, by their OSM highway type. Each junction's control is
+chosen by its legs' ranks:
 
-| Control | When |
-| --- | --- |
-| Free | Two legs or fewer (a bend, a dead end). |
-| Signal | Three or more Main legs. |
-| All-way stop | All legs the same rank. |
-| Stop | On the minor legs, where they meet bigger roads. |
+| Control | When | Source |
+| --- | --- | --- |
+| Free | Two legs or fewer (a bend, a dead end). | A/B Street: no signs where two roads meet. |
+| Signal | Three arterial legs or more, or two arterials crossing two collectors or bigger. | MUTCD 4C.01–4C.02 [T49](city-research.md#references): signals are warranted by heavy traffic on both roads (Warrant 1: 500 an hour on the major road and 150 on the minor, for 8 hours). We have no counts when a town is made, so the class stands in for them. |
+| Stop | Where ranks differ: the smaller roads stop for the biggest. | MUTCD 2B.04 [T50](city-research.md#references): "the roadway carrying the lowest volume of traffic should be controlled"; A/B Street's `ControlStopSign::new`: everything stops but the highest rank. |
+| Stop, at a T | A T of equal roads: the stem stops, the two that run straight through don't. | MUTCD 2B.04 again: the through road carries more than the stem. |
+| All-way stop | Four legs or more, all one rank. | MUTCD 2B.07 [T50](city-research.md#references): multi-way stops are for roads with about equal volumes crossing. |
 
-**Signals** have two 30-second stages, one per pair of opposite legs.
+A/B Street makes an all-way stop of any junction whose roads share a rank,
+T junctions too. We don't: that made 197 of Porchlight's 307 junctions
+all-way stops, and cars stopped at most corners. Now it's 31 (7 signals,
+247 stop signs, 22 free). Where signals go, A/B Street takes from
+OpenStreetMap (osm2streets' `IntersectionControl`); we have no map to read,
+hence the class rule.
+
+**Signals** have two 30-second stages, one per pair of opposite legs: the
+straight-on movements of a pair go together, and turns across them give way
+to cars crossing. At a T, the two legs that run most nearly straight through
+share a stage and the stem has the other. This is A/B Street's
+`four_way_two_stage` and `three_way` plans.
 
 - The stage is a pure function of the clock plus a per-junction offset, so
   any two copies of the town agree on it.
@@ -262,7 +284,10 @@ the kerb of a busy street.
 `SetObstacles(points)` takes where the players are, on every update:
 
 - **On a lane:** the first car behind them stops 1.2 tiles short. When they
-  move, it goes on from where it is.
+  move, it goes on from where it is. They stand in the way of each lane
+  whose middle is within 0.7 tiles of them (half a car's width and a
+  margin): their own side's, and the other side's too when they're near the
+  middle of the road.
 - **In a junction:** every turn whose curve passes within 0.5 tiles of them
   is blocked. A car already on that turn stops short. No car may start it
   until they've gone, and going wakes the junction.
@@ -598,7 +623,7 @@ serves:
 | --- | --- |
 | `GET /mp/sim/life?town=<key>` | The town's clock, who's indoors where, who's off the map at each gate, and the day's figures. |
 | `GET /mp/sim/building?town=<key>&i=<n>` | Who's in that building, and when each next goes out. |
-| `GET /mp/sim/signals?town=<key>` | The town's traffic lights now: each signal's stage showing green and when it ends (`ends`, town ms), and a lamp on the kerb by each stop line with the stage it goes on. |
+| `GET /mp/sim/signals?town=<key>[&stops=1]` | The town's traffic lights now: each signal's stage showing green and when it ends (`ends`, town ms), and a lamp on the kerb by each stop line with the stage it goes on. With `&stops=1`, its stop signs too: x, y, and 1 if all-way. |
 | `GET /mp/sim/where?town=<key>&kind=car\|person&i=<n>` | As before, plus whether the slot is empty, and who's in it and what they're doing (the agent's state, trip and legs). |
 
 **Manage** (`manage/src/life.ts`) shows this:
@@ -606,11 +631,19 @@ serves:
 - **On the map,** with land use on, each building has a disc whose area is
   the number of people inside.
 - **Hovering** a building says how many are inside.
-- **Clicking** a building lists them, with when each next goes out.
-- **The panel's Town life section** gives each town's clock and who's
-  indoors, out and out of town. It also gives trips made and failed, each
-  mode's share and mean time, the busiest hour, how full the kerbs are,
-  and the slow junctions.
+- **Clicking** a building lists them at the top of the panel, with when
+  each next goes out; click someone for their focus.
+
+**The panel** is as simple as it can be, top to bottom:
+
+1. **What was clicked:** a car or townsperson's focus, or who's in a
+   building; with nothing clicked, how to look closer.
+2. **Towns:** each in a line or two (its clock, people, who's out, cars on
+   the road and stopped, trips today, the share by car and how long they
+   take). Click one to go there.
+3. **Show:** a checkbox for each layer, with its key beside it (car speeds,
+   townsfolk, lamp colours, stop signs, land use, players).
+4. **Playing now,** only when someone is: click to follow them.
 
 - **Traffic lights,** close in (2 pixels a tile or more), are a small lamp
   in a dark housing on the kerb by each stop line: green, amber in a
@@ -618,6 +651,9 @@ serves:
   once a second, and in between works out each lamp from the stage and
   when it ends (`lampColor`), as the town does. How the game shows them is
   still to be decided.
+- **Stop signs,** at the same zoom, are a small red octagon on the kerb by
+  each lane that stops (paler at an all-way stop). They come with a town's
+  first lights (`&stops=1`), since they don't change.
 
 Hidden slots aren't drawn, hovered or counted.
 

@@ -162,7 +162,7 @@ namespace Porchlight.Sim
         /// an empty slot, has no day to explain. Buildings are given as Manage knows them (zoning's order).
         /// </summary>
         /// <summary>The town's traffic lights now (Manage's map).</summary>
-        public object Signals() => traffic.life.Signals();
+        public object Signals(bool withStops) => traffic.life.Signals(withStops);
 
         public object Focus(bool car, bool bySlot, int i, bool brief = false)
         {

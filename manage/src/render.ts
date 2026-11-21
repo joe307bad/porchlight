@@ -21,12 +21,17 @@ export interface Layers {
   trails: boolean;
   /** Traffic lights, a lamp at each stop line (close in). */
   signals: boolean;
+  /** Stop signs, one on the kerb by each lane that stops (close in). */
+  stops: boolean;
 }
 
-export const DEFAULT_LAYERS: Layers = { roads: true, zoning: true, cars: true, people: true, players: true, names: true, reach: true, trails: false, signals: true };
+export const DEFAULT_LAYERS: Layers = { roads: true, zoning: true, cars: true, people: true, players: true, names: true, reach: true, trails: false, signals: true, stops: true };
 
 /** Lamp colours. */
-const LAMPS = { green: '#3ddc84', amber: '#ffb020', red: '#ff4d4d' } as const;
+export const LAMPS = { green: '#3ddc84', amber: '#ffb020', red: '#ff4d4d' } as const;
+/** Stop signs: stopping for a bigger road, and an all-way stop. */
+export const STOP_SIGN = '#e5484d';
+export const ALL_WAY = '#ff8fa3';
 /** Closer in than this (pixels a tile), traffic lights are drawn. */
 export const SIGNALS_FROM = 2;
 
@@ -273,22 +278,59 @@ export class MapRenderer {
   /** Each town's traffic lights as last heard, and how far its clock was from ours then (ms). */
   private signals = new Map<string, { s: Signals; skew: number }>();
 
-  /** A town's traffic lights, just heard (null: forget them). */
+  /** Each town's stop signs (they don't change): x, y, 1 if all-way. */
+  private stops = new Map<string, [number, number, number][]>();
+
+  /** A town's traffic lights, just heard (null: forget them); its stop signs, if they came too. */
   setSignals(key: string, s: Signals | null): void {
     if (!s) this.signals.delete(key);
-    else this.signals.set(key, { s, skew: s.now - Date.now() });
+    else {
+      this.signals.set(key, { s, skew: s.now - Date.now() });
+      if (s.stops) this.stops.set(key, s.stops);
+    }
   }
 
-  /** Whether the lights are drawn at this zoom (and so worth asking for). */
+  /** Whether a town's stop signs have been heard. */
+  hasStops(key: string): boolean {
+    return this.stops.has(key);
+  }
+
+  /** Whether the lights or stop signs are drawn at this zoom (and so worth asking for). */
   showsSignals(): boolean {
-    return this.layers.signals && this.cam.scale >= SIGNALS_FROM;
+    return (this.layers.signals || this.layers.stops) && this.cam.scale >= SIGNALS_FROM;
+  }
+
+  /** Each stop sign: a small red octagon on the kerb by the line (paler for an all-way stop). */
+  private drawStops(ctx: CanvasRenderingContext2D, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
+    if (!this.layers.stops || this.cam.scale < SIGNALS_FROM) return;
+    const r = Math.max(0.3, 2.5 * px);
+    for (const allWay of [0, 1]) {
+      ctx.fillStyle = allWay ? ALL_WAY : STOP_SIGN;
+      ctx.beginPath();
+      for (const [key, stops] of this.stops) {
+        const room = this.roomOf(key);
+        if (!room) continue;
+        for (const [sx, sy, a] of stops) {
+          if (a !== allWay) continue;
+          const x = room.meta.ox + sx, y = room.meta.oy + sy;
+          if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+          for (let k = 0; k < 8; k++) {
+            const t = ((k + 0.5) * Math.PI) / 4;
+            if (k === 0) ctx.moveTo(x + r * Math.cos(t), y + r * Math.sin(t));
+            else ctx.lineTo(x + r * Math.cos(t), y + r * Math.sin(t));
+          }
+          ctx.closePath();
+        }
+      }
+      ctx.fill();
+    }
   }
 
   /** Each traffic light, a small lamp in a dark housing on the kerb by each stop line: green, amber or red. */
   private drawSignals(ctx: CanvasRenderingContext2D, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
-    if (!this.showsSignals()) return;
-    const size = Math.max(0.45, 2.5 * px);
-    const housing = size + Math.max(0.2, 1.5 * px);
+    if (!this.layers.signals || !this.showsSignals()) return;
+    const size = Math.max(0.45, 4 * px);
+    const housing = size + Math.max(0.2, 2 * px);
     for (const [key, { s, skew }] of this.signals) {
       const room = this.roomOf(key);
       if (!room) continue;
@@ -678,6 +720,7 @@ export class MapRenderer {
       if (this.layers.people) this.drawPeople(ctx, view, px, dim);
       if (this.layers.cars) this.drawCars(ctx, view, px, dim);
     }
+    this.drawStops(ctx, view, px);
     this.drawSignals(ctx, view, px);
     this.drawFocus(ctx, px);
     if (this.layers.players) this.drawPlayers(ctx, view, px);

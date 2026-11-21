@@ -355,16 +355,22 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
   home, a job, a shop, a gate) and is routed over the lanes on free-flow
   travel time (`Life/Router.cs`, not `StreetRoute`). This is the change
   everything else builds on.
-- [ ] **Junction control by road class** (needs the §1 hierarchy):
-  - [x] local × local: all-way stop (PR #19: any junction whose legs are
-    all the same rank)
+- [ ] **Junction control by road class** (PR #19: ranked by functional
+  class, arterial 3, collector 2, local 1; [town-life.md](town-life.md) §2):
+  - [x] equal roads crossing (four legs): all-way stop (MUTCD 2B.07 [T50]);
+    a T of equal roads, the stem stops (MUTCD 2B.04)
   - [ ] collector × local: two-way stop with HCM gap acceptance (4.1 s /
-    6.2 s) [T12]. Stop signs on the minor legs are in (a 500 ms stop, then
-    first come first served), but there's no gap acceptance yet.
+    6.2 s) [T12]. Stop signs on the smaller roads are in (MUTCD 2B.04, A/B
+    Street's `ControlStopSign`), a 500 ms stop then first come first served,
+    but there's no gap acceptance yet.
   - [ ] arterial × arterial: fixed-time signal, cycle from Webster on the
-    expected peak flows, worked out when the town is made [T10]. Fixed
-    two-stage 30 s signals are in (PR #19), but the cycle isn't from Webster
+    expected peak flows, worked out when the town is made [T10]. Signals
+    where arterials cross (the MUTCD's warrants [T49], with class for
+    volume) are in, two-stage 30 s, changing early for a car waiting with
+    nobody coming the other way (PR #19), but the cycle isn't from Webster
     yet.
+- [x] **Turns at a comfortable cornering speed:** √(a / curvature) with
+  a = 0.32 g (AASHTO side friction at 15 mph [T48]), over a car's length.
 - [x] **Don't block the box:** no car enters a junction unless there's room
   where it's going. A car held 3 minutes is let through, and one held behind
   a player for 15 s turns round (PR #19) [T18].
@@ -805,7 +811,27 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
   https://cdn.fastly.steamstatic.com/apps/valve/2009/ai_systems_of_l4d_mike_booth.pdf
 - **[T47]** RimWorld AI storytellers: https://rimworldwiki.com/wiki/AI_Storytellers
 
+- **[T48]** AASHTO, *A Policy on Geometric Design of Highways and Streets*
+  ("Green Book"), 7th ed. (2018), Table 3-7: side friction factor 0.32 at
+  15 mph, via the Iowa DOT Design Manual, Chapter 2B:
+  https://ia.iowadot.gov/design/dmanual/2B.pdf
+- **[T49]** FHWA, *MUTCD* (2009), Chapter 4C, "Traffic Control Signal
+  Needs Studies": Section 4C.01 lists the warrants; 4C.02, Warrant 1
+  (Table 4C-1, 500 and 150 vehicles an hour):
+  https://mutcd.fhwa.dot.gov/htm/2009/part4/part4c.htm
+- **[T50]** FHWA, *MUTCD* (2009), Chapter 2B: Sections 2B.04 "Right-of-Way
+  at Intersections", 2B.06 "STOP Sign Applications", 2B.07 "Multi-Way Stop
+  Applications": https://mutcd.fhwa.dot.gov/htm/2009/part2/part2b.htm
+- **[T51]** A/B Street's junction control: stop signs by road rank,
+  `map_model/src/objects/stop_signs.rs` (`ControlStopSign::new`); signal
+  plans, `map_model/src/make/traffic_signals/mod.rs` (`four_way_two_stage`,
+  `three_way`); where signals go, osm2streets' `IntersectionControl`, from
+  OpenStreetMap: https://github.com/a-b-street/abstreet ·
+  https://github.com/a-b-street/osm2streets
+
 **Unverified or secondary:**
+- the Green Book's Table 3-7 itself (read through Iowa DOT's copy) [T48]
+- MUTCD 2B.07's numeric criteria (only its Support and opening Guidance read) [T50]
 - Perry's ¼-mile and 160-acre figures [P5]
 - the IDM default parameters
 - 1,900 vehicles/hour from the HCM itself [T8]

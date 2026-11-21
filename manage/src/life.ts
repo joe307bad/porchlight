@@ -250,6 +250,8 @@ export interface Signals {
   now: number;
   stageMs: number;
   lights: { node: number; stage: number; ends: number; lamps: [number, number, number][] }[];
+  /** Its stop signs, when asked for (&stops=1): x, y, 1 if an all-way stop. */
+  stops?: [number, number, number][];
 }
 
 /** The last few seconds of a green show amber. */

@@ -381,7 +381,7 @@ namespace Porchlight.Life
             {
                 bool served = c.stopped || Now >= c.arrived + STOP_MS;
                 explain?.Add(new Why("Must it stop first?", served ? "Yes, and it has" : $"Yes: stopping until {TownClock.FormatSeconds(c.arrived + STOP_MS)}", served,
-                    j.control == Control.AllWayStop ? "An all-way stop: every car stops." : "A stop sign onto a bigger road."));
+                    j.control == Control.AllWayStop ? "An all-way stop: two equal streets cross, and every car stops." : net.lanes[m.from].rank >= TopRank(j) ? "The end of a T: it stops for the street running through." : "A stop sign onto a bigger road."));
                 if (!served)
                 {
                     again = c.arrived + STOP_MS;
@@ -473,6 +473,14 @@ namespace Porchlight.Life
                 return Verdict.Blocked;
             }
             return Verdict.Go;
+        }
+
+        /// <summary>The highest rank of a junction's roads.</summary>
+        int TopRank(Junction j)
+        {
+            int top = 0;
+            foreach (int r in j.legs) top = Math.Max(top, RoadNet.Rank(net.roads[r]));
+            return top;
         }
 
         /// <summary>A light stays green at least this long before it changes for someone waiting the other way.</summary>
@@ -1059,12 +1067,19 @@ namespace Porchlight.Life
                     if (road < 0) continue;
                     var centre = AutoDrive.PointAt(net.roads[road].points, net.Arcs(road), s);
                     if (Geo.Dist(centre, p) > net.roads[road].width / 2 + 0.2) continue;
-                    int lane = net.SideLane(road, s, p);
-                    if (lane < 0) continue;
-                    var l = net.lanes[lane];
-                    double d = (l.dir > 0 ? s : net.lengths[road] - s) - l.start;
-                    if (d < -1 || d > l.Span + 1) continue;
-                    if (!want.TryGetValue(lane, out double was) || d < was) want[lane] = d;
+                    // Each lane whose cars would pass within reach of them: their own side's, and the other's too
+                    // when they're near the middle of the road (a car's no narrower coming the other way).
+                    int mine = net.SideLane(road, s, p);
+                    foreach (int dir in new[] { 1, -1 })
+                    {
+                        int lane = net.LaneOf(road, dir);
+                        if (lane < 0) continue;
+                        var l = net.lanes[lane];
+                        if (lane != mine && Geo.Dist(net.LanePoint(road, dir, l.dir > 0 ? s : net.lengths[road] - s, 0).at, p) > PASSING) continue;
+                        double d = (l.dir > 0 ? s : net.lengths[road] - s) - l.start;
+                        if (d < -1 || d > l.Span + 1) continue;
+                        if (!want.TryGetValue(lane, out double was) || d < was) want[lane] = d;
+                    }
                 }
                 // Stood in a junction: the turns that pass over them (no car starts one; one on it stops short).
                 foreach (var p in at)
@@ -1123,6 +1138,8 @@ namespace Porchlight.Life
         readonly List<int> blocked = new List<int>();
         /// <summary>How far from a junction's middle someone stood may be on one of its turns (tiles).</summary>
         const double JUNCTION_REACH = 4;
+        /// <summary>Someone this near a lane's middle (tiles) is in its cars' way: half a car's width and a margin.</summary>
+        const double PASSING = 0.7;
         /// <summary>How near a turn's curve someone stood is in its way (tiles).</summary>
         const double IN_THE_WAY = 0.5;
 

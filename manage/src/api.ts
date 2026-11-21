@@ -74,8 +74,8 @@ export async function briefOn(town: string, kind: 'car' | 'person', slot: number
 }
 
 /** A town's traffic lights now, or null if it isn't running. */
-export async function signalsOf(town: string): Promise<import('./life.ts').Signals | null> {
-  const res = await fetch(`/mp/sim/signals?town=${encodeURIComponent(town)}`, { cache: 'no-store', credentials: 'same-origin' });
+export async function signalsOf(town: string, stops = false): Promise<import('./life.ts').Signals | null> {
+  const res = await fetch(`/mp/sim/signals?town=${encodeURIComponent(town)}${stops ? '&stops=1' : ''}`, { cache: 'no-store', credentials: 'same-origin' });
   if (!res.ok) return null;
   return (await res.json()) as import('./life.ts').Signals;
 }

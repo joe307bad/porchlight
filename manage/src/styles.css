@@ -601,3 +601,48 @@ p {
   color: var(--muted);
   margin: 0 0 4px;
 }
+
+/* The panel's first card when nothing's clicked: how to look closer. */
+.hint {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.hint b {
+  color: var(--text, inherit);
+  font-weight: 600;
+}
+
+.name .time {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* What the map shows: a checkbox each, its key beside it. */
+.layer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layer-list .legend {
+  margin: 2px 0 0 22px;
+  font-size: 11px;
+}
+
+.legend i.dot {
+  border-radius: 50%;
+}
+
+.legend i.stop {
+  border-radius: 0;
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}

@@ -26,7 +26,7 @@ namespace Porchlight.Life
         public double start, end;
         /// <summary>Speed limit (tiles a second).</summary>
         public double speed;
-        /// <summary>Main roads 2, streets 1.</summary>
+        /// <summary>Its road's rank (Rank): arterials 3, collectors 2, local streets 1.</summary>
         public int rank;
         public readonly List<int> outs = new List<int>();
         /// <summary>Its kerb spots (ids into RoadNet.spots), in order along it.</summary>
@@ -69,6 +69,11 @@ namespace Porchlight.Life
         public readonly List<int> legs = new List<int>();
         /// <summary>Each leg's signal stage.</summary>
         public readonly List<int> legStage = new List<int>();
+        /// <summary>
+        /// Each leg's say at a stop-sign junction: its road's rank, and at a T of equal roads, a half more for the two
+        /// that run straight through (the stem stops for them). Lower than the highest: it stops.
+        /// </summary>
+        public readonly List<double> legPriority = new List<double>();
         /// <summary>Where in the signal cycle it starts (ms).</summary>
         public long offset;
     }
@@ -113,8 +118,13 @@ namespace Porchlight.Life
     public sealed class RoadNet
     {
         /// <summary>Speed limits (tiles a second): 50 km/h and 30 km/h.</summary>
-        /// <summary>The fastest a car turns (radians a second): sets how slowly it takes a tight corner.</summary>
+        /// <summary>The fastest a car turns (radians a second): sets how slowly it takes a tight bend in a lane.</summary>
         public const double SWING = 1.2;
+        /// <summary>
+        /// How hard a driver corners at a junction (tiles a second squared): 0.32 g, the side friction AASHTO's Green
+        /// Book designs intersection curves for at 15 mph (a tile's about 4 m: 50 km/h is 3.5 tiles a second).
+        /// </summary>
+        public const double CORNERING = 0.32 * 9.81 / 3.97;
         /// <summary>How far along a lane its bends are measured over (tiles: about a car's length).</summary>
         const double BEND = 1.2;
         /// <summary>A car's length, and the step down a lane, as its bends are measured (tiles).</summary>
@@ -216,7 +226,7 @@ namespace Porchlight.Life
                     var lane = new Lane
                     {
                         id = lanes.Count, road = i, dir = dir, fromNode = fromNode, toNode = toNode, roadLength = lengths[i],
-                        speed = r.kind == RoadKind.Main ? MAIN_SPEED : STREET_SPEED, rank = Rank(r.kind),
+                        speed = r.kind == RoadKind.Main ? MAIN_SPEED : STREET_SPEED, rank = Rank(r),
                         exit = borderNodes.Contains(toNode), entry = borderNodes.Contains(fromNode),
                     };
                     lane.start = Trim(i, fromNode, borderNodes);
@@ -269,7 +279,13 @@ namespace Porchlight.Life
             return false;
         }
 
-        public static int Rank(RoadKind k) => k == RoadKind.Main ? 2 : 1;
+        /// <summary>
+        /// A road's rank, by its functional class (FHWA): an arterial 3, a collector 2, a local street 1 (a main road's
+        /// an arterial at least). A/B Street ranks its roads the same way, by their OSM highway type.
+        /// </summary>
+        public static int Rank(RoadStroke r) => r.kind == RoadKind.Main || r.cls == RoadClass.Arterial ? ARTERIAL : r.cls == RoadClass.Collector ? 2 : 1;
+
+        public const int ARTERIAL = 3;
 
         /// <summary>How much of a road's end is the junction's (its turns' curves), or a dead end's U-turn's.</summary>
         double Trim(int road, int node, HashSet<int> borderNodes)
@@ -416,16 +432,16 @@ namespace Porchlight.Life
             m.at = new List<double> { 0 };
             for (int i = 1; i < pts.Count; i++) m.at.Add(m.at[i - 1] + Geo.Dist(pts[i], pts[i - 1]));
             m.length = Math.Max(0.2, m.at[m.at.Count - 1]);
-            // No faster round the curve than a car's nose can swing: speed = turn rate x radius (length / angle).
-            // Measured at its sharpest (a curve's tighter in places than on average).
-            double sharpest = 0, w = Math.Min(BEND / 2, m.length / 2);
+            // Round the curve no faster than a driver corners comfortably: v = sqrt(a / curvature), at the curve's
+            // tightest a car's length (its wheels round it, not a point on it).
+            double sharpest = 0, w = Math.Min(BEND, m.length);
             for (double d = 0; d + w <= m.length + 1e-9 && w > 1e-3; d += w / 4)
             {
                 var a = MovementPoint(m, d).along;
                 var b = MovementPoint(m, d + w).along;
                 sharpest = Math.Max(sharpest, Math.Abs(DetMath.Atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y)) / w);
             }
-            if (sharpest > 0) m.speed = Math.Min(m.speed, Math.Max(0.3, SWING / sharpest));
+            if (sharpest > 0) m.speed = Math.Min(m.speed, Math.Max(0.3, Math.Sqrt(CORNERING / sharpest)));
             from.outs.Add(m.id);
             movements.Add(m);
             j.movements.Add(m.id);
@@ -439,45 +455,51 @@ namespace Porchlight.Life
         }
 
         /// <summary>
-        /// How a junction is run. Two roads meeting (a bend) or a dead end: free. Three or more
-        /// main roads: signals. All the same kind of road: an all-way stop. Otherwise the smaller
-        /// roads stop for the bigger.
+        /// How a junction is run (docs/town-life.md §2, from the MUTCD and A/B Street):
+        /// - two roads meeting (a bend) or a dead end: free;
+        /// - signals where arterials cross: three arterial legs or more, or two crossing two collectors or better (the
+        ///   MUTCD's signal warrants are heavy traffic on both roads; the class stands in for the counts);
+        /// - otherwise, roads of different ranks: the smaller roads stop for the bigger (MUTCD 2B.04-2B.06; A/B
+        ///   Street's ControlStopSign: everything stops but the highest rank);
+        /// - roads all of one rank: four legs or more, an all-way stop (MUTCD 2B.07, similar streets crossing); a T,
+        ///   the stem stops for the two that run straight through.
         /// </summary>
         void Control(Junction j)
         {
             int legs = j.legs.Count;
-            int mains = 0, top = 0, bottom = int.MaxValue;
+            int arterials = 0, collectors = 0, top = 0, bottom = int.MaxValue;
             foreach (int r in j.legs)
             {
-                int rank = Rank(roads[r].kind);
-                if (rank == 2) mains++;
+                int rank = Rank(roads[r]);
+                if (rank == ARTERIAL) arterials++;
+                else if (rank == 2) collectors++;
                 top = Math.Max(top, rank);
                 bottom = Math.Min(bottom, rank);
+                j.legPriority.Add(rank);
             }
             if (legs <= 2) j.control = Life.Control.Free;
-            else if (mains >= 3) j.control = Life.Control.Signal;
-            else if (top == bottom) j.control = Life.Control.AllWayStop;
-            else j.control = Life.Control.Stop;
+            else if (arterials >= 3 || (arterials == 2 && collectors >= 2)) j.control = Life.Control.Signal;
+            else if (top == bottom && legs >= 4) j.control = Life.Control.AllWayStop;
+            else
+            {
+                j.control = Life.Control.Stop;
+                // A T of equal roads: the straightest pair runs through, the stem stops.
+                if (top == bottom)
+                {
+                    var (a, b) = StraightestPair(j);
+                    j.legPriority[a] += 0.5;
+                    j.legPriority[b] += 0.5;
+                }
+            }
             // Signal stages: the legs round the junction take turns; at three legs the straightest pair goes together.
             for (int i = 0; i < legs; i++) j.legStage.Add(i % 2);
             if (legs == 3)
             {
-                int best = 0;
-                double bestDot = double.PositiveInfinity;
-                for (int a = 0; a < 3; a++)
-                {
-                    int b = (a + 1) % 3;
-                    var da = LegDir(j, j.legs[a]);
-                    var db = LegDir(j, j.legs[b]);
-                    double dot = da.x * db.x + da.y * db.y;
-                    if (dot < bestDot)
-                    {
-                        bestDot = dot;
-                        best = a;
-                    }
-                }
-                for (int i = 0; i < 3; i++) j.legStage[i] = i == best || i == (best + 1) % 3 ? 0 : 1;
+                var (a, b) = StraightestPair(j);
+                for (int i = 0; i < 3; i++) j.legStage[i] = i == a || i == b ? 0 : 1;
             }
+            double most = 0;
+            foreach (double p in j.legPriority) most = Math.Max(most, p);
             foreach (int id in j.movements)
             {
                 var m = movements[id];
@@ -485,10 +507,31 @@ namespace Porchlight.Life
                 var to = lanes[m.to];
                 int leg = j.legs.IndexOf(from.road);
                 m.stage = leg >= 0 ? j.legStage[leg] : 0;
-                m.stops = j.control == Life.Control.AllWayStop || (j.control == Life.Control.Stop && from.rank < top);
+                double say = leg >= 0 ? j.legPriority[leg] : from.rank;
+                m.stops = j.control == Life.Control.AllWayStop || (j.control == Life.Control.Stop && say < most);
                 m.unprotected = j.control == Life.Control.Stop && from.rank < top && to.rank > from.rank;
                 m.signal = j.control == Life.Control.Signal;
             }
+        }
+
+        /// <summary>The two legs of a three-legged junction that run most nearly straight on into each other.</summary>
+        (int a, int b) StraightestPair(Junction j)
+        {
+            int best = 0;
+            double bestDot = double.PositiveInfinity;
+            for (int a = 0; a < j.legs.Count; a++)
+            {
+                int b = (a + 1) % j.legs.Count;
+                var da = LegDir(j, j.legs[a]);
+                var db = LegDir(j, j.legs[b]);
+                double dot = da.x * db.x + da.y * db.y;
+                if (dot < bestDot)
+                {
+                    bestDot = dot;
+                    best = a;
+                }
+            }
+            return (best, (best + 1) % j.legs.Count);
         }
 
         Vec2 LegDir(Junction j, int road)

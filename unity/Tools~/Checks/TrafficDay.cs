@@ -149,8 +149,33 @@ static class TrafficDay
                  $"  trips {s.started} started, {s.finished} made, {s.failed} failed; walk {s.finishedBy[0]} ({Mean(0)}), drive {s.finishedBy[1]} ({Mean(1)}), bus {s.finishedBy[2]} ({Mean(2)})\n" +
                  $"  streets by day: {100 * busySum / Math.Max(1, busyN):0}% of {blocks} blocks with a car on them (at the quietest {100 * busyLow:0}%)\n" +
                  $"  peak {peakCars} cars on the road at {peakAt}, {peakOut} out; drawn at most {peakDrawnCars}/{life.carSlots.Length} cars, {peakDrawnPeople}/{life.personSlots.Length} people\n" +
+                 $"  {Turns(life)}\n" +
                  $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, gave up {s.gaveUp}, rerouted {s.rerouted}, lights changed {s.lightsChanged}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
         return errs;
+    }
+
+    /// <summary>
+    /// How briskly cars take corners: each turn's speed as a share of the slower road's limit (straight on, turning,
+    /// U-turns apart), the median and the slowest tenth; and the junctions by control.
+    /// </summary>
+    public static string Turns(TownLife life)
+    {
+        var net = life.net;
+        var bends = new List<double>();
+        foreach (var m in net.movements)
+        {
+            if (m.uturn) continue;
+            double limit = Math.Min(net.lanes[m.from].speed, net.lanes[m.to].speed);
+            var p = m.points;
+            if (p == null || p.Count < 3) continue;
+            double h0 = Math.Atan2(p[1].y - p[0].y, p[1].x - p[0].x), h1 = Math.Atan2(p[^1].y - p[^2].y, p[^1].x - p[^2].x);
+            if (Math.Abs(Porchlight.Explore.Orbit.ShortestTurn(h0, h1)) < 0.5) continue;
+            bends.Add(m.speed / limit);
+        }
+        bends.Sort();
+        string Share(double q) => bends.Count == 0 ? "-" : $"{100 * bends[(int)Math.Min(bends.Count - 1, q * bends.Count)]:0}%";
+        var kinds = net.junctions.Values.GroupBy(j => j.control).OrderBy(g => g.Key).Select(g => $"{g.Count()} {g.Key}");
+        return $"turns at {Share(0.5)} of the road's limit (slowest tenth {Share(0.1)}); junctions: {string.Join(", ", kinds)}";
     }
 
     /// <summary>The queues hold together: no car in front of the one ahead of it, none off its segment.</summary>
