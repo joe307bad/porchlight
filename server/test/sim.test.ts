@@ -9,10 +9,21 @@ import assert from 'node:assert/strict';
 import { findWorker, SimPool, type SimTown } from '../src/sim/pool.ts';
 import { STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
 
+// The towns run at mid-morning (10:30 county time, UTC-5) whenever this runs: at night the streets are all but
+// empty, and there'd be no car to stand in front of or take. The worker's clock is shifted forward to it.
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const SHIFT = (((10.5 * HOUR - ((Date.now() - 5 * HOUR) % DAY)) % DAY) + DAY) % DAY;
+process.env.SIM_CLOCK_SHIFT_MS = String(Math.round(SHIFT));
+/** The towns' clock now. */
+const townNow = () => Date.now() + SHIFT;
+
 const worker = findWorker({ ...process.env, SIM: undefined });
 const skip = worker ? false : 'no build of the simulation worker (sim/)';
 
 const RECORD = 7;
+/** An empty slot (WorldSync.HIDDEN: nobody out in it now). */
+const hidden = (v: DataView, i: number) => v.getUint16(i * RECORD) === 0xffff && v.getUint16(i * RECORD + 2) === 0xffff;
 
 /** Waits until `ok` holds after a tick, or fails after `ms`. */
 function until(pool: SimPool, ok: (towns: SimTown[]) => boolean, ms = 20_000): Promise<SimTown[]> {
@@ -55,7 +66,7 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
     assert.equal(town.key, key);
     assert.ok(town.cars.byteLength / RECORD > 0, 'it has traffic');
     assert.ok(town.people.byteLength / RECORD > 0, 'it has townsfolk');
-    assert.ok(Math.abs(Date.now() - town.at) < 2_000, 'the tick is of now');
+    assert.ok(Math.abs(townNow() - town.at) < 2_000, 'the tick is of now (the towns\' clock)');
 
     // A client with the full town, carried along by the deltas, has every record the worker has
     // or (dead-reckoned between) close to it; and a delta is a good deal less than the whole town.
@@ -71,30 +82,81 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
     }
     assert.ok(sent < full * 0.6, `deltas ${sent} B against ${full} B whole`);
 
-    // A player standing in front of a car: it stops there.
-    const v = new DataView(town.cars.buffer, town.cars.byteOffset, town.cars.byteLength);
-    let moving = -1;
-    for (let i = 0; i < town.cars.byteLength / RECORD; i++) if (v.getUint8(i * RECORD + 6) > 20) moving = i;
-    if (moving >= 0) {
+    // A player stepping out in front of a car: it stops short of them, and never drives into them. The town
+    // runs on the real clock, so which cars are moving differs run to run, and the player reaches the worker
+    // a tick or few after the positions they were placed by (the car's moved on meanwhile): a car that's
+    // already on the spot by then, turns off before reaching it, or whose slot goes to another car proves
+    // nothing either way, and the next one's tried.
+    const pose = (u: { cars: Uint8Array }, at: number) => {
+      const w = new DataView(u.cars.buffer, u.cars.byteOffset, u.cars.byteLength);
+      const rx = w.getUint16(at), ry = w.getUint16(at + 2);
+      if (rx === 0xffff && ry === 0xffff) return null;
+      return { x: rx / 100, y: ry / 100, h: (w.getUint16(at + 4) / 65536) * 2 * Math.PI, speed: w.getUint8(at + 6) / 40 };
+    };
+    let stopped = -1;
+    const tried = new Set<number>();
+    const judged: number[] = [];
+    for (let attempt = 0; attempt < 8 && stopped < 0; attempt++) {
       const [t] = await until(pool, (ts) => ts.length > 0);
-      const w = new DataView(t.cars.buffer, t.cars.byteOffset, t.cars.byteLength);
+      let moving = -1;
+      for (let i = 0; i < t.cars.byteLength / RECORD; i++) {
+        const p = pose(t, i * RECORD);
+        if (p && p.speed > 0.5 && !tried.has(i)) moving = i;
+      }
+      if (moving < 0) break;
+      tried.add(moving);
       const at = moving * RECORD;
-      const x = w.getUint16(at) / 100, y = w.getUint16(at + 2) / 100, h = (w.getUint16(at + 4) / 65536) * 2 * Math.PI;
-      const stand = { x: x + Math.cos(h) * 1.2, y: y + Math.sin(h) * 1.2 };
-      let speed = Infinity;
-      for (let i = 0; i < 20 && speed > 0.2; i++) {
+      const first = pose(t, at)!;
+      const stand = { x: first.x + Math.cos(first.h) * 3, y: first.y + Math.sin(first.h) * 3 };
+      // Somewhere clear: no other car on (or just short of) the spot.
+      let clear = true;
+      for (let i = 0; i < t.cars.byteLength / RECORD; i++) {
+        const o = i !== moving ? pose(t, i * RECORD) : null;
+        if (o && Math.hypot(o.x - stand.x, o.y - stand.y) < 1.5) clear = false;
+      }
+      if (!clear) continue;
+      let last = first;
+      let seen = false;
+      let nearest = Infinity;
+      for (let i = 0; i < 20; i++) {
         pool.setPlayers(new Map([[key, [stand]]]));
         const [u] = await until(pool, (ts) => ts.length > 0);
-        speed = new DataView(u.cars.buffer, u.cars.byteOffset).getUint8(at + 6) / 40;
+        const p = pose(u, at);
+        if (!p || Math.hypot(p.x - last.x, p.y - last.y) > 3) break; // parked, or the slot's another car's now
+        last = p;
+        const d = Math.hypot(p.x - stand.x, p.y - stand.y);
+        const along = (stand.x - p.x) * Math.cos(p.h) + (stand.y - p.y) * Math.sin(p.h);
+        // Already at the spot when the player got there: too late to stop, not driving into them.
+        if (!seen && along < 1.4) break;
+        if (!seen) judged.push(moving);
+        seen = true;
+        assert.ok(d > 0.45 || along <= 0 || p.speed <= 0.2, `car ${moving} drove into the player (${d.toFixed(2)} tiles off, ${p.speed} tiles a second)`);
+        if (d > nearest + 0.5) {
+          // It turned off another way: it was never going to reach them, so it isn't judged.
+          judged.pop();
+          break;
+        }
+        nearest = Math.min(nearest, d);
+        // Stopped short of them, having come on toward them (they stood 3 tiles ahead of its middle; a bus,
+        // 3.1 long, stops with its middle 1.2 + 1.55 back).
+        if (p.speed <= 0.2 && along < 3) {
+          stopped = moving;
+          break;
+        }
       }
-      assert.ok(speed <= 0.2, `car ${moving} stopped for the player (still ${speed} tiles a second)`);
       pool.setPlayers(new Map());
     }
+    if (judged.length > 0) assert.ok(stopped >= 0, `none of cars ${judged.join(', ')} stopped for a player in front of it`);
 
     // A car taken after the town's first word on it: out of the traffic, its driver onto the pavement.
     pool.setTaken(key, []);
-    const before = town.people.byteLength / RECORD;
-    pool.setTaken(key, ['t0']);
+    const [now] = await until(pool, (ts) => ts.length > 0);
+    const before = now.people.byteLength / RECORD;
+    const cv = new DataView(now.cars.buffer, now.cars.byteOffset, now.cars.byteLength);
+    let shown = -1;
+    for (let i = 0; i < now.cars.byteLength / RECORD && shown < 0; i++) if (!hidden(cv, i)) shown = i;
+    assert.ok(shown >= 0, 'a car on the road to take');
+    pool.setTaken(key, [`t${shown}`]);
     const [after] = await until(pool, (ts) => ts.length > 0 && ts[0].fullDue);
     assert.equal(after.people.byteLength / RECORD, before + 1, 'the driver is out');
     assert.equal(after.looks.length, 1);
@@ -107,6 +169,155 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
     pool.close();
   }
   assert.ok(!lines.some((l) => /couldn't|Exception/.test(l)), lines.join('\n'));
+});
+
+test('the town has a life: a clock, people indoors, a day\'s figures, and the worker answers about one of them', { skip, timeout: 60_000 }, async () => {
+  const pool = new SimPool(worker!, 1);
+  pool.log = () => {};
+  pool.start();
+  const key = STARTER_TOWNS[0].key;
+  try {
+    pool.setTowns([key]);
+    await until(pool, (t) => t.length > 0 && t[0].life !== null && t[0].zoning !== null);
+    const town = pool.town(key)!;
+    const life = town.life!;
+    assert.ok(Math.abs(life.clock - townNow()) < 5_000, 'its clock is the time now (the towns\' clock)');
+    assert.match(life.time, /^\d\d:\d\d$/);
+    const indoors = life.inside.reduce((n, [, k]) => n + k, 0);
+    const people = life.summary.people as number;
+    assert.ok(people > 100, `a town of people (${people})`);
+    // Everyone's somewhere: indoors, off the map, or out.
+    const off = life.offMap.reduce((n, k) => n + k, 0);
+    assert.equal(indoors + off + (life.summary.out as number), people, 'everyone indoors, off the map or out');
+    for (const [b] of life.inside) assert.ok(b >= 0 && b < town.zoning!.buildings.length, `building ${b} is one of the town's`);
+    // Who's in the fullest building, and when each next goes out.
+    const [fullest, n] = [...life.inside].sort((a, b) => b[1] - a[1])[0];
+    const answer = (await pool.ask(key, 'building', fullest)) as { inside: { id: number; kind: string }[] } | null;
+    assert.ok(answer, 'the worker answers');
+    assert.equal(answer!.inside.length, Math.min(50, n), 'everyone inside (up to 50) listed');
+    // A car on the road: who's driving and what they're up to; an empty slot: nobody.
+    const v = new DataView(town.cars.buffer, town.cars.byteOffset, town.cars.byteLength);
+    // (Only slots drawn are asked about: at night nearly all are empty, and each ask waits on a tick.)
+    for (let i = 0; i < town.cars.byteLength / RECORD; i++) {
+      if (hidden(v, i)) continue;
+      const about = (await pool.ask(key, 'car', i)) as { state: string } | null;
+      if (about) {
+        assert.ok(typeof about.state === 'string');
+        break;
+      }
+    }
+    assert.equal(await pool.ask('no-such-town', 'car', 0), null);
+  } finally {
+    pool.close();
+  }
+});
+
+interface Why { q: string; a: string; yes: boolean; note?: string; under?: Why[] }
+interface Focus {
+  kind: string;
+  id: number;
+  where?: string;
+  doing: string;
+  drawn: string;
+  slot: number;
+  tree: Why[];
+  queue: { at: number | null; time: string | null; what: string; now: boolean }[];
+  path: number[][];
+  empty?: boolean;
+  wanderer?: boolean;
+  day?: { decides: string; entries: { status: string }[] };
+}
+
+test('Manage focuses on a car or townsperson: found where it\'s drawn, followed by who it is, its tree and queue', { skip, timeout: 60_000 }, async () => {
+  const pool = new SimPool(worker!, 1);
+  pool.log = () => {};
+  pool.start();
+  const key = STARTER_TOWNS[0].key;
+  try {
+    pool.setTowns([key]);
+    await until(pool, (t) => t.length > 0 && t[0].life !== null && t[0].zoning !== null);
+    const town = pool.town(key)!;
+    const focus = async (kind: 'car' | 'person', by: 'slot' | 'id', i: number) =>
+      (await pool.ask(key, kind === 'car' ? 'focus-car' : 'focus-person', i, by)) as Focus | null;
+
+    // A car on the road, clicked where it's drawn: who it is, why it's doing what it's doing, what's next.
+    const cars = new DataView(town.cars.buffer, town.cars.byteOffset, town.cars.byteLength);
+    let car: Focus | null = null;
+    let askedEmpty = false;
+    for (let i = 0; i < town.cars.byteLength / RECORD && !car; i++) {
+      if (hidden(cars, i)) {
+        // One empty slot asked about is enough (at night nearly all are, and each ask waits on a tick).
+        if (askedEmpty) continue;
+        askedEmpty = true;
+        const none = await focus('car', 'slot', i);
+        assert.equal(none?.empty, true, 'an empty slot has nobody to focus on');
+        continue;
+      }
+      const f = await focus('car', 'slot', i);
+      if (f && !f.empty) car = f;
+    }
+    if (car) {
+      assert.equal(car.kind, 'car');
+      assert.ok(car.tree.length > 0 && car.tree.every((w) => typeof w.q === 'string' && typeof w.a === 'string'), 'a decision tree of questions and answers');
+      assert.ok(car.queue.length > 0 && car.queue[0].now, 'its queue starts with what it does now');
+      const again = await focus('car', 'id', car.id);
+      assert.equal(again?.id, car.id, 'followed by who it is');
+    }
+
+    // Someone indoors, by who they are (from the building they're in): where they are and when they go out next.
+    const life = town.life!;
+    const [fullest] = [...life.inside].sort((a, b) => b[1] - a[1])[0];
+    const inside = (await pool.ask(key, 'building', fullest)) as { inside: { id: number }[] };
+    const person = await focus('person', 'id', inside.inside[0].id);
+    assert.ok(person, 'a person indoors');
+    assert.equal(person!.doing, 'Indoors');
+    assert.equal(person!.tree[0].q, 'Where are they?');
+    assert.match(person!.tree[0].a, new RegExp(`building ${fullest}\\b`), 'the building as Manage knows it (zoning\'s order)');
+    assert.ok(person!.queue.some((x) => x.what.startsWith('Set off')), 'their next trip is in their queue');
+    // Their day: where they are in it, and what decides what's next.
+    assert.ok(person!.day && typeof person!.day.decides === 'string' && person!.day.decides.length > 0, 'what decides what they do next');
+    assert.ok(person!.day!.entries.some((e) => e.status === 'next'), 'their next trip marked in their day');
+
+    // The first townsfolk records are the wanderers: they've no day to explain.
+    const first = await focus('person', 'slot', 0);
+    assert.ok(first?.wanderer || first?.kind === 'person' || first?.empty, 'a wanderer, or someone of the town\'s life');
+
+    // Someone out and drawn: found by where, and back again by who.
+    const people = new DataView(town.people.buffer, town.people.byteOffset, town.people.byteLength);
+    for (let i = town.people.byteLength / RECORD - 1; i >= 0; i--) {
+      if (hidden(people, i)) continue;
+      const f = await focus('person', 'slot', i);
+      if (!f || f.wanderer || f.empty) continue;
+      assert.equal(f.where, 'OnTrip');
+      assert.ok(f.tree.some((w) => w.q === 'How are they getting there?'), 'how they chose to get there');
+      const again = await focus('person', 'id', f.id);
+      assert.equal(again?.id, f.id);
+      // The map's hover line on them: who, what, and how far through their day.
+      const brief = (await pool.ask(key, 'brief-person', i, 'slot')) as { id: number; line: string } | null;
+      assert.equal(brief?.id, f.id);
+      assert.match(brief!.line, /^Person #\d+ · .+ · trip \d+ of \d+ today$/);
+      break;
+    }
+    assert.equal(await pool.ask('no-such-town', 'focus-car', 0, 'slot'), null);
+
+    // The traffic lights Manage draws: each signal's stage and when it ends, a lamp at each stop line on a stage.
+    const signals = (await pool.ask(key, 'signals', 0)) as { now: number; stageMs: number; lights: { stage: number; ends: number; lamps: number[][] }[] };
+    assert.ok(signals && Array.isArray(signals.lights), 'the lights');
+    assert.equal(signals.stageMs, 30_000);
+    for (const l of signals.lights) {
+      assert.ok(l.stage === 0 || l.stage === 1);
+      assert.ok(l.ends > signals.now && l.ends <= signals.now + signals.stageMs, 'its stage ends within a stage from now');
+      assert.ok(l.lamps.length >= 3 && l.lamps.every((p) => p.length === 3 && (p[2] === 0 || p[2] === 1)), 'a lamp on each way in');
+      assert.ok(new Set(l.lamps.map((p) => p[2])).size === 2, 'some ways go on each stage');
+    }
+    assert.equal((signals as { stops?: unknown }).stops, undefined, 'stop signs only when asked');
+    // The stop signs, asked for once: one on the kerb by each lane that stops, all-way or not.
+    const withStops = (await pool.ask(key, 'signals', 1)) as { stops: number[][] };
+    assert.ok(withStops.stops.length > 0, 'the town has stop signs');
+    assert.ok(withStops.stops.every((s) => s.length === 3 && (s[2] === 0 || s[2] === 1)));
+  } finally {
+    pool.close();
+  }
 });
 
 test('a worker that stops is started again, and given its towns', { skip, timeout: 60_000 }, async () => {

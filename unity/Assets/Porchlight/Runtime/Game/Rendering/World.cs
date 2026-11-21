@@ -68,6 +68,8 @@ namespace Porchlight.Rendering
         const float DOOR_LIFT = 85;
         const double LAMP_HEIGHT = 0.95;
         const double LAMP_REACH = 0.3;
+        /// <summary>How far a lamp's post stands clear of any street's edge (the kerb's own width).</summary>
+        const double LAMP_CLEAR = 0.05;
         static readonly double BUILDING_TURN = Math.PI;
 
         static class C

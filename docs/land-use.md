@@ -124,6 +124,19 @@ they come from the simulation's READY once it has made the town.
 
 ## Next: commuting
 
+**Status:** the town's life ([town-life.md](town-life.md), PR #19) now does
+most of this, from the zoning here:
+
+- **Generation:** everyone is simulated, not sampled.
+- **Distribution:** jobs are filled at random from the slots, with
+  commuters in and out by the gates. A gravity model is still to come.
+- **Mode choice:** walk under 240 m, drive, or bus.
+- **Assignment:** routing on free-flow times. Re-routing on BPR costs is
+  still to come.
+- **Time of day:** the plans' peaks.
+
+Below is the plan as it was written.
+
 The plan towards trips, in the order transport planners build their models
 (the four-step model; an activity-based model like MATSim is the richer
 alternative once townsfolk have whole days):

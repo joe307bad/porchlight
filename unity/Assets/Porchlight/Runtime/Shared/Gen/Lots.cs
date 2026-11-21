@@ -1,7 +1,8 @@
 // Stage 7a: lots. Each block is split recursively across its longer side until
-// the pieces are no bigger than lotMaxSize. Pieces smaller than lotMinSize, or
-// with no road along any side, are dropped. The lots nearest the center become
-// the plaza, with a well in the middle.
+// the pieces are no bigger than lotMaxSize (less, nearer the middle: its
+// transect zone's lot size, TownPlan.Rules). Pieces smaller than lotMinSize, or
+// with no road along any side, are dropped. The lots nearest the center (not in
+// a park) become the plaza, with a well in the middle.
 
 using System;
 using System.Collections.Generic;
@@ -77,13 +78,16 @@ namespace Porchlight.Gen
             var g = Parcels.Ground(model);
             yield return "/ground";
             var list = new List<Lot>();
+            var parks = new HashSet<int>();
+            foreach (var hood in model.neighbourhoods) if (hood.parkBlockId >= 0) parks.Add(hood.parkBlockId);
             foreach (var block in model.blocks)
             {
                 yield return "/block";
                 var tiles = new List<int>();
                 foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h)) if (g.free[t] != 0) tiles.Add(t);
                 var pieces = new List<List<int>>();
-                foreach (var comp in Parcels.Components(tiles, w)) Split(comp, w, p.lotMaxSize, rng, pieces);
+                double maxSize = Math.Max(1.5 * p.lotMinSize, p.lotMaxSize * TownPlan.Rules(block.transect).lotScale);
+                foreach (var comp in Parcels.Components(tiles, w)) Split(comp, w, maxSize, rng, pieces);
                 int looked = 0;
                 foreach (var piece in pieces)
                 {
@@ -102,7 +106,8 @@ namespace Porchlight.Gen
             if (list.Count > 0)
             {
                 Vec2 Centroid(Lot l) => Geo.PolygonCentroid(l.polygon);
-                var byDistance = new List<Lot>(list);
+                var byDistance = list.FindAll(l => !parks.Contains(l.blockId));
+                if (byDistance.Count == 0) byDistance = new List<Lot>(list);
                 Numbers.StableSort(byDistance, (a, b) => Dist2(Centroid(a), model.center) - Dist2(Centroid(b), model.center));
                 var first = byDistance[0];
                 var plaza = new List<Lot> { first };

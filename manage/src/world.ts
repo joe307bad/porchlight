@@ -9,7 +9,7 @@
 // Who's near whom (players and the cars and people round them, and each
 // other) is worked out once per feed frame, not per drawn frame.
 
-import { ANIM, KEPT, NO_WORLD, PLAYER_BYTES, RECORD, readPlayer, type PositionsFrame, type RoomMeta } from './protocol.ts';
+import { ANIM, HIDDEN, KEPT, NO_WORLD, PLAYER_BYTES, RECORD, readPlayer, type PositionsFrame, type RoomMeta } from './protocol.ts';
 
 /** How quickly the drawn position closes on the sent one (per second), and further off than this (tiles) it jumps. */
 const EASE = 8;
@@ -38,6 +38,10 @@ export class Layer {
   h = new Float32Array(0);
   /** Within REACH of a player. */
   near = new Uint8Array(0);
+  /** Out now: 0 for an empty slot (the hidden sentinel: nobody in it, WorldSync.HIDDEN). */
+  shown = new Uint8Array(0);
+  /** How many are out now (shown). */
+  out = 0;
   /** Cars face (cos h, sin h); people (sin h, cos h). */
   readonly people: boolean;
   constructor(people: boolean) {
@@ -63,22 +67,36 @@ export class Layer {
       this.y = fresh ? new Float32Array(n) : grow(this.y);
       this.h = fresh ? new Float32Array(n) : grow(this.h);
       this.near = new Uint8Array(n);
+      this.shown = new Uint8Array(n);
       // New ones start where they are.
       if (n > had) this.x.fill(NaN, had);
     }
     const TURN = (2 * Math.PI) / 65536;
+    let out = 0;
     for (let i = 0, o = at; i < n; i++, o += RECORD) {
-      this.tx[i] = ox + v.getUint16(o, false) / 100;
-      this.ty[i] = oy + v.getUint16(o + 2, false) / 100;
+      const rx = v.getUint16(o, false), ry = v.getUint16(o + 2, false);
+      if (rx === HIDDEN && ry === HIDDEN) {
+        this.shown[i] = 0;
+        this.ts[i] = 0;
+        // Out again later: straight to wherever that is, not eased from here.
+        this.x[i] = NaN;
+        continue;
+      }
+      this.shown[i] = 1;
+      out++;
+      this.tx[i] = ox + rx / 100;
+      this.ty[i] = oy + ry / 100;
       this.th[i] = v.getUint16(o + 4, false) * TURN;
       this.ts[i] = v.getUint8(o + 6) / 40;
     }
+    this.out = out;
   }
 
   step(dt: number, going: boolean): void {
     const k = Math.min(1, 1 - Math.exp(-dt * EASE));
     const { tx, ty, th, ts, x, y, h } = this;
     for (let i = 0; i < this.n; i++) {
+      if (!this.shown[i]) continue;
       if (going && ts[i] > 0) {
         const d = ts[i] * dt;
         if (this.people) {
@@ -108,6 +126,7 @@ export class Layer {
 
   clear(): void {
     this.n = 0;
+    this.out = 0;
   }
 }
 
@@ -317,11 +336,12 @@ export class World {
     const t: Totals = { towns: 0, players: 0, cars: 0, people: 0, moving: 0, stopped: 0, speed: 0 };
     let sum = 0;
     for (const r of this.order) {
-      if (r.players.length || r.cars.n || r.people.n) t.towns++;
+      if (r.players.length || r.cars.out || r.people.out) t.towns++;
       t.players += r.players.length;
-      t.cars += r.cars.n;
-      t.people += r.people.n;
+      t.cars += r.cars.out;
+      t.people += r.people.out;
       for (let i = 0; i < r.cars.n; i++) {
+        if (!r.cars.shown[i]) continue;
         const s = r.cars.ts[i];
         if (s < STOPPED) t.stopped++;
         else {
@@ -349,8 +369,9 @@ export class World {
 /** How many of the layer are within reach of the player (and mark them so). */
 function count(l: Layer, p: PlayerView, r2: number): number {
   let n = 0;
-  const { tx, ty, near } = l;
+  const { tx, ty, near, shown } = l;
   for (let i = 0; i < l.n; i++) {
+    if (!shown[i]) continue;
     const dx = tx[i] - p.tx;
     const dy = ty[i] - p.ty;
     if (dx * dx + dy * dy <= r2) {

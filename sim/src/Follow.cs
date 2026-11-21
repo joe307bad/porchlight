@@ -31,13 +31,15 @@ namespace Porchlight.Sim
             bool ok = true;
             foreach (var key in keys)
             {
-                var server = new SimTown(1, key);
-                var game = new SimTown(2, key); // the player's own, made from the same key
+                long morning = Program.Morning();
+                var server = new SimTown(1, key, morning);
+                var game = new SimTown(2, key); // the player's own, made from the same key (following, its own life never runs)
                 var sync = new WorldSync();
                 var gaps = new List<double>();
+                int hiddenWrong = 0;
                 for (int tick = 0; tick < 600; tick++)
                 {
-                    server.Step();
+                    server.Step(morning + (tick + 1) * 100);
                     var cars = server.Cars();
                     var people = server.People();
                     var delta = server.delta.Next(cars, people, tick * SimTown.TICK);
@@ -49,10 +51,22 @@ namespace Porchlight.Sim
                     for (int i = 0; i < server.traffic.cars.Count; i++)
                     {
                         if (server.traffic.cars[i].taken) continue;
+                        // Hidden on the server: hidden here too, wherever it was.
+                        if (server.traffic.cars[i].hidden != game.traffic.cars[i].hidden) { hiddenWrong++; continue; }
+                        if (server.traffic.cars[i].hidden) continue;
                         gaps.Add(Numbers.Hypot(server.traffic.cars[i].x - game.traffic.cars[i].x, server.traffic.cars[i].y - game.traffic.cars[i].y));
                     }
                     for (int i = 0; i < server.people.Count; i++)
+                    {
+                        if (server.people[i].hidden != game.people[i].hidden) { hiddenWrong++; continue; }
+                        if (server.people[i].hidden) continue;
                         gaps.Add(Numbers.Hypot(server.people[i].x - game.people[i].x, server.people[i].y - game.people[i].y));
+                    }
+                }
+                if (hiddenWrong > 0)
+                {
+                    Console.WriteLine($"FAIL {key.Split('&')[0]}: {hiddenWrong} times a car or person was shown on one side and hidden on the other");
+                    ok = false;
                 }
                 if (gaps.Count == 0) continue;
                 gaps.Sort();

@@ -23,6 +23,11 @@
 //
 // Some last splits in the outskirts are courts instead: a street from one side
 // that stops short in a cul-de-sac, so the block wraps round it.
+//
+// Each piece is planned as its era built (TownPlan.EraAt its middle): the old
+// core a regular grid of small blocks (Siksna's ~60 × 80 m) with no courts, the
+// garden suburbs as above with a few, and the post-war edge with the most.
+// The streets of the first few splits of each piece are its collectors.
 
 using System;
 using System.Collections.Generic;
@@ -39,6 +44,10 @@ namespace Porchlight.Gen
             public List<int> tiles;
             /// <summary>0: blocks run long along x (the streets crossing x are a long block apart); 1: along y.</summary>
             public int orient;
+            /// <summary>How many splits made it: 0, a piece of land between the main roads.</summary>
+            public int depth;
+            /// <summary>The era it was planned in (TownPlan.EraAt its middle).</summary>
+            public Era era;
         }
 
         /// <summary>One end of a street across a region: where it meets a road, or a dead end.</summary>
@@ -87,10 +96,17 @@ namespace Porchlight.Gen
             readonly Func<Vec2, int, bool> bulbFits;
             readonly Func<Vec2, Vec2, int[], int, Hit?> firstHit;
             readonly List<Region> queue = new List<Region>();
+            readonly TownModel model;
             int nextId;
+
+            /// <summary>Streets laid by splits this deep or shallower (0: the first across a piece of land between the main roads) are collectors.</summary>
+            public const int COLLECTOR_DEPTH = 2;
+            /// <summary>The streets laid by the first splits (to COLLECTOR_DEPTH) of each piece of land between the main roads: the collectors (end to end).</summary>
+            public readonly List<(Vec2 a, Vec2 b)> collectors = new List<(Vec2 a, Vec2 b)>();
 
             public StreetPlan(TownModel model, GraphBuilder g, Rng rng, byte[] land, byte[] roadOk, Func<Vec2, double> falloff, Func<Vec2, int, bool> bulbFits, Func<Vec2, Vec2, int[], int, Hit?> firstHit)
             {
+                this.model = model;
                 w = model.width;
                 h = model.height;
                 p = model.@params;
@@ -192,17 +208,24 @@ namespace Porchlight.Gen
                 }
                 var mid = new Vec2(sx / r.tiles.Count + 0.5, sy / r.tiles.Count + 0.5);
                 double f = falloff(mid);
+                var era = TownPlan.EraAt(model, mid);
                 // A block's depth, centre to centre, and its length: bigger where streets are sparse and out of the centre.
-                double depth = Math.Max(p.streetSpacing * (1 + (1 - p.roadDensity) * 0.5) * (1 + OUTSKIRTS * (1 - f)), floor + sw + 1);
-                double length = depth * p.blockLength;
+                // The old core is a tight, regular grid of Siksna's small blocks (scaled with the street spacing) instead.
+                double depth = era == Era.Core
+                    ? Math.Max(p.streetSpacing * TownPlan.CORE_DEPTH / 9, floor + sw + 1)
+                    : Math.Max(p.streetSpacing * (1 + (1 - p.roadDensity) * 0.5) * (1 + OUTSKIRTS * (1 - f)), floor + sw + 1);
+                double length = era == Era.Core ? depth * TownPlan.CORE_LENGTH / TownPlan.CORE_DEPTH * p.blockLength / 2 : depth * p.blockLength;
                 double mx = r.orient == 0 ? length : depth;
                 double my = r.orient == 0 ? depth : length;
                 int nx = Blocks(x1 - x0 + 1, mx), ny = Blocks(y1 - y0 + 1, my);
                 if (nx <= 1 && ny <= 1) return;
                 bool last = nx * ny == 2;
-                // Where streets are sparse, some pieces stay two blocks big.
-                if (last && rng.Chance((1 - p.roadDensity) * 0.5)) return;
-                bool court = last && p.culDeSacs > 0 && rng.Chance(p.culDeSacs * COURT_SHARE * (1 - f));
+                // Where streets are sparse, some pieces stay two blocks big (never in the gridded core).
+                if (last && era != Era.Core && rng.Chance((1 - p.roadDensity) * 0.5)) return;
+                // Courts: none in the core, some in the garden suburbs, and most in the post-war loops and lollipops.
+                double courts = era == Era.Core ? 0 : era == Era.GardenSuburb ? COURT_SHARE * 0.5 : Math.Min(1, COURT_SHARE * 1.5);
+                bool court = last && p.culDeSacs > 0 && courts > 0 && rng.Chance(p.culDeSacs * courts * (1 - f));
+                r.era = era;
                 // The way with the most blocks to come is split first.
                 bool xFirst = nx > ny || (nx == ny && (x1 - x0 + 1) / mx >= (y1 - y0 + 1) / my);
                 foreach (int axis in xFirst ? new[] { 0, 1 } : new[] { 1, 0 })
@@ -225,7 +248,8 @@ namespace Porchlight.Gen
                 int k = n / 2;
                 if (n % 2 == 1 && rng.Chance(0.5)) k++;
                 double ideal = lo - 1 - hwT + k * module;
-                double target = ideal + p.irregularity * module * 0.3 * rng.Range(-1, 1);
+                // The core's grid is regular: its streets keep to their places.
+                double target = ideal + (r.era == Era.Core ? 0 : p.irregularity) * module * 0.3 * rng.Range(-1, 1);
                 int window = Math.Max(1, (int)Math.Floor(module * 0.35 + 0.5));
                 int cMin = Math.Max((int)Math.Floor(ideal) - window, lo + hwT + floor);
                 int cMax = Math.Min((int)Math.Ceiling(ideal) + window, hi - hwT - floor);
@@ -254,7 +278,11 @@ namespace Porchlight.Gen
                     var runs = Runs(r, axis, c, lo2, hi2);
                     if (runs.Count == 0) continue;
                     if (court && Court(axis, c, runs)) return true;
-                    foreach (var run in runs) Carve(axis, c, run);
+                    foreach (var run in runs)
+                    {
+                        Carve(axis, c, run);
+                        if (r.depth <= COLLECTOR_DEPTH) collectors.Add((Centre(axis, c, run.u0), Centre(axis, c, run.u1)));
+                    }
                     Regroup(r, axis);
                     return true;
                 }
@@ -447,7 +475,8 @@ namespace Porchlight.Gen
                     Flood(t, r.id);
                     var child = queue[queue.Count - 1];
                     child.orient = r.orient;
-                    if (rng.Chance(0.15 * p.irregularity)) child.orient = 1 - child.orient;
+                    child.depth = r.depth + 1;
+                    if (r.era != Era.Core && rng.Chance(0.15 * p.irregularity)) child.orient = 1 - child.orient;
                 }
             }
 
@@ -468,7 +497,8 @@ namespace Porchlight.Gen
                     bool fromA = ends.Count == 1 ? ends[0] : rng.Chance(0.5);
                     int u = fromA ? run.u0 + len - 1 : run.u1 - len + 1;
                     var stop = Centre(axis, c, u);
-                    if (!bulbFits(stop, -1)) continue;
+                    // A court of the garden suburbs stops short of the gridded core.
+                    if (!bulbFits(stop, -1) || TownPlan.EraAt(model, stop) == Era.Core) continue;
                     int a = NodeAt(fromA ? run.a : run.b);
                     int b = RoadGraphOps.AddNode(g, stop);
                     int id = RoadGraphOps.AddEdge(g, a, b, RoadKind.Street);

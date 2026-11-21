@@ -4,13 +4,30 @@
 //   GET /mp/traffic/county   the signed-in account's county: its towns (and their
 //                            roads: saved for the ones that come with the game,
 //                            the simulation's for the rest), the
-//                            highways and the spaces between (JSON)
+//                            highways and the spaces between, and `sim`: whether
+//                            this server runs the towns' simulation (JSON)
 //   GET /mp/traffic/feed     a stream of binary frames, about 10 a second, for
 //                            as long as the request stays open
 //   POST /mp/traffic/focus   { feed, towns: [key] }: the towns that viewer is
 //                            looking at closely (the rest come once a second)
 //   GET /mp/sim/where?town=<key>&kind=car|person&i=<n>
-//                            where that car or townsperson is right now (JSON)
+//                            where that car or townsperson is right now, and (the
+//                            simulation's) who they are and what they're doing (JSON)
+//   GET /mp/sim/life?town=<key>
+//                            the town's life: its clock, who's indoors where, off the
+//                            map at each gate, and the day's figures (JSON)
+//   GET /mp/sim/building?town=<key>&i=<n>
+//                            who's in that building (zoning's order) and when each next goes out
+//   GET /mp/sim/focus?town=<key>&kind=car|person&slot=<n> (or &id=<n>)
+//                            one car or townsperson, found by where it's drawn (its place in
+//                            the positions frame) or who it is (the id an earlier answer gave):
+//                            its decision tree, its queue of what's next, its day, and its way
+//                            ahead (docs/town-life.md §11; JSON); &brief=1: just a line of who
+//                            and what they're doing, for the map's hover
+//   GET /mp/sim/signals?town=<key>[&stops=1]
+//                            the town's traffic lights now: each signal's stage showing green
+//                            and when it ends, and a lamp at each stop line with the stage it
+//                            goes on; &stops=1: its stop signs too (docs/town-life.md §11; JSON)
 //
 // One timer serves every viewer: each tick packs each town once (its players,
 // and its cars and townsfolk exactly as the game packs them, WorldSync.cs: the
@@ -53,6 +70,10 @@ const COUNTY = '/mp/traffic/county';
 const FEED = '/mp/traffic/feed';
 const FOCUS = '/mp/traffic/focus';
 const WHERE = '/mp/sim/where';
+const LIFE = '/mp/sim/life';
+const BUILDING = '/mp/sim/building';
+const SIM_FOCUS = '/mp/sim/focus';
+const SIM_SIGNALS = '/mp/sim/signals';
 /** A town not looked at closely: its traffic once in this many ticks. */
 export const QUIET_EVERY = 10;
 
@@ -317,7 +338,7 @@ export class TrafficFeed {
   /** Handles the traffic routes; false if the request isn't one of them. */
   routes = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const [path, query = ''] = (req.url ?? '/').split('?');
-    if (path !== COUNTY && path !== FEED && path !== FOCUS && path !== WHERE) return false;
+    if (path !== COUNTY && path !== FEED && path !== FOCUS && path !== WHERE && path !== LIFE && path !== BUILDING && path !== SIM_FOCUS && path !== SIM_SIGNALS) return false;
     const send = (status: number, body: unknown): true => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
@@ -333,10 +354,15 @@ export class TrafficFeed {
 
     if (path === COUNTY) {
       const { county, names } = await countyOf(this.deps, account.id);
-      return send(200, countyMapJson(county, names, (key) => {
-        const t = this.sim?.pool.town(key);
-        return t?.roads ? { roads: t.roads, zoning: t.zoning } : null;
-      }));
+      // `sim`: whether this server runs its towns' life at all (without it, Manage has no lights, stop signs,
+      // people in buildings or focus to show, and says so).
+      return send(200, {
+        ...countyMapJson(county, names, (key) => {
+          const t = this.sim?.pool.town(key);
+          return t?.roads ? { roads: t.roads, zoning: t.zoning } : null;
+        }),
+        sim: this.sim !== null,
+      });
     }
 
     if (path === FOCUS) {
@@ -366,16 +392,63 @@ export class TrafficFeed {
       const list = kind === 'car' ? town.cars : kind === 'person' ? town.people : null;
       if (!list || !Number.isInteger(i) || i < 0 || i >= list.byteLength / 7) return send(404, { error: 'No such car or townsperson.' });
       const v = new DataView(list.buffer, list.byteOffset + i * 7, 7);
+      // An empty slot (nobody out in it now: WorldSync.HIDDEN).
+      const hidden = v.getUint16(0) === 0xffff && v.getUint16(2) === 0xffff;
+      // The simulation knows who it is, too.
+      const about = src?.sim && this.sim ? await this.sim.pool.ask(key, kind as 'car' | 'person', i) : null;
       return send(200, {
         town: key,
         kind,
         i,
-        x: v.getUint16(0) / 100,
-        y: v.getUint16(2) / 100,
+        hidden,
+        x: hidden ? null : v.getUint16(0) / 100,
+        y: hidden ? null : v.getUint16(2) / 100,
         heading: (v.getUint16(4) / 65536) * 2 * Math.PI,
         speed: v.getUint8(6) / 40,
         at: town.at,
+        about,
       });
+    }
+
+    if (path === SIM_FOCUS) {
+      const q = new URLSearchParams(query);
+      const key = q.get('town') ?? '';
+      const kind = q.get('kind');
+      const by = q.has('id') ? 'id' : 'slot';
+      const i = Number(q.get(by));
+      if (!(await this.deps.persistence.mayEnter(account.id, key))) return send(403, { error: "That town is someone else's." });
+      if ((kind !== 'car' && kind !== 'person') || !Number.isInteger(i) || i < 0) return send(400, { error: 'Say kind=car or person, and slot= or id=.' });
+      const sim = this.sim?.running(key, Date.now()) ?? null;
+      if (!sim) return send(404, { error: "The simulation isn't running that town." });
+      const brief = q.get('brief') === '1';
+      const answer = await this.sim!.pool.ask(key, `${brief ? 'brief' : 'focus'}-${kind}` as 'focus-car' | 'focus-person' | 'brief-car' | 'brief-person', i, by);
+      if (!answer) return send(404, { error: kind === 'car' ? 'No such car.' : 'No such townsperson.' });
+      return send(200, { town: key, ...(answer as object) });
+    }
+
+    if (path === SIM_SIGNALS) {
+      const q = new URLSearchParams(query);
+      const key = q.get('town') ?? '';
+      if (!(await this.deps.persistence.mayEnter(account.id, key))) return send(403, { error: "That town is someone else's." });
+      const sim = this.sim?.running(key, Date.now()) ?? null;
+      if (!sim) return send(404, { error: "The simulation isn't running that town." });
+      const answer = await this.sim!.pool.ask(key, 'signals', q.get('stops') === '1' ? 1 : 0);
+      if (!answer) return send(404, { error: "The simulation isn't running that town." });
+      return send(200, { town: key, ...(answer as object) });
+    }
+
+    if (path === LIFE || path === BUILDING) {
+      const q = new URLSearchParams(query);
+      const key = q.get('town') ?? '';
+      if (!(await this.deps.persistence.mayEnter(account.id, key))) return send(403, { error: "That town is someone else's." });
+      const sim = this.sim?.running(key, Date.now()) ?? null;
+      if (!sim || !sim.life) return send(404, { error: "The simulation isn't running that town." });
+      if (path === LIFE) return send(200, { town: key, ...sim.life });
+      const i = Number(q.get('i'));
+      if (!Number.isInteger(i) || i < 0) return send(404, { error: 'No such building.' });
+      const answer = await this.sim!.pool.ask(key, 'building', i);
+      if (!answer) return send(404, { error: 'No such building.' });
+      return send(200, { town: key, ...(answer as object) });
     }
 
     let mine = 0;

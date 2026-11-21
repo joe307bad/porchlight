@@ -115,6 +115,15 @@ jobs:
 
       - name: Game — towns grow (every invariant checked) and repeat
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60
+      # Road hierarchy (FHWA's shares), the ring road, eras, transect zones, neighbourhood units and a second centre.
+      - name: Game — towns planned like real ones
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- plan
+      # The town's life (docs/town-life.md): a whole day of each starter town and two generated ones, end to
+      # end (nobody stuck, trips made, the same day twice), then its rules one scenario at a time.
+      - name: Game — a day of each town's life, start to finish, and the same twice
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- traffic-day server/towns 2
+      - name: Game — the town's life, rule by rule (players in the road, signals, parking, buses, the wire)
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- life server/towns
       # The web build grows and builds the towns ahead a share at a time: no share long enough to stall
       # the car (a shared runner is slower than a desk: twice the limit), and the same towns as all at once.
       - name: Game — the county built a share at a time, as the web build does
