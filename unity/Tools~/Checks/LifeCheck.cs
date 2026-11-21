@@ -477,9 +477,10 @@ static class LifeCheck
     }
 
     /// <summary>
-    /// Given the morning rush, when a player steps out just in front of a moving car as it's drawn (wherever it
-    /// is: on a lane, on a turn, about to go round one), then over the next three seconds no car drawn comes
-    /// within a car's half-width of them. Tried on many cars at once over the morning.
+    /// Given the morning rush, when a player steps out just in front of a moving car or the bus as it's drawn
+    /// (wherever it is: on a lane, on a turn, about to go round one, at the mouth of a junction), then over the
+    /// next three seconds no car or bus drawn comes within a car's half-width of them. Tried on many at once over
+    /// the morning.
     /// </summary>
     static string NobodyRunOver(TownModel model, IsoLayout layout, TownZoning zoning)
     {
@@ -490,27 +491,31 @@ static class LifeCheck
         {
             for (int f = 0; f < 15; f++) t.Update(0.1, null);
             int k = -1;
-            for (int i = 0; i < life.busSlotsFrom; i++)
+            // Every few rounds the bus (if it's moving), the rest cars.
+            int pick = round % 5 == 4 ? life.carSlots.Length - life.busSlotsFrom : life.busSlotsFrom, from = round % 5 == 4 ? life.busSlotsFrom : 0;
+            for (int i = 0; i < pick; i++)
             {
-                int n = (round * 7 + i) % life.busSlotsFrom;
+                int n = from + (round * 7 + i) % pick;
                 if (!t.cars[n].hidden && t.cars[n].speed > 0.5) { k = n; break; }
             }
             if (k < 0) continue;
             tried++;
             var c = t.cars[k];
-            var stand = new Vec2(c.x + Math.Cos(c.heading) * 1.2, c.y + Math.Sin(c.heading) * 1.2);
+            // Just in front of its front bumper (its middle's half its length back: a bus is longer than a car).
+            double ahead = life.cars[life.CarInSlot(k)].length / 2 + 0.55;
+            var stand = new Vec2(c.x + Math.Cos(c.heading) * ahead, c.y + Math.Sin(c.heading) * ahead);
             // Only somewhere clear: not on (or just behind) another car's back bumper.
             bool clear = true;
-            for (int i = 0; i < life.busSlotsFrom && clear; i++)
+            for (int i = 0; i < life.carSlots.Length && clear; i++)
                 if (i != k && !t.cars[i].hidden && Numbers.Hypot(t.cars[i].x - stand.x, t.cars[i].y - stand.y) < 1.2) clear = false;
             if (!clear) { tried--; continue; }
             var you = new List<Vec2> { stand };
-            int who = life.carSlots[k].who;
+            int who = life.CarInSlot(k);
             string at = Describe(life, life.cars[who]);
             for (int f = 0; f < 30; f++)
             {
                 t.Update(0.1, you);
-                for (int i = 0; i < life.busSlotsFrom; i++)
+                for (int i = 0; i < life.carSlots.Length; i++)
                 {
                     var o = t.cars[i];
                     if (o.hidden || o.taken) continue;
@@ -518,8 +523,8 @@ static class LifeCheck
                     // Driving into them: close, moving, and with them ahead (not a car already past).
                     double along = (stand.x - o.x) * Math.Cos(o.heading) + (stand.y - o.y) * Math.Sin(o.heading);
                     if (d < 0.45 && o.speed > 0.2 && along > 0)
-                        return $"{TownClock.Format(life.Now)}: car {life.carSlots[i].who} drawn {d:0.00} tiles from a player at {o.speed:0.0} tiles a second " +
-                               $"(they stood 1.2 ahead of car {who}, then {at}; now {Describe(life, life.cars[life.carSlots[i].who])})";
+                        return $"{TownClock.Format(life.Now)}: car {life.CarInSlot(i)} drawn {d:0.00} tiles from a player at {o.speed:0.0} tiles a second " +
+                               $"(they stood {ahead:0.0} ahead of car {who}, then {at}; now {Describe(life, life.cars[life.CarInSlot(i)])})";
                 }
             }
             for (int f = 0; f < 5; f++) t.Update(0.1, null);

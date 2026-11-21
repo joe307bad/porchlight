@@ -122,9 +122,15 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
         if (!seen) judged.push(moving);
         seen = true;
         assert.ok(d > 0.45 || along <= 0 || p.speed <= 0.2, `car ${moving} drove into the player (${d.toFixed(2)} tiles off, ${p.speed} tiles a second)`);
-        if (d > nearest + 0.5) break; // it turned off another way
+        if (d > nearest + 0.5) {
+          // It turned off another way: it was never going to reach them, so it isn't judged.
+          judged.pop();
+          break;
+        }
         nearest = Math.min(nearest, d);
-        if (p.speed <= 0.2 && along < 2.5) {
+        // Stopped short of them, having come on toward them (they stood 3 tiles ahead of its middle; a bus,
+        // 3.1 long, stops with its middle 1.2 + 1.55 back).
+        if (p.speed <= 0.2 && along < 3) {
           stopped = moving;
           break;
         }
@@ -182,9 +188,10 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     assert.equal(answer!.inside.length, Math.min(50, n), 'everyone inside (up to 50) listed');
     // A car on the road: who's driving and what they're up to; an empty slot: nobody.
     const v = new DataView(town.cars.buffer, town.cars.byteOffset, town.cars.byteLength);
+    // (Only slots drawn are asked about: at night nearly all are empty, and each ask waits on a tick.)
     for (let i = 0; i < town.cars.byteLength / RECORD; i++) {
-      const about = (await pool.ask(key, 'car', i)) as { state: string } | null;
       if (hidden(v, i)) continue;
+      const about = (await pool.ask(key, 'car', i)) as { state: string } | null;
       if (about) {
         assert.ok(typeof about.state === 'string');
         break;
@@ -227,8 +234,12 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     // A car on the road, clicked where it's drawn: who it is, why it's doing what it's doing, what's next.
     const cars = new DataView(town.cars.buffer, town.cars.byteOffset, town.cars.byteLength);
     let car: Focus | null = null;
+    let askedEmpty = false;
     for (let i = 0; i < town.cars.byteLength / RECORD && !car; i++) {
       if (hidden(cars, i)) {
+        // One empty slot asked about is enough (at night nearly all are, and each ask waits on a tick).
+        if (askedEmpty) continue;
+        askedEmpty = true;
         const none = await focus('car', 'slot', i);
         assert.equal(none?.empty, true, 'an empty slot has nobody to focus on');
         continue;

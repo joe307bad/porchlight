@@ -1063,22 +1063,28 @@ namespace Porchlight.Life
             {
                 foreach (var p in at)
                 {
-                    int road = net.NearestRoad(p, out double s);
-                    if (road < 0) continue;
-                    var centre = AutoDrive.PointAt(net.roads[road].points, net.Arcs(road), s);
-                    if (Geo.Dist(centre, p) > net.roads[road].width / 2 + 0.2) continue;
-                    // Each lane whose cars would pass within reach of them: their own side's, and the other's too
-                    // when they're near the middle of the road (a car's no narrower coming the other way).
-                    int mine = net.SideLane(road, s, p);
-                    foreach (int dir in new[] { 1, -1 })
+                    // Every road they're on or beside: at a junction's mouth that's more than the nearest one (the
+                    // end of the lane coming in is as near as the road across).
+                    foreach (int road in net.RoadsNear(p, PASSING + 1))
                     {
-                        int lane = net.LaneOf(road, dir);
-                        if (lane < 0) continue;
-                        var l = net.lanes[lane];
-                        if (lane != mine && Geo.Dist(net.LanePoint(road, dir, l.dir > 0 ? s : net.lengths[road] - s, 0).at, p) > PASSING) continue;
-                        double d = (l.dir > 0 ? s : net.lengths[road] - s) - l.start;
-                        if (d < -1 || d > l.Span + 1) continue;
-                        if (!want.TryGetValue(lane, out double was) || d < was) want[lane] = d;
+                        double s = Math.Max(0, Math.Min(net.lengths[road], Geo.ArcPosition(p, net.roads[road].points)));
+                        var centre = AutoDrive.PointAt(net.roads[road].points, net.Arcs(road), s);
+                        bool onIt = Geo.Dist(centre, p) <= net.roads[road].width / 2 + 0.2;
+                        int mine = onIt ? net.SideLane(road, s, p) : -1;
+                        // Each lane whose cars would pass within reach of them: their own side's, and the other's
+                        // too when they're near the middle of the road (a car's no narrower coming the other way).
+                        foreach (int dir in new[] { 1, -1 })
+                        {
+                            int lane = net.LaneOf(road, dir);
+                            if (lane < 0) continue;
+                            var l = net.lanes[lane];
+                            double along = l.dir > 0 ? s : net.lengths[road] - s;
+                            if (lane != mine && Geo.Dist(net.LanePoint(road, dir, along, 0).at, p) > PASSING) continue;
+                            double d = along - l.start;
+                            // On the lane (or just before it); in the junction box the turns below are what's blocked.
+                            if (d < -1 || d > l.Span + (lane == mine ? 1 : 0)) continue;
+                            if (!want.TryGetValue(lane, out double was) || d < was) want[lane] = d;
+                        }
                     }
                 }
                 // Stood in a junction: the turns that pass over them (no car starts one; one on it stops short).

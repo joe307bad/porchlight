@@ -731,6 +731,16 @@ namespace Porchlight.Life
             return best;
         }
 
+        /// <summary>The driven roads whose centrelines pass within `reach` of `p` plus their own half-width.</summary>
+        public IEnumerable<int> RoadsNear(Vec2 p, double reach)
+        {
+            foreach (var lane in lanes)
+            {
+                if (lane.dir < 0) continue;
+                if (Geo.DistToPolyline(p, roads[lane.road].points) <= roads[lane.road].width / 2 + reach) yield return lane.road;
+            }
+        }
+
         /// <summary>The lane of `road` on the same side as `p` (its kerb's lane).</summary>
         public int SideLane(int road, double s, Vec2 p)
         {

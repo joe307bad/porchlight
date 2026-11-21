@@ -287,7 +287,9 @@ the kerb of a busy street.
   move, it goes on from where it is. They stand in the way of each lane
   whose middle is within 0.7 tiles of them (half a car's width and a
   margin): their own side's, and the other side's too when they're near the
-  middle of the road.
+  middle of the road. Every road near them counts, not only the nearest:
+  at the mouth of a junction the end of the lane coming in is as near as
+  the road across. Buses stop for them as cars do.
 - **In a junction:** every turn whose curve passes within 0.5 tiles of them
   is blocked. A car already on that turn stops short. No car may start it
   until they've gone, and going wakes the junction.
@@ -783,10 +785,11 @@ given/when/then:
   stands in front of it, then within two seconds it has stopped short of
   them, and it goes again once they've gone.
 - **Nobody's run over.** Given the morning rush, when a player steps out
-  in a clear spot just in front of a moving car, wherever it is (on a
-  lane, on a turn, about to take one), then over the next three seconds
-  no car drives into them. This is tried 200 times a town. With players
-  ignored, it fails in every town.
+  in a clear spot just in front of a moving car or the bus (half a tile
+  past its front bumper), wherever it is (on a lane, on a turn, about to
+  take one, at the mouth of a junction), then over the next three seconds
+  nothing drives into them. This is tried 200 times a town, every fifth on
+  the bus. With players ignored, it fails in every town.
 - **Manage's focus.** Given the morning rush, when every person on a trip
   and every car on the road is focused on, a minute at a time, then each
   tree's way of getting there is the mode the trip took. A waiting car's
