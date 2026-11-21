@@ -9,6 +9,15 @@ import assert from 'node:assert/strict';
 import { findWorker, SimPool, type SimTown } from '../src/sim/pool.ts';
 import { STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
 
+// The towns run at mid-morning (10:30 county time, UTC-5) whenever this runs: at night the streets are all but
+// empty, and there'd be no car to stand in front of or take. The worker's clock is shifted forward to it.
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+const SHIFT = (((10.5 * HOUR - ((Date.now() - 5 * HOUR) % DAY)) % DAY) + DAY) % DAY;
+process.env.SIM_CLOCK_SHIFT_MS = String(Math.round(SHIFT));
+/** The towns' clock now. */
+const townNow = () => Date.now() + SHIFT;
+
 const worker = findWorker({ ...process.env, SIM: undefined });
 const skip = worker ? false : 'no build of the simulation worker (sim/)';
 
@@ -57,7 +66,7 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
     assert.equal(town.key, key);
     assert.ok(town.cars.byteLength / RECORD > 0, 'it has traffic');
     assert.ok(town.people.byteLength / RECORD > 0, 'it has townsfolk');
-    assert.ok(Math.abs(Date.now() - town.at) < 2_000, 'the tick is of now');
+    assert.ok(Math.abs(townNow() - town.at) < 2_000, 'the tick is of now (the towns\' clock)');
 
     // A client with the full town, carried along by the deltas, has every record the worker has
     // or (dead-reckoned between) close to it; and a delta is a good deal less than the whole town.
@@ -172,7 +181,7 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     await until(pool, (t) => t.length > 0 && t[0].life !== null && t[0].zoning !== null);
     const town = pool.town(key)!;
     const life = town.life!;
-    assert.ok(Math.abs(life.clock - Date.now()) < 5_000, 'its clock is the time now');
+    assert.ok(Math.abs(life.clock - townNow()) < 5_000, 'its clock is the time now (the towns\' clock)');
     assert.match(life.time, /^\d\d:\d\d$/);
     const indoors = life.inside.reduce((n, [, k]) => n + k, 0);
     const people = life.summary.people as number;

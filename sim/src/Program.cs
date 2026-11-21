@@ -49,6 +49,14 @@ namespace Porchlight.Sim
         static readonly ConcurrentQueue<(byte type, byte[] body)> inbox = new ConcurrentQueue<(byte, byte[])>();
         static readonly ConcurrentQueue<SimTown> made = new ConcurrentQueue<SimTown>();
         static readonly Dictionary<int, SimTown> towns = new Dictionary<int, SimTown>();
+        /// <summary>
+        /// SIM_CLOCK_SHIFT_MS: the towns' clock this far ahead of the real one, for tests (the server's run their
+        /// towns at mid-morning whenever CI runs them, not at night with the streets empty). Unset: the real time.
+        /// </summary>
+        static readonly long clockShift = long.TryParse(Environment.GetEnvironmentVariable("SIM_CLOCK_SHIFT_MS"), out long shift) ? shift : 0;
+
+        /// <summary>The towns' clock now (unix ms).</summary>
+        static long ClockNow() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + clockShift;
         /// <summary>Towns asked for (id → key), made or being made.</summary>
         static readonly Dictionary<int, string> wanted = new Dictionary<int, string>();
         /// <summary>Each town's taken cars as last told (kept for a town still being made).</summary>
@@ -153,7 +161,7 @@ namespace Porchlight.Sim
                         var town = new SimTown(id, key);
                         // Started here too (its life run up to now from a little before), not in the first tick: that
                         // takes a while in a big town, and every other town's tick would wait on it.
-                        town.Step(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                        town.Step(ClockNow());
                         Log($"town {id} made in {sw.ElapsedMilliseconds} ms: {town.traffic.cars.Count} cars, {town.people.Count} people");
                         made.Enqueue(town);
                     }
@@ -242,7 +250,7 @@ namespace Porchlight.Sim
         static void Tick()
         {
             if (towns.Count == 0) return;
-            double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            double now = ClockNow();
             var parts = new List<byte[]>(towns.Count);
             int size = 10;
             foreach (var town in towns.Values)
