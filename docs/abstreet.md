@@ -799,7 +799,8 @@ city-research.md's list (in brackets).
    is there for the room.
 3. **Cars as queues** [7], done: intervals, laggy heads and committed room
    (`Life/Cars.cs`), behind `Traffic`'s `Positions()` / `Take()`. The bench
-   costs 0.18 ms a town.
+   cost 0.18 ms a town then; with three times the people, vans and
+   routing by the traffic, it's 0.26 ms.
 4. **Junctions** [5], done:
    - conflicts from crossing curves;
    - Free, Stop, All-way stop and two-stage Signal;
@@ -819,6 +820,12 @@ city-research.md's list (in brackets).
    - activity chains (work, lunch, shops, school, visits);
    - one bus loop, ridden by the timetable;
    - the figures and problems in Manage's Town life panel.
+
+**Since then,** the towns are busier and travel smarter: giving up in a
+jam, vans on their rounds, routing by measured traffic with rerouting,
+spots held from setting off, drivers let in, lights that change for a
+waiting car, and nearer errands ([town-life.md](town-life.md) §3–§6, §9,
+and what each is worth in §12).
 
 **The host fallback still works.** With `SIM=off`, one player's game runs
 the town's life from the clock (it's all in `Runtime/Shared`). A player
