@@ -828,6 +828,15 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
   `three_way`); where signals go, osm2streets' `IntersectionControl`, from
   OpenStreetMap: https://github.com/a-b-street/abstreet ·
   https://github.com/a-b-street/osm2streets
+- **[T52]** Batterman, S., Cook, R. & Justin, T. (2015). Temporal variation
+  of traffic on highways and the development of accurate temporal
+  allocation factors for air pollution analyses. *Atmospheric Environment*
+  107, 351–363. doi:10.1016/j.atmosenv.2015.02.047. Table 7: hourly
+  allocation factors, weekday, for total and commercial traffic (Detroit
+  metro) and the SMOKE national default. Measured on freeways; the paper
+  notes arterials and collectors weren't studied. We use the commercial
+  weekday column for the vans out each hour.
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC4380130
 
 **Unverified or secondary:**
 - the Green Book's Table 3-7 itself (read through Iowa DOT's copy) [T48]

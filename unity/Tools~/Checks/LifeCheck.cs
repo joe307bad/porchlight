@@ -181,12 +181,14 @@ static class LifeCheck
                 seen[c.id] = c.seg;
                 if (c.bus >= 0)
                 {
-                    if (c.state == CarState.AtStop) { if (!atStopSince.ContainsKey(c.id)) atStopSince[c.id] = t; }
+                    // Only stops it's seen arrive at: one it was already at when the day began started before.
+                    if (c.state == CarState.AtStop) { if (!atStopSince.ContainsKey(c.id)) atStopSince[c.id] = t == start ? long.MinValue : t; }
                     else if (atStopSince.TryGetValue(c.id, out long since))
                     {
                         atStopSince.Remove(c.id);
                         // Seen at a stop at `since` (up to half a second after it got there), and gone by `t`.
-                        if (t - since + 500 < Life_DWELL) return $"bus {c.bus} at a stop only {(t - since) / 1000.0:0.0} s";
+                        if (since != long.MinValue && t - since + 500 < Life_DWELL)
+                            return $"bus {c.bus} at a stop only {(t - since) / 1000.0:0.0} s, {TownClock.Format(since)} to {TownClock.Format(t)}";
                     }
                 }
             }

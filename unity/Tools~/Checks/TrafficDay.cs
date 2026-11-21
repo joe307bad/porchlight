@@ -100,15 +100,6 @@ static class TrafficDay
             long hour = TownClock.TimeOfDay(t) / TownClock.HOUR;
             if (hour >= 8 && hour < 20 && t < start + 24 * TownClock.HOUR)
             {
-                // Vans sit out the rushes: none sets off on a call in one (one already on its way finishes it).
-                bool InRush(long m)
-                {
-                    double h = TownClock.TimeOfDay(m) / (double)TownClock.HOUR;
-                    return h >= 7.75 && h < 9.25 || h >= 16.25 && h < 18.25;
-                }
-                var rushing = life.vans.Where(v => v.seg >= 0 && v.callFrom >= 0 && InRush(v.callFrom)).ToList();
-                if (rushing.Count > 0 && errs.Count < 5)
-                    errs.Add($"{TownClock.Format(t)}: van {rushing[0].van} set off on a call at {TownClock.Format(rushing[0].callFrom)}, in the rush");
                 double busy = life.BlocksInUse(out blocks) / (double)Math.Max(1, blocks);
                 busySum += busy;
                 busyLow = Math.Min(busyLow, busy);

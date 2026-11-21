@@ -25,6 +25,8 @@ interface Props {
   selected: string | null;
   /** Each town's life the simulation's running, by key. */
   lives: Map<string, TownLife>;
+  /** Whether the towns' life has been asked for yet. */
+  livesAsked: boolean;
   /** The building clicked, and who's in it. */
   building: BuildingLife | null;
   onCloseBuilding: () => void;
@@ -94,6 +96,7 @@ export function Panel(p: Props) {
       </header>
       {open && (
         <div className="panel-body">
+          <SimMissing sim={p.map.sim} running={p.lives.size > 0} asked={p.livesAsked} />
           {/* What was clicked, always at the top: a car or person and why, a building and who's inside, or how to. */}
           {p.focus || p.focusNote ? (
             <FocusView
@@ -123,7 +126,7 @@ export function Panel(p: Props) {
                 const life = p.lives.get(t.key);
                 return (
                   <li key={t.key}>
-                    <button className="row" onClick={() => p.onTown(t)} title="Show it on the map">
+                    <button className="row" onClick={() => p.onTown(t)} title={`Show it on the map. Its key: ${t.key}`}>
                       <span className="grow">
                         <span className="name">
                           {t.name}
@@ -220,6 +223,33 @@ export function townLines(world: World, key: string, life: TownLife | undefined)
     `${f.people.toLocaleString()} people · ${f.out.toLocaleString()} out · ${onRoad}`,
     `${f.made.toLocaleString()} trips today · ${Math.round(f.shares[drive] * 100)}% by car${mean !== null ? `, ${mean.toFixed(1)} min each` : ''}`,
   ];
+}
+
+/**
+ * Said at the top when the server isn't running the towns' life: everything the panel shows past the map's
+ * streets (cars, townsfolk, lights, stop signs, who's inside, a click's why) comes from it.
+ */
+export function SimMissing({ sim, running, asked }: { sim: boolean | undefined; running: boolean; asked: boolean }) {
+  if (running || (sim !== false && !asked)) return null;
+  return (
+    <section className="warn" role="status" aria-label="Simulation">
+      <h2>{sim === false ? 'No town simulation on this server' : 'No town is running yet'}</h2>
+      <p className="sub">
+        {sim === false ? (
+          <>
+            The cars, townsfolk, traffic lights, stop signs, who's in each building and what you click on all come from the server's town simulation
+            (sim/, .NET 8), and this server hasn't got it. Install the .NET SDK (8 or newer: <code>brew install --cask dotnet-sdk</code> on a Mac), then
+            start <code>./dev.sh</code> again: it builds it.
+          </>
+        ) : (
+          <>
+            The server's town simulation hasn't started any towns, so there are no cars, townsfolk, lights or stop signs yet. A town takes a few seconds
+            to start; if this stays, look for <code>[sim]</code> lines in the server's output.
+          </>
+        )}
+      </p>
+    </section>
+  );
 }
 
 /** The building clicked: who's inside, and when each goes out next; click someone to focus on them. */

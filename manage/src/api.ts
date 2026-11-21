@@ -4,6 +4,8 @@
 // which passes these on to the server with the game's own session.
 
 export interface CountyMap {
+  /** Whether the server runs the towns' simulation (sim/): without it there are no lights, stop signs, people in buildings or focus. */
+  sim?: boolean;
   towns: {
     key: string;
     name: string;

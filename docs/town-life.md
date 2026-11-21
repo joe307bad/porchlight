@@ -532,17 +532,26 @@ are short enough to walk.
 ## 9. Vans on their rounds
 
 A town's streets aren't only its own people's comings and goings. Vans
-call at its homes, shops and offices all day: deliveries, tradespeople,
-the post. They're most of what keeps a side street from being empty
-between the rushes. Without them, only 1–6% of a town's blocks had a car
-on them by day. `Life/Rounds.cs` has them:
+call at its homes, shops and offices day and night: deliveries,
+tradespeople, the post, taxis. They're most of what keeps a side street
+from being empty between the rushes, and the only traffic at night.
+Without them, only 1–6% of a town's blocks had a car on them by day, and
+at night a town had one car on the road. `Life/Rounds.cs` has them:
 
 - **How many:** 0.6 a block (`VANS_A_BLOCK`; a block is a street between
   two junctions, either way). A bigger town has more.
-- **A shift:** out between 06:30 and 07:30, off between 20:00 and 22:00,
-  from the van's id and the day.
+- **How many are out, hour by hour,** follows real commercial traffic:
+  Detroit's weekday commercial profile in Batterman, Cook & Justin (2015),
+  Table 7 [T52](city-research.md#references). Divided by its busiest hour (09:00), it's the share of the
+  vans out: about a fifth at 01:00–02:00, half at 06:00, all at 09:00,
+  under half by 19:00. Each van has a fixed place in line, from a hash of
+  its id. It's out while the share is above its place, so vans come out
+  one by one as the share rises and the last out go off first as it falls.
+  Porchlight has about 50 cars on the road at night, 140 at 05:00 and
+  around 300 through the day.
 - **The rushes are sat out** (07:45–09:15 and 16:15–18:15). A van that
-  finishes a call in one waits off the road until it's over. The rushes
+  finishes a call in one waits off the road until it's over, plus up to
+  10 minutes, so they don't all come back at once. The rushes
   have the commuters, and a van then only holds them up: all-day vans
   doubled Ember Crossing's rush-hour drives.
 - **Calls:** a van comes out at a building and drives to its next call:

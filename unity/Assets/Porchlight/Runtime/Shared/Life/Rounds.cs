@@ -1,14 +1,17 @@
-// Vans on their rounds: deliveries, tradespeople, the post. A town's streets
-// aren't only its own people's comings and goings: all day there are vans
+// Vans on their rounds: deliveries, tradespeople, the post, taxis. A town's streets
+// aren't only its own people's comings and goings: day and night there are vans
 // calling at its homes, shops and offices, one after another, which is most of what
-// keeps a side street from being empty between the rushes. Each van works a
-// shift (on 06:30-07:30, off 20:00-22:00) and sits out the rushes (RUSHES):
-// the rushes have the commuters, and a van then only holds them up. It starts at a
-// building, drives to the next call (the nearest of a few picked at random,
-// so it works one part of town at a time) and on to the next, and goes off at
-// the end of its shift. Vans don't park: they pull in, drop off and go (so
-// they don't take the kerb spots residents need). There are as many as the
-// town has blocks to keep busy (VANS_A_BLOCK), so a bigger town has more.
+// keeps a side street from being empty. How many are out follows real commercial
+// traffic hour by hour (WORKING: Batterman, Cook & Justin 2015, Table 7, Detroit's
+// commercial weekday profile): a quarter of them at 3 am, nearly all through the
+// morning, fewer by evening. Each van has its place in line (Layout.Hash of its
+// number): it's out while the share working is above it, so as the share rises
+// vans come out in turn and as it falls the last in go off first, none flickering
+// on and off. Vans sit out the rushes (RUSHES), which have the commuters. A van starts at a building, drives to the next call (the nearest of a
+// few picked at random, so it works one part of town at a time) and on to the next.
+// Vans don't park: they pull in, drop off and go (so they don't take the kerb spots
+// residents need). There are as many as the town has blocks to keep busy
+// (VANS_A_BLOCK), so a bigger town has more.
 
 using System;
 using System.Collections.Generic;
@@ -21,8 +24,22 @@ namespace Porchlight.Life
     {
         /// <summary>Vans for each block of street (between two junctions): how busy the streets are between the rushes.</summary>
         public const double VANS_A_BLOCK = 0.6;
-        /// <summary>The rushes (from, to: hours into the day), which vans sit out: after the call they're at, off the road till it's over.</summary>
+        /// <summary>
+        /// Commercial traffic through a weekday, hour by hour (the share of the day's in each hour from midnight):
+        /// Batterman, Cook &amp; Justin, "Temporal variation of traffic on highways and the development of accurate
+        /// temporal allocation factors for air pollution analyses", Atmospheric Environment 107 (2015), Table 7,
+        /// Detroit metro, commercial, weekday. Over its highest, it's the share of the vans out.
+        /// </summary>
+        static readonly double[] WORKING = { 0.0137, 0.0129, 0.0136, 0.0166, 0.0229, 0.0342, 0.0524, 0.0637, 0.0684, 0.0711, 0.0700, 0.0679, 0.0669, 0.0664, 0.0643, 0.0589, 0.0506, 0.0414, 0.0336, 0.0283, 0.0250, 0.0222, 0.0190, 0.0159 };
+        const double WORKING_MOST = 0.0711;
+        /// <summary>
+        /// The rushes (from, to: hours into the day), which vans sit out: after the call they're at, off the road till
+        /// it's over (each a few minutes after the next, not all at once). The rushes have the commuters, and a van
+        /// then only holds them up: vans out through them doubled Ember Crossing's rush-hour drives.
+        /// </summary>
         static readonly (double from, double to)[] RUSHES = { (7.75, 9.25), (16.25, 18.25) };
+        /// <summary>How far on a van looks for when it's next out (it's out every day: a day is far enough).</summary>
+        const long LOOK_STEP = 5 * TownClock.MINUTE;
         /// <summary>A van's next call is the nearest of this many picked at random.</summary>
         const int VAN_CHOICES = 3;
         /// <summary>A call this close (tiles) to where it is isn't worth driving to: another.</summary>
@@ -50,28 +67,43 @@ namespace Porchlight.Life
             vanPicks = new int[n];
         }
 
-        /// <summary>Van `k`'s shift on `day`: when it starts and ends.</summary>
-        (long on, long off) Shift(int k, long day)
+        /// <summary>The share of the vans out at `t` (0-1): the commercial profile, between its hours smoothly.</summary>
+        public static double Working(long t)
         {
-            long start = DayStart(day);
-            long H = TownClock.HOUR;
-            double a = Layout.Hash(k * 31 + 7, (int)day), b = Layout.Hash(k * 31 + 11, (int)day);
-            return (start + (long)((6.5 + a) * H), start + (long)((20 + 2 * b) * H));
+            double h = TownClock.Hours(t);
+            int i = (int)Math.Floor(h) % 24;
+            double f = h - Math.Floor(h);
+            return (WORKING[i] * (1 - f) + WORKING[(i + 1) % 24] * f) / WORKING_MOST;
         }
 
-        /// <summary>When van `k` next goes out, at or after `t`: now, if it's in its shift and not a rush.</summary>
+        /// <summary>Van `k`'s place in line: it's out while the share working is above this.</summary>
+        static double VanPlace(int k) => Layout.Hash(k * 31 + 7, 1931);
+
+        /// <summary>Whether van `k` is out at `t`: its turn in the hour's share, and not a rush.</summary>
+        static bool OnDuty(int k, long t)
+        {
+            if (VanPlace(k) >= Working(t)) return false;
+            double h = TownClock.Hours(t), late = Layout.Hash(k * 31 + 13, 1931) / 6;
+            foreach (var (from, to) in RUSHES)
+                if (h >= from && h < to + late) return false;
+            return true;
+        }
+
+        /// <summary>When van `k` next goes out, at or after `t`: now, if it's on duty.</summary>
         long NextShift(int k, long t)
         {
-            long day = TownClock.DayOf(t);
-            var (on, off) = Shift(k, day);
-            if (t < on) return on;
-            if (t >= off) return Shift(k, day + 1).on;
-            // A rush: out again once it's over (a few minutes apart, not all at once).
-            long tod = TownClock.TimeOfDay(t);
-            foreach (var (from, to) in RUSHES)
-                if (tod >= from * TownClock.HOUR && tod < to * TownClock.HOUR)
-                    return Math.Min(off, t - tod + (long)(to * TownClock.HOUR) + (long)(10 * TownClock.MINUTE * Layout.Hash(k * 31 + 13, (int)day)));
-            return t;
+            if (OnDuty(k, t)) return t;
+            for (long u = t + LOOK_STEP; u <= t + TownClock.DAY; u += LOOK_STEP)
+                if (OnDuty(k, u)) return u;
+            return t + TownClock.DAY;
+        }
+
+        /// <summary>When van `k`, out at `t`, next goes off (the share working falls below its place).</summary>
+        long OffDuty(int k, long t)
+        {
+            for (long u = t; u <= t + TownClock.DAY; u += LOOK_STEP)
+                if (!OnDuty(k, u)) return u;
+            return t + TownClock.DAY;
         }
 
         void StartVans(long from)
@@ -111,7 +143,7 @@ namespace Porchlight.Life
         bool VanOnward(Car c)
         {
             int k = c.van;
-            if (Now >= Shift(k, TownClock.DayOf(Now)).off || NextShift(k, Now) > Now)
+            if (!OnDuty(k, Now))
             {
                 RemoveVan(c);
                 return true;

@@ -884,6 +884,14 @@ namespace Porchlight.Rendering
             }
         }
 
+        /// <summary>Whether `p` is on a street's asphalt, or within `margin` of its edge.</summary>
+        bool OnAnyRoad(Vec2 p, double margin)
+        {
+            foreach (var r in layout.roads)
+                if (Geo.DistToPolyline(p, r.points) < r.width / 2 + margin) return true;
+            return false;
+        }
+
         /// <summary>The street lamps, along a share of the sidewalks a part.</summary>
         IEnumerable<int> AddLamps(Rng rng)
         {
@@ -910,12 +918,15 @@ namespace Porchlight.Rendering
                     int tx = (int)Math.Floor(on.x), ty = (int)Math.Floor(on.y);
                     if (!Grid.InBounds(tx, ty, model.width, model.height) || IsWaterTerrain(model.tiles.terrain[Grid.Index(tx, ty, model.width)])) continue;
                     if (layout.use[Grid.Index(tx, ty, model.width)] == Use.HOUSE) continue;
-                    placed.Add(on);
                     double tgx = b.x - a.x, tgy = b.y - a.y;
                     double tl = Numbers.Hypot(tgx, tgy);
                     if (tl == 0) tl = 1;
                     var normal = new Vec2((tgy / tl) * path.side, (-tgx / tl) * path.side);
                     var basePt = new Vec2(on.x + normal.x * (Layout.SIDEWALK / 2 - 0.08), on.y + normal.y * (Layout.SIDEWALK / 2 - 0.08));
+                    // Never on the road: where a street bends (round a plaza, into a junction) a pavement can
+                    // cross another street's asphalt, and a post there would stand in the traffic.
+                    if (OnAnyRoad(basePt, LAMP_CLEAR)) continue;
+                    placed.Add(on);
                     double rot = DetMath.Atan2(-normal.x, -normal.y);
                     // A post, an arm reaching out over the street (+z), and the lamp's head.
                     var lamp = new GameObject("lamp").transform;

@@ -646,3 +646,18 @@ p {
   border-radius: 0;
   clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
 }
+
+/* The simulation's missing: said plainly at the top. */
+.warn {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #e5484d88;
+  background: #e5484d18;
+  border-radius: 10px;
+}
+.warn h2 {
+  margin: 0 0 4px;
+}
+.warn code {
+  font-size: 12px;
+}

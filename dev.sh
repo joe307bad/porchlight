@@ -56,6 +56,14 @@ fi
 # The towns' traffic and townsfolk, run by the server (sim/, .NET): built when dotnet's here and it's
 # missing or out of date. Without it the server lets each town's players run it, as before.
 SIM_DLL="$ROOT/sim/bin/Release/net8.0/porchlight-sim.dll"
+# Where .NET's installers put it when it isn't on the PATH (the Mac's .pkg, Homebrew, dotnet-install.sh).
+for d in /usr/local/share/dotnet /opt/homebrew/bin /usr/local/bin "$HOME/.dotnet"; do
+  if ! command -v dotnet >/dev/null 2>&1 && [ -x "$d/dotnet" ]; then export PATH="$d:$PATH"; export DOTNET_ROOT="${DOTNET_ROOT:-$d}"; fi
+done
+if command -v dotnet >/dev/null 2>&1 && [ -z "$(dotnet --list-sdks 2>/dev/null)" ]; then
+  echo "warning: dotnet is here but has no SDK (only a runtime), so the town simulation can't be built." >&2
+  echo "         Install the .NET SDK, 8 or newer (on a Mac: brew install --cask dotnet-sdk)." >&2
+fi
 if command -v dotnet >/dev/null 2>&1; then
   if [ ! -f "$SIM_DLL" ] || [ -n "$(find "$ROOT/sim/src" "$ROOT/sim/Porchlight.Sim.csproj" "$ROOT/unity/Assets/Porchlight/Runtime/Shared" -newer "$SIM_DLL" -name '*.cs*' -print -quit)" ]; then
     echo "Building the town simulation (sim/)..."
@@ -63,7 +71,12 @@ if command -v dotnet >/dev/null 2>&1; then
       || echo "warning: the town simulation didn't build; the players will run their towns" >&2
   fi
 else
-  echo "note: no dotnet, so no town simulation on the server; each town's players run its traffic." >&2
+  echo "" >&2
+  echo "warning: no dotnet, so no town simulation on the server: in Manage there'll be no cars, townsfolk," >&2
+  echo "         traffic lights, stop signs, people in buildings or clicking on things, and in the game each" >&2
+  echo "         town's players run its traffic. Install the .NET SDK, 8 or newer (on a Mac:" >&2
+  echo "         brew install --cask dotnet-sdk), then start ./dev.sh again." >&2
+  echo "" >&2
 fi
 
 # Rebuild when there's no build, when asked, or when the project has changed since the last one.

@@ -109,6 +109,8 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   const [hover, setHover] = useState<Hover | null>(null);
   const [feed, setFeed] = useState<Feed | null>(null);
   const [lives, setLives] = useState<Map<string, TownLife>>(new Map());
+  /** Whether the towns' life has been asked for at least once (so "none running" means it, not "not asked yet"). */
+  const [livesAsked, setLivesAsked] = useState(false);
   const [building, setBuilding] = useState<BuildingLife | null>(null);
   // The car or townsperson focused on: who (followed by id), what the simulation last said, and whether the map follows them.
   const [target, setTarget] = useState<FocusTarget | null>(null);
@@ -164,7 +166,16 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     };
     r.onBuilding = (b) => {
       if (!b) return setBuilding(null);
-      void buildingLife(b.key, b.i).then(setBuilding);
+      void buildingLife(b.key, b.i)
+        .catch(() => null)
+        .then((got) => {
+          setBuilding(got);
+          if (!got) {
+            setFocus(null);
+            setTarget(null);
+            setFocusNote("Can't tell who's in it: the server's simulation isn't running that town.");
+          }
+        });
     };
     setRenderer(r);
     const f = new Feed(world, (s) => {
@@ -188,6 +199,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         }
       }
       setLives(got);
+      setLivesAsked(true);
     };
     void lifeOnce();
     const lifeTimer = setInterval(() => void lifeOnce(), LIFE_MS);
@@ -322,6 +334,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         onLayers={setLayers}
         selected={selected}
         lives={lives}
+        livesAsked={livesAsked}
         building={building}
         onCloseBuilding={() => setBuilding(null)}
         following={following}

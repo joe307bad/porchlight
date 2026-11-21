@@ -426,9 +426,9 @@ namespace Porchlight.Life
                 if (c.bus >= 0) tree.Add(Why.Info("Who's driving, and where to?", "The town bus, round and round its loop", $"{busStops.Count} stops, by the timetable."));
                 else if (c.van >= 0 && c.seg >= 0)
                 {
-                    var (_, off) = Shift(c.van, TownClock.DayOf(Now));
+                    long off = OffDuty(c.van, Now);
                     tree.Add(Why.Info("Who's driving, and where to?", $"A van on its rounds: next, {PlaceText(c.dest, building)}",
-                        $"Deliveries and tradespeople: its shift ends at {TownClock.Format(off)}. Each call's the nearest of {VAN_CHOICES} picked at random, so it works one part of town at a time; it drops off and goes on, without parking."));
+                        $"Deliveries, tradespeople and taxis, day and night: {Math.Round(100 * Working(Now))}% of the town's vans are out now, as much commercial traffic as real towns have at this hour; this one goes off at {TownClock.Format(off)}. Each call's the nearest of {VAN_CHOICES} picked at random, so it works one part of town at a time; it drops off and goes on, without parking."));
                 }
                 else if (c.owner >= 0 && people[c.owner].trip != null && c.seg >= 0)
                 {

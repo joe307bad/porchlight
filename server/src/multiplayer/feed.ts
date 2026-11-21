@@ -4,7 +4,8 @@
 //   GET /mp/traffic/county   the signed-in account's county: its towns (and their
 //                            roads: saved for the ones that come with the game,
 //                            the simulation's for the rest), the
-//                            highways and the spaces between (JSON)
+//                            highways and the spaces between, and `sim`: whether
+//                            this server runs the towns' simulation (JSON)
 //   GET /mp/traffic/feed     a stream of binary frames, about 10 a second, for
 //                            as long as the request stays open
 //   POST /mp/traffic/focus   { feed, towns: [key] }: the towns that viewer is
@@ -353,10 +354,15 @@ export class TrafficFeed {
 
     if (path === COUNTY) {
       const { county, names } = await countyOf(this.deps, account.id);
-      return send(200, countyMapJson(county, names, (key) => {
-        const t = this.sim?.pool.town(key);
-        return t?.roads ? { roads: t.roads, zoning: t.zoning } : null;
-      }));
+      // `sim`: whether this server runs its towns' life at all (without it, Manage has no lights, stop signs,
+      // people in buildings or focus to show, and says so).
+      return send(200, {
+        ...countyMapJson(county, names, (key) => {
+          const t = this.sim?.pool.town(key);
+          return t?.roads ? { roads: t.roads, zoning: t.zoning } : null;
+        }),
+        sim: this.sim !== null,
+      });
     }
 
     if (path === FOCUS) {

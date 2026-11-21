@@ -102,6 +102,8 @@ test('the county map: every town that comes with the game, the highways, and onl
   const names = map.towns.map((t: { name: string }) => t.name);
   for (const t of STARTER_TOWNS) assert.ok(names.includes(t.name), `${t.name} on the map`);
   assert.ok(names.includes('Hollow'));
+  // This server runs no simulation, and the map says so (Manage then says why it has no lights or people).
+  assert.equal(map.sim, false, 'no simulation here');
   assert.ok(map.highways.length >= 5 && map.highways.every((h: number[]) => h.length >= 4 && h.length % 2 === 0));
   const other = (await api('someone', 'GET', '/mp/traffic/county')).json;
   assert.ok(!other.towns.some((t: { name: string }) => t.name === 'Hollow'), "someone else's town isn't on your map");
