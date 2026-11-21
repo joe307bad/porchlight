@@ -82,6 +82,9 @@ namespace Porchlight.Sim
         /// <summary>Would a client carrying `s` on to now have `r` wrong?</summary>
         static bool Stale(in Sent s, in Sent r, double now, bool car)
         {
+            // An empty slot stays empty: nothing to carry on, nothing to refresh.
+            bool wasHidden = s.x >= 655.35 && s.y >= 655.35, isHidden = r.x >= 655.35 && r.y >= 655.35;
+            if (wasHidden || isHidden) return wasHidden != isHidden;
             double dt = now - s.at;
             if (dt >= REFRESH) return true;
             // Cars face (cos h, sin h); people (sin h, cos h) (WorldSync.Step).

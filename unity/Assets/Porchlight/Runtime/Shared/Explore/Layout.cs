@@ -48,6 +48,8 @@ namespace Porchlight.Explore
     public sealed class RoadStroke
     {
         public RoadKind kind;
+        /// <summary>Its functional class (the plan's: arterial, collector, local).</summary>
+        public RoadClass cls;
         public int from, to;
         /// <summary>Smoothed centreline, endpoints exactly on the graph nodes.</summary>
         public List<Vec2> points;
@@ -186,6 +188,7 @@ namespace Porchlight.Explore
                 roads.Add(new RoadStroke
                 {
                     kind = e.kind,
+                    cls = e.cls,
                     from = e.from,
                     to = e.to,
                     points = Geo.Chaikin(PadCorners(e.points, CORNER_RADIUS), SMOOTHING_PASSES),

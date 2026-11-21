@@ -6,7 +6,8 @@
 
 import type { CountyMap } from './api.ts';
 import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
-import { ZONES, buildingAt, describe } from './zoning.ts';
+import { ZONES, buildingIndexAt, describe } from './zoning.ts';
+import { focusPoint, indoorRadius, indoors, lampColor, type EntityFocus, type Signals, type TownLife } from './life.ts';
 
 export interface Layers {
   roads: boolean;
@@ -18,9 +19,21 @@ export interface Layers {
   names: boolean;
   reach: boolean;
   trails: boolean;
+  /** Traffic lights, a lamp at each stop line (close in). */
+  signals: boolean;
+  /** Stop signs, one on the kerb by each lane that stops (close in). */
+  stops: boolean;
 }
 
-export const DEFAULT_LAYERS: Layers = { roads: true, zoning: true, cars: true, people: true, players: true, names: true, reach: true, trails: false };
+export const DEFAULT_LAYERS: Layers = { roads: true, zoning: true, cars: true, people: true, players: true, names: true, reach: true, trails: false, signals: true, stops: true };
+
+/** Lamp colours. */
+export const LAMPS = { green: '#3ddc84', amber: '#ffb020', red: '#ff4d4d' } as const;
+/** Stop signs: stopping for a bigger road, and an all-way stop. */
+export const STOP_SIGN = '#e5484d';
+export const ALL_WAY = '#ff8fa3';
+/** Closer in than this (pixels a tile), traffic lights are drawn. */
+export const SIGNALS_FROM = 2;
 
 /** Car colours by speed (tiles a second): stopped, crawling, moving, fast. */
 export const SPEEDS = [
@@ -30,6 +43,10 @@ export const SPEEDS = [
   { under: Infinity, color: '#38bdf8', label: 'Fast' },
 ];
 export const PERSON = '#e9e4ff';
+/** The focus's ring and its way ahead. */
+export const FOCUS = '#ffcf4a';
+/** People indoors, drawn on their buildings. */
+export const INDOORS = '#f4f1e8';
 const PERSON_PX = pixel(PERSON, 0.9);
 const PERSON_DIM_PX = pixel(PERSON, 0.35);
 const SPEED_PX = SPEEDS.map((s) => pixel(s.color, 1));
@@ -56,6 +73,8 @@ const MAX_SCALE = 40;
 export const KMH = 14.4;
 
 export interface Hover {
+  /** The car or townsperson it's about (town|kind|slot), if it's the simulation's line on them. */
+  key?: string;
   x: number;
   y: number;
   text: string;
@@ -123,6 +142,17 @@ export class MapRenderer {
   private readonly trail = document.createElement('canvas');
   private stillKey = '';
   private paths: StreetPaths;
+  /** Each town's life, by key (the simulation's: who's indoors where), once known. */
+  readonly life = new Map<string, TownLife>();
+  private lifeVersion = 0;
+
+  /** A town's life as the server last said: drawn on its buildings. */
+  setLife(key: string, life: TownLife): void {
+    this.life.set(key, life);
+    this.lifeVersion++;
+  }
+  /** The building under the pointer, if its town's life is known: [town key, its index]. */
+  hoverBuilding: { key: string; i: number } | null = null;
   private cam: Camera = { cx: 0, cy: 0, scale: 1 };
   private readonly map: CountyMap;
   private width = 0;
@@ -143,7 +173,18 @@ export class MapRenderer {
   private fpsAt = 0;
   onSelect: (sid: string | null) => void = () => {};
   onFollowEnd: () => void = () => {};
+  /** A building clicked (its town's key and index), or null (somewhere else). */
+  onBuilding: (b: { key: string; i: number } | null) => void = () => {};
   onHover: (h: Hover | null) => void = () => {};
+  /** The car or townsperson under the pointer (null: none), for a line about them from the simulation. */
+  onHoverEntity: (e: { key: string; kind: 'car' | 'person'; slot: number; x: number; y: number } | null) => void = () => {};
+  /** A car or townsperson clicked: its town, and its place in the feed's records. */
+  onEntity: (e: { key: string; kind: 'car' | 'person'; slot: number }) => void = () => {};
+  /** The camera's stopped following the focus (the map was dragged). */
+  onFocusFollowEnd: () => void = () => {};
+  /** The car or townsperson focused on (Manage's focus view), drawn with its way ahead; followed, if `followingFocus`. */
+  private focused: EntityFocus | null = null;
+  private followingFocus = false;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly world: World;
@@ -217,6 +258,120 @@ export class MapRenderer {
 
   select(sid: string | null): void {
     this.selected = sid;
+  }
+
+  /** The car or townsperson focused on, as the simulation last said (null: none). */
+  setFocus(f: EntityFocus | null): void {
+    this.focused = f;
+    if (!f) this.followingFocus = false;
+  }
+
+  /** Keep the focus in the middle of the map (and close enough in to see it), or stop. */
+  followFocus(on: boolean): void {
+    this.followingFocus = on;
+    if (on) {
+      this.following = null;
+      this.cam.scale = Math.max(this.cam.scale, 8);
+    }
+  }
+
+  /** Each town's traffic lights as last heard, and how far its clock was from ours then (ms). */
+  private signals = new Map<string, { s: Signals; skew: number }>();
+
+  /** Each town's stop signs (they don't change): x, y, 1 if all-way. */
+  private stops = new Map<string, [number, number, number][]>();
+
+  /** A town's traffic lights, just heard (null: forget them); its stop signs, if they came too. */
+  setSignals(key: string, s: Signals | null): void {
+    if (!s) this.signals.delete(key);
+    else {
+      this.signals.set(key, { s, skew: s.now - Date.now() });
+      if (s.stops) this.stops.set(key, s.stops);
+    }
+  }
+
+  /** Whether a town's stop signs have been heard. */
+  hasStops(key: string): boolean {
+    return this.stops.has(key);
+  }
+
+  /** Whether the lights or stop signs are drawn at this zoom (and so worth asking for). */
+  showsSignals(): boolean {
+    return (this.layers.signals || this.layers.stops) && this.cam.scale >= SIGNALS_FROM;
+  }
+
+  /** Each stop sign: a small red octagon on the kerb by the line (paler for an all-way stop). */
+  private drawStops(ctx: CanvasRenderingContext2D, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
+    if (!this.layers.stops || this.cam.scale < SIGNALS_FROM) return;
+    const r = Math.max(0.3, 2.5 * px);
+    for (const allWay of [0, 1]) {
+      ctx.fillStyle = allWay ? ALL_WAY : STOP_SIGN;
+      ctx.beginPath();
+      for (const [key, stops] of this.stops) {
+        const room = this.roomOf(key);
+        if (!room) continue;
+        for (const [sx, sy, a] of stops) {
+          if (a !== allWay) continue;
+          const x = room.meta.ox + sx, y = room.meta.oy + sy;
+          if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+          for (let k = 0; k < 8; k++) {
+            const t = ((k + 0.5) * Math.PI) / 4;
+            if (k === 0) ctx.moveTo(x + r * Math.cos(t), y + r * Math.sin(t));
+            else ctx.lineTo(x + r * Math.cos(t), y + r * Math.sin(t));
+          }
+          ctx.closePath();
+        }
+      }
+      ctx.fill();
+    }
+  }
+
+  /** Each traffic light, a small lamp in a dark housing on the kerb by each stop line: green, amber or red. */
+  private drawSignals(ctx: CanvasRenderingContext2D, view: { x0: number; y0: number; x1: number; y1: number }, px: number): void {
+    if (!this.layers.signals || !this.showsSignals()) return;
+    const size = Math.max(0.45, 4 * px);
+    const housing = size + Math.max(0.2, 2 * px);
+    for (const [key, { s, skew }] of this.signals) {
+      const room = this.roomOf(key);
+      if (!room) continue;
+      const now = Date.now() + skew;
+      ctx.fillStyle = '#0b0d12';
+      ctx.beginPath();
+      for (const light of s.lights)
+        for (const [lx, ly] of light.lamps) {
+          const x = room.meta.ox + lx, y = room.meta.oy + ly;
+          if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+          ctx.rect(x - housing / 2, y - housing / 2, housing, housing);
+        }
+      ctx.fill();
+      for (const color of ['green', 'amber', 'red'] as const) {
+        ctx.fillStyle = LAMPS[color];
+        ctx.beginPath();
+        for (const light of s.lights)
+          for (const [lx, ly, stage] of light.lamps) {
+            const x = room.meta.ox + lx, y = room.meta.oy + ly;
+            if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
+            if (lampColor(light, stage, now, s.stageMs) !== color) continue;
+            ctx.moveTo(x + size / 2, y);
+            ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+          }
+        ctx.fill();
+      }
+    }
+  }
+
+  /** The room a town's in, in the feed (null: not open). */
+  private roomOf(key: string) {
+    for (const r of this.world.order) if (r.meta.key === key) return r;
+    return null;
+  }
+
+  /** Where the focus is now (county frame), or null. */
+  focusAt(): { x: number; y: number; live: boolean } | null {
+    const f = this.focused;
+    if (!f) return null;
+    const r = this.roomOf(f.town);
+    return focusPoint(f, r ? { ox: r.meta.ox, oy: r.meta.oy, cars: r.cars, people: r.people } : null);
   }
 
   private fitCanvas(): void {
@@ -298,6 +453,10 @@ export class MapRenderer {
       this.following = null;
       this.onFollowEnd();
     }
+    if (this.followingFocus) {
+      this.followingFocus = false;
+      this.onFocusFollowEnd();
+    }
     this.cam.cx -= dx / this.cam.scale;
     this.cam.cy -= dy / this.cam.scale;
   };
@@ -310,12 +469,38 @@ export class MapRenderer {
       const hit = this.playerAt(p.x, p.y, 14);
       this.selected = hit?.sid ?? null;
       this.onSelect(this.selected);
+      if (hit) return;
+      // No player there: a car or townsperson to focus on; or else a building with its town's life known, to see who's in it.
+      const e = this.entityAt(p.x, p.y, 10);
+      if (e) this.onEntity(e);
+      else this.onBuilding(this.hoverBuilding);
     }
   };
 
   private readonly leave = () => {
     if (!this.pointers.size) this.onHover(null);
   };
+
+  /** The car or townsperson drawn nearest the pointer, within `within` pixels (of the layers shown). */
+  private entityAt(px: number, py: number, within: number): { key: string; kind: 'car' | 'person'; slot: number } | null {
+    const w = this.toWorld(px, py);
+    let best = (within / this.cam.scale) ** 2;
+    let hit: { key: string; kind: 'car' | 'person'; slot: number } | null = null;
+    for (const r of this.world.order) {
+      for (const [kind, l, on] of [['car', r.cars, this.layers.cars], ['person', r.people, this.layers.people]] as const) {
+        if (!on) continue;
+        for (let i = 0; i < l.n; i++) {
+          if (!l.shown[i]) continue;
+          const d = (l.x[i] - w.x) ** 2 + (l.y[i] - w.y) ** 2;
+          if (d < best) {
+            best = d;
+            hit = { key: r.meta.key, kind, slot: i };
+          }
+        }
+      }
+    }
+    return hit;
+  }
 
   private playerAt(px: number, py: number, within: number): PlayerView | null {
     let best: PlayerView | null = null;
@@ -341,6 +526,8 @@ export class MapRenderer {
       this.onHover({ x: px, y: py, text: `${p.name} · ${doing(p)} · ${p.town}${p.host ? ' · runs its traffic' : ''}` });
       return;
     }
+    const e = this.entityAt(px, py, 8);
+    this.onHoverEntity(e ? { ...e, x: px, y: py } : null);
     const w = this.toWorld(px, py);
     const within = 8 / this.cam.scale;
     let best = within * within;
@@ -349,6 +536,7 @@ export class MapRenderer {
       if (this.layers.cars) {
         const c = r.cars;
         for (let i = 0; i < c.n; i++) {
+          if (!c.shown[i]) continue;
           const d = (c.x[i] - w.x) ** 2 + (c.y[i] - w.y) ** 2;
           if (d < best) {
             best = d;
@@ -359,6 +547,7 @@ export class MapRenderer {
       if (this.layers.people) {
         const c = r.people;
         for (let i = 0; i < c.n; i++) {
+          if (!c.shown[i]) continue;
           const d = (c.x[i] - w.x) ** 2 + (c.y[i] - w.y) ** 2;
           if (d < best) {
             best = d;
@@ -370,8 +559,12 @@ export class MapRenderer {
     if (!text) {
       for (const t of this.paths.towns) {
         if (w.x < t.x0 || w.y < t.y0 || w.x > t.x0 + t.width || w.y > t.y0 + t.height) continue;
-        const b = this.layers.zoning ? buildingAt(t, w.x - t.x0, w.y - t.y0) : null;
-        text = b ? `${describe(b)} · ${t.name}` : t.name;
+        const i = this.layers.zoning ? buildingIndexAt(t, w.x - t.x0, w.y - t.y0) : -1;
+        const b = i >= 0 ? t.buildings![i] : null;
+        const life = this.life.get(t.key);
+        const inside = life && i >= 0 ? (indoors(life).get(i) ?? 0) : null;
+        text = b ? `${describe(b)}${inside === null ? '' : ` · ${inside.toLocaleString()} inside`} · ${t.name}` : t.name;
+        this.hoverBuilding = b && life ? { key: t.key, i } : null;
       }
     }
     this.onHover(text ? { x: px, y: py, text } : null);
@@ -397,6 +590,12 @@ export class MapRenderer {
         this.cam.cx = p.x;
         this.cam.cy = p.y;
       }
+    } else if (this.followingFocus) {
+      const at = this.focusAt();
+      if (at) {
+        this.cam.cx = at.x;
+        this.cam.cy = at.y;
+      }
     }
     this.draw();
     this.fpsCount++;
@@ -409,7 +608,7 @@ export class MapRenderer {
 
   /** The still parts, drawn again only when the view or what's shown changes. */
   private drawStill(): void {
-    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height},${this.layers.roads},${this.layers.zoning},${this.layers.names}`;
+    const key = `${this.cam.cx},${this.cam.cy},${this.cam.scale},${this.width},${this.height},${this.layers.roads},${this.layers.zoning},${this.layers.names},${this.lifeVersion}`;
     if (key === this.stillKey) return;
     this.stillKey = key;
     const ctx = this.still.getContext('2d', { alpha: false })!;
@@ -445,6 +644,26 @@ export class MapRenderer {
         ctx.fill(path);
       });
       ctx.globalAlpha = 1;
+      // Who's indoors: a disc on each building, its area as many as are inside.
+      if (this.life.size) {
+        ctx.fillStyle = INDOORS;
+        ctx.beginPath();
+        for (const t of this.paths.towns) {
+          const life = this.life.get(t.key);
+          if (!life || !t.buildings) continue;
+          for (const [i, n] of life.inside) {
+            const b = t.buildings[i];
+            if (!b) continue;
+            const r = indoorRadius(n);
+            const cx = t.x0 + (b[1] + b[3]) / 2, cy = t.y0 + (b[2] + b[4]) / 2;
+            ctx.moveTo(cx + r, cy);
+            ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+          }
+        }
+        ctx.globalAlpha = 0.55;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     }
     // The streets.
     if (this.layers.roads) {
@@ -501,7 +720,66 @@ export class MapRenderer {
       if (this.layers.people) this.drawPeople(ctx, view, px, dim);
       if (this.layers.cars) this.drawCars(ctx, view, px, dim);
     }
+    this.drawStops(ctx, view, px);
+    this.drawSignals(ctx, view, px);
+    this.drawFocus(ctx, px);
     if (this.layers.players) this.drawPlayers(ctx, view, px);
+  }
+
+  /** The focus: its way ahead, where it's going, and a ring round it where it is now. */
+  private drawFocus(ctx: CanvasRenderingContext2D, px: number): void {
+    const f = this.focused;
+    const at = this.focusAt();
+    if (!f || !at) return;
+    const r = this.roomOf(f.town);
+    const ox = r ? r.meta.ox : 0, oy = r ? r.meta.oy : 0;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (f.path.length > 1) {
+      // From where it's drawn now along the way the simulation gave (skipping what's already behind it).
+      let from = 0, best = Infinity;
+      for (let i = 0; i < Math.min(f.path.length, 40); i++) {
+        const d = (f.path[i][0] + ox - at.x) ** 2 + (f.path[i][1] + oy - at.y) ** 2;
+        if (d < best) {
+          best = d;
+          from = i;
+        }
+      }
+      ctx.strokeStyle = FOCUS;
+      ctx.globalAlpha = 0.85;
+      ctx.lineWidth = Math.max(0.25, 3 * px);
+      ctx.setLineDash([6 * px, 4 * px]);
+      ctx.beginPath();
+      ctx.moveTo(at.x, at.y);
+      for (let i = from + 1; i < f.path.length; i++) ctx.lineTo(f.path[i][0] + ox, f.path[i][1] + oy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+    if (f.dest) {
+      const x = f.dest[0] + ox, y = f.dest[1] + oy, s = Math.max(0.5, 6 * px);
+      ctx.strokeStyle = FOCUS;
+      ctx.lineWidth = Math.max(0.2, 2.5 * px);
+      ctx.beginPath();
+      ctx.moveTo(x - s, y - s);
+      ctx.lineTo(x + s, y + s);
+      ctx.moveTo(x + s, y - s);
+      ctx.lineTo(x - s, y + s);
+      ctx.stroke();
+    }
+    const R = Math.max(1.2, 10 * px);
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.5 * px;
+    ctx.setLineDash(at.live ? [] : [3 * px, 3 * px]);
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = FOCUS;
+    ctx.lineWidth = 1.5 * px;
+    ctx.beginPath();
+    ctx.arc(at.x, at.y, R + 3 * px, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
 
   private readonly dots = document.createElement('canvas');
@@ -532,7 +810,7 @@ export class MapRenderer {
     const plot = (l: Layer, n: number, s: number, near: number, color: (i: number) => number) => {
       const half = s >> 1;
       for (let i = 0; i < n; i++) {
-        if (near >= 0 && l.near[i] !== near) continue;
+        if (!l.shown[i] || (near >= 0 && l.near[i] !== near)) continue;
         const X = ((l.x[i] * k + ox) | 0) - half;
         const Y = ((l.y[i] * k + oy) | 0) - half;
         if (X < 0 || Y < 0 || X + s > W || Y + s > H) continue;
@@ -615,6 +893,7 @@ export class MapRenderer {
       t.fillStyle = color;
       t.beginPath();
       for (let i = 0; i < l.n; i++) {
+        if (!l.shown[i]) continue;
         const x = l.x[i];
         const y = l.y[i];
         if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;

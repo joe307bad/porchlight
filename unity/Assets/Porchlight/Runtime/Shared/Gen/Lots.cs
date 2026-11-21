@@ -86,7 +86,7 @@ namespace Porchlight.Gen
                 var tiles = new List<int>();
                 foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h)) if (g.free[t] != 0) tiles.Add(t);
                 var pieces = new List<List<int>>();
-                double maxSize = Math.Max(2 * p.lotMinSize, p.lotMaxSize * TownPlan.Rules(block.transect).lotScale);
+                double maxSize = Math.Max(1.5 * p.lotMinSize, p.lotMaxSize * TownPlan.Rules(block.transect).lotScale);
                 foreach (var comp in Parcels.Components(tiles, w)) Split(comp, w, maxSize, rng, pieces);
                 int looked = 0;
                 foreach (var piece in pieces)

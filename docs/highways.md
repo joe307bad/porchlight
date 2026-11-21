@@ -79,7 +79,7 @@ How long a highway needs to be, worked through in §5: roughly **300–500 tiles
 | Camera | Close: fog 22→60 tiles. Iso: orthographic, camera 60 back. | Distant towns never need drawing, so no far LOD or impostors are needed at first. |
 | Sync | `WorldSync` sends traffic positions as u16 × 1/100 tile, which caps at **655 tiles** (`WorldSync.cs:15-21`). | Fine as long as each space is under 655 tiles a side, so keep highway spaces shorter than that. |
 | Server | One room per town key, 100 players (`index.ts:72`). Movement is checked against `0..width × 0..height` and 11.1 tiles/s (`movement.ts:13, 67`). Joining evicts the character's session in *any* room. `Multiplayer.Join` disconnects before it joins (`Multiplayer.cs:178, 272`). | The bounds checks have to stretch to cover half of each highway, and handing over between rooms needs a path that doesn't evict. |
-| Day/night | Kept per town, in memory (`CityRoom.ts:143`). | Driving into the next town could flip night to day. It needs one shared clock. |
+| Day/night | Kept per town, in memory (`CityRoom.ts:143`). | Driving into the next town could flip night to day. It needs one shared clock. There is one now (`Life/Clock.cs`: real time, county-wide; [town-life.md](town-life.md)), but the sky doesn't follow it yet. |
 | Platform | WebGL 2, **no threads** (`webGLThreadsSupport: 0`), up to 4 GB of memory, no Addressables. Unity 6000.6.5f1. | Main-thread time slicing is the only option that works on every platform. |
 
 ---

@@ -114,7 +114,9 @@ namespace Porchlight.Gen
                 {
                     Width = w,
                     Height = h,
-                    Step = (a, to) => step(to),
+                    // Onto a road from off it: at one of its junctions, or well clear of them (JUNCTIONS_APART), so
+                    // where it meets the road is one junction, not a knot of two a tile or three apart.
+                    Step = (a, to) => step(to) + (onRoad[to] != 0 && onRoad[a] == 0 && NearJunction(to) ? JOIN_PENALTY : 0),
                     TurnCost = TURN_COST,
                     Goal = c => c == goal,
                     Estimate = c => AStar.Manhattan(c, goal, w) * cheapest,
@@ -139,6 +141,13 @@ namespace Porchlight.Gen
                     k = end + 1;
                 }
                 EnsureNode(from);
+            }
+            bool NearJunction(int cell)
+            {
+                if (nodeAt.ContainsKey(cell)) return false;
+                foreach (int n in nodeCells)
+                    if (AStar.Manhattan(n, cell, w) < RoadGraphOps.JUNCTIONS_APART) return true;
+                return false;
             }
             double Step(int to) => onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY : 0);
             foreach (int gate in gates)
@@ -203,6 +212,35 @@ namespace Porchlight.Gen
             }
             yield return "/simplify";
             RoadGraphOps.Planarize(builder);
+            // Where the main roads are for: the gates, and each road's own end (the airport's car park, the zoo's
+            // gate). These stay put and joined up. The centre's where they all head, a junction even where only two
+            // meet, but it may move a tile or three to make one junction of a knot there.
+            var pinned = new HashSet<int>();
+            int centreNode = -1;
+            foreach (var n in builder.nodes)
+            {
+                if (Geo.Dist(n.at, Center(centerCell)) < 0.01) centreNode = n.id;
+                foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) pinned.Add(n.id);
+            }
+            foreach (var (node, list) in RoadGraphOps.Incidence(builder)) if (list.Count == 1 && node != centreNode) pinned.Add(node);
+            // A road moved onto the one junction crosses no tile a main road may not that it didn't already (water it
+            // bridged stays bridged; the airport, the zoo, too steep a slope stay out of it).
+            bool LineOk(List<Vec2> was, List<Vec2> now)
+            {
+                var before = new HashSet<(int, int)>();
+                for (int k = 0; k + 1 < was.Count; k++)
+                    foreach (var c in Grid.CellsOnSegment(was[k].x, was[k].y, was[k + 1].x, was[k + 1].y)) before.Add(c);
+                for (int k = 0; k + 1 < now.Count; k++)
+                    foreach (var (x, y) in Grid.CellsOnSegment(now[k].x, now[k].y, now[k + 1].x, now[k + 1].y))
+                    {
+                        if (before.Contains((x, y))) continue;
+                        if (!Grid.InBounds(x, y, w, h)) return false;
+                        int i = Grid.Index(x, y, w);
+                        if (float.IsPositiveInfinity(cost[i]) || !segmentOk(new Vec2(x + 0.5, y + 0.5), new Vec2(x + 0.5, y + 0.5))) return false;
+                    }
+                return true;
+            }
+            RoadGraphOps.CollapseShortLinks(builder, pinned, RoadGraphOps.JUNCTIONS_APART, LineOk, centreNode);
             PruneCenterStub(builder, Center(centerCell));
             var next = model.With();
             next.roads = RoadGraphOps.Compact(builder);
@@ -241,6 +279,9 @@ namespace Porchlight.Gen
             }
             return o.Count >= 3 ? o : new List<int>();
         }
+
+        /// <summary>The cost of joining a road a tile or three from one of its junctions (a long way round's cheaper).</summary>
+        const double JOIN_PENALTY = 30;
 
         /// <summary>The longest stub (tiles) left poking past a junction at the town centre.</summary>
         const double STUB = 3;
@@ -285,6 +326,8 @@ namespace Porchlight.Gen
                     errors.Add($"gate {g.x},{g.y} is not connected to the center");
             }
             errors.AddRange(CheckRoadSlopes(model, RoadKind.Main));
+            // One junction where the main roads meet, never a knot of them (RoadGraphOps.CollapseShortLinks).
+            errors.AddRange(RoadGraphOps.CheckKnots(graph, RoadGraphOps.JUNCTIONS_APART, graph.nodes[RoadGraphOps.NearestNode(graph, model.center)].at));
             errors.AddRange(RoadGraphOps.CheckBridges(model, Raster.WaterMask(model)));
             errors.AddRange(AirportStage.CheckRoadIn(model));
             return errors;

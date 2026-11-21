@@ -423,3 +423,241 @@ p {
 .sub.bad {
   color: var(--bad);
 }
+
+/* Who's in the building clicked (Town life). */
+.building {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.building .name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.building ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* Focus: one car or townsperson, why they do what they do and what's next. */
+.focus {
+  margin: 4px 0 8px;
+  padding: 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: rgba(246, 183, 60, 0.05);
+}
+.focus h2 {
+  margin-top: 0;
+  color: var(--accent);
+}
+.focus h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 12px 0 6px;
+}
+.focus .doing {
+  font-weight: 600;
+  margin: 4px 0 8px;
+}
+.focus-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tree,
+.tree .tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+}
+.tree .tree {
+  margin: 4px 0 2px 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+.tree li {
+  display: grid;
+  grid-template-columns: 1.1em minmax(0, 1fr);
+  margin: 4px 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.tree .mark {
+  font-weight: 700;
+}
+.tree .mark.good {
+  color: var(--good);
+}
+.tree .mark.bad {
+  color: var(--bad);
+}
+.tree .q {
+  color: var(--muted);
+}
+.tree .note {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.85;
+}
+.queue {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.queue li {
+  display: flex;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.queue li.now {
+  color: var(--accent);
+  font-weight: 600;
+}
+.queue .when {
+  flex: none;
+  width: 5.5em;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.queue li.now .when {
+  color: var(--accent);
+}
+.recent li {
+  margin: 2px 0;
+}
+.bad {
+  color: var(--bad);
+}
+.link {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.link:hover,
+.link:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* Their day: where they are in it. */
+.focus .decides {
+  font-size: 12px;
+  margin: 0 0 6px;
+}
+.day {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  font-size: 12px;
+}
+.day li {
+  display: grid;
+  grid-template-columns: 1.1em 4.6em minmax(0, 1fr);
+  gap: 4px;
+  padding: 2px 0;
+}
+.day li.done,
+.day li.failed {
+  color: var(--muted);
+}
+.day li.done .mark {
+  color: var(--good);
+}
+.day li.failed .mark {
+  color: var(--bad);
+}
+.day li.now {
+  color: var(--accent);
+  font-weight: 600;
+}
+.day .when {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.day .note {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.focus .rule {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
+/* The panel's first card when nothing's clicked: how to look closer. */
+.hint {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.hint b {
+  color: var(--text, inherit);
+  font-weight: 600;
+}
+
+.name .time {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* What the map shows: a checkbox each, its key beside it. */
+.layer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.layer-list .legend {
+  margin: 2px 0 0 22px;
+  font-size: 11px;
+}
+
+.legend i.dot {
+  border-radius: 50%;
+}
+
+.legend i.stop {
+  border-radius: 0;
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+
+/* The simulation's missing: said plainly at the top. */
+.warn {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #e5484d88;
+  background: #e5484d18;
+  border-radius: 10px;
+}
+.warn h2 {
+  margin: 0 0 4px;
+}
+.warn code {
+  font-size: 12px;
+}

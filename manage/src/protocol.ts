@@ -9,6 +9,8 @@ export const NO_WORLD = 0xffff;
 export const KEPT = 0xfffe;
 /** Bytes per car or townsperson (WorldSync.cs), per player (feed.ts). */
 export const RECORD = 7;
+/** A record's x and y both this: an empty slot, nobody out in it now (WorldSync.HIDDEN). */
+export const HIDDEN = 0xffff;
 export const PLAYER_BYTES = 18;
 
 export interface RoomMeta {
@@ -143,7 +145,8 @@ export function decodePositions(body: Uint8Array): PositionsFrame {
 }
 
 /** A car's or townsperson's record (WorldSync.cs): position (tiles, the room's frame), heading (radians) and speed (tiles a second). */
-export function readRecord(v: DataView, at: number): { x: number; y: number; heading: number; speed: number } {
+export function readRecord(v: DataView, at: number): { x: number; y: number; heading: number; speed: number } | null {
+  if (v.getUint16(at, false) === HIDDEN && v.getUint16(at + 2, false) === HIDDEN) return null;
   return {
     x: v.getUint16(at, false) / 100,
     y: v.getUint16(at + 2, false) / 100,

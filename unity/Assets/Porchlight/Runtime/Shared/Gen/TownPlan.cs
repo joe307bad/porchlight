@@ -122,7 +122,7 @@ namespace Porchlight.Gen
         /// <summary>The transect table: what each zone builds.</summary>
         public static TransectRule Rules(Transect t) => t switch
         {
-            Transect.T6 => new TransectRule { setback = false, lotScale = 0.55, houseFloorsMin = 2, houseFloorsMax = 2, shopShare = 1, gardens = false, courtyards = true },
+            Transect.T6 => new TransectRule { setback = false, lotScale = 0.45, houseFloorsMin = 2, houseFloorsMax = 2, shopShare = 1, gardens = false, courtyards = true },
             Transect.T5 => new TransectRule { setback = false, lotScale = 0.7, houseFloorsMin = 1, houseFloorsMax = 2, shopShare = 1, gardens = false, courtyards = true },
             Transect.T4 => new TransectRule { setback = false, lotScale = 0.85, houseFloorsMin = 1, houseFloorsMax = 2, shopShare = 0, gardens = false, courtyards = false },
             _ => new TransectRule { setback = true, lotScale = 1, houseFloorsMin = 1, houseFloorsMax = 1, shopShare = 0, gardens = true, courtyards = false },
