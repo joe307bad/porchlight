@@ -113,7 +113,12 @@ A movement is one way through a junction, from one lane's end to another's
 start.
 
 - Each turn is a cubic Bézier that leaves and arrives along each lane's
-  direction, so the heading never jumps.
+  direction, so the heading never jumps. It's kept as 16 points along the
+  curve, and a car's heading is blended from the way the curve goes at one
+  point to the way at the next (`RoadNet.MovementPoint`), rather than
+  taken from the straight piece between them. Taken that way, it stepped
+  9° at each of the 11 points a turn had, and the car's front flicked with
+  it.
 - A straight-on turn keeps the slower lane's speed. A turn goes at up to
   0.6 of it, and no faster than a driver corners comfortably:
   v = √(a / curvature), with a = 0.32 g (`CORNERING`, the side friction
@@ -636,12 +641,34 @@ The slots go out exactly as cars and people always have (7 bytes each,
   instead of easing it from where it was last.
 - Deltas (`sim/src/Delta.cs`) send a slot when it empties or fills, and
   don't dead-reckon an empty one.
-- **Turning between updates.** Updates come 10 times a second; the game
-  draws at 60. A car drawn by easing its facing toward the last one sent lags
-  a corner, and turns in jerks. Instead `WorldSync` estimates each car's
-  turn rate from its last two updates and carries it round at that rate for
-  up to half a second (`TURN_FOR`, at most 3 rad/s), easing what's left
-  (`FACE`, 25/s).
+- **Drawing cars between updates.** Updates come 10 times a second; the
+  game draws at 60. Guessing a car ahead from its last update and easing it
+  back when the next comes (as the game did) shows every correction as a
+  nudge sideways and a flick of its facing, worst round a corner. Instead
+  the game draws each car a moment behind (`WorldSync.DELAY`, 0.2 s, two
+  ticks), between the updates either side of that moment. Like a lot of
+  networked games, it trades a delay you can't see for motion with no
+  corrections in it.
+  - **Where:** a cubic Hermite curve through each update's place, leaving
+    and arriving at each as the car was moving there (from the update
+    before it to the one after).
+  - **Facing:** blended from each update's to the next, turning at the rate
+    it was turning at each. The middle of a car doesn't quite go the way it
+    faces round a corner, because its back wheels trail, so facing and
+    place are blended separately.
+  - **Past the last update,** the car carries straight on at its speed, as
+    the server expects, for as long as the server's still talking. When the
+    next update comes, the car curves to it from where and how it's
+    drawn, so it never jumps.
+  - **A slot handed to another car** (one parks, another comes out, in the
+    same tick) puts the car straight where it is, rather than drawing it
+    across town.
+  - Updates arrive unevenly, so each is taken to be from a usual gap after
+    the last, drawn a little toward when it actually came.
+- **The server sends a turning car every tick.** A car is sent again if
+  its facing turns more than 0.02 rad (it was 0.12). Turning cars are a
+  small share, so deltas stay about 3% of the whole town.
+- People are still eased toward their latest update.
 
 ---
 
@@ -861,8 +888,10 @@ given/when/then:
   `Checks life server/towns Smooth`.
 - **A corner on the wire.** Given a car going round a curve (1.2 tiles
   radius, 1.3 tiles/s) sent 10 times a second and drawn at 60, then it's
-  drawn within 0.05 tiles of the curve and facing within 8° of it (0.014
-  tiles and 5.4° now; easing alone was 15° off).
+  drawn within 0.02 tiles of the curve, facing within 2° of it, and its
+  turn rate never steps more than 0.1 rad/s from one frame to the next.
+  Now it's 0.006 tiles, 0.3° and no step. Guessed ahead and eased back,
+  it was 15° off.
 - **Turn names.** Given every turn in a town, right turns are on average
   shorter than left (traffic keeps right), and there are some of each.
 - **A player in a junction.** Given a player in the middle of the busiest
@@ -887,10 +916,24 @@ rad/s, and no car's back wheels slide sideways faster than 0.6 tiles/s.
 **`sim --bench`** and **`sim --follow`** run the towns at 08:15 on a fixed
 weekday:
 
-- a tick costs about 0.18 ms a town (the budget is 1 ms);
-- deltas are about 5% of the whole;
-- a follower's drawing stays within 0.3 tiles of the server's, and every
-  car or person is hidden on both sides or shown on both.
+- a tick costs about 0.3 ms a town (the budget is 1 ms);
+- deltas are about 3% of the whole;
+- a follower's drawing stays within 0.3 tiles of the server's 0.2 s before
+  (it's drawn that far behind), and every car or person is hidden on both
+  sides or shown on both;
+- **the drawn cars move smoothly**, frame by frame at 60 fps, through each
+  town's morning rush, as a player's game draws them from the real deltas:
+
+  | | Limit | Now | Guessed ahead and eased back (before) |
+  |---|---|---|---|
+  | Turning frames where the turn rate jumps (over 20 rad/s²) | 1% | 0–0.1% | 10–26% |
+  | Frames where speed surges (over 4 tiles/s²) | 3% | 0.3–1.3% | 2–5% |
+  | Frames at speed where the back axle slides (over 10°) | 2% | 0–0.2% | up to 40% |
+  | Turn-rate step from one frame to the next, 99.9th percentile | 0.6 rad/s | 0.15–0.31 | 1.7–3.1 |
+
+  Boats aren't counted. Sliding is counted from 1.2 tiles/s, because the
+  back axle is taken to be 0.55 tiles behind the middle, and slower than
+  that, a short car's real one is too far off it to tell.
 
 **`server/test/sim.test.ts`** runs the real worker:
 

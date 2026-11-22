@@ -151,7 +151,8 @@ static class LifeCheck
     /// <summary>
     /// Given a car going round a quarter circle (1.2 tiles' radius, at a turn's 1.3 tiles/s) and the server's word
     /// on it ten times a second, when the game draws it sixty times a second, then it stays on the curve and faces
-    /// along it: carried round at the rate it was turning between words, its facing kept close.
+    /// along it (drawn a moment behind, between the words either side), and its turn rate never jumps from one
+    /// frame to the next.
     /// </summary>
     static string WireCorner()
     {
@@ -160,7 +161,7 @@ static class LifeCheck
         var sync = new WorldSync();
         var theirs = new List<TrafficCar> { new TrafficCar() };
         var none = new List<Walker>();
-        double worst = 0, sinceSent = SENT, worstFacing = 0;
+        double worst = 0, sinceSent = SENT, worstFacing = 0, worstStep = 0, lastHeading = double.NaN, lastTurn = double.NaN;
         double end = Math.PI / 2 * R / V;
         for (double time = 0; time < end; time += FRAME)
         {
@@ -177,22 +178,35 @@ static class LifeCheck
             }
             sync.Step(FRAME, theirs, none);
             sinceSent += FRAME;
-            // Judged once it's had two words (one alone can't say it's turning).
-            if (time > 2 * SENT)
+            // Judged once it's had two words to draw between (one alone can't say it's turning), and is drawn
+            // between them; until the last word (past it, it's carried straight on, off the curve).
+            if (time > 2 * SENT + WorldSync.DELAY && time < end - SENT)
             {
                 worst = Math.Max(worst, Math.Abs(Numbers.Hypot(theirs[0].x - 50, theirs[0].y - 50) - R));
                 double along = Math.Atan2(theirs[0].y - 50, theirs[0].x - 50) + Math.PI / 2;
                 worstFacing = Math.Max(worstFacing, Math.Abs(Porchlight.Explore.Orbit.ShortestTurn(theirs[0].heading, along)));
+                if (!double.IsNaN(lastHeading))
+                {
+                    double turn = Porchlight.Explore.Orbit.ShortestTurn(lastHeading, theirs[0].heading) / FRAME;
+                    if (!double.IsNaN(lastTurn)) worstStep = Math.Max(worstStep, Math.Abs(turn - lastTurn));
+                    lastTurn = turn;
+                }
+                lastHeading = theirs[0].heading;
             }
         }
-        Console.WriteLine($"     corner: drawn at most {worst:0.000} tiles off it, facing at most {worstFacing * 180 / Math.PI:0.0}° off its way");
+        Console.WriteLine($"     corner: drawn at most {worst:0.000} tiles off it, facing at most {worstFacing * 180 / Math.PI:0.0}° off its way, its turn rate stepping at most {worstStep:0.00} rad/s a frame");
         if (worst > CORNER_OFF) return $"drawn {worst:0.000} tiles off the corner it's going round";
         if (worstFacing * 180 / Math.PI > FACING_OFF) return $"facing {worstFacing * 180 / Math.PI:0.0}° off the way it's going: sliding round sideways";
+        if (worstStep > TURN_STEP) return $"its turn rate stepped {worstStep:0.00} rad/s from one frame to the next: a flick of its facing";
         return null;
     }
 
-    /// <summary>How far a car drawn going round a corner may be off it (tiles), and facing off its way (degrees; before: 15°).</summary>
-    const double CORNER_OFF = 0.05, FACING_OFF = 8;
+    /// <summary>
+    /// How far a car drawn going round a corner may be off it (tiles), facing off its way (degrees), and its turn rate
+    /// step from one frame to the next (rad/s; it turns at 1.08 throughout). Guessed ahead and eased back, as before:
+    /// 15° off, and its turn rate stepping as each word came.
+    /// </summary>
+    const double CORNER_OFF = 0.02, FACING_OFF = 2, TURN_STEP = 0.1;
 
     /// <summary>
     /// Given a town's whole day, then: no car starts a turn at a signal on red; no two parked cars share a

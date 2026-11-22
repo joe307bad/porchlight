@@ -23,8 +23,11 @@ namespace Porchlight.Sim
         public const int RECORD = 7;
         /// <summary>Tiles a client's carried-on position may be off before it's sent again.</summary>
         const double OFF = 0.2;
-        /// <summary>Radians it may be turned.</summary>
-        const double TURNED = 0.12;
+        /// <summary>
+        /// Radians it may be turned: little, so a car going round a corner is sent every tick. The game draws a car
+        /// between its words (WorldSync), and with one a tick it goes round the corner on the server's own curve.
+        /// </summary>
+        const double TURNED = 0.02;
         /// <summary>Tiles a second its speed may be off.</summary>
         const double SPEED = 0.12;
         /// <summary>Seconds anything goes unsent at most.</summary>

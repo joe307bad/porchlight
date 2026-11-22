@@ -328,7 +328,11 @@ namespace Porchlight.Life
             return (new Vec2(p.x - ty * off, p.y + tx * off), new Vec2(tx, ty));
         }
 
-        /// <summary>A point `d` tiles round a movement's curve, and the way along it.</summary>
+        /// <summary>
+        /// A point `d` tiles round a movement's curve, and the way along it. The way turns smoothly from one of
+        /// the curve's points to the next (blended between the way at each), rather than in a step at each:
+        /// a car's facing, and so its front wheels, never flick round a corner.
+        /// </summary>
         public (Vec2 at, Vec2 along) MovementPoint(Movement m, double d)
         {
             var pts = m.points;
@@ -339,9 +343,31 @@ namespace Porchlight.Life
             var b = pts[k];
             double seg = m.at[k] - m.at[k - 1];
             double t = seg < 1e-9 ? 0 : (d - m.at[k - 1]) / seg;
-            double dx = b.x - a.x, dy = b.y - a.y, l = Numbers.Hypot(dx, dy);
-            return (new Vec2(a.x + dx * t, a.y + dy * t), l < 1e-9 ? new Vec2(1, 0) : new Vec2(dx / l, dy / l));
+            var ta = WayAt(pts, k - 1);
+            var tb = WayAt(pts, k);
+            double wx = ta.x + (tb.x - ta.x) * t, wy = ta.y + (tb.y - ta.y) * t, wl = Numbers.Hypot(wx, wy);
+            var along = wl < 1e-9 ? Unit(a, b) : new Vec2(wx / wl, wy / wl);
+            return (new Vec2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t), along);
         }
+
+        /// <summary>The way along a curve at its kth point: halfway between the ways in and out of it.</summary>
+        static Vec2 WayAt(List<Vec2> pts, int k)
+        {
+            var inWay = k > 0 ? Unit(pts[k - 1], pts[k]) : Unit(pts[k], pts[k + 1]);
+            var outWay = k < pts.Count - 1 ? Unit(pts[k], pts[k + 1]) : inWay;
+            double x = inWay.x + outWay.x, y = inWay.y + outWay.y, l = Numbers.Hypot(x, y);
+            // A cusp (the tip of a U-turn, if ever exactly so): the way in.
+            return l < 1e-9 ? inWay : new Vec2(x / l, y / l);
+        }
+
+        static Vec2 Unit(Vec2 a, Vec2 b)
+        {
+            double dx = b.x - a.x, dy = b.y - a.y, l = Numbers.Hypot(dx, dy);
+            return l < 1e-9 ? new Vec2(1, 0) : new Vec2(dx / l, dy / l);
+        }
+
+        /// <summary>Points a turn's curve is drawn through (and a U-turn's each half): enough that a car's way round it barely bends at each.</summary>
+        const int CURVE_POINTS = 16;
 
         // --- Junctions --------------------------------------------------------------------------
 
@@ -404,8 +430,8 @@ namespace Porchlight.Life
                 gy /= gap;
                 var tip = new Vec2((a.x + b.x) / 2 + f.x * reach * 1.1, (a.y + b.y) / 2 + f.y * reach * 1.1);
                 double k1 = reach * 0.6, k2 = Math.Max(gap / 2, reach * 0.45);
-                for (int i = 0; i <= 8; i++) pts.Add(Cubic(a, new Vec2(a.x + f.x * k1, a.y + f.y * k1), new Vec2(tip.x - gx * k2, tip.y - gy * k2), tip, i / 8.0));
-                for (int i = 1; i <= 8; i++) pts.Add(Cubic(tip, new Vec2(tip.x + gx * k2, tip.y + gy * k2), new Vec2(b.x + f.x * k1, b.y + f.y * k1), b, i / 8.0));
+                for (int i = 0; i <= CURVE_POINTS; i++) pts.Add(Cubic(a, new Vec2(a.x + f.x * k1, a.y + f.y * k1), new Vec2(tip.x - gx * k2, tip.y - gy * k2), tip, i / (double)CURVE_POINTS));
+                for (int i = 1; i <= CURVE_POINTS; i++) pts.Add(Cubic(tip, new Vec2(tip.x + gx * k2, tip.y + gy * k2), new Vec2(b.x + f.x * k1, b.y + f.y * k1), b, i / (double)CURVE_POINTS));
                 m.speed = UTURN_SPEED;
             }
             else
@@ -424,7 +450,7 @@ namespace Porchlight.Life
                 k2 = Math.Min(k2, gap * 0.75);
                 var p1 = new Vec2(a.x + fa.x * k1, a.y + fa.y * k1);
                 var p2 = new Vec2(b.x - fb.x * k2, b.y - fb.y * k2);
-                for (int i = 0; i <= 10; i++) pts.Add(Cubic(a, p1, p2, b, i / 10.0));
+                for (int i = 0; i <= CURVE_POINTS; i++) pts.Add(Cubic(a, p1, p2, b, i / (double)CURVE_POINTS));
                 bool straight = fa.x * fb.x + fa.y * fb.y > 0.85;
                 m.speed = Math.Min(from.speed, to.speed) * (straight ? 1 : TURN_SHARE);
             }
