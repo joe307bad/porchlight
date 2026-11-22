@@ -600,6 +600,8 @@ export class CityRoom extends Room<{ state: CityState }> {
 
   /** Where everyone's own cars are parked (tiles): the traffic stops for them too. */
   *parkedCars(): Generator<{ x: number; y: number }> {
+    // A room being disposed has no state left; the simulation's link may still ask it once.
+    if (!this.state?.cars) return;
     for (const c of this.state.cars.values()) yield { x: c.x, y: c.z };
   }
 
@@ -610,13 +612,13 @@ export class CityRoom extends Room<{ state: CityState }> {
 
   /** The simulation moved the town on: what changed, to everyone here. */
   simTick(town: SimTown): void {
-    if (this.state.host !== SERVER_HOST || this.clients.length === 0) return;
+    if (!this.state || this.state.host !== SERVER_HOST || this.clients.length === 0) return;
     this.broadcast(MSG_WORLD_DELTA, { d: town.delta });
   }
 
   /** The whole town, to everyone here (the server's just taken it over, or its townsfolk changed). */
   simFull(town: SimTown): void {
-    if (this.state.host !== SERVER_HOST || this.clients.length === 0) return;
+    if (!this.state || this.state.host !== SERVER_HOST || this.clients.length === 0) return;
     this.broadcast(MSG_WORLD, this.worldOf(town));
   }
 
