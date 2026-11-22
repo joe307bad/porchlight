@@ -490,6 +490,7 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
     yet.
 - [x] **Turns at a comfortable cornering speed:** √(a / curvature) with
   a = 0.32 g (AASHTO side friction at 15 mph [T48]), over a car's length.
+  Now 0.38 g, with the limits a tenth over a real town's (see below).
 - [x] **Don't block the box:** no car enters a junction unless there's room
   where it's going. A car held 3 minutes is let through, and one held behind
   a player for 15 s turns round (PR #19) [T18].
@@ -499,8 +500,10 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
 - [ ] **IDM near the camera on the host** [T1][T2]. Keep its entry and exit
   times pinned to the server's queue schedule so the two never disagree.
   Use MOBIL only on multi-lane county highways [T7].
-- [x] **Speed limits by road class** (Main 3.5 tiles/s, about 30 mph;
-  streets 2.1), slower on bends and turns (PR #19).
+- [x] **Speed limits by road class** (Main 3.85 tiles/s, about 55 km/h;
+  streets 2.3, about 33 km/h), slower on bends and turns (PR #19). Real
+  towns' 50 and 30 km/h looked like crawling at a game's scale, so the
+  limits are a tenth over, and cars corner a little brisker (PR #18).
 - [ ] **Congestion-aware routing:** BPR edge costs from the last ~15 minutes
   of flow. Re-route a random ~10% of drivers each simulated day, which
   converges towards Wardrop equilibrium cheaply, as MATSim does [T14][T15][T21].

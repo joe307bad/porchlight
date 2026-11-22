@@ -96,8 +96,23 @@ quarter of the road's width.
 - **The lane's direction is taken over 0.6 tiles either side** (`TANGENT`),
   not at a point. This way a lane rounds a tight corner of the road's line
   instead of looping back on itself on the inside of it.
-- **Speed limits:** 3.5 tiles/s on Main roads (about 30 mph) and 2.1 on
-  streets.
+- **Speed limits:** 3.85 tiles/s on Main roads (about 55 km/h) and 2.3 on
+  streets (about 33 km/h). They were 3.5 and 2.1 (50 and 30 km/h, a real
+  town's), but at a game's scale cars looked like they were crawling, so
+  the limits are a tenth over, cars corner at 0.38 g, and swing round a bend
+  in a lane at up to 1.4 rad/s (`SWING`). Pulling away and braking stay as
+  gentle as they were. More than a tenth wasn't worth it: stopping from 60
+  km/h takes 12 tiles, and the smoothness check (§ below) started counting
+  cars braking hard on short lanes.
+- **Looking ahead:** a car chooses how fast to come onto its next segment by
+  looking up to four segments down its route (`Arrival`): no faster than it
+  can still slow, braking at `BRAKE`, for each one's limit (a turn's swing),
+  a stop sign, and where it parks. Looking only at the next segment, a car
+  came off a junction at full speed onto a short lane with a stop sign at
+  its end and had to brake three times as hard as it should; at the faster
+  limits that was 1.1–1.5% of all moments driven, against a limit of 1%. With
+  the look-ahead it's 0.2–0.7%. (Lights, and turns it'll be judged to wait
+  for, it still only sees when it gets near: they change.)
 - **Bendy lanes are slower.** A car's length is laid along the lane and
   stepped down it 0.05 tiles at a time. The lane is no faster than:
   - the speed at which that length swings round at `SWING` (1.2 rad/s);
@@ -121,10 +136,11 @@ start.
   it.
 - A straight-on turn keeps the slower lane's speed. A turn goes at up to
   0.6 of it, and no faster than a driver corners comfortably:
-  v = √(a / curvature), with a = 0.32 g (`CORNERING`, the side friction
-  AASHTO designs low-speed street curves for at 15 mph [T48](city-research.md#references)), at the curve's
-  tightest car's length. A tile's about 4 m (50 km/h is 3.5 tiles a
-  second). Turns run at about 38% of the road's limit (19 km/h off a
+  v = √(a / curvature), with a = 0.38 g (`CORNERING`, brisker than the
+  0.32 g side friction AASHTO designs low-speed street curves for at
+  15 mph [T48](city-research.md#references)), at the curve's
+  tightest car's length. A tile's about 4 m (55 km/h is 3.85 tiles a
+  second). The shares below were measured at 0.32 g. Turns run at about 38% of the road's limit (19 km/h off a
   50 km/h road), the slowest tenth at about a third. Before this they were
   held to a turn rate at the curve's sharpest point: 31% on average and 17%
   for the slowest tenth, which looked like hesitating.
@@ -693,7 +709,7 @@ serves:
 
 | Route | What it returns |
 | --- | --- |
-| `GET /mp/sim/life?town=<key>` | The town's clock, who's indoors where, who's off the map at each gate, and the day's figures. |
+| `GET /mp/sim/life?town=<key>` | The town's clock, who's indoors where, who's off the map at each gate, the day's figures (with the population table), and what each car and person record is (`kinds`). |
 | `GET /mp/sim/building?town=<key>&i=<n>` | Who's in that building, and when each next goes out. |
 | `GET /mp/sim/signals?town=<key>[&stops=1]` | The town's traffic lights now: each signal's stage showing green and when it ends (`ends`, town ms), and a lamp on the kerb by each stop line with the stage it goes on. With `&stops=1`, its stop signs too: x, y, and 1 if all-way. |
 | `GET /mp/sim/where?town=<key>&kind=car\|person&i=<n>` | As before, plus whether the slot is empty, and who's in it and what they're doing (the agent's state, trip and legs). |
@@ -706,16 +722,48 @@ serves:
 - **Clicking** a building lists them at the top of the panel, with when
   each next goes out; click someone for their focus.
 
-**The panel** is as simple as it can be, top to bottom:
+**The panel** is as simple as it can be: no explanations and no keys, and
+everything on one line (what doesn't fit is cut short, its whole in a
+tooltip). The ⓘ in its head opens **the key**: how to look closer, what
+each layer's colours and shapes mean, what each kind of thing on the map
+is, and (if so) why there's no traffic and how to start it. Top to bottom:
 
-1. **What was clicked:** a car or townsperson's focus, or who's in a
-   building; with nothing clicked, how to look closer.
-2. **Towns:** each in a line or two (its clock, people, who's out, cars on
-   the road and stopped, trips today, the share by car and how long they
-   take). Click one to go there.
-3. **Show:** a checkbox for each layer, with its key beside it (car speeds,
-   townsfolk, lamp colours, stop signs, land use, players).
-4. **Playing now,** only when someone is: click to follow them.
+1. **What's open:** a car or townsperson's focus, who's in a building, a
+   town's tables, or a kind's list. Each has a one-line header with a ✕.
+2. **Towns:** a line each, with its clock, then people · out · cars on the
+   road. Clicking one goes there and opens **its tables**:
+   - the population: a row for each kind of person (workers, students, at
+     home in the day, commuters, through traffic) and a total. The columns
+     are how many, then where each is now, so they add up across: at home,
+     at work or school, elsewhere, walking, driving, on the bus, off the
+     map. The last column is how many own a car;
+   - today: each mode's share of trips and mean trip time, trips made and
+     failed, kerb spots taken, and the busiest hour.
+3. **On the map:** the eleven kinds of thing the map shows, a line each
+   with a box to show or hide it, and how many are out now. Clicking its
+   name lists each one out (up to 40, a line each in the simulation's
+   words); click one to focus on it and follow it.
+4. **Show:** the other layers, two checkboxes a row.
+5. **Playing,** only when someone is: click to follow them.
+
+**The kinds.** Every car and person record has a kind (`SimTown.Kinds`,
+sent with the town's life as two strings, a letter a record, `-` for an
+empty one):
+
+| Vehicles | | People on foot | |
+| --- | --- | --- | --- |
+| `r` | residents' cars | `w` | workers |
+| `c` | commuters' cars (driven in from out of town) | `s` | students |
+| `t` | through traffic (gate to gate) | `h` | at home in the day, out on errands |
+| `v` | vans on their rounds (deliveries, trades, the post, taxis) | `c` | commuters walking to and from their cars |
+| `b` | buses | `x` | wanderers (strolling, with no day of their own) |
+| `s` | boats | | |
+
+A car's kind comes from what's in its slot: a bus, a van, or a person's
+car by its owner's kind. People's records start with the wanderers, then
+the life's person slots, then drivers put out of cars a player took
+(counted at home in the day). Hidden kinds aren't drawn, hovered, picked
+or left as trails; they're remembered in the browser, like the layers.
 
 - **Traffic lights,** close in (2 pixels a tile or more), are a small lamp
   in a dark housing on the kerb by each stop line: green, amber in a
@@ -761,6 +809,13 @@ marked ✓ or ✗; a fact (how long, how fast, which way) is unmarked.
   router reckoned it), what it's doing (behind which car, a player in the
   way), and where it'll stop (driveway, the kerb spot it holds, hunting).
   A car waiting at a junction gets `Judge`'s questions, each answered.
+
+**The panel shows only what it is and what it'll do:** a header line (Car,
+Van, Bus or Person, its number and town, who it is in the tooltip, and
+buttons to follow it and to go to its driver or car), a line for what it's
+doing now, and the next four things in its queue. The tree, its day and
+the rest below are still worked out and served (the life check checks
+them), but Manage no longer shows them.
 
 **Their day** comes first: where they are in their routine. It lists
 today's trips in order: those made (✓, with when they got there) or

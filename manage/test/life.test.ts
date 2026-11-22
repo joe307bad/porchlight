@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { describeInside, figures, indoorRadius, indoors, type TownLife } from '../src/life.ts';
+import { ENTITY_KINDS, POPULATION_COLUMNS, describeInside, figures, indoorRadius, indoors, ofKind, type TownLife } from '../src/life.ts';
 import { HIDDEN, RECORD, readRecord } from '../src/protocol.ts';
 import { buildingIndexAt } from '../src/zoning.ts';
 
@@ -88,4 +88,41 @@ test('given a point on the map, then the building there is found by its place in
   const t = { buildings: [[0, 0, 0, 2, 2, 1, 0], [3, 5, 5, 8, 8, 0, 4]] };
   assert.equal(buildingIndexAt(t, 6, 7), 1);
   assert.equal(buildingIndexAt(t, 4, 4), -1);
+});
+
+test('given what each record is in two towns, then a kind lists each of its own across them, and nothing else', () => {
+  const a: TownLife = { ...life, town: 'a', kinds: { cars: 'rv-vbs', people: 'xxwsh-c' } };
+  const b: TownLife = { ...life, town: 'b', kinds: { cars: '--v', people: 'w' } };
+  const lives = new Map([
+    ['a', a],
+    ['b', b],
+  ]);
+  const vans = ENTITY_KINDS.find((k) => k.id === 'car:v')!;
+  assert.deepEqual(ofKind(lives, vans), [
+    ['a', 1],
+    ['a', 3],
+    ['b', 2],
+  ]);
+  const workers = ENTITY_KINDS.find((k) => k.id === 'person:w')!;
+  assert.deepEqual(ofKind(lives, workers), [
+    ['a', 2],
+    ['b', 0],
+  ]);
+  // A car's letter isn't a person's: a student is 's', and so is a boat, but each is only of its own.
+  const boats = ENTITY_KINDS.find((k) => k.id === 'car:s')!;
+  assert.deepEqual(ofKind(lives, boats), [['a', 5]]);
+  // Every record counted once, empties ('-') in none.
+  const all = ENTITY_KINDS.reduce((n, k) => n + ofKind(lives, k).length, 0);
+  assert.equal(all, 'rv-vbs--v'.replace(/-/g, '').length + 'xxwsh-cw'.replace(/-/g, '').length);
+  // A town the server hasn't said kinds for (an older one): none of anything.
+  assert.deepEqual(ofKind(new Map([['c', life]]), vans), []);
+});
+
+test('the kinds Manage shows are the eleven the simulation sends: six of vehicle, five on foot', () => {
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').length, 6);
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').length, 5);
+  assert.equal(new Set(ENTITY_KINDS.map((k) => k.id)).size, 11);
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').map((k) => k.letter).join(''), 'rctvbs');
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').map((k) => k.letter).join(''), 'wshcx');
+  assert.equal(POPULATION_COLUMNS.length, 9, "the town table's columns: Analytics.POPULATION_COLUMNS");
 });

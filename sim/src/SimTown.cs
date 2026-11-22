@@ -154,6 +154,51 @@ namespace Porchlight.Sim
             gates = traffic.life.net.borders.Select(b => new[] { Math.Round(b.at.x, 1), Math.Round(b.at.y, 1) }).ToList(),
             stops = traffic.life.busStops.Select(b => new[] { Math.Round(b.at.x, 1), Math.Round(b.at.y, 1) }).ToList(),
             summary = traffic.life.Summary(),
+            kinds = Kinds(),
+        };
+
+        /// <summary>
+        /// What each of the tick's car and person records is (Manage shows and hides each kind, and lists them), a
+        /// letter a record, '-' for an empty one. Cars: r a resident's car, c a commuter's, t through traffic, v a van
+        /// (or taxi) on its rounds, b a bus, s a boat. People: w a worker, s a student, h someone at home in the day
+        /// (out on errands), c a commuter on foot, x a wanderer (strolling, with no day).
+        /// </summary>
+        public object Kinds()
+        {
+            var life = traffic.life;
+            var cars = new System.Text.StringBuilder(traffic.cars.Count);
+            for (int i = 0; i < traffic.cars.Count; i++)
+            {
+                var c = traffic.cars[i];
+                if (c.loop >= 0) { cars.Append('s'); continue; }
+                int id = i < life.carSlots.Length ? life.CarInSlot(i) : -1;
+                if (id < 0) { cars.Append(c.taken ? 'r' : '-'); continue; }
+                var car = life.cars[id];
+                if (car.bus >= 0) cars.Append('b');
+                else if (car.van >= 0) cars.Append('v');
+                else if (car.owner >= 0) cars.Append(PersonLetter(life.people[car.owner].kind));
+                else cars.Append('r');
+            }
+            var people = new System.Text.StringBuilder(this.people.Count);
+            int wanderers = basePeople - life.personSlots.Length;
+            for (int i = 0; i < this.people.Count; i++)
+            {
+                if (i < wanderers) { people.Append('x'); continue; }
+                int slot = i - wanderers;
+                int id = slot < life.personSlots.Length ? life.PersonInSlot(slot) : -1;
+                people.Append(id >= 0 ? PersonLetter(life.people[id].kind, onFoot: true) : slot < life.personSlots.Length ? '-' : 'h');
+            }
+            return new { cars = cars.ToString(), people = people.ToString() };
+        }
+
+        static char PersonLetter(PersonKind k, bool onFoot = false) => k switch
+        {
+            PersonKind.Worker => onFoot ? 'w' : 'r',
+            PersonKind.Student => onFoot ? 's' : 'r',
+            PersonKind.AtHome => onFoot ? 'h' : 'r',
+            PersonKind.CommuterIn => 'c',
+            PersonKind.Through => onFoot ? 'c' : 't',
+            _ => onFoot ? 'h' : 'r',
         };
 
         /// <summary>

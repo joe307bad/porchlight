@@ -117,21 +117,22 @@ namespace Porchlight.Life
 
     public sealed class RoadNet
     {
-        /// <summary>Speed limits (tiles a second): 50 km/h and 30 km/h.</summary>
         /// <summary>The fastest a car turns (radians a second): sets how slowly it takes a tight bend in a lane.</summary>
-        public const double SWING = 1.2;
+        public const double SWING = 1.4;
         /// <summary>
-        /// How hard a driver corners at a junction (tiles a second squared): 0.32 g, the side friction AASHTO's Green
-        /// Book designs intersection curves for at 15 mph (a tile's about 4 m: 50 km/h is 3.5 tiles a second).
+        /// How hard a driver corners at a junction (tiles a second squared): 0.38 g, a little brisker than the 0.32 g
+        /// side friction AASHTO's Green Book designs intersection curves for at 15 mph (a game's town is smaller and
+        /// quicker than a real one; a tile's about 4 m: 55 km/h is 3.85 tiles a second).
         /// </summary>
-        public const double CORNERING = 0.32 * 9.81 / 3.97;
+        public const double CORNERING = 0.38 * 9.81 / 3.97;
         /// <summary>How far along a lane its bends are measured over (tiles: about a car's length).</summary>
         const double BEND = 1.2;
         /// <summary>A car's length, and the step down a lane, as its bends are measured (tiles).</summary>
         const double CAR = 1.1, STEP = 0.05;
         /// <summary>How far either side of a point a lane's way along is taken over (tiles).</summary>
         const double TANGENT = 0.6;
-        public const double MAIN_SPEED = 3.5, STREET_SPEED = 2.1;
+        /// <summary>Speed limits (tiles a second): 55 km/h and 33 km/h (a tenth over real towns' 50 and 30, which look slow at a game's scale; more, and a car stopping from full speed needs more road than a short lane gives it).</summary>
+        public const double MAIN_SPEED = 3.85, STREET_SPEED = 2.3;
         /// <summary>Round a corner at this share of the slower road's limit; a U-turn at this.</summary>
         public const double TURN_SHARE = 0.6, UTURN_SPEED = 0.6;
         /// <summary>How far either side of a junction a turn's curve starts (tiles).</summary>

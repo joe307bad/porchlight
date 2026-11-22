@@ -151,6 +151,16 @@ export class MapRenderer {
     this.life.set(key, life);
     this.lifeVersion++;
   }
+  /** The kinds of car and person not drawn (ENTITY_KINDS' ids: 'car:v', 'person:x', …). */
+  hidden = new Set<string>();
+  /** Whether a town's ith car or person is of a kind that's hidden (by its town's latest life). */
+  private off(key: string, kind: 'car' | 'person', i: number): boolean {
+    if (this.hidden.size === 0) return false;
+    const k = this.life.get(key)?.kinds;
+    if (!k) return false;
+    const ch = (kind === 'car' ? k.cars : k.people)[i];
+    return ch !== undefined && this.hidden.has(`${kind}:${ch}`);
+  }
   /** The building under the pointer, if its town's life is known: [town key, its index]. */
   hoverBuilding: { key: string; i: number } | null = null;
   private cam: Camera = { cx: 0, cy: 0, scale: 1 };
@@ -490,7 +500,7 @@ export class MapRenderer {
       for (const [kind, l, on] of [['car', r.cars, this.layers.cars], ['person', r.people, this.layers.people]] as const) {
         if (!on) continue;
         for (let i = 0; i < l.n; i++) {
-          if (!l.shown[i]) continue;
+          if (!l.shown[i] || this.off(r.meta.key, kind, i)) continue;
           const d = (l.x[i] - w.x) ** 2 + (l.y[i] - w.y) ** 2;
           if (d < best) {
             best = d;
@@ -536,7 +546,7 @@ export class MapRenderer {
       if (this.layers.cars) {
         const c = r.cars;
         for (let i = 0; i < c.n; i++) {
-          if (!c.shown[i]) continue;
+          if (!c.shown[i] || this.off(r.meta.key, 'car', i)) continue;
           const d = (c.x[i] - w.x) ** 2 + (c.y[i] - w.y) ** 2;
           if (d < best) {
             best = d;
@@ -547,7 +557,7 @@ export class MapRenderer {
       if (this.layers.people) {
         const c = r.people;
         for (let i = 0; i < c.n; i++) {
-          if (!c.shown[i]) continue;
+          if (!c.shown[i] || this.off(r.meta.key, 'person', i)) continue;
           const d = (c.x[i] - w.x) ** 2 + (c.y[i] - w.y) ** 2;
           if (d < best) {
             best = d;
@@ -807,10 +817,10 @@ export class MapRenderer {
     const ox = W / 2 - this.cam.cx * k;
     const oy = H / 2 - this.cam.cy * k;
     const size = (tiles: number, css: number) => Math.max(1, Math.round(Math.max(tiles * this.cam.scale, css) * this.dpr));
-    const plot = (l: Layer, n: number, s: number, near: number, color: (i: number) => number) => {
+    const plot = (key: string, kind: 'car' | 'person', l: Layer, n: number, s: number, near: number, color: (i: number) => number) => {
       const half = s >> 1;
       for (let i = 0; i < n; i++) {
-        if (!l.shown[i] || (near >= 0 && l.near[i] !== near)) continue;
+        if (!l.shown[i] || (near >= 0 && l.near[i] !== near) || this.off(key, kind, i)) continue;
         const X = ((l.x[i] * k + ox) | 0) - half;
         const Y = ((l.y[i] * k + oy) | 0) - half;
         if (X < 0 || Y < 0 || X + s > W || Y + s > H) continue;
@@ -832,12 +842,12 @@ export class MapRenderer {
       for (const room of this.world.order) {
         if (this.layers.people) {
           const c = bright ? PERSON_PX : PERSON_DIM_PX;
-          plot(room.people, room.people.n, sp, pass, () => c);
+          plot(room.meta.key, 'person', room.people, room.people.n, sp, pass, () => c);
         }
         if (this.layers.cars) {
           const ts = room.cars.ts;
           const colors = bright ? SPEED_PX : SPEED_DIM_PX;
-          plot(room.cars, room.cars.n, sc, pass, (i) => colors[speedBand(ts[i])]);
+          plot(room.meta.key, 'car', room.cars, room.cars.n, sc, pass, (i) => colors[speedBand(ts[i])]);
         }
       }
     }
@@ -889,11 +899,11 @@ export class MapRenderer {
     t.globalCompositeOperation = 'source-over';
     this.toCounty(t);
     const r = Math.max(0.35, 1.2 / this.cam.scale);
-    const dot = (l: Layer, color: string) => {
+    const dot = (key: string, kind: 'car' | 'person', l: Layer, color: string) => {
       t.fillStyle = color;
       t.beginPath();
       for (let i = 0; i < l.n; i++) {
-        if (!l.shown[i]) continue;
+        if (!l.shown[i] || this.off(key, kind, i)) continue;
         const x = l.x[i];
         const y = l.y[i];
         if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
@@ -902,8 +912,8 @@ export class MapRenderer {
       t.fill();
     };
     for (const room of this.world.order) {
-      if (this.layers.cars) dot(room.cars, 'rgba(56,189,248,0.5)');
-      if (this.layers.people) dot(room.people, 'rgba(233,228,255,0.35)');
+      if (this.layers.cars) dot(room.meta.key, 'car', room.cars, 'rgba(56,189,248,0.5)');
+      if (this.layers.people) dot(room.meta.key, 'person', room.people, 'rgba(233,228,255,0.35)');
     }
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.drawImage(this.trail, 0, 0);
@@ -919,6 +929,7 @@ export class MapRenderer {
         const l = room.people;
         for (let i = 0; i < l.n; i++) {
           if (dim && (l.near[i] === 1) !== (pass === 1)) continue;
+          if (this.off(room.meta.key, 'person', i)) continue;
           const x = l.x[i];
           const y = l.y[i];
           if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;
@@ -948,6 +959,7 @@ export class MapRenderer {
             const s = l.ts[i];
             if (s < lo || s >= hi) continue;
             if (dim && (l.near[i] === 1) !== (pass === 1)) continue;
+            if (this.off(room.meta.key, 'car', i)) continue;
             const x = l.x[i];
             const y = l.y[i];
             if (x < view.x0 || x > view.x1 || y < view.y0 || y > view.y1) continue;

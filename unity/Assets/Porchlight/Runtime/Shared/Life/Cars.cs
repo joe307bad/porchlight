@@ -186,9 +186,10 @@ namespace Porchlight.Life
         {
             if (c.route == null || c.step >= c.route.Count - 1 || c.s1 < SegLength(c.seg) - 1e-6) return 0;
             int next = c.route[c.step + 1];
-            if (c.seg >= Lanes) return Math.Min(SegSpeed(next), Stoppable(RoomOn(next)));
+            double ahead = Arrival(c, c.step + 1);
+            if (c.seg >= Lanes) return Math.Min(Math.Min(SegSpeed(next), Stoppable(RoomOn(next))), ahead);
             var m = net.movements[next - Lanes];
-            double beyond = Stoppable(m.length + RoomOn(m.to));
+            double beyond = Math.Min(Stoppable(m.length + RoomOn(m.to)), ahead);
             if (m.stops) return 0;
             var j = net.junctions[m.node];
             if (j.control == Control.Signal)
@@ -200,6 +201,37 @@ namespace Porchlight.Life
             // slows to stop rather than arriving at speed to be told to wait.
             if (Judge(c, m, j, out _, out _, out _, null, out _) != Verdict.Go) return 0;
             return Math.Min(m.speed, beyond);
+        }
+
+        /// <summary>How many of the segments on from where it's going onto a car looks at to judge how fast it can arrive.</summary>
+        const int LOOK_AHEAD = 4;
+
+        /// <summary>
+        /// The fastest a car can come onto its route's `k`th segment and still slow, braking at BRAKE, for what's on
+        /// past it: each segment's limit (a turn's swing), a stop sign, and where it parks. A short lane between a
+        /// junction and a stop sign, say: it comes off the junction slow enough to stop by the end of it, rather than
+        /// at full speed and braking hard. (Lights, and turns it's judged to wait for, it sees when it gets there.)
+        /// </summary>
+        double Arrival(Car c, int k)
+        {
+            double best = double.MaxValue, dist = 0;
+            for (int s = k; s < c.route.Count && s < k + LOOK_AHEAD; s++)
+            {
+                int seg = c.route[s];
+                best = Math.Min(best, Math.Sqrt(SegSpeed(seg) * SegSpeed(seg) + 2 * BRAKE * dist));
+                if (s == c.route.Count - 1)
+                {
+                    best = Math.Min(best, Math.Sqrt(2 * BRAKE * (dist + Math.Max(0, c.goal))));
+                    break;
+                }
+                dist += SegLength(seg);
+                if (seg < Lanes && net.movements[c.route[s + 1] - Lanes].stops)
+                {
+                    best = Math.Min(best, Math.Sqrt(2 * BRAKE * dist));
+                    break;
+                }
+            }
+            return best;
         }
 
         /// <summary>How far along `seg` a car coming onto it can go before the back of a car stopped (or stopping) on it.</summary>

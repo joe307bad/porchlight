@@ -63,6 +63,7 @@ static class LifeCheck
         yield return ("Manage's focus only looks: a morning watched closely comes out the same as one not", FocusOnlyLooks);
         yield return ("turns are named the driver's way: right turns are the tight ones", TurnNames);
         yield return ("vans on their rounds at midday: out, calling, and saying so", VansAtMidday);
+        yield return ("Manage's town table: everyone counted once, by who they are and where they are now", PopulationTable);
         yield return ("the morning rush travels smart: routes by the traffic, spots held, drivers let in, lights that change for a car", TravelsSmart);
         yield return ("no car drives through a player standing in a junction", JunctionPlayer);
         yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
@@ -581,6 +582,50 @@ static class LifeCheck
     }
 
     /// <summary>
+    /// Given a town at 10:00 and again at 03:00, when Manage asks for its population table, then each row's places add
+    /// up to its people; the rows add up to the town's people, its out (walking, driving and on the bus) to those on a
+    /// trip, and its off the map to those off it. At 10:00 workers and students are mostly at work or school; at 03:00
+    /// residents are all at home.
+    /// </summary>
+    static string PopulationTable(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var life = new TownLife(model, layout, zoning);
+        foreach (long at in new[] { TrafficDay.Morning + 2 * TownClock.HOUR, TrafficDay.Morning + 19 * TownClock.HOUR })
+        {
+            if (!life.Started) life.Start(at);
+            else life.RunUntil(at);
+            var rows = life.Population();
+            var cols = TownLife.POPULATION_COLUMNS;
+            long Col(object[] row, string c) => (long)row[1 + Array.IndexOf(cols, c)];
+            long Sum(string c) => rows.Sum(row => Col(row, c));
+            string when = TownClock.Format(at);
+            foreach (var row in rows)
+            {
+                long places = cols.Skip(1).Take(7).Sum(c => Col(row, c));
+                if (places != Col(row, "people")) return $"{when}: {row[0]}'s places add up to {places}, not its {Col(row, "people")} people";
+                if (Col(row, "ownCar") > Col(row, "people")) return $"{when}: more {row[0]} own a car than there are";
+            }
+            if (Sum("people") != life.people.Count) return $"{when}: the rows add up to {Sum("people")}, the town has {life.people.Count}";
+            long onTrip = life.people.Count(p => p.where == Where.OnTrip), off = life.people.Count(p => p.where == Where.OffMap);
+            if (Sum("walking") + Sum("driving") + Sum("onBus") != onTrip) return $"{when}: {Sum("walking") + Sum("driving") + Sum("onBus")} out in the table, {onTrip} on a trip";
+            if (Sum("offMap") != off) return $"{when}: {Sum("offMap")} off the map in the table, {off} off it";
+            var workers = rows.Where(row => (string)row[0] == "Worker" || (string)row[0] == "Student").ToList();
+            long residents = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through").Sum(row => Col(row, "people"));
+            if (at < TrafficDay.Morning + 12 * TownClock.HOUR)
+            {
+                long busy = workers.Sum(row => Col(row, "workOrSchool")), all = workers.Sum(row => Col(row, "people"));
+                if (all > 0 && busy < all / 2) return $"{when}: only {busy} of {all} workers and students at work or school";
+            }
+            else
+            {
+                long home = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through").Sum(row => Col(row, "home"));
+                if (home != residents) return $"{when}: {home} of {residents} residents at home";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Given a town's morning rush (07:30-09:30), then: the router's been told the lanes' hold-ups; drivers going to a
     /// building hold a kerb spot near its door, none more than RESERVE_REACH away; a driver waiting to pull out was let
     /// in; a light changed for a car waiting at red with nobody coming the other way (if the town has lights); and in a
@@ -705,7 +750,8 @@ static class LifeCheck
         var waited = new HashSet<int>();
         int L = life.net.lanes.Count;
         // Where each car on a lane into it was a second ago: one that hasn't moved since is waiting for them too
-        // (held short of the junction's mouth, where they stand in the way of the lane coming in).
+        // (held short of the junction's mouth, where they stand in the way of the lane coming in; or queued behind
+        // a car that was already on its turn when they stepped in, and has stopped short of them on it).
         var lastAt = new Dictionary<int, double>();
         for (int f = 0; f < 6000 && waited.Count < 3; f++)
         {
@@ -725,7 +771,7 @@ static class LifeCheck
                     else if (f % 10 == 0)
                     {
                         double front = life.Front(car);
-                        if (lastAt.TryGetValue(car.id, out double was) && Math.Abs(front - was) < 0.01 && car.state == CarState.Crossing) waited.Add(car.id);
+                        if (lastAt.TryGetValue(car.id, out double was) && Math.Abs(front - was) < 0.01 && (car.state == CarState.Crossing || car.state == CarState.Queued)) waited.Add(car.id);
                         lastAt[car.id] = front;
                     }
                 }

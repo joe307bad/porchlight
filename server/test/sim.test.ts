@@ -190,6 +190,20 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     const off = life.offMap.reduce((n, k) => n + k, 0);
     assert.equal(indoors + off + (life.summary.out as number), people, 'everyone indoors, off the map or out');
     for (const [b] of life.inside) assert.ok(b >= 0 && b < town.zoning!.buildings.length, `building ${b} is one of the town's`);
+    // Manage's town table: a row a kind of person, each counted once, by where they are now.
+    const table = life.summary.population as [string, ...number[]][];
+    assert.ok(table.length > 0, 'a population table');
+    assert.equal(table.reduce((n, r) => n + (r[1] as number), 0), people, 'its rows add up to the town');
+    for (const r of table) assert.equal((r.slice(2, 9) as number[]).reduce((n, k) => n + k, 0), r[1], `${r[0]}: home, work, elsewhere, walking, driving, bus and off the map add up`);
+    // What each record is, a letter each: as many as there are records, and a letter for every one drawn.
+    await until(pool, (t) => t[0].life?.kinds !== undefined);
+    const now = pool.town(key)!;
+    const kinds = now.life!.kinds!;
+    assert.equal(kinds.cars.length, now.cars.byteLength / RECORD, 'a letter a car record');
+    assert.ok(kinds.people.length >= now.people.byteLength / RECORD - 2, 'a letter a person record');
+    assert.match(kinds.cars, /^[-rctvbs]*$/);
+    assert.match(kinds.people, /^[-wshcx]*$/);
+    assert.ok(/[wshc]/.test(kinds.people) || /x/.test(kinds.people), 'some townsfolk of a kind');
     // Who's in the fullest building, and when each next goes out.
     const [fullest, n] = [...life.inside].sort((a, b) => b[1] - a[1])[0];
     const answer = (await pool.ask(key, 'building', fullest)) as { inside: { id: number; kind: string }[] } | null;

@@ -72,6 +72,8 @@ export interface TownLife {
   stops: [number, number][];
   /** The day's figures (TownLife.Summary). */
   summary: Record<string, unknown>;
+  /** What each of the latest tick's car and person records is: a letter each, '-' for an empty one (SimTown.Kinds). */
+  kinds?: { cars: string; people: string };
 }
 
 export interface SimPlayer {

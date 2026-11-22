@@ -15,6 +15,7 @@ import { World } from './world.ts';
 type Phase = { state: 'loading' } | { state: 'signedOut' } | { state: 'error'; why: string } | { state: 'ready'; who: Me; map: CountyMap };
 
 const LAYERS_KEY = 'porchlight.manage.traffic.layers';
+const HIDDEN_KEY = 'porchlight.manage.traffic.hidden';
 /** How often each town's life is asked for (ms). */
 const LIFE_MS = 5_000;
 /** How often the traffic lights in view are asked for (ms). */
@@ -34,6 +35,16 @@ function savedLayers(): Layers {
     return raw ? { ...DEFAULT_LAYERS, ...(JSON.parse(raw) as Partial<Layers>) } : DEFAULT_LAYERS;
   } catch {
     return DEFAULT_LAYERS;
+  }
+}
+
+/** The kinds of car and person hidden on the map, as last left. */
+function savedHidden(): Set<string> {
+  try {
+    const raw = localStorage.getItem(HIDDEN_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
   }
 }
 
@@ -104,6 +115,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   const [renderer, setRenderer] = useState<MapRenderer | null>(null);
   const [status, setStatus] = useState<FeedStatus>({ state: 'connecting' });
   const [layers, setLayers] = useState<Layers>(savedLayers);
+  const [hidden, setHidden] = useState<Set<string>>(savedHidden);
   const [selected, setSelected] = useState<string | null>(null);
   const [following, setFollowing] = useState<string | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
@@ -222,6 +234,16 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
 
   useEffect(() => {
     if (!renderer) return;
+    renderer.hidden = hidden;
+    try {
+      localStorage.setItem(HIDDEN_KEY, JSON.stringify([...hidden]));
+    } catch {
+      // No storage: not remembered.
+    }
+  }, [renderer, hidden]);
+
+  useEffect(() => {
+    if (!renderer) return;
     renderer.layers = layers;
     try {
       localStorage.setItem(LAYERS_KEY, JSON.stringify(layers));
@@ -266,6 +288,22 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
       renderer?.followFocus(true);
     },
     [renderer],
+  );
+
+  /** Focus on whoever's drawn in a town's car or person record now (from a kind's list), and follow them there. */
+  const focusSlot = useCallback(
+    (key: string, kind: 'car' | 'person', slot: number) => {
+      void focusOn(key, kind, 'slot', slot).then((a) => {
+        if (!isFocus(a)) {
+          setTarget(null);
+          setFocus(null);
+          setFocusNote(nobody(a));
+          return;
+        }
+        focusTo({ town: key, kind: a.kind, id: a.id });
+      });
+    },
+    [focusTo],
   );
 
   const followFocus = useCallback(
@@ -332,6 +370,9 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         renderer={renderer}
         layers={layers}
         onLayers={setLayers}
+        hidden={hidden}
+        onHidden={setHidden}
+        onFocusSlot={focusSlot}
         selected={selected}
         lives={lives}
         livesAsked={livesAsked}

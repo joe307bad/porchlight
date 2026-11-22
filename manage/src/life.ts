@@ -16,7 +16,39 @@ export interface TownLife {
   gates: [number, number][];
   stops: [number, number][];
   summary: LifeSummary;
+  /** What each of the tick's car and person records is: a letter each (ENTITY_KINDS), '-' for an empty one. */
+  kinds?: { cars: string; people: string };
 }
+
+/** The kinds of thing on the map: what each car and person record is (sim/src/SimTown.cs Kinds). */
+export const ENTITY_KINDS: { id: string; of: 'car' | 'person'; letter: string; label: string }[] = [
+  { id: 'car:r', of: 'car', letter: 'r', label: "Residents' cars" },
+  { id: 'car:c', of: 'car', letter: 'c', label: "Commuters' cars" },
+  { id: 'car:t', of: 'car', letter: 't', label: 'Through traffic' },
+  { id: 'car:v', of: 'car', letter: 'v', label: 'Vans on their rounds' },
+  { id: 'car:b', of: 'car', letter: 'b', label: 'Buses' },
+  { id: 'car:s', of: 'car', letter: 's', label: 'Boats' },
+  { id: 'person:w', of: 'person', letter: 'w', label: 'Workers' },
+  { id: 'person:s', of: 'person', letter: 's', label: 'Students' },
+  { id: 'person:h', of: 'person', letter: 'h', label: 'Out on errands' },
+  { id: 'person:c', of: 'person', letter: 'c', label: 'Commuters on foot' },
+  { id: 'person:x', of: 'person', letter: 'x', label: 'Wanderers' },
+];
+
+/** Each of a kind out now, across the towns: [town key, its place in the records]. */
+export function ofKind(lives: Map<string, TownLife>, kind: (typeof ENTITY_KINDS)[number]): [string, number][] {
+  const o: [string, number][] = [];
+  for (const [key, life] of lives) {
+    const s = kind.of === 'car' ? life.kinds?.cars : life.kinds?.people;
+    if (!s) continue;
+    for (let i = 0; i < s.length; i++) if (s[i] === kind.letter) o.push([key, i]);
+  }
+  return o;
+}
+
+/** A town's population table (Analytics.Population): a row a kind of person, then where they are now. */
+export const POPULATION_COLUMNS = ['People', 'Home', 'Work / school', 'Elsewhere', 'Walking', 'Driving', 'Bus', 'Off map', 'Own a car'] as const;
+export const POPULATION_KINDS: Record<string, string> = { Worker: 'Workers', Student: 'Students', AtHome: 'At home in the day', CommuterIn: 'Commuters', Through: 'Through traffic' };
 
 export interface LifeSummary {
   clock: string;
@@ -38,6 +70,8 @@ export interface LifeSummary {
   gridlockBroken: number;
   mainCrossings: number;
   hunts: number;
+  /** [kind, people, home, work or school, elsewhere, walking, driving, on the bus, off the map, own a car]. */
+  population?: [string, ...number[]][];
 }
 
 /** GET /mp/sim/building: who's inside, and when each goes out next. */

@@ -274,7 +274,48 @@ namespace Porchlight.Life
                 ["gaveUp"] = stats.gaveUp,
                 ["mainCrossings"] = stats.mainCrossings,
                 ["hunts"] = stats.hunts,
+                ["population"] = Population(),
             };
+        }
+
+        /// <summary>The columns of Population's rows, after the kind of person.</summary>
+        public static readonly string[] POPULATION_COLUMNS = { "people", "home", "workOrSchool", "elsewhere", "walking", "driving", "onBus", "offMap", "ownCar" };
+
+        /// <summary>
+        /// Who the town's people are and where they are now, for Manage's town table: a row a kind of person (its
+        /// name, then POPULATION_COLUMNS: how many, indoors at home, at work or school, indoors anywhere else, out on
+        /// foot, driving, on (or waiting for) the bus, off the map, and how many have a car).
+        /// </summary>
+        public List<object[]> Population()
+        {
+            var kinds = (PersonKind[])Enum.GetValues(typeof(PersonKind));
+            var rows = new long[kinds.Length, POPULATION_COLUMNS.Length];
+            foreach (var p in people)
+            {
+                int k = (int)p.kind, c;
+                if (p.where == Where.OffMap) c = 7;
+                else if (p.where == Where.OnTrip)
+                {
+                    var leg = p.trip != null && p.trip.leg >= 0 && p.trip.leg < p.trip.legs.Count ? p.trip.legs[p.trip.leg].kind : LegKind.Walk;
+                    c = leg == LegKind.Drive ? 5 : leg == LegKind.Wait || leg == LegKind.Ride ? 6 : 4;
+                }
+                else if (p.at.Same(p.home)) c = 1;
+                else if (p.at.Same(p.work)) c = 2;
+                else c = 3;
+                rows[k, 0]++;
+                rows[k, c]++;
+                if (p.hasCar) rows[k, 8]++;
+            }
+            var o = new List<object[]>();
+            for (int k = 0; k < kinds.Length; k++)
+            {
+                if (rows[k, 0] == 0) continue;
+                var row = new object[POPULATION_COLUMNS.Length + 1];
+                row[0] = kinds[k].ToString();
+                for (int c = 0; c < POPULATION_COLUMNS.Length; c++) row[c + 1] = rows[k, c];
+                o.Add(row);
+            }
+            return o;
         }
 
         double Mean(int mode) => stats.finishedBy[mode] == 0 ? 0 : Math.Round(stats.durationBy[mode] / (double)stats.finishedBy[mode] / 1000, 1);
