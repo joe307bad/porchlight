@@ -99,6 +99,11 @@ namespace Porchlight.Life
         public const double ACCEL = 0.6;
         /// <summary>Braking, tiles/s² (about 0.3 g: comfortable, well short of an emergency stop).</summary>
         public const double BRAKE = 0.75;
+        /// <summary>
+        /// Stopping for a light that's changed, tiles/s²: 3.4 m/s², the deceleration ITE's guidance times amber
+        /// lights for (firmer than BRAKE, still a driver's choice). A car coming up to a light keeps able to.
+        /// </summary>
+        const double AMBER = 3.4 / 3.97;
         /// <summary>A car that's sat at its interval's end longer than this (ms) is starting from rest.</summary>
         const long STILL_MS = 50;
 
@@ -230,6 +235,8 @@ namespace Porchlight.Life
                     best = Math.Min(best, Math.Sqrt(2 * BRAKE * dist));
                     break;
                 }
+                // A light ahead may be red by then: still able to stop for it, braking as firmly as for an amber.
+                if (seg < Lanes && net.movements[c.route[s + 1] - Lanes].signal) best = Math.Min(best, Math.Sqrt(2 * AMBER * dist));
             }
             return best;
         }
@@ -1212,6 +1219,8 @@ namespace Porchlight.Life
             }
             c.target = -1;
             c.huntFailed = false;
+            // It stays where it's parked, drawn, and its driver gets out and walks off from it.
+            ShowParked(c, true);
             if (c.owner >= 0) DriveDone(people[c.owner]);
         }
 

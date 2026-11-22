@@ -39,13 +39,125 @@ namespace Porchlight.Life
         /// <summary>Car `c`'s leaving the lane it's on: how long it took, over its time at the limit.</summary>
         void Measured(Car c)
         {
-            if (holdSum == null) return;
             var l = net.lanes[c.seg];
             double took = (Now - c.laneSince) / 1000.0 - Math.Max(0, l.Span - c.laneFrom) / l.speed;
+            // The hour's log counts the whole hold-up, a light's wait and all: it's what a driver sat through.
+            Logged(c.seg, Math.Max(0, took));
+            if (holdSum == null) return;
             // A signal's wait is counted by routes already (Router.SIGNAL_S).
             if (l.outs.Count > 0 && net.movements[l.outs[0]].signal) took -= Router.SIGNAL_S;
             holdSum[c.seg] += Math.Max(0, took);
             holdN[c.seg]++;
+        }
+
+        // --- The last day's hold-ups, an hour at a time (Manage's congestion slider) -------------
+
+        /// <summary>How many hours back the log of hold-ups goes (this one, and the 23 before it).</summary>
+        public const int HOURS_KEPT = 24;
+        /// <summary>Which hour (since the epoch) each of the log's slots holds (-1: none yet).</summary>
+        readonly long[] loggedHour = NewHours();
+        /// <summary>Each slot's cars that left each lane, and their hold-ups (seconds, summed).</summary>
+        int[][] loggedCars;
+        double[][] loggedHold;
+
+        static long[] NewHours()
+        {
+            var h = new long[HOURS_KEPT];
+            for (int i = 0; i < h.Length; i++) h[i] = -1;
+            return h;
+        }
+
+        /// <summary>A car's left `lane` held up `hold` seconds: into this hour's slot.</summary>
+        void Logged(int lane, double hold)
+        {
+            if (loggedCars == null)
+            {
+                loggedCars = new int[HOURS_KEPT][];
+                loggedHold = new double[HOURS_KEPT][];
+                for (int i = 0; i < HOURS_KEPT; i++)
+                {
+                    loggedCars[i] = new int[Lanes];
+                    loggedHold[i] = new double[Lanes];
+                }
+            }
+            long hour = Now / TownClock.HOUR;
+            int k = (int)(((hour % HOURS_KEPT) + HOURS_KEPT) % HOURS_KEPT);
+            if (loggedHour[k] != hour)
+            {
+                loggedHour[k] = hour;
+                Array.Clear(loggedCars[k], 0, Lanes);
+                Array.Clear(loggedHold[k], 0, Lanes);
+            }
+            loggedCars[k][lane]++;
+            loggedHold[k][lane] += hold;
+        }
+
+        /// <summary>The log's slot for the hour `ago` hours before this one, or -1 if nothing was logged then.</summary>
+        int LoggedSlot(int ago)
+        {
+            if (loggedCars == null || ago < 0 || ago >= HOURS_KEPT) return -1;
+            long hour = Now / TownClock.HOUR - ago;
+            int k = (int)(((hour % HOURS_KEPT) + HOURS_KEPT) % HOURS_KEPT);
+            return loggedHour[k] == hour ? k : -1;
+        }
+
+        /// <summary>One hour of the log: when it started, how many cars left a lane in it, and their hold-ups (seconds).</summary>
+        public struct HourHold
+        {
+            public long from;
+            public int cars;
+            public double hold;
+        }
+
+        /// <summary>The last HOURS_KEPT hours, oldest first (this one, so far, last).</summary>
+        public HourHold[] HoldsByHour()
+        {
+            var o = new HourHold[HOURS_KEPT];
+            long now = Now / TownClock.HOUR;
+            for (int i = 0; i < HOURS_KEPT; i++)
+            {
+                int ago = HOURS_KEPT - 1 - i;
+                o[i].from = (now - ago) * TownClock.HOUR;
+                int k = LoggedSlot(ago);
+                if (k < 0) continue;
+                for (int l = 0; l < Lanes; l++)
+                {
+                    o[i].cars += loggedCars[k][l];
+                    o[i].hold += loggedHold[k][l];
+                }
+            }
+            return o;
+        }
+
+        /// <summary>A road's hold-ups in an hour: both its lanes' cars, and their hold-ups (seconds, summed).</summary>
+        public struct RoadHold
+        {
+            public int road, cars;
+            public double hold;
+            public double Mean => cars == 0 ? 0 : hold / cars;
+        }
+
+        /// <summary>The `top` roads that held cars up longest in all in the hour `ago` hours before this one, worst first.</summary>
+        public List<RoadHold> MostHeldUp(int ago, int top)
+        {
+            var o = new List<RoadHold>();
+            int k = LoggedSlot(ago);
+            if (k < 0) return o;
+            var byRoad = new Dictionary<int, RoadHold>();
+            for (int l = 0; l < Lanes; l++)
+            {
+                if (loggedCars[k][l] == 0) continue;
+                int road = net.lanes[l].road;
+                byRoad.TryGetValue(road, out var r);
+                r.road = road;
+                r.cars += loggedCars[k][l];
+                r.hold += loggedHold[k][l];
+                byRoad[road] = r;
+            }
+            foreach (var r in byRoad.Values) if (r.hold > 0) o.Add(r);
+            o.Sort((a, b) => a.hold != b.hold ? b.hold.CompareTo(a.hold) : a.road.CompareTo(b.road));
+            if (o.Count > top) o.RemoveRange(top, o.Count - top);
+            return o;
         }
 
         /// <summary>Each minute: every few minutes the router's told the hold-ups; drivers held up think again.</summary>

@@ -500,10 +500,10 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
 - [ ] **IDM near the camera on the host** [T1][T2]. Keep its entry and exit
   times pinned to the server's queue schedule so the two never disagree.
   Use MOBIL only on multi-lane county highways [T7].
-- [x] **Speed limits by road class** (Main 3.85 tiles/s, about 55 km/h;
-  streets 2.3, about 33 km/h), slower on bends and turns (PR #19). Real
+- [x] **Speed limits by road class** (Main 4.3 tiles/s, about 61 km/h;
+  streets 2.6, about 37 km/h), slower on bends and turns (PR #19). Real
   towns' 50 and 30 km/h looked like crawling at a game's scale, so the
-  limits are a tenth over, and cars corner a little brisker (PR #18).
+  limits are a fifth over, and cars corner a little brisker (PR #18).
 - [ ] **Congestion-aware routing:** BPR edge costs from the last ~15 minutes
   of flow. Re-route a random ~10% of drivers each simulated day, which
   converges towards Wardrop equilibrium cheaply, as MATSim does [T14][T15][T21].

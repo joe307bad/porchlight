@@ -28,6 +28,7 @@ export const ENTITY_KINDS: { id: string; of: 'car' | 'person'; letter: string; l
   { id: 'car:v', of: 'car', letter: 'v', label: 'Vans on their rounds' },
   { id: 'car:b', of: 'car', letter: 'b', label: 'Buses' },
   { id: 'car:s', of: 'car', letter: 's', label: 'Boats' },
+  { id: 'car:p', of: 'car', letter: 'p', label: 'Parked cars' },
   { id: 'person:w', of: 'person', letter: 'w', label: 'Workers' },
   { id: 'person:s', of: 'person', letter: 's', label: 'Students' },
   { id: 'person:h', of: 'person', letter: 'h', label: 'Out on errands' },
@@ -305,4 +306,42 @@ export function lampColor(light: { stage: number; ends: number }, lampStage: num
   }
   if (lampStage !== stage) return 'red';
   return ends - now <= AMBER_MS ? 'amber' : 'green';
+}
+
+/** GET /mp/sim/congestion (sim's SimTown.Congestion): the last day's hold-ups an hour at a time, and the streets that held cars up most in the hour asked about. */
+export interface Congestion {
+  town: string;
+  /** Hours back from this one (0: this hour so far). */
+  ago: number;
+  /** The last 24 hours, oldest first: when each started (unix ms, and as hh:mm), cars that left a lane in it, and their hold-ups (s, in all). */
+  hours: { from: number; time: string; cars: number; hold: number }[];
+  /** The worst streets that hour, worst first: kind (0 main, 1 street), cars, hold-ups (s, in all and on average), centreline (town tiles: x, y, …). */
+  streets: CongestedStreet[];
+}
+
+export interface CongestedStreet {
+  road: number;
+  kind: number;
+  cars: number;
+  hold: number;
+  mean: number;
+  points: number[];
+}
+
+/** A hold-up in a few characters: "40 s", "12 min", "3.4 h". */
+export function heldText(seconds: number): string {
+  if (seconds < 90) return `${Math.round(seconds)} s`;
+  if (seconds < 90 * 60) return `${Math.round(seconds / 60)} min`;
+  return `${(seconds / 3600).toFixed(1)} h`;
+}
+
+/** Each hour's bar on the slider, 0–1 of the worst hour's hold-ups. */
+export function holdBars(hours: Congestion['hours']): number[] {
+  const most = Math.max(0, ...hours.map((h) => h.hold));
+  return hours.map((h) => (most > 0 ? h.hold / most : 0));
+}
+
+/** A street drawn as congested: as wide as its share of the worst one's hold-ups (1–6 px, before zoom). */
+export function congestionWidth(hold: number, worst: number): number {
+  return worst > 0 ? 1 + 5 * Math.min(1, hold / worst) : 1;
 }

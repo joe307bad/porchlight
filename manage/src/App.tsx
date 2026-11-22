@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { briefOn, buildingLife, county, focusOn, signalsOf, inDesktopApp, me, signInUrl, townLife, type CountyMap, type Me } from './api.ts';
-import { isFocus, type BuildingLife, type EntityFocus, type FocusAnswer, type FocusTarget, type TownLife } from './life.ts';
+import { isFocus, type BuildingLife, type CongestedStreet, type EntityFocus, type FocusAnswer, type FocusTarget, type TownLife } from './life.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
 import { backToApp, backToGame, embedded } from './embed.ts';
@@ -290,6 +290,16 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     [renderer],
   );
 
+  const congestion = useCallback((key: string | null, streets: CongestedStreet[] | null) => renderer?.setCongestion(key, streets), [renderer]);
+  const street = useCallback(
+    (key: string, points: number[]) => {
+      follow(null);
+      renderer?.fitStreet(key, points);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [renderer],
+  );
+
   /** Focus on whoever's drawn in a town's car or person record now (from a kind's list), and follow them there. */
   const focusSlot = useCallback(
     (key: string, kind: 'car' | 'person', slot: number) => {
@@ -390,6 +400,8 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
           follow(null);
           renderer?.fit(t.x0, t.y0, t.width, t.height);
         }}
+        onCongestion={congestion}
+        onStreet={street}
       />
     </div>
   );

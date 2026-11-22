@@ -77,7 +77,7 @@ namespace Porchlight.App
         static readonly HashSet<string> PASSED = new HashSet<string>
         {
             "/auth/me", "/mp/traffic/county", "/mp/traffic/feed",
-            "/mp/sim/life", "/mp/sim/building", "/mp/sim/focus", "/mp/sim/signals", "/mp/sim/where",
+            "/mp/sim/life", "/mp/sim/building", "/mp/sim/focus", "/mp/sim/signals", "/mp/sim/congestion", "/mp/sim/where",
         };
         /// <summary>What the page may tell the server (POST, from the page itself).</summary>
         const string FOCUS = "/mp/traffic/focus";

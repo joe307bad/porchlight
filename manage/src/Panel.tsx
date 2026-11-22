@@ -7,7 +7,7 @@
 // head opens them (KeyModal). Read from the World four times a second.
 
 import { useEffect, useRef, useState } from 'react';
-import { briefOn } from './api.ts';
+import { briefOn, congestionOf } from './api.ts';
 import type { CountyMap, Me } from './api.ts';
 import type { Feed, FeedStatus } from './feed.ts';
 import { ALL_WAY, LAMPS, PERSON, SPEEDS, STOP_SIGN, type Layers, type MapRenderer } from './render.ts';
@@ -20,9 +20,13 @@ import {
   POPULATION_KINDS,
   describeInside,
   figures,
+  heldText,
+  holdBars,
   ofKind,
   untilText,
   type BuildingLife,
+  type CongestedStreet,
+  type Congestion,
   type EntityFocus,
   type FocusTarget,
   type TownLife,
@@ -67,7 +71,14 @@ interface Props {
   onFocus: (t: FocusTarget) => void;
   /** Focus on whoever's drawn in a town's car or person record now (a kind's list). */
   onFocusSlot: (key: string, kind: 'car' | 'person', slot: number) => void;
+  /** A town's most congested streets to draw on the map, at the hour picked (null: none). */
+  onCongestion: (key: string | null, streets: CongestedStreet[] | null) => void;
+  /** Take the map to one of a town's streets. */
+  onStreet: (key: string, points: number[]) => void;
 }
+
+/** How often a town's congestion is asked for again while it's open (ms). */
+const CONGESTION_MS = 10_000;
 
 /** Each thing the map can show besides the cars and people: its checkbox's word, what it is in full, and its key (in the ⓘ). */
 const LAYERS: { key: keyof Layers; short: string; label: string; legend?: { color: string; label: string; shape?: 'dot' | 'ring' | 'stop' }[] }[] = [
@@ -101,7 +112,7 @@ const LAYERS: { key: keyof Layers; short: string; label: string; legend?: { colo
 ];
 
 /** What's open at the top of the panel when nothing's clicked on the map: a town's table, or a kind's list. */
-type Drill = { town: string } | { kind: string } | null;
+type Drill = { town: string } | { kind: string; town?: string } | null;
 
 export function Panel(p: Props) {
   const [, setTick] = useState(0);
@@ -122,7 +133,7 @@ export function Panel(p: Props) {
     else h.add(id);
     p.onHidden(h);
   };
-  const drilledTown = drill && 'town' in drill ? p.map.towns.find((t) => t.key === drill.town) : undefined;
+  const drilledTown = drill && !('kind' in drill) ? p.map.towns.find((t) => t.key === drill.town) : undefined;
   const drilledKind = drill && 'kind' in drill ? ENTITY_KINDS.find((k) => k.id === drill.kind) : undefined;
 
   return (
@@ -159,9 +170,26 @@ export function Panel(p: Props) {
           ) : p.building ? (
             <Building building={p.building} town={townName(p.building.town)} onClose={p.onCloseBuilding} onFocus={p.onFocus} />
           ) : drilledTown ? (
-            <TownView name={drilledTown.name} life={p.lives.get(drilledTown.key)} onClose={() => setDrill(null)} />
+            <TownView
+              name={drilledTown.name}
+              townKey={drilledTown.key}
+              life={p.lives.get(drilledTown.key)}
+              onKind={(kind) => setDrill({ kind, town: drilledTown.key })}
+              onCongestion={p.onCongestion}
+              onStreet={p.onStreet}
+              onClose={() => setDrill(null)}
+            />
           ) : drilledKind ? (
-            <KindList kind={drilledKind} lives={p.lives} townName={townName} onFocusSlot={p.onFocusSlot} onClose={() => setDrill(null)} />
+            <KindList
+              kind={drilledKind}
+              lives={p.lives}
+              town={drill && 'kind' in drill ? drill.town : undefined}
+              towns={p.map.towns}
+              onTown={(town) => setDrill({ kind: drilledKind.id, town })}
+              townName={townName}
+              onFocusSlot={p.onFocusSlot}
+              onClose={() => setDrill(null)}
+            />
           ) : null}
 
           <section aria-label="Towns">
@@ -200,7 +228,7 @@ export function Panel(p: Props) {
                   <li key={k.id} className={drilledKind?.id === k.id ? 'sel' : ''}>
                     <span className="row line">
                       <input type="checkbox" checked={!p.hidden.has(k.id)} onChange={() => toggle(k.id)} aria-label={`Show ${k.label.toLowerCase()}`} />
-                      <button className={`link name ${shown ? '' : 'muted'}`} onClick={() => setDrill(drilledKind?.id === k.id ? null : { kind: k.id })} title="List each of them out now">
+                      <button className={`link name ${shown ? '' : 'muted'}`} onClick={() => setDrill(drilledKind?.id === k.id ? null : { kind: k.id, town: drilledTown?.key })} title="List each of them out now">
                         {k.label}
                       </button>
                       <span className="figs">{n.toLocaleString()}</span>
@@ -297,7 +325,24 @@ export function townLines(world: World, key: string, life: TownLife | undefined)
 }
 
 /** A town drilled into: who its people are and where they are now, and its day so far, as tables. */
-function TownView({ name, life, onClose }: { name: string; life: TownLife | undefined; onClose: () => void }) {
+function TownView({
+  name,
+  townKey,
+  life,
+  onKind,
+  onCongestion,
+  onStreet,
+  onClose,
+}: {
+  name: string;
+  townKey: string;
+  life: TownLife | undefined;
+  onKind: (kind: string) => void;
+  onCongestion: Props['onCongestion'];
+  onStreet: Props['onStreet'];
+  onClose: () => void;
+}) {
+  const here = life ? new Map([[townKey, life]]) : new Map<string, TownLife>();
   const rows = life?.summary.population ?? [];
   const totals = POPULATION_COLUMNS.map((_, c) => rows.reduce((n, r) => n + (r[c + 1] as number), 0));
   const f = life ? figures(life) : null;
@@ -388,9 +433,98 @@ function TownView({ name, life, onClose }: { name: string; life: TownLife | unde
               </table>
             </div>
           )}
+          <CongestionView townKey={townKey} onCongestion={onCongestion} onStreet={onStreet} />
+          <ul className="list kinds" aria-label={`On the map in ${name}`}>
+            {ENTITY_KINDS.map((k) => {
+              const n = ofKind(here, k).length;
+              return (
+                <li key={k.id}>
+                  <button className="row line" onClick={() => onKind(k.id)} disabled={n === 0} title={`List ${name}'s ${k.label.toLowerCase()} out now`}>
+                    <span className="name">{k.label}</span>
+                    <span className="figs">{n.toLocaleString()}</span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * A town's congestion over the last day: a bar an hour (how long cars were held up in all), a slider to pick one,
+ * and that hour's worst streets, drawn red on the map and numbered; click one to go to it.
+ */
+function CongestionView({ townKey, onCongestion, onStreet }: { townKey: string; onCongestion: Props['onCongestion']; onStreet: Props['onStreet'] }) {
+  const [ago, setAgo] = useState(0);
+  const [c, setC] = useState<Congestion | null>(null);
+  useEffect(() => {
+    let live = true;
+    const ask = () => void congestionOf(townKey, ago).then((a) => live && setC(a));
+    ask();
+    const t = setInterval(ask, CONGESTION_MS);
+    return () => {
+      live = false;
+      clearInterval(t);
+    };
+  }, [townKey, ago]);
+  useEffect(() => {
+    onCongestion(c && c.ago === ago ? c.town : null, c && c.ago === ago ? c.streets : null);
+  }, [c, ago, onCongestion]);
+  useEffect(() => () => onCongestion(null, null), [onCongestion]);
+  if (!c) return null;
+  const bars = holdBars(c.hours);
+  const at = c.hours.length - 1 - ago;
+  const hour = c.hours[at];
+  const until = ago === 0 ? 'now' : c.hours[at + 1]?.time ?? '';
+  return (
+    <div className="congestion" aria-label="Congestion">
+      <h2 className="line">Congestion</h2>
+      <div className="bars" role="group" aria-label="Hold-ups each hour">
+        {bars.map((b, i) => (
+          <button
+            key={i}
+            className={`bar ${i === at ? 'on' : ''}`}
+            style={{ height: `${Math.max(2, Math.round(b * 28))}px` }}
+            onClick={() => setAgo(c.hours.length - 1 - i)}
+            title={`${c.hours[i].time}: ${heldText(c.hours[i].hold)} held up, ${c.hours[i].cars.toLocaleString()} cars`}
+            aria-label={`${c.hours[i].time}`}
+          />
+        ))}
+      </div>
+      <input
+        type="range"
+        className="hour-slider"
+        min={0}
+        max={c.hours.length - 1}
+        value={at}
+        onChange={(e) => setAgo(c.hours.length - 1 - Number(e.target.value))}
+        aria-label="Hour"
+        aria-valuetext={hour ? `${hour.time} to ${until}` : ''}
+      />
+      {hour && (
+        <p className="sub line">
+          {hour.time}–{until} · {heldText(hour.hold)} held up · {hour.cars.toLocaleString()} cars
+        </p>
+      )}
+      <ol className="list">
+        {c.streets.map((s, n) => (
+          <li key={s.road}>
+            <button className="row line" onClick={() => onStreet(townKey, s.points)} title={`${heldText(s.hold)} held up in all, ${heldText(s.mean)} a car`}>
+              <span className="name">
+                {n + 1}. {s.kind === 0 ? 'Main road' : 'Street'} {s.road}
+              </span>
+              <span className="figs">
+                {heldText(s.hold)} · {s.cars} cars
+              </span>
+            </button>
+          </li>
+        ))}
+        {c.streets.length === 0 && <li className="sub line">Nobody held up</li>}
+      </ol>
+    </div>
   );
 }
 
@@ -398,17 +532,25 @@ function TownView({ name, life, onClose }: { name: string; life: TownLife | unde
 function KindList({
   kind,
   lives,
+  town,
+  towns,
+  onTown,
   townName,
   onFocusSlot,
   onClose,
 }: {
   kind: Kind;
   lives: Map<string, TownLife>;
+  /** Only this town's, or every town's. */
+  town: string | undefined;
+  towns: CountyMap['towns'];
+  onTown: (town: string | undefined) => void;
   townName: (key: string) => string;
   onFocusSlot: (key: string, kind: 'car' | 'person', slot: number) => void;
   onClose: () => void;
 }) {
-  const all = ofKind(lives, kind);
+  const everywhere = ofKind(lives, kind);
+  const all = town ? everywhere.filter(([k]) => k === town) : everywhere;
   const listed = all.slice(0, LISTED);
   const [lines, setLines] = useState<Map<string, string>>(new Map());
   const asked = useRef(new Set<string>());
@@ -416,7 +558,7 @@ function KindList({
   useEffect(() => {
     asked.current.clear();
     setLines(new Map());
-  }, [kind.id]);
+  }, [kind.id, town]);
   useEffect(() => {
     for (const [k, i] of listed) {
       const id = `${k}|${i}`;
@@ -432,6 +574,16 @@ function KindList({
         <h2>
           {kind.label} · {all.length.toLocaleString()}
         </h2>
+        <select className="town-pick" value={town ?? ''} onChange={(e) => onTown(e.target.value || undefined)} aria-label="Which town">
+          <option value="">All towns</option>
+          {towns
+            .filter((t) => lives.has(t.key))
+            .map((t) => (
+              <option key={t.key} value={t.key}>
+                {t.name} ({everywhere.filter(([k]) => k === t.key).length})
+              </option>
+            ))}
+        </select>
         <button className="icon-btn" onClick={onClose} aria-label="Close">
           ✕
         </button>
@@ -442,7 +594,7 @@ function KindList({
           return (
             <li key={`${k}|${i}`}>
               <button className="row line" onClick={() => onFocusSlot(k, kind.of, i)} title={line ?? ''}>
-                <span className="figs">{townName(k)}</span>
+                {!town && <span className="figs">{townName(k)}</span>}
                 <span className="name">{line ?? '…'}</span>
               </button>
             </li>

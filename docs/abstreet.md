@@ -248,8 +248,8 @@ Speed limits come from `map_model/src/objects/road.rs:246-283`.
   - Keep the U-turn at dead ends as a movement from (road, dir) to
     (road, −dir).
 - **Speed by road kind** (city-research §1, §4):
-  - `Main` 55 km/h = 3.85 tiles/s (was 50 km/h = 3.5)
-  - `Street` 33 km/h = 2.3 tiles/s (was 30 km/h = 2.1)
+  - `Main` about 61 km/h = 4.3 tiles/s (was 50 km/h = 3.5)
+  - `Street` about 37 km/h = 2.6 tiles/s (was 30 km/h = 2.1)
   - turns at the lower of the two roads' limits
   - U-turns at today's `UTURN_SPEED` share
 - **Car lengths** from the catalog model's real size, or 1.1–1.6 tiles.

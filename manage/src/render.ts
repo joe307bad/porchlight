@@ -7,7 +7,7 @@
 import type { CountyMap } from './api.ts';
 import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
 import { ZONES, buildingIndexAt, describe } from './zoning.ts';
-import { focusPoint, indoorRadius, indoors, lampColor, type EntityFocus, type Signals, type TownLife } from './life.ts';
+import { congestionWidth, focusPoint, indoorRadius, indoors, lampColor, type CongestedStreet, type EntityFocus, type Signals, type TownLife } from './life.ts';
 
 export interface Layers {
   roads: boolean;
@@ -45,6 +45,8 @@ export const SPEEDS = [
 export const PERSON = '#e9e4ff';
 /** The focus's ring and its way ahead. */
 export const FOCUS = '#ffcf4a';
+/** The congestion slider's streets. */
+export const CONGESTED = '#ff4d4d';
 /** People indoors, drawn on their buildings. */
 export const INDOORS = '#f4f1e8';
 const PERSON_PX = pixel(PERSON, 0.9);
@@ -298,6 +300,29 @@ export class MapRenderer {
       this.signals.set(key, { s, skew: s.now - Date.now() });
       if (s.stops) this.stops.set(key, s.stops);
     }
+  }
+
+  /** The streets Manage's congestion slider picked out (one town's, at one hour), drawn red over the map. */
+  private congested: { key: string; streets: CongestedStreet[] } | null = null;
+
+  /** A town's most congested streets to draw (null: none). */
+  setCongestion(key: string | null, streets: CongestedStreet[] | null): void {
+    this.congested = key && streets && streets.length > 0 ? { key, streets } : null;
+  }
+
+  /** Fit the view round one of a town's streets (its centreline, town tiles: x, y, …). */
+  fitStreet(key: string, points: number[]): void {
+    const t = this.map.towns.find((x) => x.key === key);
+    if (!t || points.length < 2) return;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let i = 0; i + 1 < points.length; i += 2) {
+      x0 = Math.min(x0, points[i]);
+      x1 = Math.max(x1, points[i]);
+      y0 = Math.min(y0, points[i + 1]);
+      y1 = Math.max(y1, points[i + 1]);
+    }
+    const pad = 6;
+    this.fit(t.x0 + x0 - pad, t.y0 + y0 - pad, x1 - x0 + 2 * pad, y1 - y0 + 2 * pad, 64);
   }
 
   /** Whether a town's stop signs have been heard. */
@@ -730,10 +755,47 @@ export class MapRenderer {
       if (this.layers.people) this.drawPeople(ctx, view, px, dim);
       if (this.layers.cars) this.drawCars(ctx, view, px, dim);
     }
+    this.drawCongestion(ctx, px);
     this.drawStops(ctx, view, px);
     this.drawSignals(ctx, view, px);
     this.drawFocus(ctx, px);
     if (this.layers.players) this.drawPlayers(ctx, view, px);
+  }
+
+  /** The congestion slider's streets: red over the road, wider the more they held cars up; each numbered as listed. */
+  private drawCongestion(ctx: CanvasRenderingContext2D, px: number): void {
+    const c = this.congested;
+    if (!c) return;
+    const t = this.map.towns.find((x) => x.key === c.key);
+    if (!t) return;
+    const worst = c.streets[0].hold;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = CONGESTED;
+    ctx.globalAlpha = 0.8;
+    for (const s of c.streets) {
+      if (s.points.length < 4) continue;
+      ctx.lineWidth = Math.max(0.3, congestionWidth(s.hold, worst) * 2 * px);
+      ctx.beginPath();
+      ctx.moveTo(t.x0 + s.points[0], t.y0 + s.points[1]);
+      for (let i = 2; i + 1 < s.points.length; i += 2) ctx.lineTo(t.x0 + s.points[i], t.y0 + s.points[i + 1]);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    const r = Math.max(0.6, 7 * px);
+    ctx.font = `bold ${Math.max(0.8, 9 * px)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    c.streets.forEach((s, n) => {
+      const m = Math.floor(s.points.length / 4) * 2;
+      const x = t.x0 + s.points[m], y = t.y0 + s.points[m + 1];
+      ctx.fillStyle = CONGESTED;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(n + 1), x, y);
+    });
   }
 
   /** The focus: its way ahead, where it's going, and a ring round it where it is now. */

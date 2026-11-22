@@ -28,6 +28,9 @@
 //                            the town's traffic lights now: each signal's stage showing green
 //                            and when it ends, and a lamp at each stop line with the stage it
 //                            goes on; &stops=1: its stop signs too (docs/town-life.md §11; JSON)
+//   GET /mp/sim/congestion?town=<key>&ago=<hours back, 0–23>
+//                            the last day's hold-ups an hour at a time, and the streets that
+//                            held cars up most in that hour, each with its centreline (JSON)
 //
 // One timer serves every viewer: each tick packs each town once (its players,
 // and its cars and townsfolk exactly as the game packs them, WorldSync.cs: the
@@ -74,6 +77,7 @@ const LIFE = '/mp/sim/life';
 const BUILDING = '/mp/sim/building';
 const SIM_FOCUS = '/mp/sim/focus';
 const SIM_SIGNALS = '/mp/sim/signals';
+const SIM_CONGESTION = '/mp/sim/congestion';
 /** A town not looked at closely: its traffic once in this many ticks. */
 export const QUIET_EVERY = 10;
 
@@ -338,7 +342,7 @@ export class TrafficFeed {
   /** Handles the traffic routes; false if the request isn't one of them. */
   routes = async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const [path, query = ''] = (req.url ?? '/').split('?');
-    if (path !== COUNTY && path !== FEED && path !== FOCUS && path !== WHERE && path !== LIFE && path !== BUILDING && path !== SIM_FOCUS && path !== SIM_SIGNALS) return false;
+    if (path !== COUNTY && path !== FEED && path !== FOCUS && path !== WHERE && path !== LIFE && path !== BUILDING && path !== SIM_FOCUS && path !== SIM_SIGNALS && path !== SIM_CONGESTION) return false;
     const send = (status: number, body: unknown): true => {
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
@@ -433,6 +437,19 @@ export class TrafficFeed {
       const sim = this.sim?.running(key, Date.now()) ?? null;
       if (!sim) return send(404, { error: "The simulation isn't running that town." });
       const answer = await this.sim!.pool.ask(key, 'signals', q.get('stops') === '1' ? 1 : 0);
+      if (!answer) return send(404, { error: "The simulation isn't running that town." });
+      return send(200, { town: key, ...(answer as object) });
+    }
+
+    if (path === SIM_CONGESTION) {
+      const q = new URLSearchParams(query);
+      const key = q.get('town') ?? '';
+      const ago = Number(q.get('ago') ?? '0');
+      if (!Number.isInteger(ago) || ago < 0 || ago > 23) return send(400, { error: 'Say ago= hours back, 0 to 23.' });
+      if (!(await this.deps.persistence.mayEnter(account.id, key))) return send(403, { error: "That town is someone else's." });
+      const sim = this.sim?.running(key, Date.now()) ?? null;
+      if (!sim) return send(404, { error: "The simulation isn't running that town." });
+      const answer = await this.sim!.pool.ask(key, 'congestion', ago);
       if (!answer) return send(404, { error: "The simulation isn't running that town." });
       return send(200, { town: key, ...(answer as object) });
     }

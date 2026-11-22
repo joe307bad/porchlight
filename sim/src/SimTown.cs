@@ -174,7 +174,8 @@ namespace Porchlight.Sim
                 int id = i < life.carSlots.Length ? life.CarInSlot(i) : -1;
                 if (id < 0) { cars.Append(c.taken ? 'r' : '-'); continue; }
                 var car = life.cars[id];
-                if (car.bus >= 0) cars.Append('b');
+                if (car.seg < 0 && car.state == CarState.Parked) cars.Append('p');
+                else if (car.bus >= 0) cars.Append('b');
                 else if (car.van >= 0) cars.Append('v');
                 else if (car.owner >= 0) cars.Append(PersonLetter(life.people[car.owner].kind));
                 else cars.Append('r');
@@ -208,6 +209,35 @@ namespace Porchlight.Sim
         /// </summary>
         /// <summary>The town's traffic lights now (Manage's map).</summary>
         public object Signals(bool withStops) => traffic.life.Signals(withStops);
+
+        /// <summary>Manage's congestion slider: the streets that held up cars most.</summary>
+        public const int CONGESTED_STREETS = 12;
+
+        /// <summary>
+        /// The last day's hold-ups an hour at a time (oldest first, this hour last), and the streets that held cars up
+        /// most in all in the hour `ago` hours back: each with its kind, how many cars left it, their hold-ups
+        /// (seconds, in all and on average) and its centreline (the town's tiles), to draw.
+        /// </summary>
+        public object Congestion(int ago)
+        {
+            var life = traffic.life;
+            double R(double v) => Math.Round(v * 10) / 10;
+            var hours = life.HoldsByHour().Select(h => new { from = h.from, time = TownClock.Format(h.from), cars = h.cars, hold = R(h.hold) }).ToList();
+            var streets = life.MostHeldUp(ago, CONGESTED_STREETS).Select(r =>
+            {
+                var road = life.net.roads[r.road];
+                return new
+                {
+                    road = r.road,
+                    kind = (int)road.kind,
+                    cars = r.cars,
+                    hold = R(r.hold),
+                    mean = R(r.Mean),
+                    points = road.points.SelectMany(p => new[] { R(p.x), R(p.y) }).ToArray(),
+                };
+            }).ToList();
+            return new { ago, hours, streets };
+        }
 
         public object Focus(bool car, bool bySlot, int i, bool brief = false)
         {

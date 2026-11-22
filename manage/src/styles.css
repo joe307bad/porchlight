@@ -741,6 +741,16 @@ p {
   align-items: center;
   gap: 6px;
 }
+.town-pick {
+  max-width: 45%;
+  font: inherit;
+  font-size: 12px;
+  background: var(--panel, inherit);
+  color: inherit;
+  border: 1px solid var(--line, #8884);
+  border-radius: 4px;
+  padding: 1px 2px;
+}
 .focus-head h2 {
   flex: 1;
   min-width: 0;
@@ -868,4 +878,39 @@ p {
 }
 .key-list li {
   margin: 3px 0;
+}
+
+/* A town's congestion: a bar an hour over the last day, a slider under them, the hour's worst streets. */
+.congestion {
+  margin-top: 8px;
+}
+.congestion .bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 30px;
+}
+.congestion .bar {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 1px 1px 0 0;
+  background: var(--muted);
+  opacity: 0.5;
+  cursor: pointer;
+}
+.congestion .bar.on {
+  background: #ff4d4d;
+  opacity: 1;
+}
+.hour-slider {
+  width: 100%;
+  margin: 2px 0 0;
+  accent-color: #ff4d4d;
+}
+.congestion ol.list {
+  padding: 0;
+  margin: 4px 0 0;
+  list-style: none;
 }

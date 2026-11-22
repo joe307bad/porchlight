@@ -96,23 +96,29 @@ quarter of the road's width.
 - **The lane's direction is taken over 0.6 tiles either side** (`TANGENT`),
   not at a point. This way a lane rounds a tight corner of the road's line
   instead of looping back on itself on the inside of it.
-- **Speed limits:** 3.85 tiles/s on Main roads (about 55 km/h) and 2.3 on
-  streets (about 33 km/h). They were 3.5 and 2.1 (50 and 30 km/h, a real
+- **Speed limits:** 4.3 tiles/s on Main roads (about 61 km/h) and 2.6 on
+  streets (about 37 km/h). They were 3.5 and 2.1 (50 and 30 km/h, a real
   town's), but at a game's scale cars looked like they were crawling, so
-  the limits are a tenth over, cars corner at 0.38 g, and swing round a bend
+  the limits are a fifth over, cars corner at 0.38 g, and swing round a bend
   in a lane at up to 1.4 rad/s (`SWING`). Pulling away and braking stay as
-  gentle as they were. More than a tenth wasn't worth it: stopping from 60
-  km/h takes 12 tiles, and the smoothness check (§ below) started counting
-  cars braking hard on short lanes.
+  gentle as they were. Faster limits need cars to see what's ahead in time
+  (next bullet): before they did, a tenth over was as far as the
+  smoothness check (§ below) allowed, and 65/40 km/h passes it now but
+  with turns at its very limit.
 - **Looking ahead:** a car chooses how fast to come onto its next segment by
   looking up to four segments down its route (`Arrival`): no faster than it
   can still slow, braking at `BRAKE`, for each one's limit (a turn's swing),
-  a stop sign, and where it parks. Looking only at the next segment, a car
+  a stop sign, and where it parks; and no faster than it can still stop for
+  a traffic light that may be red by then, braking at `AMBER` (3.4 m/s²,
+  the rate ITE's guidance times amber lights for). Without that, at 61 km/h
+  a car came onto a short lane with a light at its end, learned there it
+  was red, and braked at 1.3 tiles/s². Looking only at the next segment, a car
   came off a junction at full speed onto a short lane with a stop sign at
   its end and had to brake three times as hard as it should; at the faster
   limits that was 1.1–1.5% of all moments driven, against a limit of 1%. With
-  the look-ahead it's 0.2–0.7%. (Lights, and turns it'll be judged to wait
-  for, it still only sees when it gets near: they change.)
+  the look-ahead it's 0.2–0.8%. (Whether a light's red, and turns it'll be
+  judged to wait for, it still only learns when it gets near: they change.
+  It's only ready for them.)
 - **Bendy lanes are slower.** A car's length is laid along the lane and
   stepped down it 0.05 tiles at a time. The lane is no faster than:
   - the speed at which that length swings round at `SWING` (1.2 rad/s);
@@ -372,7 +378,8 @@ signal keeps its own timing.
 ### Routing by the traffic
 
 `Life/Congestion.cs` (`liveRoutes`). As each car leaves a lane, the time it
-took over its time at the limit is noted (less a signal's 7.5 s, which the
+took over its time at the limit is noted (and logged by the hour for
+Manage's congestion slider, §11) (less a signal's 7.5 s, which the
 turn already counts). Every 5 minutes each lane's hold-up is worked out
 again: half the last figure, half what was measured since, counting the car
 waiting at the front too. The router is told, and its trees are made again
@@ -625,8 +632,14 @@ The game draws a fixed set of **slots**, not every agent:
   road at once.
 - **Person slots:** `clamp(ceil(people × 0.06), 16, 1200)`.
 
-A car takes a slot when it comes out onto the road, and gives it back when
-it parks. A walker takes one when they step outside, and gives it back at
+A car takes a slot when it comes out onto the road. When it parks in a
+spot it **keeps it**, drawn standing there, so its driver gets out and
+walks off from it, and later walks up to it and gets in (a driver setting
+off for a car that's lost its slot gets one back for it). A parked car's
+slot is the first given up: a car coming out onto the road with no slot
+free takes the one of the car parked longest. A car parked off the map,
+or put somewhere new at once (gridlock, a gate), gives its slot back. A
+player can take a parked car too; its spot is freed. A walker takes one when they step outside, and gives it back at
 the door. An empty slot is **hidden**. Each slot keeps one car model or one
 walker look for good, so nothing about a slot changes but where it is and
 whether it's shown. `traffic-day` fails if more are ever out than there are
@@ -711,6 +724,7 @@ serves:
 | --- | --- |
 | `GET /mp/sim/life?town=<key>` | The town's clock, who's indoors where, who's off the map at each gate, the day's figures (with the population table), and what each car and person record is (`kinds`). |
 | `GET /mp/sim/building?town=<key>&i=<n>` | Who's in that building, and when each next goes out. |
+| `GET /mp/sim/congestion?town=<key>&ago=<0–23>` | The last 24 hours' hold-ups, oldest first (`from`, `time`, `cars`, `hold` in seconds), and the 12 streets that held cars up most in all in the hour `ago` hours back: each one's `road`, `kind`, `cars`, `hold`, `mean` and `points` (its centreline, the town's tiles). |
 | `GET /mp/sim/signals?town=<key>[&stops=1]` | The town's traffic lights now: each signal's stage showing green and when it ends (`ends`, town ms), and a lamp on the kerb by each stop line with the stage it goes on. With `&stops=1`, its stop signs too: x, y, and 1 if all-way. |
 | `GET /mp/sim/where?town=<key>&kind=car\|person&i=<n>` | As before, plus whether the slot is empty, and who's in it and what they're doing (the agent's state, trip and legs). |
 
@@ -738,13 +752,41 @@ is, and (if so) why there's no traffic and how to start it. Top to bottom:
      at work or school, elsewhere, walking, driving, on the bus, off the
      map. The last column is how many own a car;
    - today: each mode's share of trips and mean trip time, trips made and
-     failed, kerb spots taken, and the busiest hour.
-3. **On the map:** the eleven kinds of thing the map shows, a line each
+     failed, kerb spots taken, and the busiest hour;
+   - **congestion** (below): a bar for each of the last 24 hours, a slider
+     to pick one, and that hour's worst streets;
+   - the kinds out in that town now, a line each: clicking one lists that
+     town's (its workers, its buses).
+3. **On the map:** the twelve kinds of thing the map shows, a line each
    with a box to show or hide it, and how many are out now. Clicking its
    name lists each one out (up to 40, a line each in the simulation's
-   words); click one to focus on it and follow it.
+   words), in every town, or in one picked from the list's header (the
+   town open, if one is); click one to focus on it and follow it.
 4. **Show:** the other layers, two checkboxes a row.
 5. **Playing,** only when someone is: click to follow them.
+
+**Congestion.** To see where the town's traffic jams, and when, a town's
+tables end with its last day of hold-ups (`GET /mp/sim/congestion`, asked
+again every 10 s while it's open):
+
+- a bar for each of the last 24 hours (this one so far on the right), as
+  tall as that hour's hold-ups in all against the worst hour's;
+- a slider under them (or click a bar) picks an hour: its times, how long
+  cars were held up in all, and how many left a lane;
+- that hour's 12 worst streets, worst first: the road's kind and number,
+  its hold-ups in all, and the cars. They're drawn on the map in red,
+  wider the worse, each with its number at its middle. Clicking one takes
+  the map to it.
+
+A hold-up is a car's time over a lane less its time at the limit, as
+routing measures it (§4, Routing by the traffic), but with the whole wait
+at a light counted: it's what the driver sat through. The town's life
+keeps it an hour at a time for 24 hours (`TownLife.HoldsByHour`,
+`MostHeldUp`): each lane's cars and their hold-ups, in a ring of 24 slots
+by the hour since the epoch, a slot cleared when its hour comes round
+again. A road's figure is its two lanes' together. Only cars that have
+left a lane are counted, so a queue nobody's got out of yet shows when
+they do. The log starts with the town's life: hours before it are empty.
 
 **The kinds.** Every car and person record has a kind (`SimTown.Kinds`,
 sent with the town's life as two strings, a letter a record, `-` for an
@@ -758,9 +800,10 @@ empty one):
 | `v` | vans on their rounds (deliveries, trades, the post, taxis) | `c` | commuters walking to and from their cars |
 | `b` | buses | `x` | wanderers (strolling, with no day of their own) |
 | `s` | boats | | |
+| `p` | parked cars | | |
 
-A car's kind comes from what's in its slot: a bus, a van, or a person's
-car by its owner's kind. People's records start with the wanderers, then
+A car's kind comes from what's in its slot: parked, a bus, a van, or a
+person's car by its owner's kind. People's records start with the wanderers, then
 the life's person slots, then drivers put out of cars a player took
 (counted at home in the day). Hidden kinds aren't drawn, hovered, picked
 or left as trails; they're remembered in the browser, like the layers.
@@ -843,7 +886,8 @@ starts where that's known:
 
 **The way ahead** is drawn on the map from where it is: the car's lanes
 and turns to where it'll stop, or the walker's pieces of sidewalk and
-crossings. A ring marks the focus, dashed when it isn't out (indoors, or
+crossings, from as far along the one they're on as they've walked (not
+from its start, back where they came from). A ring marks the focus, dashed when it isn't out (indoors, or
 parked), and a cross marks where it's going. **Follow** keeps it in the
 middle of the map.
 
@@ -940,7 +984,8 @@ given/when/then:
   between frames, and almost none stall on a turn. With cars at one speed
   per segment (as before), about 4% are harsh (7% on turns) and cars jump.
   All four towns pass. Run one scenario alone with
-  `Checks life server/towns Smooth`.
+  `Checks life server/towns "drive smoothly"` (a scenario's name has the
+  last argument in).
 - **A corner on the wire.** Given a car going round a curve (1.2 tiles
   radius, 1.3 tiles/s) sent 10 times a second and drawn at 60, then it's
   drawn within 0.02 tiles of the curve, facing within 2° of it, and its
@@ -952,6 +997,15 @@ given/when/then:
 - **A player in a junction.** Given a player in the middle of the busiest
   junction through the rush, then no car on a turn there reaches them,
   cars do wait, and the waiting cars go once the player leaves.
+- **Parked cars stay.** Given the morning rush, when a car parks in a spot,
+  then it's drawn standing in it for as long as it keeps its slot, and no
+  car vanishes as it parks; when a driver walks out to their parked car,
+  it's there (every moment, in all four towns).
+- **Congestion by the hour.** Given the rush run on half an hour, when
+  Manage asks for the last day's congestion, then there are 24 hours an
+  hour apart, the last this one; this hour's streets come worst first and
+  add up to the hour's hold-ups; and the hours before the town started are
+  empty.
 - **A whole day.** Given a town's whole day, then:
   - no car starts a turn on red;
   - no two parked cars share a spot;

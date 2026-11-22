@@ -127,6 +127,7 @@ namespace Porchlight.Life
                 at = Door(p.at);
                 drawn = "none";
             }
+            o["carSlot"] = c != null && (c.seg >= 0 || ParkedShown(c)) ? c.slot : -1;
             o["at"] = new[] { Round(at.x), Round(at.y) };
             o["drawn"] = drawn;
             o["slot"] = slot;
@@ -210,11 +211,11 @@ namespace Porchlight.Life
                 ["bus"] = c.bus,
                 ["van"] = c.van,
                 ["state"] = c.state.ToString(),
-                ["slot"] = c.seg >= 0 || c.bus >= 0 ? c.slot : -1,
+                ["slot"] = c.seg >= 0 || c.bus >= 0 || ParkedShown(c) ? c.slot : -1,
             };
             var at = c.seg >= 0 ? CarPoint(c).at : c.spot >= 0 ? net.spots[c.spot].at : c.offMap ? GateNear(c) : Door(Place.Building(c.parkedBy >= 0 ? c.parkedBy : c.dest.id));
             o["at"] = new[] { Round(at.x), Round(at.y) };
-            o["drawn"] = c.seg >= 0 && c.slot >= 0 ? "car" : "none";
+            o["drawn"] = (c.seg >= 0 || ParkedShown(c)) && c.slot >= 0 ? "car" : "none";
             var tree = new List<Why>();
             var queue = new List<Dictionary<string, object>>();
             var path = new List<Vec2>();
@@ -631,6 +632,9 @@ namespace Porchlight.Life
 
         // --- The way ahead ------------------------------------------------------------------------
 
+        /// <summary>Parked in a spot and drawn there.</summary>
+        bool ParkedShown(Car c) => c.seg < 0 && c.spot >= 0 && !c.offMap && c.slot >= 0;
+
         void CarPath(Car c, List<Vec2> path)
         {
             if (c.route == null) return;
@@ -653,10 +657,13 @@ namespace Porchlight.Life
         void WalkPath(Person p, List<Vec2> path)
         {
             path.Add(PersonPoint(p).at);
+            // How far along the piece they're on they've walked: the way ahead goes on from there, not from its start.
+            double done = p.piece >= 0 && p.w0 >= 0 ? (Now - p.w0) / 1000.0 * p.wSpeed : 0;
             for (int k = Math.Max(0, p.piece); k < p.walk.Count && path.Count < FOCUS_POINTS; k++)
             {
-                var pts = p.walk[k].points;
-                for (int i = k == p.piece ? 1 : 0; i < pts.Count && path.Count < FOCUS_POINTS; i++) path.Add(pts[i]);
+                var piece = p.walk[k];
+                for (int i = 0; i < piece.points.Count && path.Count < FOCUS_POINTS; i++)
+                    if (k != p.piece || piece.at[i] > done) path.Add(piece.points[i]);
             }
         }
 

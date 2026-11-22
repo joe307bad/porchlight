@@ -201,7 +201,7 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     const kinds = now.life!.kinds!;
     assert.equal(kinds.cars.length, now.cars.byteLength / RECORD, 'a letter a car record');
     assert.ok(kinds.people.length >= now.people.byteLength / RECORD - 2, 'a letter a person record');
-    assert.match(kinds.cars, /^[-rctvbs]*$/);
+    assert.match(kinds.cars, /^[-rctvbsp]*$/);
     assert.match(kinds.people, /^[-wshcx]*$/);
     assert.ok(/[wshc]/.test(kinds.people) || /x/.test(kinds.people), 'some townsfolk of a kind');
     // Who's in the fullest building, and when each next goes out.
@@ -325,6 +325,24 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
       assert.ok(new Set(l.lamps.map((p) => p[2])).size === 2, 'some ways go on each stage');
     }
     assert.equal((signals as { stops?: unknown }).stops, undefined, 'stop signs only when asked');
+    // Manage's congestion slider: the last 24 hours, oldest first, this one last; this hour's worst streets worst
+    // first, each with its centreline to draw.
+    const jam = (await pool.ask(key, 'congestion', 0)) as {
+      ago: number;
+      hours: { from: number; time: string; cars: number; hold: number }[];
+      streets: { road: number; kind: number; cars: number; hold: number; mean: number; points: number[] }[];
+    };
+    assert.equal(jam.ago, 0);
+    assert.equal(jam.hours.length, 24);
+    for (let i = 1; i < 24; i++) assert.equal(jam.hours[i].from - jam.hours[i - 1].from, 3_600_000, 'an hour apart');
+    assert.match(jam.hours[23].time, /^\d\d:00$/);
+    assert.ok(jam.streets.length <= 12, 'at most a dozen streets');
+    for (let i = 1; i < jam.streets.length; i++) assert.ok(jam.streets[i].hold <= jam.streets[i - 1].hold, 'worst first');
+    for (const st of jam.streets) {
+      assert.ok(st.cars > 0 && st.hold > 0 && st.points.length >= 4 && st.points.length % 2 === 0, 'a street that held cars up, and its line');
+      assert.ok(st.kind === 0 || st.kind === 1, 'a road cars drive');
+    }
+    assert.ok(jam.streets.reduce((n, st) => n + st.hold, 0) <= jam.hours[23].hold + 1, "no more than the hour's hold-ups");
     // The stop signs, asked for once: one on the kerb by each lane that stops, all-way or not.
     const withStops = (await pool.ask(key, 'signals', 1)) as { stops: number[][] };
     assert.ok(withStops.stops.length > 0, 'the town has stop signs');

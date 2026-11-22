@@ -64,6 +64,8 @@ static class LifeCheck
         yield return ("turns are named the driver's way: right turns are the tight ones", TurnNames);
         yield return ("vans on their rounds at midday: out, calling, and saying so", VansAtMidday);
         yield return ("Manage's town table: everyone counted once, by who they are and where they are now", PopulationTable);
+        yield return ("a parked car stays where it's parked: its driver gets out and walks off from it, and walks back up to it", ParkedStays);
+        yield return ("Manage's congestion slider: each hour's hold-ups, and its worst streets worst first", CongestionByHour);
         yield return ("the morning rush travels smart: routes by the traffic, spots held, drivers let in, lights that change for a car", TravelsSmart);
         yield return ("no car drives through a player standing in a junction", JunctionPlayer);
         yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
@@ -413,7 +415,8 @@ static class LifeCheck
                 if (nose > front + 1.5 - 0.2) return $"car {who} at {nose:0.00} reached the player at {front + 1.5:0.00}";
                 if (c.speed > 0.05) return $"car {who} still going at {c.speed:0.00} tiles a second";
                 for (int f = 0; f < 50; f++) t.Update(0.1, null);
-                if (car.seg == lane.id && life.Front(car) <= nose + 1e-6 && car.state != CarState.Queued && car.state != CarState.Waiting) return $"car {who} didn't go again ({car.state})";
+                // (Or it's stopped where it was going anyway: in a queue, at the junction, or pulling into its spot.)
+                if (car.seg == lane.id && life.Front(car) <= nose + 1e-6 && car.state != CarState.Queued && car.state != CarState.Waiting && car.state != CarState.Parking) return $"car {who} didn't go again ({car.state})";
                 return null;
             }
         }
@@ -578,6 +581,88 @@ static class LifeCheck
         life.RunUntil(life.Now + TownClock.HOUR);
         int moved = out_.Count(v => v.seg >= 0 && v.dest.id != calls[v.id]);
         if (moved < out_.Count / 2) return $"only {moved} of {out_.Count} vans on to another call an hour on";
+        return null;
+    }
+
+    /// <summary>
+    /// Given the morning rush, when cars park in a spot, then each is drawn standing in it, facing along its lane, for
+    /// as long as it keeps its slot (it gives it up only to a car coming out on the road with none free); and when a
+    /// driver walks out to their parked car, it's drawn there as they walk up to it.
+    /// </summary>
+    static string ParkedStays(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var life = new TownLife(model, layout, zoning);
+        life.Start(TrafficDay.Morning);
+        var wasOnRoad = new bool[life.cars.Count];
+        int parkedShown = 0, parkedHidden = 0, walksUp = 0, walksUpShown = 0;
+        for (int f = 0; f < 6000; f++)
+        {
+            life.RunUntil(life.Now + 100);
+            life.Draw();
+            for (int i = 0; i < life.carSlots.Length; i++)
+            {
+                var pose = life.carSlots[i];
+                if (!pose.shown) continue;
+                var c = life.cars[pose.who];
+                if (c.seg >= 0) continue;
+                if (c.spot < 0) return $"car {c.id} drawn off the road with no spot to stand in";
+                var spot = life.net.spots[c.spot];
+                if (Geo.Dist(new Vec2(pose.x, pose.y), spot.at) > 1e-6) return $"car {c.id} drawn {Geo.Dist(new Vec2(pose.x, pose.y), spot.at):0.00} tiles from its spot";
+            }
+            for (int id = 0; id < life.cars.Count && id < wasOnRoad.Length; id++)
+            {
+                var c = life.cars[id];
+                bool onRoad = c.seg >= 0;
+                // Just parked in a spot: still drawn (unless a car coming out on the road took its slot this moment).
+                if (wasOnRoad[id] && !onRoad && c.spot >= 0 && c.state == CarState.Parked && c.bus < 0 && c.van < 0)
+                {
+                    if (c.slot >= 0 && life.carSlots[c.slot].shown) parkedShown++;
+                    else parkedHidden++;
+                }
+                wasOnRoad[id] = onRoad;
+            }
+            foreach (var p in life.people)
+            {
+                var t = p.trip;
+                if (t == null || t.leg < 0 || t.leg + 1 >= t.legs.Count || t.legs[t.leg].kind != LegKind.Walk || t.legs[t.leg + 1].kind != LegKind.Drive) continue;
+                if (p.car < 0 || life.cars[p.car].spot < 0 || life.cars[p.car].seg >= 0) continue;
+                walksUp++;
+                var car = life.cars[p.car];
+                if (car.slot >= 0 && life.carSlots[car.slot].shown) walksUpShown++;
+            }
+        }
+        Console.WriteLine($"     parked: {parkedShown} cars parked and stayed drawn, {parkedHidden} not; {walksUpShown} of {walksUp} moments walking up to a parked car it was there");
+        if (parkedShown == 0) return "no car parked and stayed drawn";
+        if (parkedHidden > parkedShown / 10) return $"{parkedHidden} cars vanished as they parked (and {parkedShown} stayed)";
+        if (walksUp == 0) return "nobody walked out to a parked car";
+        if (walksUpShown < walksUp * 0.95) return $"a driver walked up to a car that wasn't there {walksUp - walksUpShown} times of {walksUp}";
+        return null;
+    }
+
+    /// <summary>
+    /// Given the morning rush run on, when Manage asks for the last day's congestion, then there are 24 hours, oldest
+    /// first, a whole hour apart, the last this one; this hour's streets come worst first, held cars up for a time and
+    /// add up to the hour's hold-ups in all; and an hour before the town started has none.
+    /// </summary>
+    static string CongestionByHour(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var life = new TownLife(model, layout, zoning);
+        life.Start(TrafficDay.Morning);
+        life.RunUntil(TrafficDay.Morning + 30 * TownClock.MINUTE);
+        var hours = life.HoldsByHour();
+        if (hours.Length != TownLife.HOURS_KEPT) return $"{hours.Length} hours, not {TownLife.HOURS_KEPT}";
+        for (int i = 1; i < hours.Length; i++) if (hours[i].from - hours[i - 1].from != TownClock.HOUR) return $"hour {i} isn't an hour after the one before";
+        if (life.Now - hours[hours.Length - 1].from >= TownClock.HOUR || life.Now < hours[hours.Length - 1].from) return "the last hour isn't this one";
+        var now = hours[hours.Length - 1];
+        if (now.cars == 0) return "no cars counted leaving a lane this hour, in the rush";
+        var all = life.MostHeldUp(0, int.MaxValue);
+        if (all.Count == 0) return "no street held anyone up, in the rush";
+        for (int i = 1; i < all.Count; i++) if (all[i].hold > all[i - 1].hold) return "the streets aren't worst first";
+        double sum = all.Sum(r => r.hold);
+        if (Math.Abs(sum - now.hold) > 1e-6 * Math.Max(1, now.hold)) return $"the streets' hold-ups add up to {sum:0.0} s, the hour's are {now.hold:0.0} s";
+        if (life.MostHeldUp(0, 5).Count > 5) return "more than the 5 streets asked for";
+        if (life.MostHeldUp(TownLife.HOURS_KEPT - 1, 5).Count != 0 || hours[0].cars != 0) return "an hour before the town started has hold-ups";
+        Console.WriteLine($"     congestion: this hour {now.cars} cars left a lane, {now.hold / 60:0} min held up in all; the worst street {all[0].hold / 60:0.0} min ({all[0].cars} cars)");
         return null;
     }
 

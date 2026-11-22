@@ -282,7 +282,12 @@ export class SimPool {
    * focus on a car or person (its decision tree and queue; 'brief-…': just a line, for the map's hover), found by
    * where it's drawn (`by` 'slot') or who it is ('id'). Null if there's none or no answer.
    */
-  ask(key: string, kind: 'car' | 'person' | 'building' | 'focus-car' | 'focus-person' | 'brief-car' | 'brief-person' | 'signals', i: number, by?: 'slot' | 'id'): Promise<unknown> {
+  ask(
+    key: string,
+    kind: 'car' | 'person' | 'building' | 'focus-car' | 'focus-person' | 'brief-car' | 'brief-person' | 'signals' | 'congestion',
+    i: number,
+    by?: 'slot' | 'id',
+  ): Promise<unknown> {
     const town = this.byKey.get(key);
     if (!town || !town.ready) return Promise.resolve(null);
     const ask = this.nextAsk++;

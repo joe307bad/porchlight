@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ENTITY_KINDS, POPULATION_COLUMNS, describeInside, figures, indoorRadius, indoors, ofKind, type TownLife } from '../src/life.ts';
+import { ENTITY_KINDS, POPULATION_COLUMNS, congestionWidth, describeInside, figures, heldText, holdBars, indoorRadius, indoors, ofKind, type TownLife } from '../src/life.ts';
 import { HIDDEN, RECORD, readRecord } from '../src/protocol.ts';
 import { buildingIndexAt } from '../src/zoning.ts';
 
@@ -118,11 +118,23 @@ test('given what each record is in two towns, then a kind lists each of its own 
   assert.deepEqual(ofKind(new Map([['c', life]]), vans), []);
 });
 
-test('the kinds Manage shows are the eleven the simulation sends: six of vehicle, five on foot', () => {
-  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').length, 6);
+test('the kinds Manage shows are the twelve the simulation sends: seven of vehicle, five on foot', () => {
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').length, 7);
   assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').length, 5);
-  assert.equal(new Set(ENTITY_KINDS.map((k) => k.id)).size, 11);
-  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').map((k) => k.letter).join(''), 'rctvbs');
+  assert.equal(new Set(ENTITY_KINDS.map((k) => k.id)).size, 12);
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').map((k) => k.letter).join(''), 'rctvbsp');
   assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').map((k) => k.letter).join(''), 'wshcx');
   assert.equal(POPULATION_COLUMNS.length, 9, "the town table's columns: Analytics.POPULATION_COLUMNS");
+});
+
+test('the congestion slider: hold-ups in a few characters, each hour a bar against the worst, streets as wide as theirs', () => {
+  assert.equal(heldText(40), '40 s');
+  assert.equal(heldText(12 * 60), '12 min');
+  assert.equal(heldText(3.4 * 3600), '3.4 h');
+  const hours = [0, 30, 120, 60].map((hold, i) => ({ from: i * 3_600_000, time: `0${i}:00`, cars: hold, hold }));
+  assert.deepEqual(holdBars(hours), [0, 0.25, 1, 0.5]);
+  assert.deepEqual(holdBars(hours.map((h) => ({ ...h, hold: 0 }))), [0, 0, 0, 0], 'a quiet day: no bars, no dividing by nothing');
+  assert.equal(congestionWidth(120, 120), 6);
+  assert.equal(congestionWidth(0, 120), 1);
+  assert.equal(congestionWidth(60, 120), 3.5);
 });

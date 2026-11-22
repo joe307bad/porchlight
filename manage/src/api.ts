@@ -87,3 +87,10 @@ export async function focusOn(town: string, kind: 'car' | 'person', by: 'slot' |
   if (!res.ok) return null;
   return (await res.json()) as import('./life.ts').FocusAnswer;
 }
+
+/** A town's congestion over the last day, and its worst streets `ago` hours back; null if it isn't running. */
+export async function congestionOf(town: string, ago: number): Promise<import('./life.ts').Congestion | null> {
+  const res = await fetch(`/mp/sim/congestion?town=${encodeURIComponent(town)}&ago=${ago}`, { cache: 'no-store', credentials: 'same-origin' });
+  if (!res.ok) return null;
+  return (await res.json()) as import('./life.ts').Congestion;
+}

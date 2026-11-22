@@ -212,9 +212,20 @@ namespace Porchlight.Life
 
         // --- What's drawn -----------------------------------------------------------------------
 
+        /// <summary>
+        /// Parked cars still drawn at their spot, longest parked first. A parked car keeps its slot (its driver gets
+        /// out and walks off from it, or walks up and gets in) while a car on the road doesn't need it.
+        /// </summary>
+        readonly List<int> parkedShown = new List<int>();
+
         int TakeCarSlot(Car c)
         {
-            if (c.slot >= 0) return c.slot;
+            if (c.slot >= 0)
+            {
+                parkedShown.Remove(c.id);
+                return c.slot;
+            }
+            if (freeCarSlots.Count == 0 && parkedShown.Count > 0) FreeCarSlot(cars[parkedShown[0]]);
             if (freeCarSlots.Count == 0)
             {
                 stats.undrawnCars++;
@@ -225,9 +236,22 @@ namespace Porchlight.Life
             return c.slot;
         }
 
+        /// <summary>Car `c`, parked in a spot: drawn there, if there's a slot free (or, `evict`, the longest parked one's).</summary>
+        void ShowParked(Car c, bool evict)
+        {
+            if (c.spot < 0 || c.seg >= 0 || c.bus >= 0 || c.van >= 0 || c.offMap) return;
+            if (c.slot < 0)
+            {
+                if (freeCarSlots.Count == 0 && (!evict || parkedShown.Count == 0)) return;
+                if (TakeCarSlot(c) < 0) return;
+            }
+            if (!parkedShown.Contains(c.id)) parkedShown.Add(c.id);
+        }
+
         void FreeCarSlot(Car c)
         {
             if (c.slot < 0 || c.bus >= 0) return;
+            parkedShown.Remove(c.id);
             carSlots[c.slot] = new Pose { who = -1 };
             if (!takenSlots.Contains(c.slot)) freeCarSlots.Push(c.slot);
             c.slot = -1;
@@ -260,6 +284,14 @@ namespace Porchlight.Life
             for (int i = 0; i < carSlots.Length; i++)
             {
                 int who = carSlots[i].who;
+                if (who >= 0 && cars[who].seg < 0 && cars[who].spot >= 0 && !cars[who].offMap)
+                {
+                    // Parked: standing in its spot, facing the way its lane goes.
+                    var spot = net.spots[cars[who].spot];
+                    var way = net.LanePoint(net.lanes[spot.lane], spot.s).along;
+                    carSlots[i] = new Pose { shown = true, x = spot.at.x, y = spot.at.y, heading = DetMath.Atan2(way.y, way.x), who = who };
+                    continue;
+                }
                 if (who < 0 || cars[who].seg < 0)
                 {
                     carSlots[i].shown = false;
@@ -340,6 +372,9 @@ namespace Porchlight.Life
             RemoveFromRoad(c);
             c.slot = -1;
             carSlots[slot] = new Pose { who = -1 };
+            // Taken from where it was parked: the spot's free.
+            if (c.spot >= 0 && spotHolder[c.spot] == c.id) spotHolder[c.spot] = -1;
+            c.spot = -1;
             stats.taken++;
             // A van: another comes out on its rounds a little later.
             if (c.van >= 0) Schedule(K_VAN, c.van, Now + 10 * TownClock.MINUTE);

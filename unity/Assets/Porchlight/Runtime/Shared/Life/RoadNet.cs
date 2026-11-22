@@ -131,8 +131,8 @@ namespace Porchlight.Life
         const double CAR = 1.1, STEP = 0.05;
         /// <summary>How far either side of a point a lane's way along is taken over (tiles).</summary>
         const double TANGENT = 0.6;
-        /// <summary>Speed limits (tiles a second): 55 km/h and 33 km/h (a tenth over real towns' 50 and 30, which look slow at a game's scale; more, and a car stopping from full speed needs more road than a short lane gives it).</summary>
-        public const double MAIN_SPEED = 3.85, STREET_SPEED = 2.3;
+        /// <summary>Speed limits (tiles a second): about 61 km/h and 37 km/h (a fifth over real towns' 50 and 30, which look slow at a game's scale; cars look ahead to slow in time, Cars.Arrival).</summary>
+        public const double MAIN_SPEED = 4.3, STREET_SPEED = 2.6;
         /// <summary>Round a corner at this share of the slower road's limit; a U-turn at this.</summary>
         public const double TURN_SHARE = 0.6, UTURN_SPEED = 0.6;
         /// <summary>How far either side of a junction a turn's curve starts (tiles).</summary>

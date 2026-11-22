@@ -226,6 +226,7 @@ namespace Porchlight.Sim
                 }
                 else if (q.kind == "focus-car" || q.kind == "focus-person") answer = town.Focus(q.kind == "focus-car", q.by == "slot", q.i);
                 else if (q.kind == "signals") answer = town.Signals(q.i == 1);
+                else if (q.kind == "congestion") answer = town.Congestion(q.i);
                 else if (q.kind == "brief-car" || q.kind == "brief-person") answer = town.Focus(q.kind == "brief-car", q.by == "slot", q.i, brief: true);
                 else if (q.kind == "building")
                 {

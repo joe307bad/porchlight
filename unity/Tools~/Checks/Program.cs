@@ -486,8 +486,7 @@ static class Program
         traffic.StartAt(TrafficDay.Morning);
         int n = traffic.life.carSlots.Length;
         var was = new (double x, double y, double heading, int who)[n];
-
-
+        var parkedWas = new bool[n];
         for (int k = 0; k < n; k++) was[k] = (0, 0, 0, -1);
         for (double t = 0; t < 60; t += DT)
         {
@@ -498,9 +497,12 @@ static class Program
                 int who = c.hidden ? -1 : traffic.life.carSlots[k].who;
                 var (x, y, heading, whoWas) = was[k];
                 was[k] = (c.x, c.y, c.heading, who);
+                bool parked = who >= 0 && traffic.life.cars[who].seg < 0, stepped = parked != parkedWas[k];
+                parkedWas[k] = parked;
 
-                // Only the same car seen a frame apart (not one just out on the road, nor a slot handed on).
-                if (who < 0 || who != whoWas) continue;
+                // Only the same car seen a frame apart (not one just out on the road, nor a slot handed on, nor one
+                // stepping between the lane and its parking spot: it's put there, as the game draws it).
+                if (who < 0 || who != whoWas || stepped) continue;
                 double turn = Math.Abs(Porchlight.Explore.Orbit.ShortestTurn(heading, c.heading)) / DT;
                 // Measured at the back wheels (a turning car's middle swings out a little; its back wheels don't slide).
                 double half = traffic.life.cars[who].length / 2 - 0.15;

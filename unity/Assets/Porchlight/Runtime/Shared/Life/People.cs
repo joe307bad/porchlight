@@ -136,6 +136,8 @@ namespace Porchlight.Life
         /// <summary>Put a parked car near a place straight away (its driveway, a free kerb spot near, or anyhow).</summary>
         void ParkNear(Car c, Place at)
         {
+            // Put somewhere new at once: not drawn moving there.
+            if (c.seg < 0) FreeCarSlot(c);
             if (c.spot >= 0 && spotHolder[c.spot] == c.id) spotHolder[c.spot] = -1;
             c.spot = -1;
             c.parkedBy = -1;
@@ -458,6 +460,8 @@ namespace Porchlight.Life
                     bool fromCar = trip.leg > 0 && trip.legs[trip.leg - 1].kind == LegKind.Drive;
                     var from = fromCar && c != null ? CarDoor(c) : leg.from;
                     var to = toCar && c != null ? CarDoor(c) : leg.to;
+                    // Off to their car: it's drawn where it's parked as they walk up to it.
+                    if (toCar && c != null) ShowParked(c, true);
                     StartWalk(p, from, to);
                     break;
                 }

@@ -65,6 +65,8 @@ namespace Porchlight.Explore
         readonly int[] drawn;
         /// <summary>Where each car slot's back wheels are.</summary>
         readonly Vec2[] rear;
+        /// <summary>Whether each slot's car was drawn parked (in its spot) last time: it's put there, or back in the lane, not driven.</summary>
+        readonly bool[] parked;
 
         public Traffic(TownModel model, IsoLayout layout, TownZoning zoning, Rng rng, Func<Rng, int> pickModel, LifeOptions options = null)
         {
@@ -76,6 +78,7 @@ namespace Porchlight.Explore
             slots = life.carSlots.Length;
             drawn = new int[slots];
             rear = new Vec2[slots];
+            parked = new bool[slots];
             int bus = Array.IndexOf(Catalog.CARS, BUS_MODEL);
             for (int i = 0; i < slots; i++)
                 cars.Add(new TrafficCar { model = i >= life.busSlotsFrom ? bus : pickModel(rng), hidden = true });
@@ -196,7 +199,10 @@ namespace Porchlight.Explore
                     c.speed = 0;
                     continue;
                 }
-                bool same = !c.hidden && drawn[i] == p.who;
+                // Parking or pulling out, it steps between the lane and its spot: placed, not swung round.
+                bool parkedNow = life.cars[p.who].seg < 0;
+                bool same = !c.hidden && drawn[i] == p.who && parked[i] == parkedNow;
+                parked[i] = parkedNow;
                 // The car's front is where the town's life has it; its back wheels follow the front as a car's
                 // do (pulled after it, never sideways), so it swings round a tight corner the way a car would.
                 double wheelbase = Math.Max(0.4, life.cars[p.who].length - 0.3);
