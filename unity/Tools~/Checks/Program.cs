@@ -58,6 +58,7 @@ static class Program
         if (args.Length > 0 && args[0] == "hitches") return Hitches.Run(args.Length > 1 ? double.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture) : 100, args.Length > 2 ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 20);
         if (args.Length > 0 && args[0] == "fingerprint") return Fingerprint.Run(args.Length > 1 ? int.Parse(args[1]) : 0);
         if (args.Length > 0 && args[0] == "ride") return RideCheck.Run();
+        if (args.Length > 0 && args[0] == "servers") return ServersCheck.Run();
         if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
         if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();
         if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();

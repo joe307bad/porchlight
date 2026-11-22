@@ -415,7 +415,10 @@ export class CityRoom extends Room<{ state: CityState }> {
     const session = readSession(d.sessionSecret, context.headers.get('cookie'), context.token);
     if (!session) throw new ServerError(401, 'Not signed in.');
     if (foreignOrigin(d.appUrl, context.headers.get('origin'))) throw new ServerError(403, 'Wrong origin.');
-    if (!d.persistence.ready) throw new ServerError(503, 'The game is starting up. Try again in a moment.');
+    if (!d.persistence.ready) {
+      console.warn('city: join refused, the database not ready yet');
+      throw new ServerError(503, 'The game is starting up. Try again in a moment.');
+    }
     try {
       const account = await d.persistence.account(session.sub, session.name);
       if (account.banned) throw new ServerError(403, 'This account is banned.');

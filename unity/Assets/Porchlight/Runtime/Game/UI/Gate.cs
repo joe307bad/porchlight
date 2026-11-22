@@ -26,16 +26,7 @@ namespace Porchlight.App
             brand.Add(El.Text("Porchlight", "signin-title"));
             card.Add(brand);
             // Which release this is, in a badge under the name (App/BuildInfo.cs), its shadow a block behind it like the name's.
-            var badge = new VisualElement();
-            badge.AddToClassList("signin-badge");
-            var shadow = new VisualElement();
-            shadow.AddToClassList("signin-badge-shadow");
-            badge.Add(shadow);
-            var face = new VisualElement();
-            face.AddToClassList("signin-badge-face");
-            face.Add(El.Text(BuildInfo.Short, "signin-badge-text"));
-            badge.Add(face);
-            card.Add(badge);
+            card.Add(Badge(BuildInfo.Short));
             UnityEngine.UIElements.Button button = null;
             button = El.Btn(label ?? (provider == "google" ? "Sign in with Google" : "Sign in"), null, () =>
             {
@@ -46,10 +37,11 @@ namespace Porchlight.App
             var err = El.Text(error ?? "", "signin-error");
             if (string.IsNullOrEmpty(error)) err.AddToClassList("hidden");
             card.Add(err);
-            // The desktop app: which server, and a way to another (a dev server).
-            if (Platform.Desktop)
+            // A dev build of the desktop app (desktop/dev-mac.sh): which server, in a badge as plain as the
+            // release's, and a click to choose another. Never in the released app (Platform.ServerChoosable).
+            if (Platform.Desktop && Platform.ServerChoosable)
             {
-                var server = El.Link("Server: " + new Uri(Platform.Instance.Origin).Authority + " \u00b7 Settings", () => ServerSettings.Show(root));
+                var server = Badge("Server: " + new Uri(Platform.Instance.Origin).Authority + " \u00b7 change", () => ServerSettings.Show(root));
                 server.AddToClassList("signin-server");
                 card.Add(server);
             }
@@ -58,6 +50,26 @@ namespace Porchlight.App
             root.AddToClassList("signed-out");
             button.Focus();
             return gate;
+        }
+
+        /// <summary>Dark text on the card's cream, its shadow a block behind it like the name's; clicked if given a click.</summary>
+        static VisualElement Badge(string text, Action onClick = null)
+        {
+            var badge = new VisualElement();
+            badge.AddToClassList("signin-badge");
+            var shadow = new VisualElement();
+            shadow.AddToClassList("signin-badge-shadow");
+            badge.Add(shadow);
+            var face = new VisualElement();
+            face.AddToClassList("signin-badge-face");
+            face.Add(El.Text(text, "signin-badge-text"));
+            badge.Add(face);
+            if (onClick != null)
+            {
+                badge.AddToClassList("signin-badge-button");
+                badge.RegisterCallback<ClickEvent>(_ => onClick());
+            }
+            return badge;
         }
     }
 }

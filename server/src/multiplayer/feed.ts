@@ -344,6 +344,8 @@ export class TrafficFeed {
     const [path, query = ''] = (req.url ?? '/').split('?');
     if (path !== COUNTY && path !== FEED && path !== FOCUS && path !== WHERE && path !== LIFE && path !== BUILDING && path !== SIM_FOCUS && path !== SIM_SIGNALS && path !== SIM_CONGESTION) return false;
     const send = (status: number, body: unknown): true => {
+      // Turned away for the server's sake, not the player's: said in the log, so a player's 503s can be found.
+      if (status >= 500) console.warn(`${req.method} ${req.url?.split('?')[0]} → ${status}: ${(body as { error?: string })?.error ?? ''}`);
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
       return true;

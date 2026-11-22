@@ -65,21 +65,43 @@ Updates after that apply without asking. To sign later:
 - Windows: pass `--signParams` or `--azureTrustedSignFile` (e.g. Azure Trusted
   Signing).
 
-## Against a dev server (macOS)
+## On a Mac: dev and prod
 
-The app built on your Mac from main, playing on a dev server instead of the
-live one:
+Two scripts, one for each kind of app:
 
 ```sh
 # on the dev machine (jbhs on the tailnet): the game server, sign-in and Manage at http://jbhs:5173
 ./dev.sh --host jbhs --no-game
-# on the Mac: pull, build (Unity), open it there; sign in as dev / dev
-desktop/mac-dev.sh
+# on the Mac: pull, build (Unity) and open "Porchlight Dev" there; sign in as dev / dev
+desktop/dev-mac.sh
+# on the Mac: erase every trace of Porchlight, install the newest release from GitHub, open it
+desktop/prod-mac.sh
 ```
 
-`desktop/mac-dev.sh --help` lists its options (another `--server`, `--no-pull`,
-`--open`). The server is also in the app's Settings (on the sign-in card, and
-in the sidebar), and the app keeps a separate sign-in for each server.
+- **`dev-mac.sh`** builds the checkout as **Porchlight Dev** (`unity/Builds/macOS-dev`).
+  - It's built with `-porchlightDev`, which defines `PORCHLIGHT_DEV` and gives it its own name and bundle id (`com.joebad.porchlight.dev`).
+  - To macOS it's another app, so it keeps its session and chosen server in its own folder (`~/Library/Application Support/Porchlight/Porchlight Dev`), never the released app's.
+  - Its server can be changed:
+    - on the sign-in card, in a badge as easy to read as the version's ("Server: jbhs:5173 · change");
+    - in the sidebar's Settings;
+    - with `--server` (`--server live` for the live one).
+  - `--help` lists the rest of its options (`--no-pull`, `--build`, `--open`).
+- **`prod-mac.sh`** sets the Mac up exactly as a player's. It lists what it will do and asks first (`--yes` skips the question, `--erase` stops before installing). Then it:
+  1. closes every Porchlight;
+  2. erases the released app and everything it keeps: its folder (session and any kept server), logs, preferences, saved window state, Velopack's downloads and log, and the installer's receipt;
+  3. erases the build that `mac-dev.sh` used to make, any `PORCHLIGHT_*` variable set for apps with `launchctl`, and LaunchServices' record of the old app;
+  4. downloads `Porchlight-osx-Setup.pkg` from the newest release, installs it into /Applications (asking for your password once), and opens it.
+
+  It leaves Porchlight Dev's folder alone.
+- **The released app can't be pointed anywhere else** (`Platform.ServerChoosable`, false for a desktop build without `PORCHLIGHT_DEV`). It has no server badge and no Settings. It ignores `-porchlightServer`, a kept server file (it deletes one it finds), `PORCHLIGHT_ORIGIN` and `PORCHLIGHT_COOKIE`. A player only ever sees the live server.
+
+  This is what went wrong before: `mac-dev.sh`'s build and the release shared one folder. A release installed after it found the dev build's `server` file and quietly played on the dev server instead of the live one. Now the release forgets that file the first time it starts.
+- **CI:** `Checks servers` (in deploy.yml) holds the rules (`Shared/Net/ServerChoice.cs`) to these cases:
+  - a released app with a dev build's file, a launch argument or the variable still plays live;
+  - a dev build goes where it's pointed;
+  - each server keeps its own sign-in.
+
+  It also checks that desktop.yml builds releases without `-porchlightDev`, and that `dev-mac.sh` builds with it.
 
 The app's Manage link opens Manage served by the app itself, on 127.0.0.1
 (`Game/Net/ManageLink.cs`), since the system browser has no sign-in. It passes
@@ -101,4 +123,4 @@ desktop/pack-mac.sh unity/Builds/macOS-app/Porchlight.app 0.0.1 Releases
 `PORCHLIGHT_UPDATES=<folder>` points an installed launcher at a folder of
 releases instead of GitHub, to try an update. `PORCHLIGHT_DESKTOP=1` makes any
 build sign in the desktop way, and `PORCHLIGHT_ORIGIN` sets the server for
-one run (over the one in Settings).
+one run (over the one in Settings) in any build but the released app.

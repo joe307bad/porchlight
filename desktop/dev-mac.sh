@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-# The desktop app on this Mac, from main as it is now, against a dev server:
-# pulls, builds Manage and the app (Unity, this Mac's), and opens it set to
-# play at the server.
+# A dev build of the desktop app on this Mac, from the checkout as it is now,
+# against a dev server: pulls, builds Manage and the app (Unity, this Mac's),
+# and opens it set to play at the server.
 #
-#   desktop/mac-dev.sh                       pull, build, open at http://jbhs:5173
-#   desktop/mac-dev.sh --server http://other:5173
-#   desktop/mac-dev.sh --server live         the live server again
-#   desktop/mac-dev.sh --no-pull             as the checkout is (your own changes)
-#   desktop/mac-dev.sh --build               build even if this commit was built last time
-#   desktop/mac-dev.sh --open                no pull, no build: open the last build
+# It's "Porchlight Dev" (unity/Builds/macOS-dev), another app to macOS than the
+# released Porchlight, with its own bundle id and its own folder for its session
+# and server (~/Library/Application Support/Porchlight/Porchlight Dev), so it
+# never touches the released app's. Only this build can change its server (on
+# the sign-in card and in the sidebar's Settings); the released app always plays
+# on the live server. For that one, desktop/prod-mac.sh.
+#
+#   desktop/dev-mac.sh                       pull, build, open at http://jbhs:5173
+#   desktop/dev-mac.sh --server http://other:5173
+#   desktop/dev-mac.sh --server live         the live server again
+#   desktop/dev-mac.sh --no-pull             as the checkout is (your own changes)
+#   desktop/dev-mac.sh --build               build even if this commit was built last time
+#   desktop/dev-mac.sh --open                no pull, no build: open the last build
 #
 # The server: ./dev.sh --host jbhs --no-game on the machine called jbhs (on the
 # tailnet), which serves the game server, sign-in (dev / dev) and Manage all at
@@ -29,8 +36,8 @@ while [ $# -gt 0 ]; do
     --no-pull) PULL=0 ;;
     --build) BUILD=yes ;;
     --open) PULL=0; BUILD=no ;;
-    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "unknown option: $1 (see desktop/mac-dev.sh --help)" >&2; exit 2 ;;
+    -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown option: $1 (see desktop/dev-mac.sh --help)" >&2; exit 2 ;;
   esac
   shift
 done
@@ -38,8 +45,8 @@ done
 
 VERSION="$(sed -n 's/^m_EditorVersion: //p' "$ROOT/unity/ProjectSettings/ProjectVersion.txt")"
 UNITY="${UNITY:-/Applications/Unity/Hub/Editor/$VERSION/Unity.app/Contents/MacOS/Unity}"
-APP="$ROOT/unity/Builds/macOS-app/Porchlight.app"
-STAMP="$ROOT/unity/Builds/macOS-app/.commit"
+APP="$ROOT/unity/Builds/macOS-dev/Porchlight Dev.app"
+STAMP="$ROOT/unity/Builds/macOS-dev/.commit"
 LOG="$ROOT/unity/Logs/build-mac.log"
 
 say() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -100,7 +107,7 @@ if [ "$BUILD" = yes ]; then
   # A build touches some of the project's own files (its icon and settings): put back any it changed, so the next pull goes through.
   before="$(git -C "$ROOT" diff --name-only)"
   if ! "$UNITY" -batchmode -projectPath "$ROOT/unity" \
-      -executeMethod Porchlight.EditorTools.Setup.BuildMacApp \
+      -executeMethod Porchlight.EditorTools.Setup.BuildMacApp -porchlightDev \
       -porchlightCommit "$COMMIT" -logFile "$LOG"; then
     grep -E "error CS|Error|Exception" "$LOG" | tail -20 >&2 || true
     die "the build failed; the whole log is $LOG"
@@ -133,4 +140,4 @@ if pgrep -f "$APP/Contents/MacOS/" >/dev/null 2>&1; then
 fi
 say "Opening Porchlight ($( [ "$SERVER" = default ] && echo "the live server" || echo "$SERVER"))..."
 open -n "$APP" --args -porchlightServer "$SERVER"
-echo "Its log: ~/Library/Logs/Porchlight/Porchlight/Player.log"
+echo "Its log: ~/Library/Logs/Porchlight/Porchlight Dev/Player.log"

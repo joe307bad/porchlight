@@ -1615,7 +1615,7 @@ namespace Porchlight.App
             {
                 sidebar.SetAccount(user.name, user.email, SignOut);
                 sidebar.SetManage(ManageLink.Open);
-                if (Platform.Desktop) sidebar.SetSettings(() => ServerSettings.Show(root));
+                if (Platform.Desktop && Platform.ServerChoosable) sidebar.SetSettings(() => ServerSettings.Show(root));
                 footer.style.display = DisplayStyle.None;
                 panel.root.style.visibility = Visibility.Hidden;
             }

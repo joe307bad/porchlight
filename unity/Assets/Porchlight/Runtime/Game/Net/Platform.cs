@@ -29,12 +29,34 @@ namespace Porchlight.App
 
         public double Now() => Time.realtimeSinceStartupAsDouble * 1000;
 
-        /// <summary>Where the desktop app plays, unless its Settings (Server) or PORCHLIGHT_ORIGIN say otherwise.</summary>
-        public const string DESKTOP_ORIGIN = "https://porchlight.joebad.com/";
+        /// <summary>Where the desktop app plays: the live server (a dev build: unless its Settings or PORCHLIGHT_ORIGIN say otherwise).</summary>
+        public const string DESKTOP_ORIGIN = ServerChoice.LIVE;
 
-        // The server, off the web: the one chosen in Settings (UI/ServerSettings.cs), kept in a
-        // file beside the session so a restart (or a script) finds it; `-porchlightServer <url>`
-        // at launch chooses it too (`-porchlightServer default` for the live one again).
+        // The server, off the web, as Shared/Net/ServerChoice.cs decides it: the one chosen in Settings
+        // (UI/ServerSettings.cs), kept in a file beside the session so a restart (or a script) finds it;
+        // `-porchlightServer <url>` at launch chooses it too (`-porchlightServer default` for the live one
+        // again). Only where the server can be chosen (ServerChoosable): the released desktop app always
+        // plays on the live one, whatever an earlier dev build left behind.
+
+        /// <summary>
+        /// Whether the server can be chosen: in the editor, a plain player, and the desktop app built by
+        /// desktop/dev-mac.sh (PORCHLIGHT_DEV). Never in the desktop app as released (desktop.yml,
+        /// desktop/prod-mac.sh), so a player never sees Settings, and nothing left on disk or in the
+        /// environment (a dev build's server file, PORCHLIGHT_ORIGIN) can send it anywhere but the live server.
+        /// </summary>
+        public static bool ServerChoosable
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return false;
+#elif PORCHLIGHT_DESKTOP && !PORCHLIGHT_DEV
+                return false;
+#else
+                return true;
+#endif
+            }
+        }
 
         static bool serverRead;
         static string server;
@@ -52,23 +74,22 @@ namespace Porchlight.App
                 if (!serverRead)
                 {
                     serverRead = true;
-                    var args = Environment.GetCommandLineArgs();
-                    int at = Array.IndexOf(args, "-porchlightServer");
-                    if (at >= 0 && at + 1 < args.Length)
+                    string saved = null;
+                    try
                     {
-                        if (args[at + 1] == "default" || !TryServer(args[at + 1], out var given)) given = null;
-                        SaveServer(given);
+                        if (System.IO.File.Exists(ServerFile)) saved = System.IO.File.ReadAllText(ServerFile);
                     }
-                    else
+                    catch (Exception e)
                     {
-                        try
-                        {
-                            if (System.IO.File.Exists(ServerFile) && TryServer(System.IO.File.ReadAllText(ServerFile), out var kept)) server = kept;
-                        }
-                        catch (Exception e)
-                        {
-                            Debug.LogWarning("porchlight: the chosen server: " + e.Message);
-                        }
+                        Debug.LogWarning("porchlight: the chosen server: " + e.Message);
+                    }
+                    server = ServerChoice.Chosen(ServerChoosable, Environment.GetCommandLineArgs(), saved, out var keep);
+                    if (keep == ServerChoice.Keep.Save) WriteServer(server);
+                    else if (keep == ServerChoice.Keep.Forget)
+                    {
+                        // A dev build's choice, from before dev builds kept their own folder: gone, so it can't come back.
+                        WriteServer(null);
+                        Debug.Log("porchlight: forgot a dev build's server (" + saved.Trim() + "); the released app plays on the live one");
                     }
                     if (server != null) Debug.Log("porchlight: playing at " + server + " (chosen in Settings)");
                 }
@@ -77,18 +98,24 @@ namespace Porchlight.App
             }
         }
 
-        /// <summary>Keep `origin` (from TryServer) as the server from now on; null for the live one again.</summary>
+        /// <summary>Keep `origin` (from TryServer) as the server from now on; null for the live one again. Only where it can be chosen.</summary>
         public static void SaveServer(string origin)
         {
+            if (!ServerChoosable) return;
             serverRead = true;
             server = origin == null || SameServer(origin, DESKTOP_ORIGIN) ? null : origin;
+            WriteServer(server);
+        }
+
+        static void WriteServer(string origin)
+        {
             try
             {
-                if (server == null) System.IO.File.Delete(ServerFile);
+                if (origin == null) System.IO.File.Delete(ServerFile);
                 else
                 {
                     System.IO.Directory.CreateDirectory(Application.persistentDataPath);
-                    System.IO.File.WriteAllText(ServerFile, server);
+                    System.IO.File.WriteAllText(ServerFile, origin);
                 }
             }
             catch (Exception e)
@@ -97,23 +124,10 @@ namespace Porchlight.App
             }
         }
 
-        /// <summary>
-        /// A server's address as typed ("jbhs:5173", "http://jbhs:5173/anything") as an origin with a
-        /// slash ("http://jbhs:5173/"); false if it isn't one. No scheme is http.
-        /// </summary>
-        public static bool TryServer(string text, out string origin)
-        {
-            origin = null;
-            text = (text ?? "").Trim();
-            if (text.Length == 0) return false;
-            if (!text.Contains("://")) text = "http://" + text;
-            if (!Uri.TryCreate(text, UriKind.Absolute, out var u) || (u.Scheme != "http" && u.Scheme != "https") || string.IsNullOrEmpty(u.Host)) return false;
-            origin = u.GetLeftPart(UriPartial.Authority) + "/";
-            return true;
-        }
+        /// <inheritdoc cref="ServerChoice.TryServer"/>
+        public static bool TryServer(string text, out string origin) => ServerChoice.TryServer(text, out origin);
 
-        public static bool SameServer(string a, string b) =>
-            string.Equals(a?.TrimEnd('/'), b?.TrimEnd('/'), StringComparison.OrdinalIgnoreCase);
+        public static bool SameServer(string a, string b) => ServerChoice.SameServer(a, b);
 
         /// <summary>
         /// The desktop app (built with PORCHLIGHT_DESKTOP, by desktop.yml), or any
@@ -145,7 +159,7 @@ namespace Porchlight.App
 #if UNITY_WEBGL && !UNITY_EDITOR
                 return null;
 #else
-                string given = Environment.GetEnvironmentVariable("PORCHLIGHT_COOKIE");
+                string given = ServerChoosable ? Environment.GetEnvironmentVariable("PORCHLIGHT_COOKIE") : null;
                 if (!string.IsNullOrEmpty(given)) return given;
                 string kept = Desktop ? NativeSignIn.Session : null;
                 return kept == null ? null : "pl_session=" + kept;
@@ -242,7 +256,7 @@ namespace Porchlight.App
             };
         }
 
-        /// <summary>The page's address; off the web PORCHLIGHT_ORIGIN, else the server chosen in Settings, else the live one (the desktop app) or localhost:3017.</summary>
+        /// <summary>The page's address; off the web PORCHLIGHT_ORIGIN, else the server chosen in Settings, else the live one (the desktop app) or localhost:3017 (ServerChoice.Origin; the released desktop app: always the live one).</summary>
         public string Href
         {
             get
@@ -256,7 +270,7 @@ namespace Porchlight.App
 #else
                 const string HOME = "http://localhost:3017/";
 #endif
-                return (Environment.GetEnvironmentVariable("PORCHLIGHT_ORIGIN") ?? ChosenServer ?? HOME) + (string.IsNullOrEmpty(hash) ? "" : "#" + hash.TrimStart('#'));
+                return ServerChoice.Origin(ServerChoosable, Environment.GetEnvironmentVariable("PORCHLIGHT_ORIGIN"), ChosenServer, HOME) + (string.IsNullOrEmpty(hash) ? "" : "#" + hash.TrimStart('#'));
 #endif
             }
         }

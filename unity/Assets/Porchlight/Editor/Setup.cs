@@ -343,7 +343,7 @@ namespace Porchlight.EditorTools
         {
             MacUniversal();
             if (Application.platform != RuntimePlatform.OSXEditor || Environment.GetEnvironmentVariable("PORCHLIGHT_NO_BURST") == "1") NoBurst("StandaloneOSX");
-            Build(BuildTarget.StandaloneOSX, "Builds/macOS-app/Porchlight.app", true);
+            Build(BuildTarget.StandaloneOSX, DevBuild ? "Builds/macOS-dev/Porchlight Dev.app" : "Builds/macOS-app/Porchlight.app", true);
         }
 
         /// <summary>
@@ -388,7 +388,7 @@ namespace Porchlight.EditorTools
             var icon = AssetDatabase.LoadAssetAtPath<Texture2D>(AppIconPath);
             // Every size from the one picture (Unity scales it).
             var standalone = UnityEditor.Build.NamedBuildTarget.Standalone;
-            // A dev server is plain http (desktop/mac-dev.sh's http://jbhs:5173, chosen in Settings), which Unity
+            // A dev server is plain http (desktop/dev-mac.sh's http://jbhs:5173, chosen in a dev build's Settings), which Unity
             // refuses unless told. The live server is https, and its session is never sent to another (NativeSignIn).
             PlayerSettings.insecureHttpOption = InsecureHttpOption.AlwaysAllowed;
             if (icon != null) PlayerSettings.SetIcons(standalone, Enumerable.Repeat(icon, PlayerSettings.GetIconSizes(standalone, IconKind.Application).Length).ToArray(), IconKind.Application);
@@ -427,23 +427,55 @@ namespace Porchlight.EditorTools
         {
             var d = new List<string>();
             if (desktop) d.Add("PORCHLIGHT_DESKTOP");
+            if (desktop && DevBuild) d.Add("PORCHLIGHT_DEV");
             if (Environment.GetEnvironmentVariable("PORCHLIGHT_NO_THREADS") == "1") d.Add("PORCHLIGHT_NO_THREADS");
             return d.Count > 0 ? d.ToArray() : null;
         }
+
+        /// <summary>
+        /// `-porchlightDev` (desktop/dev-mac.sh): the desktop app for trying a dev server. Its server can be chosen
+        /// (PORCHLIGHT_DEV; Platform.ServerChoosable), and it's another app to the system: "Porchlight Dev", with its
+        /// own bundle id, so its own folder for the session and the chosen server, never the released app's.
+        /// </summary>
+        static bool DevBuild => Array.IndexOf(Environment.GetCommandLineArgs(), "-porchlightDev") >= 0;
+
+        const string DEV_PRODUCT = "Porchlight Dev";
+        const string DEV_BUNDLE = "com.joebad.porchlight.dev";
 
         static void Build(BuildTarget target, string path, bool desktop = false)
         {
             Run();
             if (desktop) Desktop();
             Stamp();
-            var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+            bool dev = desktop && DevBuild;
+            var standalone = UnityEditor.Build.NamedBuildTarget.Standalone;
+            string product = PlayerSettings.productName, bundle = PlayerSettings.GetApplicationIdentifier(standalone);
+            if (dev)
             {
-                scenes = new[] { ScenePath },
-                locationPathName = path,
-                target = target,
-                options = BuildOptions.None,
-                extraScriptingDefines = Defines(desktop),
-            });
+                PlayerSettings.productName = DEV_PRODUCT;
+                PlayerSettings.SetApplicationIdentifier(standalone, DEV_BUNDLE);
+            }
+            BuildReport report;
+            try
+            {
+                report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
+                {
+                    scenes = new[] { ScenePath },
+                    locationPathName = path,
+                    target = target,
+                    options = BuildOptions.None,
+                    extraScriptingDefines = Defines(desktop),
+                });
+            }
+            finally
+            {
+                // Back as they were: the project's own settings are the released app's.
+                if (dev)
+                {
+                    PlayerSettings.productName = product;
+                    PlayerSettings.SetApplicationIdentifier(standalone, bundle);
+                }
+            }
             var s = report.summary;
             Debug.Log($"Porchlight: build {s.result} in {s.totalTime} ({s.totalErrors} errors, {s.totalWarnings} warnings) → {path}");
             if (Application.isBatchMode) EditorApplication.Exit(s.result == BuildResult.Succeeded ? 0 : 1);

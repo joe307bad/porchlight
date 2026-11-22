@@ -14,6 +14,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
+using Porchlight.Net;
 using UnityEngine;
 
 namespace Porchlight.App
@@ -36,12 +37,7 @@ namespace Porchlight.App
         /// </summary>
         static string FilePath => Path.Combine(Application.persistentDataPath, FileName(Platform.Instance.Origin));
 
-        public static string FileName(string origin)
-        {
-            if (Platform.SameServer(origin, Platform.DESKTOP_ORIGIN)) return "session";
-            var u = new Uri(origin);
-            return "session-" + u.Host.Replace(':', '_') + "-" + u.Port;
-        }
+        public static string FileName(string origin) => ServerChoice.SessionFile(origin);
 
         /// <summary>The session kept from last time, or null.</summary>
         public static string Session
