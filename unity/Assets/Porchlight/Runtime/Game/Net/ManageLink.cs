@@ -60,7 +60,7 @@ namespace Porchlight.App
 #if !UNITY_WEBGL || UNITY_EDITOR
     /// <summary>
     /// The desktop app's Manage page, at http://127.0.0.1:port/manage/. Only GETs, only of the page's
-    /// own files and the server routes it uses (and the page's two POSTs: back to the game, and which towns it's looking at), and only asked for by that address (a page
+    /// own files and the server routes it uses (and the page's POSTs: back to the game, which towns it's looking at, and a character sent somewhere), and only asked for by that address (a page
     /// elsewhere rebinding its own name to 127.0.0.1 is turned away by the Host it sends). One request a
     /// connection, each on the thread pool, so the feed's stream never waits on the game's frames.
     /// </summary>
@@ -77,10 +77,12 @@ namespace Porchlight.App
         static readonly HashSet<string> PASSED = new HashSet<string>
         {
             "/auth/me", "/mp/traffic/county", "/mp/traffic/feed",
-            "/mp/sim/life", "/mp/sim/building", "/mp/sim/focus", "/mp/sim/signals", "/mp/sim/congestion", "/mp/sim/where",
+            "/mp/sim/life", "/mp/sim/building", "/mp/sim/focus", "/mp/sim/signals", "/mp/sim/congestion", "/mp/sim/where", "/mp/goto",
         };
         /// <summary>What the page may tell the server (POST, from the page itself).</summary>
         const string FOCUS = "/mp/traffic/focus";
+        /// <summary>The right-click menu's: directions to a spot for one of your characters, or taken there.</summary>
+        const string GOTO = "/mp/goto";
 
         static readonly Dictionary<string, string> TYPES = new Dictionary<string, string>
         {
@@ -153,14 +155,14 @@ namespace Porchlight.App
                     string path = q < 0 ? target : target.Substring(0, q);
                     // The page's "Back to Porchlight": the game to the front. Only from the page itself (a
                     // browser says where a POST comes from), so no other site can pull the game forward.
-                    if ((path == "/app/front" || path == FOCUS) && method == "POST")
+                    if ((path == "/app/front" || path == FOCUS || path == GOTO) && method == "POST")
                     {
                         if (!headers.TryGetValue("origin", out var from) || from != $"http://127.0.0.1:{port}")
                         {
                             await Reply(stream, 403, "text/plain", "Not from here.").ConfigureAwait(false);
                             return;
                         }
-                        if (path == FOCUS)
+                        if (path == FOCUS || path == GOTO)
                         {
                             await Pass(stream, target, headers, body).ConfigureAwait(false);
                             return;

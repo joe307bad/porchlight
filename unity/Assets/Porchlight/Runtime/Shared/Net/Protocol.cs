@@ -33,6 +33,8 @@ namespace Porchlight.Net
         public const string MSG_DOTS = "dots";
         /// <summary>{ unlocks }: another of the account's characters earned something.</summary>
         public const string MSG_UNLOCKS = "unlocks";
+        /// <summary>Manage's right-click, for this character: { town, x, y, how ("directions" or "transport"), label }.</summary>
+        public const string MSG_GOTO = "goto";
 
         public const int CLOSE_SIGNED_IN_ELSEWHERE = 4100;
         public const int CLOSE_KICKED = 4101;

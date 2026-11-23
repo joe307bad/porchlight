@@ -170,6 +170,12 @@ export const whereIs = (characterId: string): { town: string; session: string; x
   return o && at ? { town: o.room.town, session: o.sessionId, ...at } : null;
 };
 
+/** Send a message to whoever's playing this character right now; false if nobody is. */
+export const tell = (characterId: string, type: string, message: unknown): boolean => {
+  const o = online.get(characterId);
+  return !!o && o.room.tellSession(o.sessionId, type, message);
+};
+
 /** How many characters are playing in this town (its room's key) right now. */
 export const playingIn = (town: string): number => [...online.values()].filter((o) => o.room.town === town).length;
 
@@ -515,6 +521,14 @@ export class CityRoom extends Room<{ state: CityState }> {
       console.error('city: join failed:', (err as Error).message);
       throw new ServerError(503, 'Service unavailable. Try again in a moment.');
     }
+  }
+
+  /** A message to one of this room's sessions (Manage's goto); false if it isn't connected here. */
+  tellSession(sessionId: string, type: string, message: unknown): boolean {
+    const rt = this.runtime.get(sessionId);
+    if (!rt?.client || rt.finished) return false;
+    rt.client.send(type, message);
+    return true;
   }
 
   /** Someone on `from`'s account earned this: if this session is another of the account's, it has it too. */

@@ -19,7 +19,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { createMissionRoutes, DEFAULT_MISSIONS_DIR, MissionStore } from '../missions.ts';
 import { createCharacterRoutes, type GameDeps } from './accounts.ts';
 import { TrafficFeed } from './feed.ts';
-import { CityRoom, configureCityRoom, countyChanged, isOnline, playingIn, presence, whereIs } from './CityRoom.ts';
+import { CityRoom, configureCityRoom, countyChanged, isOnline, playingIn, presence, tell, whereIs } from './CityRoom.ts';
 import type { Persistence } from './persistence.ts';
 import { CITY_ROOM } from './protocol.ts';
 import { SimPool, type SimCommand } from '../sim/pool.ts';
@@ -52,7 +52,7 @@ export interface GameServer {
 
 export async function startGameServer(opts: GameServerOptions): Promise<GameServer> {
   const store = new MissionStore(opts.missionsDir ?? DEFAULT_MISSIONS_DIR);
-  const deps: GameDeps = { persistence: opts.persistence, sessionSecret: opts.sessionSecret, appUrl: opts.appUrl, isOnline, presence, playingIn, whereIs, countyChanged, missions: store };
+  const deps: GameDeps = { persistence: opts.persistence, sessionSecret: opts.sessionSecret, appUrl: opts.appUrl, isOnline, presence, playingIn, whereIs, tell, countyChanged, missions: store };
   configureCityRoom(deps);
   const characters = createCharacterRoutes(deps);
   const missions = createMissionRoutes(store);

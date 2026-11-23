@@ -8,6 +8,7 @@ import { briefOn, buildingLife, county, focusOn, signalsOf, inDesktopApp, me, si
 import { isFocus, type BuildingLife, type CongestedStreet, type EntityFocus, type FocusAnswer, type FocusTarget, type TownLife } from './life.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
+import { SpotMenu, type SpotClick } from './SpotMenu.tsx';
 import { backToApp, backToGame, embedded } from './embed.ts';
 import { DEFAULT_LAYERS, MapRenderer, type Hover, type Layers } from './render.ts';
 import { World } from './world.ts';
@@ -115,6 +116,9 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   const [renderer, setRenderer] = useState<MapRenderer | null>(null);
   const [status, setStatus] = useState<FeedStatus>({ state: 'connecting' });
   const [layers, setLayers] = useState<Layers>(savedLayers);
+  /** The right-click menu's spot, while it's open. */
+  const [spot, setSpot] = useState<SpotClick | null>(null);
+  const closeSpot = useCallback(() => setSpot(null), []);
   const [hidden, setHidden] = useState<Set<string>>(savedHidden);
   const [selected, setSelected] = useState<string | null>(null);
   const [following, setFollowing] = useState<string | null>(null);
@@ -176,6 +180,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         show(line);
       });
     };
+    r.onContext = (c) => setSpot(c);
     r.onBuilding = (b) => {
       if (!b) return setBuilding(null);
       void buildingLife(b.key, b.i)
@@ -355,6 +360,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
             {hover.text}
           </div>
         )}
+        {spot && <SpotMenu at={spot} map={map} onClose={closeSpot} />}
         <div className="map-buttons">
           {!embedded && inDesktopApp() && (
             <button className="btn btn-primary" onClick={() => void backToApp()} title="Back to the Porchlight app (Manage stays open here)">

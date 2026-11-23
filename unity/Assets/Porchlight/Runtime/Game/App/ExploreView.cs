@@ -210,6 +210,8 @@ namespace Porchlight.App
         const double FOLLOW_SPACING = 0.55;
         Traffic traffic;
         Fleet fleet;
+        /// <summary>The junctions' traffic signals (lit by the town's own stages) and stop signs.</summary>
+        Signage signage;
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
         double chaseSwing;
@@ -406,6 +408,7 @@ namespace Porchlight.App
             remotes?.Clear();
             world?.Dispose();
             fleet?.Dispose();
+            signage?.Dispose();
             foreach (var a in avatars) a?.Dispose();
             unmade.Clear();
             playerAvatar?.Dispose();
@@ -529,6 +532,7 @@ namespace Porchlight.App
             // town clock, the same in every player's game and on the server (sim/SimTown.cs, in this order).
             traffic = new Traffic(model, world.layout, null, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             fleet = new Fleet(traffic, library, world.root.transform);
+            signage = new Signage(traffic.life.net, library, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
@@ -584,6 +588,8 @@ namespace Porchlight.App
             remotes?.Clear();
             fleet?.Dispose();
             fleet = null;
+            signage?.Dispose();
+            signage = null;
             traffic = null;
             foreach (var a in avatars) a?.Dispose();
             unmade.Clear();
@@ -2885,6 +2891,7 @@ namespace Porchlight.App
             remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
             if (riding != null) FollowRide();
             fleet?.Update(dusk, Emptied ? Anywhere : (Func<double, double, bool>)null);
+            if (traffic != null) signage?.Update(traffic.life.Now, dusk);
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);

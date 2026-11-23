@@ -182,7 +182,7 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     const town = pool.town(key)!;
     const life = town.life!;
     assert.ok(Math.abs(life.clock - townNow()) < 5_000, 'its clock is the time now (the towns\' clock)');
-    assert.match(life.time, /^\d\d:\d\d$/);
+    assert.match(life.time, /^(1[0-2]|[1-9]):[0-5]\d [AP]M$/, 'Eastern time, on a 12-hour clock');
     const indoors = life.inside.reduce((n, [, k]) => n + k, 0);
     const people = life.summary.people as number;
     assert.ok(people > 100, `a town of people (${people})`);
@@ -335,7 +335,7 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     assert.equal(jam.ago, 0);
     assert.equal(jam.hours.length, 24);
     for (let i = 1; i < 24; i++) assert.equal(jam.hours[i].from - jam.hours[i - 1].from, 3_600_000, 'an hour apart');
-    assert.match(jam.hours[23].time, /^\d\d:00$/);
+    assert.match(jam.hours[23].time, /^(1[0-2]|[1-9]):00 [AP]M$/);
     assert.ok(jam.streets.length <= 12, 'at most a dozen streets');
     for (let i = 1; i < jam.streets.length; i++) assert.ok(jam.streets[i].hold <= jam.streets[i - 1].hold, 'worst first');
     for (const st of jam.streets) {

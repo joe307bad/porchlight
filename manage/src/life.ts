@@ -321,11 +321,19 @@ export interface Congestion {
 
 export interface CongestedStreet {
   road: number;
+  /** Its street's name ("High Street"), and this stretch of it ("High Street, Elm Street to Oak Lane"); older servers: none. */
+  name?: string;
+  stretch?: string;
   kind: number;
   cars: number;
   hold: number;
   mean: number;
   points: number[];
+}
+
+/** A congested stretch as listed: its street and the streets at its ends, or (unnamed) what kind of road it is. */
+export function streetText(s: CongestedStreet): string {
+  return s.stretch || s.name || `${s.kind === 0 ? 'Main road' : 'Street'} ${s.road}`;
 }
 
 /** A hold-up in a few characters: "40 s", "12 min", "3.4 h". */

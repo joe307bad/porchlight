@@ -48,6 +48,8 @@ export interface SimTown {
   looks: string[];
   /** Its streets once made (SimTown.Roads: [kind, width, x0, y0, x1, y1, ...], tiles, its own frame), for Manage's map. */
   roads: number[][] | null;
+  /** Each of its streets' names, in roads' order ("Elm Street"; "" for a path). */
+  roadNames: string[] | null;
   /** What its buildings are for once made (Zoning.cs): [zone, x0, y0, x1, y1, homes, jobs] each, and the town's figures. */
   zoning: TownZoning | null;
   /** Why it couldn't be made, if it couldn't. */
@@ -220,7 +222,7 @@ export class SimPool {
     const want = new Set(keys);
     for (const key of want) {
       if (this.byKey.has(key)) continue;
-      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, zoning: null, error: null, fullDue: false, life: null };
+      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, roadNames: null, zoning: null, error: null, fullDue: false, life: null };
       this.towns.set(town.id, town);
       this.byKey.set(key, town);
     }
@@ -329,11 +331,12 @@ export class SimPool {
   received(type: number, body: Buffer): void {
     if (type === OUT_TICK) return this.tick(body);
     if (type === OUT_READY) {
-      const m = JSON.parse(body.toString()) as { id: number; cars?: number; people?: number; roads?: number[][]; zoning?: TownZoning['figures']; buildings?: number[][]; error?: string };
+      const m = JSON.parse(body.toString()) as { id: number; cars?: number; people?: number; roads?: number[][]; roadNames?: string[]; zoning?: TownZoning['figures']; buildings?: number[][]; error?: string };
       const town = this.towns.get(m.id);
       if (!town) return;
       town.error = m.error ?? null;
       if (Array.isArray(m.roads)) town.roads = m.roads;
+      if (Array.isArray(m.roadNames)) town.roadNames = m.roadNames;
       if (m.zoning && Array.isArray(m.buildings)) town.zoning = { figures: m.zoning, buildings: m.buildings };
       if (m.error) this.log(`sim: ${town.key} couldn't be made: ${m.error}`);
       return;

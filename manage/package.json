@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
-    "test:browser": "node test-browser/stress.mjs"
+    "test:browser": "node test-browser/stress.mjs && node test-browser/menu.mjs",
+    "test:menu": "node test-browser/menu.mjs"
   },
   "dependencies": {
     "react": "^19.2.0",

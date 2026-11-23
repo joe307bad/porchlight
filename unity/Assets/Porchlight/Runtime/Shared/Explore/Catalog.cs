@@ -273,6 +273,8 @@ namespace Porchlight.Explore
         /// stands a tree in each house you call at (tree) and you put a present under it.
         /// </summary>
         public static readonly string[] CHRISTMAS = { "props/christmas-tree", "props/present" };
+        /// <summary>The junctions' traffic signals and stop signs (Tools~/streets/signals.py), placed by Rendering/Signage.cs.</summary>
+        public const string TRAFFIC_SIGNAL = "props/traffic-signal", STOP_SIGN = "props/stop-sign";
         /// <summary>
         /// The Thanksgiving feast (Tools~/thanksgiving), set on every house's dining table once the
         /// turkey mission's done (the `feast` unlock): the roast turkey on its platter first, then the bowls and the pie.
@@ -282,7 +284,7 @@ namespace Porchlight.Explore
         /// <summary>Every static model the town loads.</summary>
         public static IEnumerable<string> Statics =>
             new[] { HOUSES, SHOPS, TOWERS, INDUSTRIAL, CARS, TREES, FALL_TREES, PINES, PALMS, BUSHES, FLOWERS, CROPS, ROCKS, BOULDERS,
-                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, CHRISTMAS, FURNISHINGS }.SelectMany(x => x).Distinct();
+                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, CHRISTMAS, new[] { TRAFFIC_SIGNAL, STOP_SIGN }, FURNISHINGS }.SelectMany(x => x).Distinct();
 
         /// <summary>Which model families suit each kind of building ("office" is a style, not a blueprint kind).</summary>
         public static string[] KindModels(HouseStyle style) => style switch

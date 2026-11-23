@@ -30,6 +30,8 @@ namespace Porchlight.Sim
         public readonly int id;
         public readonly string key;
         readonly IsoLayout layout;
+        /// <summary>Each street's name, as the game's directions say it (Explore/Names.cs).</summary>
+        readonly StreetNames streets;
         /// <summary>What each of its buildings is for (Zoning.cs), for Manage's land-use map.</summary>
         public readonly TownZoning zoning;
         public readonly Traffic traffic;
@@ -55,6 +57,7 @@ namespace Porchlight.Sim
             var (seed, p) = ParseKey(key);
             var model = Generator.Generate(seed, p);
             layout = Layout.Build(model);
+            streets = StreetNaming.Name(model, layout.roads);
             zoning = Zoning.Plan(model, layout);
             // ExploreView.Populate, in the same order, so each car and person here is the game's.
             traffic = new Traffic(model, layout, zoning, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
@@ -229,6 +232,8 @@ namespace Porchlight.Sim
                 return new
                 {
                     road = r.road,
+                    name = NameOf(r.road),
+                    stretch = StreetNaming.Stretch(this.streets, layout.roads, r.road),
                     kind = (int)road.kind,
                     cars = r.cars,
                     hold = R(r.hold),
@@ -287,6 +292,19 @@ namespace Porchlight.Sim
             return layout.roads.Where(r => r.points != null && r.points.Count >= 2)
                 .Select(r => new[] { (double)(int)r.kind, R(r.width) }.Concat(r.points.SelectMany(q => new[] { R(q.x), R(q.y) })).ToArray())
                 .ToList();
+        }
+
+        /// <summary>A road's street's name ("Elm Street"), or "" for none (a path, say).</summary>
+        public string NameOf(int road) =>
+            road >= 0 && road < streets.ofRoad.Count ? streets.streets[streets.ofRoad[road]].name ?? "" : "";
+
+        /// <summary>Each of Roads()'s streets' names, in the same order.</summary>
+        public List<string> RoadNames()
+        {
+            var o = new List<string>();
+            for (int i = 0; i < layout.roads.Count; i++)
+                if (layout.roads[i].points != null && layout.roads[i].points.Count >= 2) o.Add(NameOf(i));
+            return o;
         }
 
         public byte[] Cars() => WorldSync.EncodeCars(traffic.cars);

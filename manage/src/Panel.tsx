@@ -21,6 +21,7 @@ import {
   describeInside,
   figures,
   heldText,
+  streetText,
   holdBars,
   ofKind,
   untilText,
@@ -512,9 +513,9 @@ function CongestionView({ townKey, onCongestion, onStreet }: { townKey: string; 
       <ol className="list">
         {c.streets.map((s, n) => (
           <li key={s.road}>
-            <button className="row line" onClick={() => onStreet(townKey, s.points)} title={`${heldText(s.hold)} held up in all, ${heldText(s.mean)} a car`}>
+            <button className="row line" onClick={() => onStreet(townKey, s.points)} title={`${streetText(s)}: ${heldText(s.hold)} held up in all, ${heldText(s.mean)} a car`}>
               <span className="name">
-                {n + 1}. {s.kind === 0 ? 'Main road' : 'Street'} {s.road}
+                {n + 1}. {streetText(s)}
               </span>
               <span className="figs">
                 {heldText(s.hold)} · {s.cars} cars
