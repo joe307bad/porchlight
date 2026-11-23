@@ -20,6 +20,7 @@ using System.Linq;
 using System.Text.Json;
 using Porchlight.Core;
 using Porchlight.Explore;
+using Porchlight.Life;
 
 namespace Porchlight.Sim
 {
@@ -140,12 +141,18 @@ namespace Porchlight.Sim
                 // so a tick less behind than the game draws them.
                 var was = new Queue<(double x, double y, bool hidden)[]>();
                 int behind = (int)Math.Round(WorldSync.DELAY / SimTown.TICK) - 1;
+                // The traffic lights: what the player's lamps show against what the server's showed as the cars are
+                // drawn (DELAY behind the word, a tick back once six frames have gone), and against what the
+                // player's own copy of the junctions would show by the clock alone (no early changes: as before).
+                var serverLights = StreetFurniture.SignalJunctions(server.traffic.life.net);
+                var gameLights = StreetFurniture.SignalJunctions(game.traffic.life.net);
+                int lamps = 0, lampsWrong = 0, byClockWrong = 0;
                 for (int tick = 0; tick < 600; tick++)
                 {
                     server.Step(morning + (tick + 1) * 100);
                     var cars = server.Cars();
                     var people = server.People();
-                    var delta = server.delta.Next(cars, people, tick * SimTown.TICK);
+                    var delta = server.delta.Next(cars, people, tick * SimTown.TICK, server.Lights());
                     if (tick == 0) sync.Receive(cars, people);
                     else if (!sync.ReceiveDelta(delta)) { Console.WriteLine($"FAIL {key}: tick {tick}'s delta didn't fit"); ok = false; break; }
                     // A tenth of a second at 60 frames a second, as the game draws.
@@ -157,6 +164,15 @@ namespace Porchlight.Sim
                     was.Enqueue(server.traffic.cars.Select(c => (c.x, c.y, c.hidden)).ToArray());
                     if (was.Count > behind + 1) was.Dequeue();
                     if (tick < 20) continue; // settling in from where the game made them
+                    long drawn = morning + (tick + 1) * 100 - (long)(1000 * (WorldSync.DELAY - SimTown.TICK));
+                    for (int k = 0; k < serverLights.Count; k++)
+                        for (int st = 0; st < 2; st++)
+                        {
+                            int truth = StreetFurniture.Showing(serverLights[k], st, drawn);
+                            lamps++;
+                            if (sync.Showing(k, st) != truth) lampsWrong++;
+                            if (StreetFurniture.Showing(gameLights[k], st, drawn) != truth) byClockWrong++;
+                        }
                     var then = was.Peek();
                     for (int i = 0; i < server.traffic.cars.Count; i++)
                     {
@@ -177,6 +193,14 @@ namespace Porchlight.Sim
                 {
                     Console.WriteLine($"FAIL {name}: {hiddenWrong} times a car or person was shown on one side and hidden on the other");
                     ok = false;
+                }
+                if (lamps > 0)
+                {
+                    // Only a light changed early for a waiting car, within the tick before a word, may be off: the
+                    // server's own offset has moved by then. Anything more is the player's lamps out of step.
+                    bool lit = sync.Lights == serverLights.Count && lampsWrong <= lamps * 0.001;
+                    ok &= lit;
+                    Console.WriteLine($"{(lit ? "ok  " : "FAIL")} {name}: {serverLights.Count} signals' lamps as the server has them, {100.0 * lampsWrong / lamps:0.00}% of moments off (by the clock alone, as before: {100.0 * byClockWrong / lamps:0.0}%)");
                 }
                 if (gaps.Count == 0) continue;
                 gaps.Sort();

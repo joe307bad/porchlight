@@ -2891,7 +2891,9 @@ namespace Porchlight.App
             remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
             if (riding != null) FollowRide();
             fleet?.Update(dusk, Emptied ? Anywhere : (Func<double, double, bool>)null);
-            if (traffic != null) signage?.Update(traffic.life.Now, dusk);
+            // Running the town here: its own lights. Following the server's: as it says they stand (the
+            // town's life isn't run here, so its clock and junctions stand still).
+            if (traffic != null) signage?.Update(authority ? traffic.life.Now : Porchlight.Life.TownClock.Now(), dusk, authority ? null : sync);
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);

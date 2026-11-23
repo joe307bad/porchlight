@@ -244,9 +244,24 @@ and writes `Models/props/traffic-signal.glb` and `stop-sign.glb`:
 - The models are at 0.2 tiles a metre (a tile is 4 m), like the street lamps.
 - Each signal is stretched along its arm, so the head hangs over the middle
   of its lane, however wide the road.
-- Each lamp is a glowing disc in front of its lens, lit each frame from the
-  town's own life (`traffic.life.Now`), so it changes as the cars do. Lamps
-  glow brighter at night.
+- Each lamp is a glowing disc in front of its lens: dark red, amber or green
+  until lit. Lit lamps glow brighter at night.
+- The lamps show the light as the cars obey it:
+  - **Following the server's town** (every multiplayer town): from the
+    server's word. Each delta ends with each signal's green stage and the
+    milliseconds until it ends (`StreetFurniture.EncodeLights`). The player's
+    game doesn't run the town's life then, and the server's lights change
+    early for waiting cars, so the clock alone was wrong 35–49% of the time.
+  - **Running the town here:** from the town's own stages
+    (`traffic.life.Now`).
+- The lamps are drawn `WorldSync.DELAY` behind the latest word, as the cars
+  are. Every stage lasts `STAGE_MS` from its start, even one changed early, so
+  a word's stage began `ends − STAGE_MS` before it. Before that, the other
+  stage was green (`StreetFurniture.Showing`).
+
+`sim --follow` checks it: in each starter town, a player's lamps match what
+the server's showed as the cars are drawn at 99.9% of moments or more (they
+come out at 99.97–100%).
 
 ---
 

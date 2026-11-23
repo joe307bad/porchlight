@@ -1,8 +1,10 @@
 // The junctions' traffic signals and stop signs in the game: the models from
 // Tools~/streets/signals.py, stood where StreetFurniture says (the kerb at each
 // lane's stop line, the arm reaching over the lane, the faces looking back down
-// it at the cars coming), and each signal's lamps lit from the town's own
-// signal stages, which the cars obey (RoadNet.Stage): red, then green, amber
+// it at the cars coming), and each signal's lamps lit as the cars obey them:
+// where the server runs the town, as it says they stand (the end of each delta,
+// WorldSync.Showing: they change early for waiting cars); running it here, from
+// the town's own stages (RoadNet.Stage). Red, then green, amber
 // for its last seconds. Manage draws its lights at the same posts.
 
 using System;
@@ -39,6 +41,8 @@ namespace Porchlight.Rendering
         {
             public Junction junction;
             public int stage;
+            /// <summary>Its junction's place among the town's signals (its lights on the wire).</summary>
+            public int light;
             /// <summary>The lamps: red, amber, green over the lane, then the same on the pole.</summary>
             public Renderer[] lamps;
             public int showing = -1;
@@ -60,7 +64,9 @@ namespace Porchlight.Rendering
             root.transform.SetParent(parent, false);
             var signal = library.Get(Catalog.TRAFFIC_SIGNAL);
             var stop = library.Get(Catalog.STOP_SIGN);
-            var lens = Materials.Glowing(Color.white);
+            // Each lens its own colour, dark until lit (glowing with SetGlow).
+            var lens = new Material[3];
+            for (int c = 0; c < 3; c++) lens[c] = Materials.Glowing(LIT[c] * 0.22f);
             foreach (var p in StreetFurniture.Signals(net))
             {
                 // Stretched along the arm, so the head hangs over the lane's middle however wide the road.
@@ -76,11 +82,11 @@ namespace Porchlight.Rendering
                     bulb.transform.localPosition = LENSES[k];
                     bulb.transform.localScale = new Vector3(0.05f, 0.22f, 0.22f / stretch);
                     var r = bulb.GetComponent<Renderer>();
-                    r.sharedMaterial = lens;
+                    r.sharedMaterial = lens[k % 3];
                     r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     lamps[k] = r;
                 }
-                posts.Add(new Post { junction = net.junctions[p.node], stage = p.stage, lamps = lamps });
+                posts.Add(new Post { junction = net.junctions[p.node], stage = p.stage, light = p.light, lamps = lamps });
             }
             var stops = StreetFurniture.Stops(net);
             foreach (var s in stops) Stand(stop, s.at, s.inward, s.along, Vector3.one * SCALE);
@@ -112,15 +118,20 @@ namespace Porchlight.Rendering
             return holder;
         }
 
-        /// <summary>Lights each lamp showing at `moment` (the town's clock, ms): brighter at night.</summary>
-        public void Update(long moment, double dusk)
+        /// <summary>
+        /// Lights each lamp showing: as `following` (the server's word) has it, else at `moment` (the town's clock,
+        /// ms) by the town's own stages. Brighter at night.
+        /// </summary>
+        public void Update(long moment, double dusk, WorldSync following = null)
         {
             float glow = 1.2f + 2.2f * (float)dusk;
             bool relight = Mathf.Abs(glow - glowAt) > 0.05f;
             if (relight) glowAt = glow;
             foreach (var p in posts)
             {
-                int showing = StreetFurniture.Showing(p.junction, p.stage, moment);
+                // The server's word on it if there is one; else the town's own (running it here, or an older server).
+                int showing = following?.Showing(p.light, p.stage) ?? -1;
+                if (showing < 0) showing = StreetFurniture.Showing(p.junction, p.stage, moment);
                 if (showing == p.showing && !relight) continue;
                 p.showing = showing;
                 for (int k = 0; k < p.lamps.Length; k++)

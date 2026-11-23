@@ -38,7 +38,7 @@ function until(pool: SimPool, ok: (towns: SimTown[]) => boolean, ms = 20_000): P
 }
 
 /** A delta (sim/src/Delta.cs) applied to records as a client has them. */
-function applyDelta(cars: Uint8Array, people: Uint8Array, d: Uint8Array): { cars: number; people: number; changed: number } {
+function applyDelta(cars: Uint8Array, people: Uint8Array, d: Uint8Array): { cars: number; people: number; changed: number; lights: number } {
   const v = new DataView(d.buffer, d.byteOffset, d.byteLength);
   const nc = v.getUint16(0), np = v.getUint16(2);
   let o = 4, changed = 0;
@@ -50,8 +50,16 @@ function applyDelta(cars: Uint8Array, people: Uint8Array, d: Uint8Array): { cars
       changed++;
     }
   }
+  // Then the town's traffic lights (StreetFurniture.EncodeLights): u8 n, n × (u8 green stage, u16 ms until it ends).
+  const lights = d[o];
+  for (let k = 0; k < lights; k++) {
+    const r = o + 1 + 3 * k;
+    assert.ok(d[r] === 0 || d[r] === 1, 'a light\'s green stage is 0 or 1');
+    assert.ok(v.getUint16(r + 1) <= 30_000, 'and it ends within a stage');
+  }
+  o += 1 + 3 * lights;
   assert.equal(o, d.byteLength, 'the delta ends where it says');
-  return { cars: nc, people: np, changed };
+  return { cars: nc, people: np, changed, lights };
 }
 
 test('the worker runs a town: full records, deltas, players, taken cars', { skip, timeout: 60_000 }, async () => {
@@ -77,6 +85,8 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
       const r = applyDelta(cars, people, t.delta);
       assert.equal(r.cars, cars.byteLength / RECORD);
       assert.equal(r.people, people.byteLength / RECORD);
+      // Porchlight has traffic signals: their lights come with every delta, for a player's lamps to show as here.
+      assert.ok(r.lights > 0, 'the town\'s traffic lights come with the delta');
       full += t.cars.byteLength + t.people.byteLength;
       sent += t.delta.byteLength;
     }

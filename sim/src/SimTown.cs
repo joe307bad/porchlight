@@ -309,5 +309,7 @@ namespace Porchlight.Sim
 
         public byte[] Cars() => WorldSync.EncodeCars(traffic.cars);
         public byte[] People() => WorldSync.EncodePeople(people);
+        /// <summary>The town's traffic lights now, for the end of a delta (StreetFurniture.EncodeLights).</summary>
+        public byte[] Lights() => StreetFurniture.EncodeLights(traffic.life.net, traffic.life.Now);
     }
 }

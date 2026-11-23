@@ -272,7 +272,7 @@ namespace Porchlight.Sim
                 }
                 var cars = town.Cars();
                 var people = town.People();
-                var delta = town.delta.Next(cars, people, now / 1000);
+                var delta = town.delta.Next(cars, people, now / 1000, town.Lights());
                 var part = new byte[4 + 2 + 2 + cars.Length + people.Length + 4 + delta.Length];
                 int o = 0;
                 BitConverter.TryWriteBytes(part.AsSpan(o), (uint)town.id); o += 4;
@@ -394,7 +394,7 @@ namespace Porchlight.Sim
                     var cars = t.Cars();
                     var people = t.People();
                     fullBytes += cars.Length + people.Length;
-                    deltaBytes += t.delta.Next(cars, people, i * SimTown.TICK).Length;
+                    deltaBytes += t.delta.Next(cars, people, i * SimTown.TICK, t.Lights()).Length;
                 }
                 times.Add(Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
             }

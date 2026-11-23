@@ -15,6 +15,8 @@ namespace Porchlight.Life
     {
         /// <summary>The junction's node, and the stage this lane goes on (0 or 1).</summary>
         public int node, stage;
+        /// <summary>Its junction's place among the town's signals (SignalJunctions, and the lights on the wire).</summary>
+        public int light;
         /// <summary>The post's foot, on the kerb at the stop line.</summary>
         public Vec2 at;
         /// <summary>The way the lane's cars are going (unit): the lights face the other way, at them.</summary>
@@ -44,10 +46,12 @@ namespace Porchlight.Life
         public static List<SignalPost> Signals(RoadNet net)
         {
             var o = new List<SignalPost>();
+            int light = -1;
             foreach (int node in Nodes(net))
             {
                 var j = net.junctions[node];
                 if (j.control != Control.Signal) continue;
+                light++;
                 var seen = new HashSet<int>();
                 foreach (int id in j.movements)
                 {
@@ -55,7 +59,7 @@ namespace Porchlight.Life
                     if (!seen.Add(m.from)) continue;
                     var l = net.lanes[m.from];
                     var (kerb, along) = net.LanePoint(l.road, l.dir, l.end, KerbOut(net, l));
-                    o.Add(new SignalPost { node = node, stage = m.stage, at = kerb, along = along, inward = Inward(net, l, kerb), reach = KerbOut(net, l) });
+                    o.Add(new SignalPost { node = node, light = light, stage = m.stage, at = kerb, along = along, inward = Inward(net, l, kerb), reach = KerbOut(net, l) });
                 }
             }
             return o;
@@ -90,8 +94,55 @@ namespace Porchlight.Life
         public static int Showing(Junction j, int stage, long moment)
         {
             var (green, ends) = RoadNet.Stage(j, moment);
+            return Showing(green, ends, stage, moment);
+        }
+
+        /// <summary>
+        /// What a light on `stage` shows at `now`, from a word that its junction had `green` on until `ends`
+        /// (both on any one clock). Every stage runs a whole STAGE_MS from its start, one changed early for a
+        /// waiting car too, so `green` began at ends − STAGE_MS: before that (lamps are drawn a moment behind
+        /// the word) the other stage was on, and after `ends` they take turns until the next word.
+        /// </summary>
+        public static int Showing(int green, double ends, int stage, double now)
+        {
+            long turns = (long)Math.Floor((now - (ends - RoadNet.STAGE_MS)) / RoadNet.STAGE_MS);
+            if (turns != 0)
+            {
+                if ((turns & 1) != 0) green ^= 1;
+                ends += turns * RoadNet.STAGE_MS;
+            }
             if (green != stage) return 0;
-            return ends - moment <= AMBER_MS ? 1 : 2;
+            return ends - now <= AMBER_MS ? 1 : 2;
+        }
+
+        /// <summary>The town's signals, in node order: the order of their lights on the wire.</summary>
+        public static List<Junction> SignalJunctions(RoadNet net)
+        {
+            var o = new List<Junction>();
+            foreach (int node in Nodes(net)) if (net.junctions[node].control == Control.Signal) o.Add(net.junctions[node]);
+            return o;
+        }
+
+        /// <summary>
+        /// The town's lights at `moment`, for the players following it (the end of each delta, Delta.cs): u8 n, then
+        /// for each signal (SignalJunctions) u8 the stage that's green and u16 the ms until it ends, big-endian.
+        /// The server's lights change early for a waiting car, so the players' can't be worked out from the clock alone.
+        /// </summary>
+        public static byte[] EncodeLights(RoadNet net, long moment)
+        {
+            var js = SignalJunctions(net);
+            int n = Math.Min(js.Count, 255);
+            var o = new byte[1 + 3 * n];
+            o[0] = (byte)n;
+            for (int k = 0; k < n; k++)
+            {
+                var (green, ends) = RoadNet.Stage(js[k], moment);
+                long left = Math.Max(0, Math.Min(0xFFFF, ends - moment));
+                o[1 + 3 * k] = (byte)green;
+                o[2 + 3 * k] = (byte)(left >> 8);
+                o[3 + 3 * k] = (byte)left;
+            }
+            return o;
         }
 
         /// <summary>How long a light shows amber before red (ITE: about a second for each 10 mph; 3 s at a town's speeds).</summary>
