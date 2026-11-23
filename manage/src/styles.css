@@ -449,8 +449,6 @@ p {
 .building ul {
   margin: 4px 0 0;
   padding-left: 16px;
-  max-height: 180px;
-  overflow-y: auto;
 }
 
 /* Focus: one car or townsperson, why they do what they do and what's next. */
@@ -770,8 +768,6 @@ p {
 }
 .focus .list {
   margin-top: 6px;
-  max-height: 320px;
-  overflow-y: auto;
 }
 .queue li.line {
   display: flex;
@@ -961,4 +957,75 @@ p {
 .spot-menu button:focus-visible {
   background: #22303d;
   outline: none;
+}
+
+/* The sidebar's breadcrumbs (crumbs.ts): County › Lanternport › Car 12. */
+.crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  list-style: none;
+  margin: 10px 0 8px;
+  padding: 0;
+  font-size: 13px;
+}
+.crumbs li + li::before {
+  content: '›';
+  margin-right: 6px;
+  color: var(--muted);
+}
+.crumbs [aria-current] {
+  font-weight: 600;
+}
+.crumbs .link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.crumbs .link:hover {
+  text-decoration: underline;
+}
+
+/* A town's tabs, a sort of thing out in it each, wrapping rather than scrolling. */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 14px 0 6px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  padding: 5px 8px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tab.on {
+  color: inherit;
+  border-bottom-color: var(--accent);
+}
+.tab .figs {
+  margin-left: 2px;
+  font-size: 11px;
+}
+.more {
+  margin-top: 6px;
+  width: 100%;
+}
+.entity .focus-head {
+  margin-bottom: 4px;
+}
+
+/* A congested street's whole name, over two lines if need be. */
+.name.wrap {
+  white-space: normal;
+  flex: 1;
 }

@@ -796,37 +796,42 @@ serves:
 - **Clicking** a building lists them at the top of the panel, with when
   each next goes out; click someone for their focus.
 
-**The panel** is as simple as it can be: no explanations and no keys, and
-everything on one line (what doesn't fit is cut short, its whole in a
-tooltip). The ⓘ in its head opens **the key**: how to look closer, what
-each layer's colours and shapes mean, what each kind of thing on the map
-is, and (if so) why there's no traffic and how to start it. Top to bottom:
+**The sidebar** is breadcrumbs (`manage/src/crumbs.ts`), and shows only
+what each one is for:
 
-1. **What's open:** a car or townsperson's focus, who's in a building, a
-   town's tables, or a kind's list. Each has a one-line header with a ✕.
-2. **Towns:** a line each, with its clock, then people · out · cars on the
-   road. Clicking one goes there and opens **its tables**:
-   - the population: a row for each kind of person (workers, students, at
-     home in the day, commuters, through traffic) and a total. The columns
-     are how many, then where each is now, so they add up across: at home,
-     at work or school, elsewhere, walking, driving, on the bus, off the
-     map. The last column is how many own a car;
-   - today: each mode's share of trips and mean trip time, trips made and
-     failed, kerb spots taken, and the busiest hour;
-   - **congestion** (below): a bar for each of the last 24 hours, a slider
-     to pick one, and that hour's worst streets;
-   - the kinds out in that town now, a line each: clicking one lists that
-     town's (its workers, its buses).
-3. **On the map:** the twelve kinds of thing the map shows, a line each
-   with a box to show or hide it, and how many are out now. Clicking its
-   name lists each one out (up to 40, a line each in the simulation's
-   words), in every town, or in one picked from the list's header (the
-   town open, if one is); click one to focus on it and follow it.
-4. **Show:** the other layers, two checkboxes a row.
-5. **Playing,** only when someone is: click to follow them.
+| Crumb | Shows |
+| --- | --- |
+| **County** | The towns, a line each with its people. |
+| **› A town** | Its congestion (below), then its most congested streets by name, then a tab for each sort of thing out in it now: Cars (residents', commuters', through traffic), Vans, Buses, People (workers, students, out on errands, commuters on foot, wanderers), Parked, Boats. Each tab shows its count, and tabs with none out are hidden. A tab lists 40 at a time, each with the simulation's line ("Driving to work"); "Show more" adds 40. |
+| **› Car 12 / Person 40** | One car or townsperson, followed on the map: what it is, what it's doing and its next four steps. Its driver or car is a crumb further on. |
+| **› Building** | Who's inside (a building clicked on the map). Each person is a crumb further on. |
+
+How the crumbs move:
+
+- Clicking a town in the county goes into it, and the map fits to it.
+- Clicking someone in a town's list, a building or a focus (a driver, their
+  car) adds a crumb and follows them.
+- Clicking a car, person or building on the map starts again from the
+  county: County › its town › it.
+- The **Whole county** button goes back to the first crumb.
+
+**Going back** to a crumb picks up as it was left, and moves the map to
+match:
+
+- **The county:** the whole county, with the town last opened highlighted.
+- **A town:** the map on the town. It keeps its tab, the hour of congestion
+  it was on, how far down its list was shown, and who was clicked from it
+  (highlighted and scrolled into view). Each town keeps this (`Memory`), so
+  it's the same if you come back to it from the county later.
+- **A car or person:** followed again.
+
+Nothing in the sidebar scrolls on its own; only the sidebar does. Long
+street names wrap. What the map shows is in the ⓘ, with the key: its
+layers (cars, people, lights, stop signs, land use, players, streets,
+names, trails, reach) and each kind of car and person, a checkbox each.
 
 **Congestion.** To see where the town's traffic jams, and when, a town's
-tables end with its last day of hold-ups (`GET /mp/sim/congestion`, asked
+crumb starts with its last day of hold-ups (`GET /mp/sim/congestion`, asked
 again every 10 s while it's open):
 
 - a bar for each of the last 24 hours (this one so far on the right), as
@@ -1164,6 +1169,22 @@ signs:
   of the lane;
 - over a whole cycle, exactly one stage at a time shows green or amber, the
   one the cars go on: 27 s green, 3 s amber and 30 s red.
+
+**`manage/test-browser/sidebar.mjs`** (`npm run test:browser`) clicks
+through the real sidebar in Chromium against a stand-in server:
+
+- the towns with their people and nothing else;
+- into a town: its most congested street by name, a tab a sort with counts,
+  and no box that scrolls on its own;
+- picking an hour, the Vans tab, a van (a crumb on, followed), then its
+  driver (another crumb);
+- back along the crumbs: the van followed again, then the town as it was
+  left (its tab, its hour, the van highlighted), then the county with the
+  town highlighted;
+- into another town: its own state, from the first tab.
+
+`manage/test/crumbs.test.ts` covers where each click takes the crumbs,
+going back, and each town's memory.
 
 **`manage/test-browser/menu.mjs`** (`npm run test:browser`) right-clicks the
 real page in Chromium against a stand-in server. It checks:
