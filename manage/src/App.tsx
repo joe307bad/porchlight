@@ -303,12 +303,14 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
           setTarget(null);
           setFocus(null);
           setFocusNote(nobody(a));
+          setFollowingFocus(false);
+          renderer?.followFocus(false);
           return;
         }
         focusTo({ town: key, kind: a.kind, id: a.id });
       });
     },
-    [focusTo],
+    [focusTo, renderer],
   );
 
   // A car or person clicked on the map: followed, the county › their town › them.
@@ -392,6 +394,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     setFocus(null);
     setFocusNote(null);
     setFollowingFocus(false);
+    renderer?.followFocus(false);
     renderer?.setFocus(null);
   }, [renderer]);
 

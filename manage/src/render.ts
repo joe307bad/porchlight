@@ -281,10 +281,10 @@ export class MapRenderer {
     this.selected = sid;
   }
 
-  /** The car or townsperson focused on, as the simulation last said (null: none). */
+  /** The car or townsperson focused on, as the simulation last said (null: none, or not heard yet). Following
+   * carries on through a null, so switching between a car and its driver keeps the map on them. */
   setFocus(f: EntityFocus | null): void {
     this.focused = f;
-    if (!f) this.followingFocus = false;
   }
 
   /** Keep the focus in the middle of the map (and close enough in to see it), or stop. */
