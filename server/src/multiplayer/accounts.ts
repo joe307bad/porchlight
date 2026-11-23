@@ -12,9 +12,9 @@
 //   DELETE /mp/towns/:id             delete one of this account's (not while anyone's playing there)
 //   GET    /mp/towns/:id/homes       the houses people live in there
 //   GET    /mp/progress              the missions and unlocks, and which this account has earned
-//   GET    /mp/players/:id           where a character (anyone's, by the id the room shows) is playing right now: { town, session, x, z, name }, or 404
+//   GET    /mp/players/:id           where a character (anyone's, by the id the room shows) is playing right now: { town, session, x, z, name }, or 404 (not playing, or in a town that's someone else's)
 //   GET    /mp/records?town=&mission=          a mission's best times in a town (its key), and this account's
-//   POST   /mp/records               { town, mission, character, seconds } keep a time (if it's the account's best there) → the board
+//   POST   /mp/records               { town, mission, character, seconds } keep a time for a race the server saw run (if it's the account's best there) → the board
 //
 // One account plays as any of its characters, several at once: a parent and
 // child on one sign-in each play their own. What's earned is the account's, so
@@ -26,6 +26,7 @@ import { SESSION_COOKIE, type SessionPayload } from '../app.ts';
 import { parseCookies, unseal } from '../cookies.ts';
 import type { Mission } from '../missions.ts';
 import { CharacterError, cleanLook, cleanName, cleanSeconds, cleanTownKey, MAX_TOWNS, TOWN_NAME_MAX, type Persistence } from './persistence.ts';
+import { played } from './played.ts';
 import { lookAllowed, MSG_GOTO, UNLOCK_NAMES, UNLOCKS, type GotoMessage } from './protocol.ts';
 
 export interface GameDeps {
@@ -62,6 +63,10 @@ export function readSession(secret: string, cookieHeader: string | null | undefi
 
 /** A request from another site (only checked when the browser says where it's from). */
 export const foreignOrigin = (appUrl: string, origin: string | null | undefined): boolean => !!origin && origin !== appUrl;
+
+/** How long a time waits for the race's last moves to arrive. */
+const RACE_WAITS = 4;
+const RACE_WAIT_MS = 250;
 
 const PREFIX = '/mp/characters';
 const TOWNS = '/mp/towns';
@@ -120,7 +125,8 @@ export function createCharacterRoutes(deps: GameDeps) {
         if (req.method !== 'GET') return send(405, { error: 'Method not allowed.' });
         if (parts.length !== 3 || !parts[2] || parts[2].length > 64) return send(404, { error: 'Not found.' });
         const where = deps.whereIs?.(parts[2]) ?? null;
-        return where ? send(200, where) : send(404, { error: 'Not playing right now.' });
+        // In a town that's someone else's, they might as well not be playing: not even its key is said.
+        return where && (await deps.persistence.mayEnter(account.id, where.town)) ? send(200, where) : send(404, { error: 'Not playing right now.' });
       }
 
       // Manage's right-click: which of the account's characters are playing (GET), and sending one of them
@@ -169,10 +175,15 @@ export function createCharacterRoutes(deps: GameDeps) {
           if (typeof id !== 'string' || !(await deps.missions.get(id))) throw new CharacterError('No such mission.', 404);
           return id;
         };
+        // A town's board is for those who can play there.
+        const enterable = async (town: string) => {
+          if (!(await deps.persistence.mayEnter(account.id, town))) throw new CharacterError("That town is someone else's.", 403);
+        };
         if (req.method === 'GET') {
           const query = new URL(req.url ?? '/', 'http://x').searchParams;
           const town = cleanTownKey(query.get('town'));
           if (!town) throw new CharacterError("That isn't a town.");
+          await enterable(town);
           return send(200, await deps.persistence.records(account.id, town, await mission(query.get('mission'))));
         }
         if (req.method === 'POST') {
@@ -182,7 +193,18 @@ export function createCharacterRoutes(deps: GameDeps) {
           const seconds = cleanSeconds(body.seconds);
           if (seconds === null) throw new CharacterError("That isn't a time.");
           if (typeof body.character !== 'string') throw new CharacterError('Who ran it?');
-          return send(200, await deps.persistence.keepRecord(account.id, body.character, town, await mission(body.mission), seconds));
+          await enterable(town);
+          const id = await mission(body.mission);
+          if (!(await deps.persistence.character(account.id, body.character))) throw new CharacterError('No such character.', 404);
+          if (!(await deps.missions.get(id))?.race) throw new CharacterError("That mission doesn't keep times.", 409);
+          // The finish may still be on its way over their other connection (the game's socket).
+          let time = played.claimRace(body.character, town, seconds);
+          for (let i = 0; time === null && i < RACE_WAITS; i++) {
+            await new Promise((r) => setTimeout(r, RACE_WAIT_MS));
+            time = played.claimRace(body.character, town, seconds);
+          }
+          if (time === null) throw new CharacterError("The server didn't see that race run.", 409);
+          return send(200, await deps.persistence.keepRecord(account.id, body.character, town, id, time));
         }
         return send(405, { error: 'Method not allowed.' });
       }

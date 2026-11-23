@@ -112,6 +112,7 @@ test('towns: three at most, and houses: one account, two people, free again when
   const edited = await p.createTown(them.id, 'Edited', `seed=edited-${made[0].id}&width=96`);
   assert.equal(edited.key, `seed=edited-${made[0].id}&width=96`);
   await assert.rejects(p.createTown(them.id, 'Copy', edited.key), /called Edited/);
+  await assert.rejects(p.createTown(me.id, 'Copy', made[1].key), /Delete one/);
 
   // Deleting a town: only its maker; those who lived there choose again; a free slot for another.
   await assert.rejects(p.ownTownKey(them.id, made[0].id), /Only whoever/);

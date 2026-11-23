@@ -169,7 +169,13 @@ export function cleanTownKey(raw: unknown): string | null {
   return typeof raw === 'string' && raw.length <= 512 && /^seed=[A-Za-z0-9*._%+-]+(&[A-Za-z0-9]+=[0-9.eE+-]+)*$/.test(raw) ? raw : null;
 }
 
-const townExists = (name: string) => new CharacterError(`That town already exists: it's called ${name}.`, 409);
+/** Someone has this very town. What it's called is theirs to know, unless it's yours or comes with the game. */
+const townExists = (name: string | null) => new CharacterError(name ? `That town already exists: it's called ${name}.` : 'That town has been made already. Try another seed.', 409);
+/** Where a town comes with the game, its houses are known: only the tile each goes by will do (so a house can't be claimed twice, by two of its tiles). */
+const starterHouses = new Map(STARTER_TOWNS.map((t) => [t.key, new Set(t.houses.map(([x, y]) => `${x},${y}`))]));
+const checkHouse = (townKey: string, x: number, y: number): void => {
+  if (starterHouses.get(townKey)?.has(`${x},${y}`) === false) throw new CharacterError("There's no house there.", 404);
+};
 
 export interface Persistence {
   /** Migrated and reachable at least once: until then joins are refused. */
@@ -515,8 +521,8 @@ export class PgPersistence implements Persistence {
       if (mine.length >= MAX_TOWNS || slot === null) throw tooManyTowns();
       const [town] = await tx.insert(towns).values({ name, key: key ?? newTownKey(), createdBy: accountId, slot }).onConflictDoNothing({ target: towns.key }).returning({ id: towns.id, name: towns.name, key: towns.key, slot: towns.slot });
       if (!town) {
-        const [same] = await tx.select({ name: towns.name }).from(towns).where(eq(towns.key, key ?? ''));
-        throw townExists(same?.name ?? 'something else');
+        const [same] = await tx.select({ name: towns.name, createdBy: towns.createdBy }).from(towns).where(eq(towns.key, key ?? ''));
+        throw townExists(same && (same.createdBy === null || same.createdBy === accountId) ? same.name : null);
       }
       return { ...town, mine: true, residents: 0, place: null };
     });
@@ -617,6 +623,8 @@ export class PgPersistence implements Persistence {
       const [c] = await tx.select({ townId: characters.townId, homeId: characters.homeId }).from(characters).where(and(eq(characters.id, characterId), eq(characters.playerId, accountId)));
       if (!c) throw noSuchCharacter();
       if (!c.townId) throw new CharacterError('Choose a town first.', 409);
+      const [town] = await tx.select({ key: towns.key }).from(towns).where(eq(towns.id, c.townId));
+      if (town) checkHouse(town.key, x, y);
       await tx.insert(homes).values({ townId: c.townId, x, y, playerId: accountId }).onConflictDoNothing();
       const [home] = await tx.select({ id: homes.id, playerId: homes.playerId }).from(homes).where(and(eq(homes.townId, c.townId), eq(homes.x, x), eq(homes.y, y)));
       // Gone already (its last resident moved out between those two lines): they can try again.
@@ -895,7 +903,7 @@ export class MemoryPersistence implements Persistence {
     const slot = freeSlot(mine.map((t) => t.slot));
     if (mine.length >= MAX_TOWNS || slot === null) throw tooManyTowns();
     const same = [...this.towns.values()].find((t) => t.key === key);
-    if (same) throw townExists(same.name);
+    if (same) throw townExists(same.createdBy === null || same.createdBy === accountId ? same.name : null);
     const town = { id: crypto.randomUUID(), name, key: key ?? newTownKey(), createdBy: accountId, slot };
     this.towns.set(town.id, town);
     return { id: town.id, name, key: town.key, mine: true, residents: 0, place: null, slot };
@@ -942,6 +950,8 @@ export class MemoryPersistence implements Persistence {
     const c = this.characters.get(characterId);
     if (!c || c.accountId !== accountId) throw noSuchCharacter();
     if (!c.townId) throw new CharacterError('Choose a town first.', 409);
+    const town = this.towns.get(c.townId);
+    if (town) checkHouse(town.key, x, y);
     if (c.house?.x === x && c.house.y === y) return;
     const inside = [...this.characters.values()].filter((o) => o.townId === c.townId && o.house?.x === x && o.house.y === y);
     if (inside.some((o) => o.accountId !== accountId)) throw houseTaken();

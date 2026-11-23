@@ -1,6 +1,7 @@
 # title: Turkey run
 # summary: The pickup's piled high with frozen turkeys for the neighbours. Pull up outside each house and your helper hops out, takes a turkey off the pile, carries it in and comes back. Five turkeys and every table in town has Thanksgiving dinner on it.
 # unlocks: feast
+# least: 45
 
 // Everything this mission is lives in this file (see README.md in this
 // folder): the pickup, its load of frozen turkeys, and what your helper does

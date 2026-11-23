@@ -1,5 +1,6 @@
 # title: Trash day
 # summary: You're driving the garbage truck. Pull up by each wheelie bin on the round, and your crew hops out, wheels it to the back, tips it in, puts it back and hops back on. Five bins and the round's done.
+# least: 45
 
 // Everything this mission is lives in this file (see README.md in this
 // folder): the truck, the round, and what the crew does at each bin, out of

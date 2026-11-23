@@ -17,9 +17,10 @@ import type { AddressInfo } from 'node:net';
 import { Server, matchMaker } from '@colyseus/core';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import { createMissionRoutes, DEFAULT_MISSIONS_DIR, MissionStore } from '../missions.ts';
-import { createCharacterRoutes, type GameDeps } from './accounts.ts';
+import { createCharacterRoutes, readSession, type GameDeps } from './accounts.ts';
 import { TrafficFeed } from './feed.ts';
 import { CityRoom, configureCityRoom, countyChanged, isOnline, playingIn, presence, tell, whereIs } from './CityRoom.ts';
+import { played } from './played.ts';
 import type { Persistence } from './persistence.ts';
 import { CITY_ROOM } from './protocol.ts';
 import { SimPool, type SimCommand } from '../sim/pool.ts';
@@ -55,7 +56,16 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   const deps: GameDeps = { persistence: opts.persistence, sessionSecret: opts.sessionSecret, appUrl: opts.appUrl, isOnline, presence, playingIn, whereIs, tell, countyChanged, missions: store };
   configureCityRoom(deps);
   const characters = createCharacterRoutes(deps);
-  const missions = createMissionRoutes(store);
+  const missions = createMissionRoutes(store, async (req, id) => {
+    const session = readSession(opts.sessionSecret, req.headers.cookie);
+    if (!session || !opts.persistence.ready) return;
+    try {
+      played.start((await opts.persistence.account(session.sub, session.name)).id, id);
+    } catch (err) {
+      // The mission can still be played: it just can't earn anything.
+      console.error('missions: start not kept:', (err as Error).message);
+    }
+  });
   const simLink = opts.sim ? new SimLink(new SimPool(opts.sim, opts.simWorkers ?? 1), deps, openRooms) : null;
   setSim(simLink);
   const traffic = new TrafficFeed(deps, undefined, undefined, simLink);

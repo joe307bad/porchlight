@@ -1,6 +1,7 @@
 # title: Deliver the Presents
 # summary: It's Christmas Eve and you're Santa, high over the town in your sleigh behind nine reindeer. Fly through the golden ring over each house and the reindeer bring you down: onto the roof and down the chimney, or into the street and in at the front door, to leave a present under the tree. Five houses before morning!
 # unlocks: christmas
+# least: 45
 
 // Everything this mission is lives in this file (see README.md in this
 // folder): you as Santa, the sleigh, the rings over each house, the reindeer

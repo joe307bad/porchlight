@@ -1,6 +1,8 @@
 # title: Marathon runner
 # summary: Run the town's longest race, right across the map from one side to the other, between the ribbons and the cheering crowds. The clock starts as you cross the start line. Every town keeps its own best times.
 # unlocks: sprint
+# least: 20
+# race: yes
 
 // Everything this mission is lives in this file: the course (the longest way
 // right across the town (corner to corner, or gate to gate), along its streets, fenced with

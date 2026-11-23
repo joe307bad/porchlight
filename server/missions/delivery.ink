@@ -1,5 +1,6 @@
 # title: Moving day
 # summary: Three neighbours need boxes run across town. Find each one, park where they ask, and drive their boxes to the drop-off.
+# least: 45
 
 // Everything this mission is lives in this file: who's in it, where they
 // live, what they say, how the boxes get from one house to another. The game

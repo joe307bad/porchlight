@@ -5,7 +5,7 @@
 //   in   1 TOWNS    JSON [{ id, key }]: the towns to run (any not listed stop)
 //        2 PLAYERS  u16 n, n × (u32 town, u16 count, count × (f32 x, f32 y)): where players are (tiles)
 //        3 TAKEN    JSON { id, taken: ["t3", …] }: the cars someone's in
-//        4 ASK      JSON { ask, town, kind: car|person|building, i }: about one car, person or building now
+//        4 ASK      JSON { ask, town, kind: car|person|building|ground…, i }: about one car, person or building now
 //   out  1 READY    JSON { id, cars, people, roads, roadNames, zoning, buildings } once a town's made (roads: its
 //                   streets, for Manage's map, SimTown.Roads; zoning and buildings: what each building
 //                   is for, Zoning.cs), or { id, error }
@@ -225,6 +225,7 @@ namespace Porchlight.Sim
                     answer = slot >= 0 ? life.AboutPersonSlot(slot) : new { wanderer = true };
                 }
                 else if (q.kind == "focus-car" || q.kind == "focus-person") answer = town.Focus(q.kind == "focus-car", q.by == "slot", q.i);
+                else if (q.kind == "ground") answer = town.Ground();
                 else if (q.kind == "signals") answer = town.Signals(q.i == 1);
                 else if (q.kind == "congestion") answer = town.Congestion(q.i);
                 else if (q.kind == "brief-car" || q.kind == "brief-person") answer = town.Focus(q.kind == "brief-car", q.by == "slot", q.i, brief: true);
