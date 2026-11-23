@@ -24,10 +24,11 @@ on:
       - '!**/*.md'
   # A pull request is built and tested the same way (the game compiled, the
   # server and the simulation tested), but never deployed: the deploy job is
-  # skipped. Test a branch on the dev setup (dev.sh, desktop/mac-dev.sh).
+  # skipped. Test a branch on the dev setup (dev.sh, desktop/dev-mac.sh).
   pull_request:
     paths:
       - 'unity/**'
+      - 'desktop/*.sh'
       - 'server/**'
       - 'manage/**'
       - 'sim/**'
@@ -115,6 +116,15 @@ jobs:
 
       - name: Game — towns grow (every invariant checked) and repeat
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60
+      # Road hierarchy (FHWA's shares), the ring road, eras, transect zones, neighbourhood units and a second centre.
+      - name: Game — towns planned like real ones
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- plan
+      # The town's life (docs/town-life.md): a whole day of each starter town and two generated ones, end to
+      # end (nobody stuck, trips made, the same day twice), then its rules one scenario at a time.
+      - name: Game — a day of each town's life, start to finish, and the same twice
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- traffic-day server/towns 2
+      - name: Game — the town's life, rule by rule (players in the road, signals, parking, buses, the wire)
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- life server/towns
       # The web build grows and builds the towns ahead a share at a time: no share long enough to stall
       # the car (a shared runner is slower than a desk: twice the limit), and the same towns as all at once.
       - name: Game — the county built a share at a time, as the web build does
@@ -124,6 +134,13 @@ jobs:
           dotnet run --project "unity/Tools~/Checks" -c Release -- ride
           dotnet run --project "unity/Tools~/Checks" -c Release -- ways
           dotnet run --project "unity/Tools~/Checks" -c Release -- where
+      # The desktop app's server: the released app always plays on the live one, whatever a dev build left
+      # behind (the cause of a released app on a Mac hitting a dev server); desktop/dev-mac.sh's can be pointed anywhere.
+      - name: Desktop — the released app plays live whatever's left behind; dev and prod Mac scripts
+        run: |
+          dotnet run --project "unity/Tools~/Checks" -c Release -- servers
+          bash -n desktop/dev-mac.sh
+          bash -n desktop/prod-mac.sh
       # The presents mission's flying: through the rings, the story's landings, down the chimneys and back.
       - name: Game — the sleigh flies through its rings, lands where it's sent, and down the chimney and back
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- sleigh

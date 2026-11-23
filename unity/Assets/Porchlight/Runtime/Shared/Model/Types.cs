@@ -40,21 +40,38 @@ namespace Porchlight.Model
 
     public enum RoadKind { Main, Street, Path }
 
+    /// <summary>
+    /// Where a road sits in the town's hierarchy (FHWA's functional classes): arterials carry traffic
+    /// across town (the main roads through the centre, and the ring), collectors gather it from the
+    /// neighbourhoods (the first streets laid across each piece of land between them), and local
+    /// streets reach the doors. Separate from <see cref="RoadKind"/>, which is how a road is built.
+    /// </summary>
+    public enum RoadClass { Local, Collector, Arterial }
+
+    /// <summary>When a part of town was built (TownPlan): an old gridded core, a garden suburb round it, post-war loops at the edge.</summary>
+    public enum Era { Core, GardenSuburb, PostWar }
+
+    /// <summary>The SmartCode transect's zones a town has (TownPlan.Rules): sub-urban, general urban, urban centre, urban core.</summary>
+    public enum Transect { T3 = 3, T4 = 4, T5 = 5, T6 = 6 }
+
     public enum Facing { N = 0, E = 1, S = 2, W = 3 }
 
-    public enum BuildingKind { House, Shop, Workshop, Church, Hall }
+    /// <summary>What a building is. New kinds go on the end (a school looks like a hall wherever a kind isn't listed).</summary>
+    public enum BuildingKind { House, Shop, Workshop, Church, Hall, School }
 
     public enum LandmarkKind { Plaza, Well, Church, Market }
 
     public static class Names
     {
         public static string Of(RoadKind k) => k == RoadKind.Main ? "main" : k == RoadKind.Street ? "street" : "path";
+        public static string Of(RoadClass k) => k == RoadClass.Arterial ? "arterial" : k == RoadClass.Collector ? "collector" : "local";
         public static string Of(BuildingKind k) => k switch
         {
             BuildingKind.House => "house",
             BuildingKind.Shop => "shop",
             BuildingKind.Workshop => "workshop",
             BuildingKind.Church => "church",
+            BuildingKind.School => "school",
             _ => "hall",
         };
         public static string Of(LandmarkKind k) => k switch
@@ -87,10 +104,12 @@ namespace Porchlight.Model
         public int from;
         public int to;
         public RoadKind kind;
+        /// <summary>Arterial, collector or local (set once the streets are laid; Local until then).</summary>
+        public RoadClass cls;
         /// <summary>Polyline from `from` to `to`, endpoints included.</summary>
         public List<Vec2> points;
 
-        public RoadEdge Clone() => new RoadEdge { id = id, from = from, to = to, kind = kind, points = points };
+        public RoadEdge Clone() => new RoadEdge { id = id, from = from, to = to, kind = kind, cls = cls, points = points };
     }
 
     public sealed class RoadGraph
@@ -113,6 +132,32 @@ namespace Porchlight.Model
         public List<Vec2> polygon;
         /// <summary>Enclosed areas that aren't part of the block (ponds, rock).</summary>
         public List<List<Vec2>> holes;
+        /// <summary>When it was built, so its houses can look their age (PlanStage).</summary>
+        public Era era;
+        /// <summary>Its transect zone: how built up it is (setbacks, heights, lot sizes; TownPlan.Rules).</summary>
+        public Transect transect = Transect.T3;
+        /// <summary>The neighbourhood it's in (an index into TownModel.neighbourhoods), or -1.</summary>
+        public int neighbourhood = -1;
+    }
+
+    /// <summary>
+    /// A neighbourhood unit (Perry, 1929): blocks bounded by arterials, about a 400 m walk across, with
+    /// a park and a school near its middle and shops at its corners, where the arterials meet.
+    /// </summary>
+    public sealed class Neighbourhood
+    {
+        public int id;
+        public List<int> blockIds = new List<int>();
+        /// <summary>The middle of its blocks (by area).</summary>
+        public Vec2 middle;
+        /// <summary>Tiles of land in its blocks.</summary>
+        public int area;
+        /// <summary>The block kept as its park (every lot in it left green), or -1.</summary>
+        public int parkBlockId = -1;
+        /// <summary>Its school (a building id), or -1: set by the buildings stage.</summary>
+        public int schoolBuildingId = -1;
+        /// <summary>The shops at its corners (building ids): set by the buildings stage.</summary>
+        public List<int> cornerShopIds = new List<int>();
     }
 
     public sealed class Lot
@@ -258,6 +303,10 @@ namespace Porchlight.Model
 
         public Vec2 center;
         public double townRadius;
+        /// <summary>A big town's second centre (multiple nuclei: by its airport or its waterfront), or null.</summary>
+        public Vec2? secondCentre;
+        /// <summary>The town's neighbourhoods (PlanStage); every block is in one.</summary>
+        public List<Neighbourhood> neighbourhoods = new List<Neighbourhood>();
         public List<Vec2> gates = new List<Vec2>();
 
         public List<River> rivers = new List<River>();

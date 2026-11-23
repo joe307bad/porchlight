@@ -1704,6 +1704,15 @@ Label {
     justify-content: space-between;
 }
 
+/* A dev build's server (UI/Gate.cs), in a badge like the release's: dark on cream, easy to read. */
 .signin-server {
     align-self: center;
+    margin-top: 22px;
+    margin-bottom: 4px;
+}
+.signin-badge-button {
+    cursor: link;
+}
+.signin-badge-button:hover > .signin-badge-face {
+    background-color: #ffe9b8;
 }

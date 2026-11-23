@@ -29,6 +29,8 @@ Scale: a tile is 4 m, a town about 256 × 256 tiles (1 km square).
 - **Radial main roads.** A\* runs from each gate (and the airport and zoo)
   to the centre, merging where routes overlap (`Gen/Roads.cs`). That makes a
   star with no ring road or bypass.
+- **One junction where roads meet, never a knot.** See "Junctions: no
+  knots" below.
 - **Streets by hierarchical domain splitting** (`Gen/StreetPlan.cs`, Yang et
   al. 2013 [P24]). Blocks are 9 tiles deep and grow up to 40% larger towards
   the edge; the outskirts get courts and cul-de-sacs.
@@ -42,6 +44,115 @@ Scale: a tile is 4 m, a town about 256 × 256 tiles (1 km square).
 - **Missing:** neighbourhoods, schools, parks (only leftover green lots and
   community gardens), parking lots, transit, a second centre, and any sense
   of the town's age.
+
+### Junctions: no knots
+
+Main roads used to meet in knots. Each is pathfound to the centre on its
+own, and a later road joins an earlier one wherever is cheapest, often a
+tile or three from an existing junction. In one player's town the middle
+was a T, a 3-tile stub, and two curved roads looping back to the next
+junction: four junctions in 4 tiles, with a lamp post on the island
+between them. Real street networks avoid this, and osm2streets cleans the
+same shapes out of OpenStreetMap: `CollapseShortRoads` merges a road
+shorter than its junctions into one junction, and
+`CollapseDegenerateIntersections` removes junctions that only join two
+roads [T51]. We borrow the idea, not the code.
+
+What happens now (`Gen/Roads.cs`, `Gen/RoadGraph.cs`):
+
+1. **Routing.** A main road joining another within 4 tiles of one of its
+   junctions pays a penalty of 30 (`JOIN_PENALTY`; a turn costs 10). So it
+   meets the road at the junction itself, or well clear of it.
+2. **Clean-up** (`RoadGraphOps.CollapseShortLinks`), repeated until nothing
+   changes:
+   - **Doubles.** Of two roads between the same two junctions, the shorter
+     is kept (a main road over a street). A road that comes back to its own
+     start goes.
+   - **Side by side.** Two roads that leave a junction the same way (told by
+     where they are 6 tiles out, past any L), within 3.5 tiles of each
+     other, are zipped. The one that turns off first is cut back and joined
+     to the other where they part, as a T. One that runs beside the other
+     all the way to a dead end leaves it by a spur across, as near its end
+     as the land allows. Across a knot, two roads laid side by side out of
+     the knot's two junctions are zipped the same way, and the knot loses a
+     leg.
+   - **Steps at the mouth.** A road that turns within 3.5 tiles of a
+     junction (`MOUTH`) and then turns back the way it set off steps aside
+     in the junction's mouth: that was the east road at Ember Crossing's
+     centre. The step is slid further out, or the road turns at once and
+     drops the first run, or cuts across with a slant, whichever keeps to
+     land and leaves no step at either end. Rounding the corner inside the
+     junction itself (under 1 tile) doesn't count.
+   - **Jogs.** A junction set a tile or three off the line its roads run on
+     moves onto that line, and the others go straight to it. This is kept
+     only if it means fewer bends.
+   - **Short links.** Two junctions closer than 4 tiles along a road
+     (`JUNCTIONS_APART`, a junction's mouth) become one. One stays where it
+     is, or failing that they meet half way. The other's roads are swung
+     whole to it, bent over their last 4 tiles, or squared off along the
+     tiles, whichever is allowed first. A merge must keep every road on land
+     a main road may cross. It can't leave two roads meeting under 60°
+     (AASHTO's least, [T48]) unless they already did, or a junction with
+     more than four legs, or a new step at a mouth. If no merge passes,
+     40° is tried as a last resort: a sharp fork beats a knot.
+   - **Forks.** If a knot can't become one junction (two roads head off the
+     same way, or it would have five legs), the shortest such road goes,
+     with any dead end it leaves. That happens only if every gate, the
+     airport and the zoo stay joined up.
+   - **Leftovers.** A dead end the clean-up left behind goes. Every dead end
+     from before (gates, the airport's car park, the zoo's gate) is pinned.
+     The centre can move a few tiles to become a merged junction, and its
+     stub goes if all it is is a dead end off a junction.
+3. **Streets** (`Gen/Streets.cs`): after the dead ends are cut back, two
+   streets between the same two junctions become one (the shorter), the
+   same as doubles above. A street laid within 4 tiles alongside a main
+   road (beside a step in it, say) goes, and the blocks either side become
+   one. The main road was routed there on purpose; the street was only
+   where the block plan happened to put it.
+4. **Checks.** The generator's own checks fail a town (as `Checks towns`
+   runs them) with two roads between the same two junctions, a road back
+   to its own start, any two junctions under 3 tiles apart along a street
+   (`RoadGraphOps.CheckKnots`), or, for main roads (`Knotted`):
+   - junctions under 4 tiles apart along the road, or under 4 apart as the
+     crow flies (a road can't loop round to dodge the first rule);
+   - a link with a bend in it under 8 tiles long (a dog-leg between two
+     junctions, as at Ember Crossing's centre);
+   - a step within 3.5 tiles of a junction.
+
+How it measured, with the stricter rules (PR #18):
+- **CI's `towns 60`:** 60 of 60 pass.
+- **`towns 300`:** 292 of 300, as before the stricter rules. The first
+  try at them passed 167 (every corner near a junction counted, not just
+  steps); zips across knots, spurs to dead ends and the 40° fallback
+  brought it back. Two knots are left: check-64's zoo spur (below) and
+  check-81, where the land blocks every merge. The other six failures are
+  the same as before.
+- **`plan`:** all 11 towns pass.
+- **Ember Crossing:** its centre is one junction, north, west and south;
+  the east road's step is 5 tiles out.
+
+How it measured first (PR #19):
+- **CI's `towns 60`:** 60 of 60 pass, with no knots. Before, 9 of them had
+  main-road junctions under 4 tiles apart; nothing checked for it then.
+- **`towns 300`:** 292 of 300 pass, against 294 before. One knot is left
+  (check-64). The zoo's access road joins 3 tiles from another junction,
+  and the zoo's own boundary blocks every way of moving it. Two small towns
+  now fail pavement checks they passed before (a sidewalk loops where two
+  main roads run side by side). Two towns that failed before pass. The
+  other five failures were there before.
+- **`plan`:** all 11 towns pass. With the centre tidied, Porchlight has 4
+  T6 blocks rather than 2, enough for the lot-size check to look at T6. It
+  found T6 lots no smaller than T5's (6.5 against 6.4 tiles), which was
+  true before too (6.33 against 6.36). The cap on a lot was the larger of
+  30 tiles × the zone's scale and twice the smallest lot (16 tiles). For
+  T6 (0.55, so 16.5) the floor all but cancelled the scale. The floor is
+  now 1.5 × the smallest lot (12). Halving a piece still leaves at least
+  the smallest lot, since a cut falls near the middle. T6's scale is now
+  0.45 (13.5 tiles), against T5's 0.7 (21).
+- **Starter towns:** regenerated. The streets report finds 0 junctions of
+  5+ legs, 0 under 60° and 0 pairs under 3 tiles apart in all four.
+- **Blue town** (the player's, `seed=35puey`): its centre is one
+  crossroads.
 
 ### What real towns do
 
@@ -82,25 +193,68 @@ Scale: a tile is 4 m, a town about 256 × 256 tiles (1 km square).
 
 ### To-do
 
-- [ ] **Road hierarchy.** Tag edges arterial / collector / local. Main roads
-  through the centre are arterials, and the first split streets in each
-  region are collectors. Add a `Checks streets` report of length shares
-  against FHWA's ~70% local [P1].
-- [ ] **A ring or bypass.** Today every trip to the other side of town goes
-  through the centre. Add a ring or bypass in bigger towns, so arterials are
-  spaced 200–800 m apart [P1].
-- [ ] **Era rings.** Each ring gets a "built" era: a tight grid core of
-  ~15 × 20-tile blocks [P2], then garden suburb, then post-war loops and
-  cul-de-sacs [P3]. Store the era per block so houses can look their age
-  later [P28].
-- [ ] **Transect zones.** Assign T3–T6 by distance plus noise, and take
-  setback, height and lot width from a T-zone table instead of the
-  `innerCity`/`downtown` thresholds [P7].
-- [ ] **Neighbourhood units.** Group blocks into ~400 m neighbourhoods
-  bounded by arterials. Each gets a school and a park near its middle and
-  shops at its arterial corners [P5].
-- [ ] **A second centre** (multiple nuclei) in large towns: at the station,
-  the docks or the airport [P8].
+All six are in: `Gen/TownPlan.cs` (eras, the transect table, the ring's radius,
+the second centre), `Gen/Plan.cs` (the plan stage: each block's era and zone,
+and the neighbourhoods), with the roads, streets, lots and buildings stages
+following them. `Checks plan` holds every town to it (below), and CI runs it.
+
+- [x] **Road hierarchy.** Every road edge has a class (`RoadClass`, beside its
+  `RoadKind`): main roads are arterials, but for a spur that only leads to the
+  airport or the zoo (a collector); the streets laid by the first three levels
+  of splitting each piece of land between the main roads are collectors; the
+  rest are local. `Checks streets` reports the length shares inside the town,
+  and `Checks plan` holds the big dry towns to FHWA's: Porchlight is 15%
+  arterial, 14% collector, 70% local [P1].
+- [x] **A ring or bypass.** A town at least 320 m in radius gets a ring road at
+  half its radius (never nearer than 200 m: 256 m in Porchlight), routed by the
+  main roads' A* from point to point round its circle. It crosses the roads out
+  from the centre rather than following them. `Checks plan`: from each gate to
+  the next on arterials without coming within half the ring's radius of the
+  middle, and a small town has no such way round [P1].
+- [x] **Era rings.** Each block's `era`: the core within ~0.3 of the radius,
+  garden suburbs to ~0.65, post-war beyond (the edges wander). The core is a
+  regular grid of ~15 × 20-tile blocks (scaled with the street spacing; 16 × 22
+  in Porchlight, median) with no courts or cul-de-sacs (a dead end it can't join
+  is cut back, unless it's a street down to the water); the garden suburbs have
+  some courts; post-war has the most, and keeps more dead ends as cul-de-sacs
+  [P2][P3]. Stored per block so houses can look their age later [P28].
+- [x] **Transect zones.** Each block's `transect`, T3–T6, by distance from the
+  nearer centre plus a wobble. The town's own settings place the zones
+  (`downtown`: T5, with T6 at its heart; `innerCity`: T4), so a key keeps its
+  character, and `TownPlan.Rules` is the table: front yards (T3 only), lot size
+  (lotMaxSize × 1, 0.85, 0.7, 0.45), house heights, shops and towers (T5–T6),
+  gardens and courtyards. It replaces the `innerCity`/`downtown` thresholds in
+  the buildings stage and the street scene [P7].
+- [x] **Neighbourhood units.** The land the arterials and water cut the town
+  into, each piece a neighbourhood about 400 m across: a piece smaller than a
+  220 m square joins the smallest one beside it, and one bigger than 1.6 × 400 m
+  square or more than 520 m across is split. Each with four blocks or more keeps
+  the block nearest its middle as a park (green, nothing built), and gets a
+  school (a new building kind, drawn as a hall) near its middle and up to four
+  shops on the arterial where an arterial meets another or a collector.
+  Porchlight has ten [P5].
+- [x] **A second centre** in large towns: just outside the airport's gate,
+  towards the town (pulled to 0.45–0.8 of the radius), or failing that its
+  bay. It's a T5 centre of its own (half the main one's reach), with offices,
+  their towers half as tall [P8]. (No station yet, and the docks come later in
+  the pipeline than the plan, so it's the airport or the waterfront.)
+- [x] **Junctions, not knots:** main roads meet at one junction, never a
+  tangle of junctions a car or two apart (osm2streets' idea [T51]; see
+  "Junctions: no knots" above, PR #19). Dog-legs between junctions and
+  steps in a junction's mouth too (PR #18). Two test towns' knots (check-64's
+  zoo spur, check-81) still can't be untangled.
+
+What `Checks plan` holds, for the county's towns, four big towns and three small
+ones: every road classed and the arterials reaching every gate; FHWA's shares
+(big dry towns); the ring's way round (big towns) and none in small ones; the
+eras in order out from the middle, the core's block size and no cul-de-sacs in
+it, and more a block post-war; the zones in order, lots smaller and houses taller
+nearer the middle, front yards only in T3 and shops in T3–T4 only at
+neighbourhood corners; every neighbourhood under 600 m across, its park and
+school nearer its middle than most of it, the park green and the corner shops on
+an arterial, and most neighbourhoods kept within the arterials (big dry towns);
+the second centre with T5 blocks and offices round it that the main centre alone
+wouldn't give; and all of it the same again from the same key.
 
 ## 2. Are the shops and businesses in realistic places?
 
@@ -173,9 +327,12 @@ Scale: a tile is 4 m, a town about 256 × 256 tiles (1 km square).
   outside the centre [P9].
 - [ ] **Industry in a wedge** along the main road out to the county highway,
   or by the docks and rail, not scattered round the edge [P8].
-- [ ] **Civic buildings:** a school per neighbourhood, a fire station, and
-  park land at ~10 acres per 1,000 residents (we have residents from
-  zoning) [P5][P14][P16]. Also car parks behind the high street.
+- [ ] **Civic buildings:**
+  - [x] a school and a park per neighbourhood (PR #18);
+  - [ ] a fire station;
+  - [ ] park land at ~10 acres per 1,000 residents (we have residents from
+    zoning) [P5][P14][P16];
+  - [ ] car parks behind the high street.
 - [ ] **Generate the Market landmark** (the plaza on market day: see §6).
 - [ ] **Planning checks** in `Checks zoning`:
   - parks per 1,000 residents
@@ -311,46 +468,72 @@ From `Explore/Traffic.cs`:
 
 ### To-do
 
-- [ ] **Trips, not wandering.** Give every car an origin and destination (a
-  home, a job, a shop, the highway) and route it with `StreetRoute` on
-  travel-time costs. This is the change everything else builds on.
-- [ ] **Junction control by road class** (needs the §1 hierarchy):
-  - local × local: all-way stop
-  - collector × local: two-way stop with HCM gap acceptance (4.1 s / 6.2 s)
-    [T12]
-  - arterial × arterial: fixed-time signal, cycle from Webster on the
-    expected peak flows, worked out when the town is made [T10]
-- [ ] **Don't block the box:** no car enters a junction unless there's room
-  where it's going. A car stuck N minutes re-routes or leaves [T18].
-- [ ] **Queue-based server sim (A/B Street / SUMO MESO style):** each lane
-  a FIFO queue holding about length / (car + 2 m) cars, released from the
-  stop line every ~1.9 s [T25][T20][T8]. Congestion follows without
-  per-tick physics, so whole towns stay cheap off-screen.
+Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
+
+- [x] **Trips, not wandering.** Every car has an origin and destination (a
+  home, a job, a shop, a gate) and is routed over the lanes on free-flow
+  travel time (`Life/Router.cs`, not `StreetRoute`). This is the change
+  everything else builds on.
+- [ ] **Junction control by road class** (PR #19: ranked by functional
+  class, arterial 3, collector 2, local 1; [town-life.md](town-life.md) §2):
+  - [x] equal roads crossing (four legs): all-way stop (MUTCD 2B.07 [T50]);
+    a T of equal roads, the stem stops (MUTCD 2B.04)
+  - [ ] collector × local: two-way stop with HCM gap acceptance (4.1 s /
+    6.2 s) [T12]. Stop signs on the smaller roads are in (MUTCD 2B.04, A/B
+    Street's `ControlStopSign`), a 500 ms stop then first come first served,
+    but there's no gap acceptance yet.
+  - [ ] arterial × arterial: fixed-time signal, cycle from Webster on the
+    expected peak flows, worked out when the town is made [T10]. Signals
+    where arterials cross (the MUTCD's warrants [T49], with class for
+    volume) are in, two-stage 30 s, changing early for a car waiting with
+    nobody coming the other way (PR #19), but the cycle isn't from Webster
+    yet.
+- [x] **Turns at a comfortable cornering speed:** √(a / curvature) with
+  a = 0.32 g (AASHTO side friction at 15 mph [T48]), over a car's length.
+  Now 0.38 g, with the limits a tenth over a real town's (see below).
+- [x] **Don't block the box:** no car enters a junction unless there's room
+  where it's going. A car held 3 minutes is let through, and one held behind
+  a player for 15 s turns round (PR #19) [T18].
+- [x] **Queue-based server sim (A/B Street / SUMO MESO style):** each lane
+  is a queue of cars on intervals, event-driven, with no per-tick physics
+  (PR #19: 0.18 ms a town a tick) [T25][T20][T8].
 - [ ] **IDM near the camera on the host** [T1][T2]. Keep its entry and exit
   times pinned to the server's queue schedule so the two never disagree.
   Use MOBIL only on multi-lane county highways [T7].
-- [ ] **Speed limits by road class** (arterial 50 km/h, local 30 km/h)
-  instead of one cruise speed.
+- [x] **Speed limits by road class** (Main 4.3 tiles/s, about 61 km/h;
+  streets 2.6, about 37 km/h), slower on bends and turns (PR #19). Real
+  towns' 50 and 30 km/h looked like crawling at a game's scale, so the
+  limits are a fifth over, and cars corner a little brisker (PR #18).
 - [ ] **Congestion-aware routing:** BPR edge costs from the last ~15 minutes
   of flow. Re-route a random ~10% of drivers each simulated day, which
   converges towards Wardrop equilibrium cheaply, as MATSim does [T14][T15][T21].
-- [ ] **Parking as a real step:** spaces per building (kerb, driveway, car
-  park). Arriving cars take the nearest free one or cruise on, then walk to
-  the door. Cruising then appears on its own downtown and round events
-  [T17][T18].
-- [ ] **Traffic through the gates:** commuters and visitors arrive and leave
-  by the county highways, and the highways get traffic (`docs/highways.md`).
+  Routing by the traffic is in (PR #18: each lane's hold-up measured as cars
+  leave it, routes costed by it, and held-up drivers taking a quicker way;
+  `Life/Congestion.cs`, [town-life.md](town-life.md)), but not BPR costs or
+  day-to-day re-routing towards equilibrium.
+- [x] **Parking as a real step:** kerb and driveway spots (PR #19). Arriving
+  cars take a free spot near the door, or hunt for one (jittered, so hunters
+  fan out), then walk to the door [T17][T18]. Car parks are still to come.
+- [ ] **Traffic through the gates:**
+  - [x] commuters and through traffic arrive and leave by the gates (PR #19);
+  - [ ] the county highways get traffic (`docs/highways.md`).
 - [ ] **Vehicles with jobs:**
-  - buses on a timetable that stop and hold up the lane
-  - delivery vans in the morning
-  - bin lorries by zone and weekday
-  - emergency vehicles that make others pull over
+  - [x] buses on a timetable that stop and hold up the lane (PR #19: one
+    loop a town, every 20 minutes, ridden by the timetable)
+  - [x] delivery vans and taxis, more or fewer by the hour as real
+    commercial traffic runs, day and night, out of the rushes (PR #19:
+    [town-life.md](town-life.md) §9, [T52])
+  - [ ] bin lorries by zone and weekday
+  - [ ] emergency vehicles that make others pull over
 
   The models already exist in `Catalog.cs`.
-- [ ] **A gridlock check:** a `Checks traffic-day` that runs a full
-  simulated day on a few seeds and fails on any car stuck for long [T18].
-- [ ] **Townsfolk as obstacles:** cars yield at crossings, and pedestrians
-  cross at junctions with a gap, not anywhere.
+- [x] **A gridlock check:** `Checks traffic-day` runs a full simulated day
+  of each starter town and two seeds, and fails on anyone stuck, a trip over
+  3 hours, too many failed trips, or a day that doesn't repeat. CI runs it,
+  with `Checks life` (PR #19) [T18].
+- [x] **Townsfolk as obstacles:** cars wait for walkers on their turn, and
+  walkers cross at junctions with leave, or mid-block at a cost (PR #19).
+  Players in the road stop cars too, on a lane or in a junction.
 
 ## 5. What do the townsfolk need to look like a real population?
 
@@ -409,46 +592,57 @@ From `Explore/Actors.cs` and `Walking.cs`:
 
 ### To-do
 
-- [ ] **Fix walking pace** to ~1.2–1.5 m/s (0.3–0.4 tiles/s), with a few
-  joggers. This is a one-line change in `Actors.cs:276-283`.
+Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
+
+- [x] **Fix walking pace:** 0.22–0.34 tiles/s (2–3 mph), with 5% joggers
+  (PR #19).
 - [ ] **Households** for every home zoning makes, seeded from the town:
   single, couple, family with 1–3 children, retirees. Use a fixed mix, with
   PopulationSim-style rebalancing only if totals drift [T27][T29]. This
-  turns zoning's `residents` into actual people.
+  turns zoning's `residents` into actual people. PR #19 makes the people (1.2
+  working residents a home, by the proletariat robot), but not their
+  households' make-up.
 - [ ] **A job for every worker**, by a doubly-constrained gravity model:
   P(job j | home i) ∝ jobs_j · e^(−β·t_ij), filling each job once [T35].
   - The town's surplus jobs (~0.2 a household) go to commuters from
     neighbouring towns, which puts peaks on the county highways.
   - Some residents work out of town.
-- [ ] **A daily plan per person (ActivitySim-style)** [T30]:
+
+  PR #19 fills jobs at random from the slots (commuters in, residents out
+  through the gates), not by gravity yet.
+- [x] **A daily plan per person (ActivitySim-style)** [T30]. PR #19: work
+  (with lunch and shops on the way home), school, errands and visits, about
+  3 trips a day. Weekends, shifts and school drop-offs are still to come.
   - the day: work, school or home, plus 0–2 stops (shop, leisure, errand),
     for ~3 trips a day [T33]
   - workers: shift starts around 8:00 ± 60 min, plus some retail, evening
     and night shifts; weekend work at ~29% of weekdays [T36]
   - school: bell times, with parents dropping children off on the way to
     work
-- [ ] **A town clock** (server-side, shared). Night becomes a time, not a
-  toggle. Departure = activity start − expected travel time − a buffer, so
+- [x] **A town clock** (server-side, shared): real time, county-wide (UTC−5)
+  (PR #19). The sky's night still comes from the client. Departure = activity start − expected travel time − a buffer, so
   rush hours and their jams follow from the plans.
-- [ ] **Mode choice:** walk under ~800 m (assumed), drive if the household
-  has a car (the driveways are already there), bus once buses run.
-- [ ] **Level of detail** [T41][T25]:
+- [x] **Mode choice:** walk under 60 tiles (240 m), drive if their car is
+  parked where they are, bus if the timetable beats walking (PR #19).
+- [x] **Level of detail** [T41][T25]. PR #19: everyone is simulated as
+  events, and only those out are drawn, through fixed slots. No RVO2 yet.
   - off-screen, a person is their plan plus where they are in it, with
     departures and arrivals as events on the server
   - near a player, the host gives them a body that walks or drives
   - RVO2 for sidewalk avoidance [T39]; social force only for dense crowds at
     events [T38]
-- [ ] **Regulars.** Keep each person's home and job across days, so the
+- [x] **Regulars.** Keep each person's home and job across days (PR #19), so the
   same faces walk to the same bakery. Players notice that more than
   accuracy. Light needs (hunger, fun) can choose errands later.
-- [ ] **Going indoors:** people enter and leave buildings through their
-  front doors (`Homes.Door`), and parked cars pick up and drop off their
-  drivers.
-- [ ] **Manage views:**
-  - people by activity (home, work, travelling)
-  - trips by hour
-  - each street's flow
-  - the junctions that jam
+- [x] **Going indoors:** people enter and leave buildings through their
+  doors, and parked cars pick up and drop off their drivers (PR #19).
+- [x] **Manage views:**
+  - [x] people by activity: who's indoors in each building, out, or out of
+    town (PR #19)
+  - [x] trips by hour (PR #19: the busiest hour and each mode's share)
+  - [x] each street's flow and hold-ups (PR #18: Manage's congestion slider,
+    the last 24 hours, with each hour's worst streets drawn on the map)
+  - [x] the junctions that jam (PR #19: the slow junctions, as a count)
 
 ## 6. Randomness: matches, concerts and the logistics they bring
 
@@ -546,28 +740,29 @@ From `Explore/Actors.cs` and `Walking.cs`:
 Each step stands on the one before. Start with the cheap ones. Progress is
 tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
 
-1. **Cheap fixes now:**
-   - walking pace (§5)
-   - speed limits by road class (§4)
-   - the road hierarchy tags and their check (§1)
-2. **A town clock** shared by the server and clients; night becomes a time
-   (§5).
-3. **People:** households from zoning's homes, jobs by gravity model, daily
-   plans (§5).
-4. **Trips:** cars driving those plans by `StreetRoute`; traffic through the
-   gates and on the highways (§4).
-5. **Junction control** (stops and signals) and don't-block-the-box, plus
-   the gridlock check (§4).
-6. **Parking as a trip step**, with going indoors (§4, §5).
-7. **Queue-based server traffic with IDM near players**, and
-   congestion-aware re-routing (§4).
-8. **Better towns:** land-value field, shops by threshold, industry
-   wedges, civic buildings, era rings, transect zones (§1–3).
+1. **Cheap fixes now:** walking pace (§5) and speed limits (§4) are done
+   (#19); the road hierarchy tags and their check (§1) are done (#18).
+2. **A town clock** shared by the server and clients (§5): done (#19).
+   Night still comes from the client's sky.
+3. **People:** daily plans are done (#19). Household make-up and jobs by
+   gravity model (§5) are left.
+4. **Trips:** cars driving those plans, and traffic through the gates, are
+   done (#19). Traffic on the highways (§4) is left.
+5. **Junction control** (stops and signals), don't-block-the-box and the
+   gridlock check (§4): done (#19). Gap acceptance and Webster cycles are
+   left.
+6. **Parking as a trip step**, with going indoors (§4, §5): done (#19).
+7. **Queue-based server traffic** (§4): done (#19). IDM near players and
+   congestion-aware re-routing are left.
+8. **Better towns:** era rings, transect zones, neighbourhoods with their
+   schools and parks, the ring road and a second centre are done (§1, #18).
+   The land-value field, shops by threshold, industry wedges and the other
+   civic buildings (§2–3) are left.
 9. **The calendar and events:** market day first (the plaza is already
    there), then a venue with match days, parades, incidents and shared
    weather (§6).
-10. **Manage** shows each layer as it lands: activities, trips by hour,
-    street flows, jams and events.
+10. **Manage** shows each layer as it lands. Activities, trips by hour and
+    jams are done (#19); street flows and events are left.
 
 ---
 
@@ -745,7 +940,36 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
   https://cdn.fastly.steamstatic.com/apps/valve/2009/ai_systems_of_l4d_mike_booth.pdf
 - **[T47]** RimWorld AI storytellers: https://rimworldwiki.com/wiki/AI_Storytellers
 
+- **[T48]** AASHTO, *A Policy on Geometric Design of Highways and Streets*
+  ("Green Book"), 7th ed. (2018), Table 3-7: side friction factor 0.32 at
+  15 mph, via the Iowa DOT Design Manual, Chapter 2B:
+  https://ia.iowadot.gov/design/dmanual/2B.pdf
+- **[T49]** FHWA, *MUTCD* (2009), Chapter 4C, "Traffic Control Signal
+  Needs Studies": Section 4C.01 lists the warrants; 4C.02, Warrant 1
+  (Table 4C-1, 500 and 150 vehicles an hour):
+  https://mutcd.fhwa.dot.gov/htm/2009/part4/part4c.htm
+- **[T50]** FHWA, *MUTCD* (2009), Chapter 2B: Sections 2B.04 "Right-of-Way
+  at Intersections", 2B.06 "STOP Sign Applications", 2B.07 "Multi-Way Stop
+  Applications": https://mutcd.fhwa.dot.gov/htm/2009/part2/part2b.htm
+- **[T51]** A/B Street's junction control: stop signs by road rank,
+  `map_model/src/objects/stop_signs.rs` (`ControlStopSign::new`); signal
+  plans, `map_model/src/make/traffic_signals/mod.rs` (`four_way_two_stage`,
+  `three_way`); where signals go, osm2streets' `IntersectionControl`, from
+  OpenStreetMap: https://github.com/a-b-street/abstreet ·
+  https://github.com/a-b-street/osm2streets
+- **[T52]** Batterman, S., Cook, R. & Justin, T. (2015). Temporal variation
+  of traffic on highways and the development of accurate temporal
+  allocation factors for air pollution analyses. *Atmospheric Environment*
+  107, 351–363. doi:10.1016/j.atmosenv.2015.02.047. Table 7: hourly
+  allocation factors, weekday, for total and commercial traffic (Detroit
+  metro) and the SMOKE national default. Measured on freeways; the paper
+  notes arterials and collectors weren't studied. We use the commercial
+  weekday column for the vans out each hour.
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC4380130
+
 **Unverified or secondary:**
+- the Green Book's Table 3-7 itself (read through Iowa DOT's copy) [T48]
+- MUTCD 2B.07's numeric criteria (only its Support and opening Guidance read) [T50]
 - Perry's ¼-mile and 160-acre figures [P5]
 - the IDM default parameters
 - 1,900 vehicles/hour from the HCM itself [T8]

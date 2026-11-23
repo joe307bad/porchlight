@@ -34,6 +34,8 @@ namespace Porchlight.Gen
         const int MAX_PRUNE_PASSES = 50;
         /// <summary>No street runs alongside another road nearer than this, centre to centre (tiles): the Check's limit, with no land at all between them.</summary>
         public const double MIN_APART = 4;
+        /// <summary>The nearest two junctions may be along any street (tiles): a car or two apart, they're a knot, not two junctions.</summary>
+        const double CLOSE_JUNCTIONS = 3;
         /// <summary>Dead ends looked at between one share of the work and the next (Steps).</summary>
         const int DEAD_ENDS_A_STEP = 40;
 
@@ -159,8 +161,14 @@ namespace Porchlight.Gen
                 }
                 return true;
             }
-            bool CulDeSac(int node, RoadEdge e) =>
-                Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id) && rng.Chance(p.culDeSacs);
+            // The gridded core joins every dead end it can; the post-war edge keeps more of them as cul-de-sacs.
+            bool CulDeSac(int node, RoadEdge e)
+            {
+                if (!(Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id))) return false;
+                var era = TownPlan.EraAt(model, g.nodes[node].at);
+                double keepShare = era == Era.Core ? 0 : era == Era.PostWar ? Math.Min(1, p.culDeSacs * 1.5) : p.culDeSacs;
+                return rng.Chance(keepShare);
+            }
 
             // The land to plat: what blocks are made of (Parcels.Ground), and where a street may be laid.
             var rock = Raster.RockMask(slope, p);
@@ -215,6 +223,8 @@ namespace Porchlight.Gen
             RoadGraphOps.MergePassThrough(g, keep);
             yield return "/merge";
             foreach (var part in DropDuplicateStreets(g)) yield return part;
+            // Two streets between the same two junctions (a little loop): the shorter kept.
+            if (RoadGraphOps.DropDoubles(g)) RoadGraphOps.MergePassThrough(g, keep);
             yield return "/dedupe";
             // A dead end too short to serve anything, or without room for its bulb, is cut back, a stretch at a time.
             for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
@@ -225,18 +235,138 @@ namespace Porchlight.Gen
                     var e = g.edges[b.edge];
                     if (keep.Contains(b.atEnd ? e.to : e.from)) continue;
                     if (!BulbFits(b.at, b.edge) || Geo.PolylineLength(e.points) < Math.Max(CUL_DE_SAC_LENGTH, floor)) cut.Add(b.edge);
+                    // The gridded core has no cul-de-sacs: one it couldn't join up goes, unless it's a street down to the water.
+                    else if (TownPlan.EraAt(model, b.at) == Era.Core && !NearWater(b.at, water, w, h)) cut.Add(b.edge);
                 }
                 if (cut.Count == 0) break;
                 foreach (int e in cut) g.dead.Add(e);
                 RoadGraphOps.MergePassThrough(g, keep);
                 yield return "/prune";
             }
+            // Cutting dead ends back can leave two streets between the same junctions again: the shorter kept.
+            if (RoadGraphOps.DropDoubles(g)) RoadGraphOps.MergePassThrough(g, keep);
             var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
+            // A street laid alongside a main road nearer than MIN_APART (beside a bend in it, say): it goes,
+            // the stretch of it between two junctions, and the blocks either side are one. The main roads are where
+            // they had to be; the street was only where the plan put it.
+            for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
+            {
+                var close = CloseParallels(roads, MIN_APART).FindAll(c => (roads.edges[c.a].kind == RoadKind.Main) != (roads.edges[c.b].kind == RoadKind.Main));
+                if (close.Count == 0) break;
+                var (ea, eb) = (roads.edges[close[0].a], roads.edges[close[0].b]);
+                var drop = ea.kind == RoadKind.Main ? eb : ea;
+                var again = RoadGraphOps.BuilderFrom(roads);
+                again.dead.Add(drop.id);
+                var keepAgain = new HashSet<int>();
+                foreach (var n in again.nodes)
+                {
+                    if (Geo.Dist(C, n.at) < 0.01) keepAgain.Add(n.id);
+                    foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) keepAgain.Add(n.id);
+                }
+                RoadGraphOps.MergePassThrough(again, keepAgain);
+                roads = KeepConnected(RoadGraphOps.Compact(again), model.center);
+            }
+            Classify(roads, model, plan.collectors);
             yield return "/compact";
             var next = model.With();
             next.roads = roads;
             next.bridges = RoadGraphOps.ComputeBridges(next, Raster.WaterMask(next));
             done(next);
+        }
+
+        /// <summary>A dead end this near the water (tiles, either way) is a street down to the shore.</summary>
+        public const int SHORE = 4;
+
+        public static bool NearWater(Vec2 at, byte[] water, int w, int h)
+        {
+            for (int y = (int)Math.Floor(at.y) - SHORE; y <= (int)Math.Floor(at.y) + SHORE; y++)
+                for (int x = (int)Math.Floor(at.x) - SHORE; x <= (int)Math.Floor(at.x) + SHORE; x++)
+                    if (x >= 0 && y >= 0 && x < w && y < h && water[Grid.Index(x, y, w)] != 0) return true;
+            return false;
+        }
+
+        /// <summary>A street within this of a collector's line, all along it, is (part of) that collector (tiles).</summary>
+        const double ON_COLLECTOR = 0.75;
+
+        /// <summary>
+        /// Each road's class (FHWA): the main roads are arterials, but for a spur off them that leads only to the airport
+        /// or the zoo (a collector); the streets laid by the first split of each piece of land between the main roads are
+        /// collectors; the rest, and the footpaths, are local.
+        /// </summary>
+        public static void Classify(RoadGraph roads, TownModel model, List<(Vec2 a, Vec2 b)> collectors)
+        {
+            // Spurs: peel the main roads back from every end that isn't a gate.
+            var degree = new Dictionary<int, int>();
+            foreach (var e in roads.edges)
+                if (e.kind == RoadKind.Main)
+                    foreach (int n in new[] { e.from, e.to }) degree[n] = (degree.TryGetValue(n, out int d) ? d : 0) + 1;
+            var gate = new HashSet<int>();
+            foreach (var n in roads.nodes)
+                foreach (var q in model.gates)
+                    if (Geo.Dist(q, n.at) < 0.01) gate.Add(n.id);
+            var spur = new HashSet<int>();
+            for (bool more = true; more;)
+            {
+                more = false;
+                foreach (var e in roads.edges)
+                {
+                    if (e.kind != RoadKind.Main || spur.Contains(e.id)) continue;
+                    int end = degree[e.from] == 1 && !gate.Contains(e.from) ? e.from : degree[e.to] == 1 && !gate.Contains(e.to) ? e.to : -1;
+                    if (end < 0) continue;
+                    spur.Add(e.id);
+                    degree[e.from]--;
+                    degree[e.to]--;
+                    more = true;
+                }
+            }
+            foreach (var e in roads.edges)
+            {
+                if (e.kind == RoadKind.Main) e.cls = spur.Contains(e.id) ? RoadClass.Collector : RoadClass.Arterial;
+                else if (e.kind == RoadKind.Path) e.cls = RoadClass.Local;
+                else
+                {
+                    e.cls = RoadClass.Local;
+                    foreach (var (a, b) in collectors)
+                    {
+                        bool along = true;
+                        foreach (var q in e.points) if (Geo.DistToSegment(q, a, b) > ON_COLLECTOR) { along = false; break; }
+                        if (along)
+                        {
+                            e.cls = RoadClass.Collector;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Of the length of a town's roads for cars (not footpaths) inside the town (its radius: FHWA's shares are of
+        /// urban roads, not the highways out across the fields), the share in each class: arterial, collector, local.
+        /// </summary>
+        public static (double arterial, double collector, double local) ClassShares(TownModel model)
+        {
+            double a = 0, c = 0, l = 0;
+            const double STEP = 0.25;
+            foreach (var e in model.roads.edges)
+            {
+                if (e.kind == RoadKind.Path) continue;
+                double len = 0;
+                for (int k = 0; k + 1 < e.points.Count; k++)
+                {
+                    var p0 = e.points[k];
+                    var p1 = e.points[k + 1];
+                    double sl = Geo.Dist(p0, p1);
+                    int n = Math.Max(1, (int)Math.Ceiling(sl / STEP));
+                    for (int j = 0; j < n; j++)
+                        if (Geo.Dist(Geo.Lerp(p0, p1, (j + 0.5) / n), model.center) <= model.townRadius) len += sl / n;
+                }
+                if (e.cls == RoadClass.Arterial) a += len;
+                else if (e.cls == RoadClass.Collector) c += len;
+                else l += len;
+            }
+            double all = Math.Max(1e-9, a + c + l);
+            return (a / all, c / all, l / all);
         }
 
         static IEnumerable<string> AddFootpaths(TownModel m, GraphBuilder gb, byte[] wet, float[] stepCost, float[] slope, RoadTerrain terrainInfo, Vec2 C)
@@ -313,6 +443,8 @@ namespace Porchlight.Gen
                 errors.Add("road graph is not a single connected component");
             errors.AddRange(CheckCrossings(graph));
             errors.AddRange(CheckDuplicates(graph));
+            // No knots: two roads between the same junctions, a loop on itself, or junctions a car or two apart.
+            errors.AddRange(RoadGraphOps.CheckKnots(graph, CLOSE_JUNCTIONS));
             foreach (var c in CloseParallels(graph, MIN_APART))
             {
                 errors.Add($"roads {c.a} and {c.b} run alongside each other {Numbers.ToFixed(c.apart, 1)} apart near {Numbers.ToFixed(c.at.x, 1)},{Numbers.ToFixed(c.at.y, 1)}");

@@ -5,6 +5,7 @@
 //   in   1 TOWNS    JSON [{ id, key }]: the towns to run (any not listed stop)
 //        2 PLAYERS  u16 n, n × (u32 town, u16 count, count × (f32 x, f32 y)): where players are (tiles)
 //        3 TAKEN    JSON { id, taken: ["t3", …] }: the cars someone's in
+//        4 ASK      JSON { ask, town, kind: car|person|building, i }: about one car, person or building now
 //   out  1 READY    JSON { id, cars, people, roads, zoning, buildings } once a town's made (roads: its
 //                   streets, for Manage's map, SimTown.Roads; zoning and buildings: what each building
 //                   is for, Zoning.cs), or { id, error }
@@ -12,6 +13,9 @@
 //                   records (7 bytes each, cars then people), u32 length, delta (Delta.cs))
 //        3 LOOKS    JSON { id, looks }: the townsfolk past those the town came with
 //        4 STATS    JSON { towns, ticks, avgMs, maxMs }, once a minute
+//        5 LIFE     JSON (SimTown.Life): each town's clock, who's indoors where and off the map at each
+//                   gate, and the day's figures, once a second
+//        6 ANSWER   JSON { ask, answer }: to ASK (answer null: no such town, car, person or building)
 //
 // Ten ticks a second, each stepping every town. Towns are made off the tick's thread
 // (up to a couple of seconds each) and join the ticks once made. Logs go to stderr.
@@ -36,14 +40,23 @@ namespace Porchlight.Sim
 {
     static class Program
     {
-        const byte IN_TOWNS = 1, IN_PLAYERS = 2, IN_TAKEN = 3;
-        const byte OUT_READY = 1, OUT_TICK = 2, OUT_LOOKS = 3, OUT_STATS = 4;
+        const byte IN_TOWNS = 1, IN_PLAYERS = 2, IN_TAKEN = 3, IN_ASK = 4;
+        const byte OUT_READY = 1, OUT_TICK = 2, OUT_LOOKS = 3, OUT_STATS = 4, OUT_LIFE = 5, OUT_ANSWER = 6;
+        const int LIFE_MS = 1000;
         const int TICK_MS = 100;
         const int STATS_MS = 60_000;
 
         static readonly ConcurrentQueue<(byte type, byte[] body)> inbox = new ConcurrentQueue<(byte, byte[])>();
         static readonly ConcurrentQueue<SimTown> made = new ConcurrentQueue<SimTown>();
         static readonly Dictionary<int, SimTown> towns = new Dictionary<int, SimTown>();
+        /// <summary>
+        /// SIM_CLOCK_SHIFT_MS: the towns' clock this far ahead of the real one, for tests (the server's run their
+        /// towns at mid-morning whenever CI runs them, not at night with the streets empty). Unset: the real time.
+        /// </summary>
+        static readonly long clockShift = long.TryParse(Environment.GetEnvironmentVariable("SIM_CLOCK_SHIFT_MS"), out long shift) ? shift : 0;
+
+        /// <summary>The towns' clock now (unix ms).</summary>
+        static long ClockNow() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + clockShift;
         /// <summary>Towns asked for (id → key), made or being made.</summary>
         static readonly Dictionary<int, string> wanted = new Dictionary<int, string>();
         /// <summary>Each town's taken cars as last told (kept for a town still being made).</summary>
@@ -65,7 +78,7 @@ namespace Porchlight.Sim
             long next = 0;
             double total = 0, max = 0;
             int ticks = 0;
-            long statsAt = STATS_MS;
+            long statsAt = STATS_MS, lifeAt = LIFE_MS;
             for (;;)
             {
                 long wait = next - clock.ElapsedMilliseconds;
@@ -84,6 +97,11 @@ namespace Porchlight.Sim
                         buildings = Porchlight.Explore.Zoning.Encode(town.zoning) }));
                 }
                 Tick();
+                if (clock.ElapsedMilliseconds >= lifeAt)
+                {
+                    lifeAt = clock.ElapsedMilliseconds + LIFE_MS;
+                    foreach (var town in towns.Values) Send(OUT_LIFE, Json(town.Life()));
+                }
                 double ms = Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
                 total += ms;
                 max = Math.Max(max, ms);
@@ -111,6 +129,7 @@ namespace Porchlight.Sim
                         case IN_TOWNS: SetTowns(m.body); break;
                         case IN_PLAYERS: SetPlayers(m.body); break;
                         case IN_TAKEN: SetTaken(m.body); break;
+                        case IN_ASK: Ask(m.body); break;
                         default: Log($"unknown message {m.type}"); break;
                     }
                 }
@@ -140,6 +159,9 @@ namespace Porchlight.Sim
                     try
                     {
                         var town = new SimTown(id, key);
+                        // Started here too (its life run up to now from a little before), not in the first tick: that
+                        // takes a while in a big town, and every other town's tick would wait on it.
+                        town.Step(ClockNow());
                         Log($"town {id} made in {sw.ElapsedMilliseconds} ms: {town.traffic.cars.Count} cars, {town.people.Count} people");
                         made.Enqueue(town);
                     }
@@ -186,18 +208,57 @@ namespace Porchlight.Sim
             if (towns.TryGetValue(m.id, out var town)) town.SetTaken(takenOf[m.id]);
         }
 
+        /// <summary>About one car, person or building in a town now (the debug view: /mp/sim/where, Manage's hover).</summary>
+        static void Ask(byte[] body)
+        {
+            var q = JsonSerializer.Deserialize<AskSpec>(body);
+            if (q == null) return;
+            object answer = null;
+            if (towns.TryGetValue(q.town, out var town))
+            {
+                var life = town.life;
+                if (q.kind == "car") answer = life.AboutCar(q.i);
+                else if (q.kind == "person")
+                {
+                    // The town's people slots come after its wanderers.
+                    int slot = q.i - (town.basePeople - life.personSlots.Length);
+                    answer = slot >= 0 ? life.AboutPersonSlot(slot) : new { wanderer = true };
+                }
+                else if (q.kind == "focus-car" || q.kind == "focus-person") answer = town.Focus(q.kind == "focus-car", q.by == "slot", q.i);
+                else if (q.kind == "signals") answer = town.Signals(q.i == 1);
+                else if (q.kind == "congestion") answer = town.Congestion(q.i);
+                else if (q.kind == "brief-car" || q.kind == "brief-person") answer = town.Focus(q.kind == "brief-car", q.by == "slot", q.i, brief: true);
+                else if (q.kind == "building")
+                {
+                    int id = q.i >= 0 && q.i < town.zoning.buildings.Count ? town.zoning.buildings[q.i].buildingId : -1;
+                    if (id >= 0) answer = new { building = q.i, inside = life.Inside(id) };
+                }
+            }
+            Send(OUT_ANSWER, Json(new { ask = q.ask, answer }));
+        }
+
+        sealed class AskSpec
+        {
+            public int ask { get; set; }
+            public int town { get; set; }
+            public string kind { get; set; }
+            public int i { get; set; }
+            /// <summary>focus-*: "slot" (`i` is where it's drawn: a car's or person's place in the tick's records) or "id" (who: the town's life's own).</summary>
+            public string by { get; set; }
+        }
+
         /// <summary>Every town a tenth of a second on, and what each now is sent.</summary>
         static void Tick()
         {
             if (towns.Count == 0) return;
-            double now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            double now = ClockNow();
             var parts = new List<byte[]>(towns.Count);
             int size = 10;
             foreach (var town in towns.Values)
             {
                 try
                 {
-                    town.Step();
+                    town.Step((long)now);
                 }
                 catch (Exception e)
                 {
@@ -286,6 +347,10 @@ namespace Porchlight.Sim
 
         static byte[] Json(object o) => JsonSerializer.SerializeToUtf8Bytes(o);
 
+        /// <summary>8:15 on a fixed weekday: the morning's rush (for the bench and the follow check).</summary>
+        public static long Morning() =>
+            Porchlight.Life.TownClock.At(Porchlight.Life.TownClock.DayOf(new DateTimeOffset(2026, 11, 20, 12, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds()), 8 * Porchlight.Life.TownClock.HOUR + 15 * Porchlight.Life.TownClock.MINUTE);
+
         static void Log(string line) => Console.Error.WriteLine("sim: " + line);
 
         sealed class TownSpec
@@ -307,13 +372,16 @@ namespace Porchlight.Sim
             var keys = Directory.GetFiles(dir, "*.json").Where(f => !f.EndsWith(".roads.json")).OrderBy(f => f)
                 .Select(f => JsonDocument.Parse(File.ReadAllText(f)).RootElement.GetProperty("key").GetString()).ToList();
             var sw = Stopwatch.StartNew();
-            var made = keys.Select((k, i) => new SimTown(i, k)).ToList();
+            // At the morning's busiest, the same morning every time.
+            long peak = Morning();
+            var made = keys.Select((k, i) => new SimTown(i, k, peak)).ToList();
             Console.WriteLine($"{made.Count} towns made in {sw.ElapsedMilliseconds} ms ({string.Join(", ", made.Select(t => $"{t.traffic.cars.Count}+{t.people.Count}"))})");
             // More towns: the same ones again (each its own, stepped separately).
             var all = new List<SimTown>();
-            for (int c = 0; c < copies; c++) all.AddRange(c == 0 ? made : keys.Select((k, i) => new SimTown(c * 1000 + i, k)));
-            // Players in each, for the cars to stop for: a few standing on its roads.
-            foreach (var t in all) t.SetObstacles(t.traffic.cars.Take(3).Select(c => new Vec2(c.x + 2, c.y + 2)).ToList());
+            for (int c = 0; c < copies; c++) all.AddRange(c == 0 ? made : keys.Select((k, i) => new SimTown(c * 1000 + i, k, peak)));
+            // Players in each, for the cars to stop for: a few standing in its busiest lanes.
+            foreach (var t in all)
+                t.SetObstacles(t.life.net.lanes.Where(l => l.dir > 0 && l.rank == 2).Take(3).Select(l => t.life.net.LanePoint(l, l.start + l.Span / 2).at).ToList());
             for (int i = 0; i < 50; i++) foreach (var t in all) t.Step();
             var times = new List<double>();
             long deltaBytes = 0, fullBytes = 0;
@@ -335,6 +403,7 @@ namespace Porchlight.Sim
             Console.WriteLine($"{all.Count} towns, a tick: avg {avg:0.000} ms, p95 {times[(int)(times.Count * 0.95)]:0.000} ms, max {times[^1]:0.000} ms ({avg / all.Count:0.000} ms a town)");
             Console.WriteLine($"sent a tick: in full {fullBytes / 600.0 / all.Count:0} B a town, as deltas {deltaBytes / 600.0 / all.Count:0} B a town ({100.0 * deltaBytes / fullBytes:0}%)");
             Console.WriteLine($"memory: {GC.GetTotalMemory(true) / 1048576.0:0} MB");
+            Console.WriteLine($"on the road at {Porchlight.Life.TownClock.Format(made[0].life.Now)}: {string.Join(", ", made.Select(t => $"{t.life.CarsOnRoad()} cars, {t.life.OutNow()} out"))}");
             // Each tick has a tenth of a second; a town's share of it on the box is far less (and every
             // town in every county shares the one worker): over budget, CI fails.
             if (avg / all.Count > budget)

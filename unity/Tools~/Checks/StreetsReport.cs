@@ -28,7 +28,7 @@ static class StreetsReport
         towns.Add(("default-b", "seed=0f9e8d7c6b5a"));
         if (dir != null) System.IO.Directory.CreateDirectory(dir);
         int bad = 0;
-        Console.WriteLine("town              close<4  close<6  stubs  deadends  T  X  bend  slivers  blocks  built  ms");
+        Console.WriteLine("town              close<4  close<6  stubs  deadends  T  X  bend  slivers  blocks  built  art  col  local  ms");
         string only = Environment.GetEnvironmentVariable("STREETS_ONLY");
         foreach (var (name, key) in towns)
         {
@@ -38,6 +38,7 @@ static class StreetsReport
             var m = Generator.Generate(seed, p);
             long ms = sw.ElapsedMilliseconds;
             var g = m.roads;
+            var shares = StreetsStage.ClassShares(m);
             int close4 = StreetsStage.CloseParallels(g, 4).Count, close6 = StreetsStage.CloseParallels(g, 6).Count;
             var degree = new Dictionary<int, int>();
             foreach (var e in g.edges) foreach (int n in new[] { e.from, e.to }) degree[n] = (degree.TryGetValue(n, out int d) ? d : 0) + 1;
@@ -65,7 +66,8 @@ static class StreetsReport
             foreach (var lot in m.lots) lotTiles += Parcels.TilesIn(lot.polygon, null, w, h).Count;
             if (close4 > 0) bad++;
             foreach (var c in StreetsStage.CloseParallels(g, 4)) Console.WriteLine($"  {name}: {g.edges[c.a].kind} {c.a} [{string.Join(" ", g.edges[c.a].points.Select(q => $"{q.x:0.#},{q.y:0.#}"))}] and {g.edges[c.b].kind} {c.b} [{string.Join(" ", g.edges[c.b].points.Select(q => $"{q.x:0.#},{q.y:0.#}"))}] {c.apart:0.0} apart");
-            Console.WriteLine($"{name,-17} {close4,7}  {close6,7}  {stubs,5}  {dead,8}  {t3} {x4} {bend,4}  {100.0 * slivers / Math.Max(1, freeCount),6:0.0}%  {m.blocks.Count,6}  {100.0 * lotTiles / Math.Max(1, freeCount),4:0}%  {ms}");
+            Console.WriteLine($"{name,-17} {close4,7}  {close6,7}  {stubs,5}  {dead,8}  {t3} {x4} {bend,4}  {100.0 * slivers / Math.Max(1, freeCount),6:0.0}%  {m.blocks.Count,6}  {100.0 * lotTiles / Math.Max(1, freeCount),4:0}%  {100 * shares.arterial,3:0}% {100 * shares.collector,3:0}% {100 * shares.local,4:0}%  {ms}");
+            Console.WriteLine($"  {name} junctions: {JunctionShapes(g)}");
             if (dir != null)
             {
                 var layout = Porchlight.Explore.Layout.Build(m);
@@ -95,6 +97,51 @@ static class StreetsReport
             }
         }
         return bad == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// The junctions a driver finds awkward: five legs or more, two legs meeting at a sharp angle (under 60°, and
+    /// under 75°: AASHTO's Green Book calls under 60° undesirable and asks for near 90°), and junctions only a car or
+    /// two apart (a road under 3 tiles between two junctions of three legs or more).
+    /// </summary>
+    public static string JunctionShapes(RoadGraph g)
+    {
+        var legs = new Dictionary<int, List<double>>();
+        void Leg(int node, Vec2 from, Vec2 toward)
+        {
+            if (!legs.TryGetValue(node, out var l)) legs[node] = l = new List<double>();
+            l.Add(Math.Atan2(toward.y - from.y, toward.x - from.x));
+        }
+        foreach (var e in g.edges)
+        {
+            if (e.points.Count < 2) continue;
+            Leg(e.from, e.points[0], e.points[1]);
+            Leg(e.to, e.points[e.points.Count - 1], e.points[e.points.Count - 2]);
+        }
+        int five = 0, under60 = 0, under75 = 0, close = 0;
+        var where = new List<string>();
+        foreach (var (node, l) in legs)
+        {
+            if (l.Count < 3) continue;
+            if (l.Count >= 5) five++;
+            l.Sort();
+            double least = double.MaxValue;
+            for (int i = 0; i < l.Count; i++)
+            {
+                double gap = (i + 1 < l.Count ? l[i + 1] : l[0] + 2 * Math.PI) - l[i];
+                least = Math.Min(least, gap);
+            }
+            double deg = least * 180 / Math.PI;
+            if (deg < 60) { under60++; if (where.Count < 6) where.Add($"{g.nodes[node].at.x:0},{g.nodes[node].at.y:0} {deg:0}° {l.Count} legs"); }
+            if (deg < 75) under75++;
+        }
+        foreach (var e in g.edges)
+            if (legs.TryGetValue(e.from, out var a) && a.Count >= 3 && legs.TryGetValue(e.to, out var b) && b.Count >= 3 && Geo.PolylineLength(e.points) < 3)
+            {
+                close++;
+                if (where.Count < 10) where.Add($"{e.points[0].x:0},{e.points[0].y:0}-{e.points[e.points.Count - 1].x:0},{e.points[e.points.Count - 1].y:0} {Geo.PolylineLength(e.points):0.0} apart");
+            }
+        return $"{legs.Count(kv => kv.Value.Count >= 3)} of 3+ legs: {five} of 5+, {under60} under 60°, {under75} under 75°, {close} pairs under 3 tiles apart" + (where.Count > 0 ? $" ({string.Join("; ", where)})" : "");
     }
 
     /// <summary>How many free tiles in a row, through (x, y), along (dx, dy).</summary>

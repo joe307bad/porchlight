@@ -3,9 +3,10 @@
 // kept by Platform.SaveServer; saving starts the game again there, signed in
 // there separately (NativeSignIn keeps a session for each server).
 //
-// Reached from the sign-in card, the "server isn't answering" card and the
-// sidebar ("Settings"), in the desktop app only: the web build plays wherever
-// its page is.
+// Reached from the sign-in card and the sidebar ("Settings"), in a dev build of
+// the desktop app only (desktop/dev-mac.sh; Platform.ServerChoosable): the
+// released app always plays on the live server, and the web build plays
+// wherever its page is.
 
 using System;
 using Porchlight.UI;
@@ -18,6 +19,7 @@ namespace Porchlight.App
         /// <summary>Over everything (the sign-in card too); closing it leaves what was there.</summary>
         public static void Show(VisualElement root)
         {
+            if (!Platform.ServerChoosable) return;
             root.Q("settings")?.RemoveFromHierarchy();
             var platform = Platform.Instance;
             var overlay = new VisualElement { name = "settings" };

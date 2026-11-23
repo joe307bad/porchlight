@@ -29,6 +29,8 @@ namespace Porchlight.Explore
         public double y;
         /// <summary>Size relative to an average townsperson.</summary>
         public readonly double scale;
+        /// <summary>Not out now (an empty slot of the town's walkers): not drawn.</summary>
+        public bool hidden;
 
         public Walker(string look, double x, double y, double scale = 1)
         {
@@ -273,19 +275,32 @@ namespace Porchlight.Explore
             this.pace = pace;
         }
 
+        /// <summary>Walking pace (tiles a second): 2-3 mph, and now and then a jogger.</summary>
+        public static double Pace(Rng rng) => rng.Chance(0.05) ? rng.Range(0.6, 0.8) : rng.Range(0.22, 0.34);
+
         public static Pedestrian Create(string look, SidewalkNetwork net, Rng rng, Vec2? from = null)
         {
             var walk = from != null ? SidewalkWalk.Join(net, rng, from.Value) : SidewalkWalk.Random(net, rng);
             var at = walk.Position();
             double scale = rng.Range(0.85, 1.05);
-            double pace = rng.Range(0.9, 1.5);
+            double pace = Pace(rng);
             return new Pedestrian(look, walk, at, rng, scale, pace);
         }
+
+        /// <summary>
+        /// One of the town's walkers on their way somewhere (Traffic.walkers): where they are is the
+        /// town's life's to say, not their own, so they don't walk by themselves. Hidden until out.
+        /// </summary>
+        public static Pedestrian Puppet(string look, double scale) =>
+            new Pedestrian(look, null, new Vec2(0, 0), new Rng(look), scale, 0.28) { puppet = true, hidden = true };
+
+        /// <summary>Moved by the town's life (Traffic), not by Update.</summary>
+        public bool puppet;
 
         /// <summary>Carry on from where they are now (another client was walking them until now).</summary>
         public void Rejoin(SidewalkNetwork net)
         {
-            if (net.paths.Count == 0) return;
+            if (net.paths.Count == 0 || puppet) return;
             walk = SidewalkWalk.Join(net, rng, new Vec2(x, y));
             pause = 0;
             going = speed;
@@ -305,6 +320,7 @@ namespace Porchlight.Explore
             following = false;
             waving = 0;
             lookAt = null;
+            if (puppet) return;
             if (net.paths.Count > 0) walk = SidewalkWalk.Join(net, rng, new Vec2(x, y));
             heading = DetMath.Atan2(x - from.x, y - from.y);
             pause = 0.7;
@@ -356,6 +372,7 @@ namespace Porchlight.Explore
 
         public void Update(double dt)
         {
+            if (puppet) return;
             if (lookAt != null)
             {
                 // Stopped to look at you.

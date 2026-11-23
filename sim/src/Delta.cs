@@ -23,8 +23,11 @@ namespace Porchlight.Sim
         public const int RECORD = 7;
         /// <summary>Tiles a client's carried-on position may be off before it's sent again.</summary>
         const double OFF = 0.2;
-        /// <summary>Radians it may be turned.</summary>
-        const double TURNED = 0.12;
+        /// <summary>
+        /// Radians it may be turned: little, so a car going round a corner is sent every tick. The game draws a car
+        /// between its words (WorldSync), and with one a tick it goes round the corner on the server's own curve.
+        /// </summary>
+        const double TURNED = 0.02;
         /// <summary>Tiles a second its speed may be off.</summary>
         const double SPEED = 0.12;
         /// <summary>Seconds anything goes unsent at most.</summary>
@@ -82,6 +85,9 @@ namespace Porchlight.Sim
         /// <summary>Would a client carrying `s` on to now have `r` wrong?</summary>
         static bool Stale(in Sent s, in Sent r, double now, bool car)
         {
+            // An empty slot stays empty: nothing to carry on, nothing to refresh.
+            bool wasHidden = s.x >= 655.35 && s.y >= 655.35, isHidden = r.x >= 655.35 && r.y >= 655.35;
+            if (wasHidden || isHidden) return wasHidden != isHidden;
             double dt = now - s.at;
             if (dt >= REFRESH) return true;
             // Cars face (cos h, sin h); people (sin h, cos h) (WorldSync.Step).

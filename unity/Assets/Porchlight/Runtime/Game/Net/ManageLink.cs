@@ -8,9 +8,9 @@
 //
 // The desktop app has no browser cookies to share, so it serves the page
 // itself (ManageHost): on a one-off port on 127.0.0.1, the files from its
-// StreamingAssets, and the three things the page asks the server for (who's
-// signed in, the county map and the live feed) passed on to the server with
-// the game's own session, read-only. The system browser opens it there.
+// StreamingAssets, and what the page asks the server for (who's signed in,
+// the county map, the live feed and the town simulation's answers: PASSED)
+// passed on to the server with the game's own session, read-only. The system browser opens it there.
 
 using System;
 using System.Collections.Generic;
@@ -69,8 +69,16 @@ namespace Porchlight.App
         static ManageHost running;
         static readonly HttpClient http = new HttpClient(new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
 
-        /// <summary>What the page may ask the server for, passed on as it is.</summary>
-        static readonly HashSet<string> PASSED = new HashSet<string> { "/auth/me", "/mp/traffic/county", "/mp/traffic/feed" };
+        /// <summary>
+        /// What the page may ask the server for, passed on as it is: who's signed in, the map, the live feed, and the
+        /// town simulation's answers (each town's life, who's in a building, a car or townsperson focused on, the
+        /// traffic lights and stop signs). Every GET in manage/src/api.ts must be here (server/test/manage-link.test.ts).
+        /// </summary>
+        static readonly HashSet<string> PASSED = new HashSet<string>
+        {
+            "/auth/me", "/mp/traffic/county", "/mp/traffic/feed",
+            "/mp/sim/life", "/mp/sim/building", "/mp/sim/focus", "/mp/sim/signals", "/mp/sim/congestion", "/mp/sim/where",
+        };
         /// <summary>What the page may tell the server (POST, from the page itself).</summary>
         const string FOCUS = "/mp/traffic/focus";
 

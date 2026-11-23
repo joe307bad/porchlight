@@ -92,6 +92,8 @@ export function createCharacterRoutes(deps: GameDeps) {
     const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
     if (!under(PREFIX) && !under(TOWNS) && !under(PLAYERS) && path !== PROGRESS && path !== RECORDS) return false;
     const send = (status: number, body: unknown): true => {
+      // Turned away for the server's sake, not the player's: said in the log, so a player's 503s can be found.
+      if (status >= 500) console.warn(`${req.method} ${req.url?.split('?')[0]} → ${status}: ${(body as { error?: string })?.error ?? ''}`);
       res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(body));
       return true;

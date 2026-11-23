@@ -9,6 +9,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- homes             # the town that comes with the game has houses to live in, and is up to date (from the repo's root)
 //   dotnet run --project "unity/Tools~/Checks" -- town <file> [key] # regenerate it into its file (`npm run town` in server/)
 //   dotnet run --project "unity/Tools~/Checks" -- zoning [key ...]  # what each starter town's buildings are for: homes, jobs, balance (ZoningCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- plan [key ...]    # is the town planned like a real one: road hierarchy, ring, eras, transect, neighbourhoods, second centre (TownPlanCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- measure <seed> 'width=256&riverCount=0'   # how big and built up a town is
 //   dotnet run --project "unity/Tools~/Checks" -- county [vectors-file] # the county: its spaces, highways and rooms (CountyCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- trips <key> [key] [key] # directions to a house in each of these towns (your slots), driven on the roads
@@ -43,6 +44,7 @@ static class Program
         if (args.Length > 1 && args[0] == "town") return RegenerateTown(args[1], args.Length > 2 ? args[2] : null);
         if (args.Length > 2 && args[0] == "roadmap") return RoadMap(args[1], args[2]);
         if (args.Length > 0 && args[0] == "zoning") return ZoningCheck.Run(args.Skip(1).ToArray());
+        if (args.Length > 0 && args[0] == "plan") return TownPlanCheck.Run(args.Skip(1).ToArray());
         if (args.Length > 2 && args[0] == "traffic") return TrafficCheck(args[1], args[2]);
         if (args.Length > 0 && args[0] == "county") return CountyCheck.Run(args.Length > 1 ? args[1] : null);
         if (args.Length > 0 && args[0] == "doors") return CountyCheck.Doors();
@@ -56,12 +58,16 @@ static class Program
         if (args.Length > 0 && args[0] == "hitches") return Hitches.Run(args.Length > 1 ? double.Parse(args[1], System.Globalization.CultureInfo.InvariantCulture) : 100, args.Length > 2 ? double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 20);
         if (args.Length > 0 && args[0] == "fingerprint") return Fingerprint.Run(args.Length > 1 ? int.Parse(args[1]) : 0);
         if (args.Length > 0 && args[0] == "ride") return RideCheck.Run();
+        if (args.Length > 0 && args[0] == "servers") return ServersCheck.Run();
         if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
         if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();
         if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();
         if (args.Length > 0 && args[0] == "steering") return SteeringCheck.Run();
         if (args.Length > 0 && args[0] == "sleigh") return SleighCheck.Run();
         if (args.Length > 0 && args[0] == "streets") return StreetsReport.Run(args.Length > 1 ? args[1] : null);
+        if (args.Length > 2 && args[0] == "life-debug") return LifeDebug.Run(args[1], double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture));
+        if (args.Length > 0 && args[0] == "life") return LifeCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : null);
+        if (args.Length > 0 && args[0] == "traffic-day") return TrafficDay.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 2);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
         return 2;
@@ -85,7 +91,7 @@ static class Program
         var houses = Porchlight.Explore.Homes.All(m);
         int built = m.buildings.Sum(b => b.tiles.Count);
         int water = m.heightmap.Count(h => h <= m.waterLevel);
-        string bad = Ports(m, layout) ?? Zoo(m, layout) ?? CulDeSacs(m, layout) ?? Turning(layout);
+        string bad = Ports(m, layout) ?? Zoo(m, layout) ?? CulDeSacs(m, layout) ?? Turning(m, layout);
         Console.WriteLine($"{m.width}x{m.height} buildings {m.buildings.Count} houses {houses.Count} built {100.0 * built / (m.width * m.height):0.0}% lots {m.lots.Count} roads {m.roads.edges.Count} cul-de-sacs {Raster.Bulbs(m.roads.edges).Count} water {water} rivers {m.rivers.Count} bridges {m.bridges.Count} docks {m.docks.Count} zoo {(m.zoo != null ? "yes" : "no")} airport {(m.airport != null ? "yes" : "no")} cars {layout.cars.Count} gen {gen:0.00}s layout {lay:0.00}s {(bad == null ? "ok" : "FAIL " + bad)}");
         return bad == null ? 0 : 1;
     }
@@ -103,7 +109,12 @@ static class Program
         const double FRAME = 1 / 60.0, CRUISE = 2.4, SECONDS = 120;
         foreach (double hostFps in new[] { 60.0, 15, 5, 2.5, 2, 1 })
         {
-            Porchlight.Explore.Traffic Make() => new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng(seed + "::traffic"), r => 0);
+            Porchlight.Explore.Traffic Make()
+            {
+                var t = new Porchlight.Explore.Traffic(m, layout, null, new Porchlight.Core.Rng(seed + "::traffic"), r => 0);
+                t.StartAt(TrafficDay.Morning);
+                return t;
+            }
             var host = Make();
             var follow = Make();
             var sync = new Porchlight.Explore.WorldSync();
@@ -305,7 +316,7 @@ static class Program
                     failed++;
                     Console.WriteLine($"FAIL {seed}: {culs2}");
                 }
-                string turning = Turning(layout);
+                string turning = Turning(a, layout);
                 if (turning != null)
                 {
                     failed++;
@@ -466,30 +477,53 @@ static class Program
     /// player finder's route reaches its target.
     /// </summary>
     /// <summary>
-    /// Town traffic turns round at a dead end as a car would, a minute of it: slowly, in a
-    /// swing out past the end and back, never swinging round faster than MAX_TURN (radians a
-    /// second; no spinning on the spot), nor sliding sideways.
+    /// Town traffic drives as a car would, a minute of the morning rush: round corners and U-turns
+    /// never faster than MAX_TURN (radians a second; no spinning on the spot), nor sliding sideways.
     /// </summary>
-    static string Turning(Porchlight.Explore.IsoLayout layout)
+    static string Turning(TownModel model, Porchlight.Explore.IsoLayout layout)
     {
         const double DT = 0.05, MAX_TURN = 2.6, MAX_SLIP = 0.6;
-        var traffic = new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng("turning"), Porchlight.Explore.Catalog.PickCarModel);
-        var cars = traffic.cars.FindAll(c => c.loop < 0);
-        var was = cars.ConvertAll(c => (c.x, c.y, c.heading));
+        var traffic = new Porchlight.Explore.Traffic(model, layout, null, new Porchlight.Core.Rng("turning"), Porchlight.Explore.Catalog.PickCarModel);
+        traffic.StartAt(TrafficDay.Morning);
+        int n = traffic.life.carSlots.Length;
+        var was = new (double x, double y, double heading, int who)[n];
+        var parkedWas = new bool[n];
+        for (int k = 0; k < n; k++) was[k] = (0, 0, 0, -1);
         for (double t = 0; t < 60; t += DT)
         {
             traffic.Update(DT, null);
-            for (int k = 0; k < cars.Count; k++)
+            for (int k = 0; k < n; k++)
             {
-                var c = cars[k];
-                var (x, y, heading) = was[k];
-                was[k] = (c.x, c.y, c.heading);
-                // Past the first second (cars start out wherever they're put, some mid-turn), turning round.
-                if (t < 1 || (c.next != Porchlight.Explore.Traffic.ROUND && c.prev != Porchlight.Explore.Traffic.ROUND)) continue;
+                var c = traffic.cars[k];
+                int who = c.hidden ? -1 : traffic.life.carSlots[k].who;
+                var (x, y, heading, whoWas) = was[k];
+                was[k] = (c.x, c.y, c.heading, who);
+                bool parked = who >= 0 && traffic.life.cars[who].seg < 0, stepped = parked != parkedWas[k];
+                parkedWas[k] = parked;
+
+                // Only the same car seen a frame apart (not one just out on the road, nor a slot handed on, nor one
+                // stepping between the lane and its parking spot: it's put there, as the game draws it).
+                if (who < 0 || who != whoWas || stepped) continue;
                 double turn = Math.Abs(Porchlight.Explore.Orbit.ShortestTurn(heading, c.heading)) / DT;
-                double slip = Math.Abs(-(c.x - x) * Math.Sin(c.heading) + (c.y - y) * Math.Cos(c.heading)) / DT;
-                if (turn > MAX_TURN) return $"car {k} swung round at {turn:0.0} rad/s turning round at ({c.x:0.0}, {c.y:0.0})";
-                if (slip > MAX_SLIP) return $"car {k} slid sideways at {slip:0.0} tiles/s turning round at ({c.x:0.0}, {c.y:0.0})";
+                // Measured at the back wheels (a turning car's middle swings out a little; its back wheels don't slide).
+                double half = traffic.life.cars[who].length / 2 - 0.15;
+                double bx = c.x - Math.Cos(c.heading) * half, by = c.y - Math.Sin(c.heading) * half;
+                double bx0 = x - Math.Cos(heading) * half, by0 = y - Math.Sin(heading) * half;
+                double slip = Math.Abs(-(bx - bx0) * Math.Sin(c.heading) + (by - by0) * Math.Cos(c.heading)) / DT;
+                if (turn > MAX_TURN)
+                {
+                    var lc = traffic.life.cars[who];
+                    int L = traffic.life.net.lanes.Count;
+                    string Seg(int g) => g < 0 ? "-" : g < L ? $"lane {g} (span {traffic.life.net.lanes[g].Span:0.00})" : $"turn {g - L}{(traffic.life.net.movements[g - L].uturn ? " (U)" : "")} (len {traffic.life.net.movements[g - L].length:0.00})";
+                    return $"car {k} swung round at {turn:0.0} rad/s at ({c.x:0.0}, {c.y:0.0}): {lc.state} on {Seg(lc.seg)} front {traffic.life.Front(lc):0.00}, laggy {Seg(lc.laggy)}, length {lc.length:0.00}";
+                }
+                if (slip > MAX_SLIP)
+                {
+                    var lc = traffic.life.cars[who];
+                    int L = traffic.life.net.lanes.Count;
+                    string Seg(int g) => g < 0 ? "-" : g < L ? $"lane {g} (span {traffic.life.net.lanes[g].Span:0.00}, {traffic.life.net.lanes[g].speed:0.00} t/s)" : $"turn {g - L}{(traffic.life.net.movements[g - L].uturn ? " (U)" : "")} (len {traffic.life.net.movements[g - L].length:0.00}, {traffic.life.net.movements[g - L].speed:0.00} t/s)";
+                    return $"car {k} slid sideways at {slip:0.00} tiles/s at ({c.x:0.0}, {c.y:0.0}): {lc.state} on {Seg(lc.seg)} front {traffic.life.Front(lc):0.00}, laggy {Seg(lc.laggy)}";
+                }
             }
         }
         return null;
@@ -497,9 +531,10 @@ static class Program
 
     static string Shared(TownModel model, Porchlight.Explore.IsoLayout layout)
     {
-        var traffic = new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng("t"), Porchlight.Explore.Catalog.PickCarModel);
-        var copy = new Porchlight.Explore.Traffic(layout, new Porchlight.Core.Rng("other"), Porchlight.Explore.Catalog.PickCarModel);
+        var traffic = new Porchlight.Explore.Traffic(model, layout, null, new Porchlight.Core.Rng("t"), Porchlight.Explore.Catalog.PickCarModel);
+        var copy = new Porchlight.Explore.Traffic(model, layout, null, new Porchlight.Core.Rng("t"), Porchlight.Explore.Catalog.PickCarModel);
         if (traffic.cars.Count == 0) return null;
+        traffic.StartAt(TrafficDay.Morning);
         for (int k = 0; k < 40; k++) traffic.Update(0.05, null);
         var people = new System.Collections.Generic.List<Porchlight.Explore.Walker>();
         var rng = new Porchlight.Core.Rng("p");
@@ -510,12 +545,18 @@ static class Program
         sync.Receive(Porchlight.Explore.WorldSync.EncodeCars(traffic.cars), Porchlight.Explore.WorldSync.EncodePeople(people));
         sync.Step(0.2, copy.cars, others); // a full catch-up, carrying on 0.2 s at speed
         for (int k = 0; k < traffic.cars.Count; k++)
-            if (Math.Abs(traffic.cars[k].x - copy.cars[k].x) > 0.6 || Math.Abs(traffic.cars[k].y - copy.cars[k].y) > 0.6) return $"traffic car {k} not followed";
+        {
+            if (traffic.cars[k].hidden != copy.cars[k].hidden) return $"traffic car {k} shown on one side and hidden on the other";
+            if (traffic.cars[k].hidden) continue;
+            // Carried on 0.2 s at up to a main road's limit (3.5 tiles a second): within 0.8.
+            if (Math.Abs(traffic.cars[k].x - copy.cars[k].x) > 0.8 || Math.Abs(traffic.cars[k].y - copy.cars[k].y) > 0.8) return $"traffic car {k} not followed";
+        }
         for (int k = 0; k < people.Count; k++)
             if (Math.Abs(people[k].x - others[k].x) > 0.4) return $"person {k} not followed";
-        foreach (var c in copy.cars) copy.Adopt(c);
+        // Taking over: the copy runs the town's life itself from the clock.
+        copy.Restart(TrafficDay.Morning + 2000);
         for (int k = 0; k < 40; k++) copy.Update(0.05, null);
-        foreach (var c in copy.cars) if (double.IsNaN(c.x) || c.x < 0 || c.x > model.width) return "adopted traffic went astray";
+        foreach (var c in copy.cars) if (!c.hidden && (double.IsNaN(c.x) || c.x < 0 || c.x > model.width)) return "taken-over traffic went astray";
         // Sidewalks run clean: none crosses itself (a loop on the inside of a bend).
         foreach (var path in layout.sidewalks.paths)
             for (int i = 0; i + 1 < path.points.Count; i++)
