@@ -617,7 +617,7 @@ export class MapRenderer {
         const b = i >= 0 ? t.buildings![i] : null;
         const life = this.life.get(t.key);
         const inside = life && i >= 0 ? (indoors(life).get(i) ?? 0) : null;
-        text = b ? `${describe(b)}${inside === null ? '' : ` · ${inside.toLocaleString()} inside`} · ${t.name}` : t.name;
+        text = b ? `Building ${i} · ${describe(b)}${inside === null ? '' : ` · ${inside.toLocaleString()} inside`} · ${t.name}` : t.name;
         this.hoverBuilding = b && life ? { key: t.key, i } : null;
       }
     }

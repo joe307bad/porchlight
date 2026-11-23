@@ -64,14 +64,15 @@ export function intoTown(town: string): Crumb[] {
 }
 
 /**
- * On to a car or person: from a town's list, a building or another one (their driver, their car), a crumb further on;
+ * On to a car or person: from a town's list or a building, a crumb further on; from another one (their driver,
+ * their car) in its place, so toggling between a car and its driver stays one crumb under the town (or building);
  * from the county, or the map (`fresh`), the county, their town, them.
  */
 export function onTo(stack: Crumb[], target: FocusTarget, fresh = false): Crumb[] {
   const top = stack[stack.length - 1];
   const crumb: Crumb = { at: 'entity', town: target.town, target };
   if (fresh || top.at === 'county' || ('town' in top && top.town !== target.town)) return [...intoTown(target.town), crumb];
-  if (top.at === 'entity' && sameTarget(top.target, target)) return stack;
+  if (top.at === 'entity') return sameTarget(top.target, target) ? stack : [...stack.slice(0, -1), crumb];
   return [...stack, crumb];
 }
 
@@ -89,7 +90,7 @@ export function sameTarget(a: FocusTarget, b: FocusTarget): boolean {
   return a.town === b.town && a.kind === b.kind && a.id === b.id;
 }
 
-/** A crumb's word: the county, a town's name, "Car 12", "Person 40", "Building". */
+/** A crumb's word: the county, a town's name, "Car 12", "Person 40", "Building 7" (its number, as the map's hover has it). */
 export function crumbLabel(c: Crumb, townName: (key: string) => string): string {
   switch (c.at) {
     case 'county':
@@ -99,7 +100,7 @@ export function crumbLabel(c: Crumb, townName: (key: string) => string): string 
     case 'entity':
       return `${c.target.kind === 'car' ? 'Car' : 'Person'} ${c.target.id}`;
     case 'building':
-      return 'Building';
+      return `Building ${c.building}`;
   }
 }
 

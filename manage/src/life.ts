@@ -336,6 +336,17 @@ export function streetText(s: CongestedStreet): string {
   return s.stretch || s.name || `${s.kind === 0 ? 'Main road' : 'Street'} ${s.road}`;
 }
 
+/** A congested stretch's street ("High Street"), as its signs in the game have it; unnamed, what kind of road it is. */
+export function streetName(s: CongestedStreet): string {
+  return s.name || (s.stretch ? s.stretch.split(', ')[0] : `${s.kind === 0 ? 'Main road' : 'Street'} ${s.road}`);
+}
+
+/** Where along it the stretch is, between the streets at its ends ("Elm Street to Oak Lane", "at Elm Street"), or "". */
+export function streetBetween(s: CongestedStreet): string {
+  const name = streetName(s);
+  return s.stretch && s.stretch.startsWith(`${name}, `) ? s.stretch.slice(name.length + 2) : '';
+}
+
 /** A hold-up in a few characters: "40 s", "12 min", "3.4 h". */
 export function heldText(seconds: number): string {
   if (seconds < 90) return `${Math.round(seconds)} s`;

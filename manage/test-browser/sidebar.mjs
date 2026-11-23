@@ -2,7 +2,8 @@
 // against a stand-in server (the routes it asks for, answered here). The towns
 // with their people and nothing else; into a town (its congestion by street
 // name, then everything out in it, a tab a sort, with no box scrolling on its
-// own); a van clicked (followed, a crumb on), its driver (another); then back
+// own); a van clicked (followed, a crumb on), its driver and back (in its place,
+// never a crumb more); then back
 // along the breadcrumbs, each as it was left: the tab, the hour, the van picked.
 //
 //   npm run test:sidebar
@@ -13,8 +14,10 @@ import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 import { createServer } from 'vite';
 
-const town = (key, name, x0) => ({ key, name, x0, y0: 0, width: 64, height: 64, private: false, roads: [[0, 2, 0, 32, 64, 32]], roadNames: ['High Street'], zoning: null, buildings: null });
-const county = { sim: true, towns: [town('seed=a', 'Lanternport', 0), town('seed=b', 'Porchlight', 80)], spaces: [], highways: [] };
+// Each town's buildings: [zone, x0, y0, x1, y1, homes, jobs]; Lanternport's 4th is the whole top half, to hover over.
+const town = (key, name, x0, buildings = null) => ({ key, name, x0, y0: 0, width: 64, height: 64, private: false, roads: [[0, 2, 0, 32, 64, 32]], roadNames: ['High Street'], zoning: null, buildings });
+const flats = [0, 1, 2, 3].map((k) => (k === 3 ? [0, 0, 0, 64, 31, 12, 0] : [0, 70 + k, 70, 71 + k, 71, 1, 0]));
+const county = { sim: true, towns: [town('seed=a', 'Lanternport', 0, flats), town('seed=b', 'Porchlight', 80)], spaces: [], highways: [] };
 const summary = (people) => ({ clock: '8:05 AM', people, out: 10, cars: 5, trips: { started: 0, finished: 0, failed: 0 }, byHour: Array.from({ length: 24 }, () => [0, 0, 0]), meanTrip: [0, 0, 0], parking: [0, 1], busiestRoads: [], waits: [], problems: 0, gridlockBroken: 0, mainCrossings: 0, hunts: 0 });
 // Lanternport: three cars (two residents', one commuter's), a van, two people. Porchlight: one car.
 const lives = {
@@ -86,7 +89,8 @@ try {
   await page.locator('[aria-label="Most congested streets"] li').first().waitFor();
   check((await crumbs()) === 'County › Lanternport', 'a town is a crumb on');
   const worst = await page.locator('[aria-label="Most congested streets"] li').first().textContent();
-  check(worst.includes('High Street, Elm Street to Oak Avenue'), `its most congested road, by name (${worst})`);
+  const between = await page.locator('[aria-label="Most congested streets"] li .between').first().textContent();
+  check(worst.startsWith('1. High Street') && between === 'Elm Street to Oak Avenue', `its most congested road by name, the streets at its ends under it (${worst})`);
   const tabs = await page.getByRole('tab').allTextContents();
   check(tabs.join(' | ') === 'Cars 3 | Vans 1 | People 2', `under it, a tab a sort out now (${tabs.join(' | ')})`);
   await page.waitForFunction(() => document.querySelector('[role="tabpanel"]')?.textContent?.includes('Car 20: out and about'));
@@ -95,6 +99,14 @@ try {
     [...document.querySelectorAll('.panel-body *')].filter((e) => ['auto', 'scroll'].includes(getComputedStyle(e).overflowY) || ['auto', 'scroll'].includes(getComputedStyle(e).overflowX)).length,
   );
   check(scrolling === 0, `no box in the sidebar scrolls on its own (${scrolling})`);
+
+  // A building hovered on the map: its number, as its crumb has it.
+  const map = await page.locator('canvas.map').boundingBox();
+  await page.mouse.move(map.x + map.width / 2, map.y + map.height / 2 - 40);
+  await page.waitForFunction(() => document.querySelector('.tip')?.textContent?.startsWith('Building'), null, { timeout: 5000 }).catch(() => {});
+  const tip = (await page.locator('.tip').textContent().catch(() => '')) ?? '';
+  check(tip.startsWith('Building 3 · '), `a building hovered: its number (${tip})`);
+  await page.mouse.move(map.x + 5, map.y + map.height - 5);
 
   // An hour back, the Vans tab, the van: followed, a crumb on.
   await page.locator('.congestion .bar').nth(20).click();
@@ -107,12 +119,20 @@ try {
   check((await page.getByRole('button', { name: 'Follow' }).getAttribute('aria-pressed')) === 'true', 'and followed on the map');
   await page.getByRole('button', { name: 'Its driver' }).click();
   await page.waitForFunction(() => document.querySelector('.entity .doing')?.textContent?.includes('Driving the van'));
-  check((await crumbs()) === 'County › Lanternport › Car 22 › Person 40', 'its driver: another crumb on');
-
-  // Back to the van, then the town: as left.
-  await page.locator('.crumbs').getByRole('button', { name: 'Car 22' }).click();
+  check((await crumbs()) === 'County › Lanternport › Person 40', 'its driver: in its place, still under the town');
+  // Back and forth between the van and its driver: never more crumbs.
+  for (let k = 0; k < 3; k++) {
+    await page.getByRole('button', { name: 'Their car' }).click();
+    await page.waitForFunction(() => document.querySelector('.entity .doing')?.textContent?.includes('Delivering'));
+    await page.getByRole('button', { name: 'Its driver' }).click();
+    await page.waitForFunction(() => document.querySelector('.entity .doing')?.textContent?.includes('Driving the van'));
+  }
+  check((await crumbs()) === 'County › Lanternport › Person 40', `toggled van, driver, van, …: still one crumb under the town (${await crumbs()})`);
+  await page.getByRole('button', { name: 'Their car' }).click();
   await page.waitForFunction(() => document.querySelector('.entity .doing')?.textContent?.includes('Delivering'));
-  check((await crumbs()) === 'County › Lanternport › Car 22' && (await page.getByRole('button', { name: 'Follow' }).getAttribute('aria-pressed')) === 'true', 'back to the van: followed again');
+  check((await crumbs()) === 'County › Lanternport › Car 22' && (await page.getByRole('button', { name: 'Follow' }).getAttribute('aria-pressed')) === 'true', 'back to the van: followed');
+
+  // Back to the town: as left.
   await page.locator('.crumbs').getByRole('button', { name: 'Lanternport' }).click();
   await page.getByRole('tabpanel').waitFor();
   check((await page.getByRole('tab', { selected: true }).textContent()).startsWith('Vans'), 'back to the town: its Vans tab as left');

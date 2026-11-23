@@ -18,7 +18,7 @@ import type { FeedStatus } from './feed.ts';
 import { ALL_WAY, LAMPS, PERSON, SPEEDS, STOP_SIGN, type Layers } from './render.ts';
 import { REACH } from './world.ts';
 import { ZONES } from './zoning.ts';
-import { ENTITY_KINDS, describeInside, heldText, holdBars, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife } from './life.ts';
+import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, streetName, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife } from './life.ts';
 import { PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
 
 const REFRESH_MS = 250;
@@ -351,7 +351,8 @@ function CongestionView({
           <li key={s.road}>
             <button className="row" onClick={() => onStreet(townKey, s.points)} title={`${streetText(s)}: ${heldText(s.hold)} held up in all, ${heldText(s.mean)} a car`}>
               <span className="name wrap">
-                {n + 1}. {streetText(s)}
+                {n + 1}. {streetName(s)}
+                {streetBetween(s) && <span className="between">{streetBetween(s)}</span>}
               </span>
               <span className="figs">{heldText(s.hold)}</span>
             </button>

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { CountyMap } from '../src/api.ts';
-import { streetText, type CongestedStreet } from '../src/life.ts';
+import { streetBetween, streetName, streetText, type CongestedStreet } from '../src/life.ts';
 import { nearestStreet, streetLabels, townAt } from '../src/streets.ts';
 
 type Town = CountyMap['towns'][number];
@@ -54,4 +54,11 @@ test('a congested stretch is listed by its street and the streets at its ends, o
   assert.equal(streetText({ ...s, name: 'High Street', stretch: 'High Street, Elm Street to Oak Lane' }), 'High Street, Elm Street to Oak Lane');
   assert.equal(streetText({ ...s, name: 'High Street' }), 'High Street');
   assert.equal(streetText(s), 'Main road 7', "an older server's");
+  // The list's two lines: the street, then the streets at the stretch's ends.
+  const high = { ...s, name: 'High Street', stretch: 'High Street, Elm Street to Oak Lane' };
+  assert.equal(streetName(high), 'High Street');
+  assert.equal(streetBetween(high), 'Elm Street to Oak Lane');
+  assert.equal(streetBetween({ ...s, name: 'High Street', stretch: 'High Street, at Elm Street' }), 'at Elm Street');
+  assert.equal(streetBetween({ ...s, name: 'High Street', stretch: 'High Street' }), '');
+  assert.equal(streetName(s), 'Main road 7');
 });

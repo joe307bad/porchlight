@@ -340,7 +340,7 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     const jam = (await pool.ask(key, 'congestion', 0)) as {
       ago: number;
       hours: { from: number; time: string; cars: number; hold: number }[];
-      streets: { road: number; kind: number; cars: number; hold: number; mean: number; points: number[] }[];
+      streets: { road: number; name: string; stretch: string; kind: number; cars: number; hold: number; mean: number; points: number[] }[];
     };
     assert.equal(jam.ago, 0);
     assert.equal(jam.hours.length, 24);
@@ -351,6 +351,8 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     for (const st of jam.streets) {
       assert.ok(st.cars > 0 && st.hold > 0 && st.points.length >= 4 && st.points.length % 2 === 0, 'a street that held cars up, and its line');
       assert.ok(st.kind === 0 || st.kind === 1, 'a road cars drive');
+      // By the name on its street signs in the game (StreetNaming, as World.cs has it), never "Main road 12".
+      assert.ok(st.name.length > 0 && st.stretch.startsWith(st.name), `named as signed: ${st.stretch}`);
     }
     assert.ok(jam.streets.reduce((n, st) => n + st.hold, 0) <= jam.hours[23].hold + 1, "no more than the hour's hold-ups");
     // The stop signs, asked for once: one on the kerb by each lane that stops, all-way or not.

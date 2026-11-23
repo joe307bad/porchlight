@@ -9,14 +9,20 @@ import { ENTITY_KINDS, type TownLife } from '../src/life.ts';
 const names = (k: string) => ({ a: 'Lanternport', b: 'Porchlight' })[k] ?? k;
 const words = (c: ReturnType<typeof intoTown>) => c.map((x) => crumbLabel(x, names)).join(' › ');
 
-test('a town, then someone in it from its list, then their car: a crumb each', () => {
+test('a town, then someone in it from its list, then their car: in their place, under the town', () => {
   let c = intoTown('a');
   assert.equal(words(c), 'County › Lanternport');
   c = onTo(c, { town: 'a', kind: 'person', id: 40 });
   assert.equal(words(c), 'County › Lanternport › Person 40');
   c = onTo(c, { town: 'a', kind: 'car', id: 12 });
-  assert.equal(words(c), 'County › Lanternport › Person 40 › Car 12');
+  assert.equal(words(c), 'County › Lanternport › Car 12');
   assert.equal(onTo(c, { town: 'a', kind: 'car', id: 12 }), c, 'the same one again: no new crumb');
+  // Toggling between a car and its driver, over and over: still the one crumb under the town.
+  for (let k = 0; k < 6; k++) c = onTo(c, { town: 'a', kind: k % 2 ? 'car' : 'person', id: k % 2 ? 12 : 40 });
+  assert.equal(words(c), 'County › Lanternport › Car 12');
+  // From a building: the one in it under the building, and their car in their place.
+  const b = onTo(onTo(onToBuilding('a', 7), { town: 'a', kind: 'person', id: 2 }), { town: 'a', kind: 'car', id: 5 });
+  assert.equal(words(b), 'County › Lanternport › Building 7 › Car 5');
 });
 
 test('clicked on the map, or in another town: the county, their town, them', () => {
@@ -24,13 +30,13 @@ test('clicked on the map, or in another town: the county, their town, them', () 
   assert.equal(words(onTo(deep, { town: 'a', kind: 'car', id: 3 }, true)), 'County › Lanternport › Car 3');
   assert.equal(words(onTo(intoTown('a'), { town: 'b', kind: 'car', id: 3 })), 'County › Porchlight › Car 3');
   assert.equal(words(onTo([COUNTY], { town: 'b', kind: 'person', id: 1 })), 'County › Porchlight › Person 1');
-  assert.equal(words(onToBuilding('a', 7)), 'County › Lanternport › Building');
-  assert.equal(words(onTo(onToBuilding('a', 7), { town: 'a', kind: 'person', id: 2 })), 'County › Lanternport › Building › Person 2');
+  assert.equal(words(onToBuilding('a', 7)), 'County › Lanternport › Building 7');
+  assert.equal(words(onTo(onToBuilding('a', 7), { town: 'a', kind: 'person', id: 2 })), 'County › Lanternport › Building 7 › Person 2');
 });
 
 test('going back drops the crumbs after it, never the county', () => {
-  const deep = onTo(onTo(intoTown('a'), { town: 'a', kind: 'person', id: 40 }), { town: 'a', kind: 'car', id: 12 });
-  assert.equal(words(backTo(deep, 2)), 'County › Lanternport › Person 40');
+  const deep = onTo(onTo(onToBuilding('a', 7), { town: 'a', kind: 'person', id: 40 }), { town: 'a', kind: 'car', id: 12 });
+  assert.equal(words(backTo(deep, 2)), 'County › Lanternport › Building 7');
   assert.equal(words(backTo(deep, 1)), 'County › Lanternport');
   assert.equal(words(backTo(deep, 0)), 'County');
   assert.equal(words(backTo(deep, -3)), 'County');

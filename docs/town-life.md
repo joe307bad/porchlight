@@ -792,7 +792,8 @@ serves:
 
 - **On the map,** with land use on, each building has a disc whose area is
   the number of people inside.
-- **Hovering** a building says how many are inside.
+- **Hovering** a building says its number (its place in the town's list of
+  buildings, the same number its breadcrumb shows) and how many are inside.
 - **Clicking** a building lists them at the top of the panel, with when
   each next goes out; click someone for their focus.
 
@@ -802,15 +803,17 @@ what each one is for:
 | Crumb | Shows |
 | --- | --- |
 | **County** | The towns, a line each with its people. |
-| **› A town** | Its congestion (below), then its most congested streets by name, then a tab for each sort of thing out in it now: Cars (residents', commuters', through traffic), Vans, Buses, People (workers, students, out on errands, commuters on foot, wanderers), Parked, Boats. Each tab shows its count, and tabs with none out are hidden. A tab lists 40 at a time, each with the simulation's line ("Driving to work"); "Show more" adds 40. |
-| **› Car 12 / Person 40** | One car or townsperson, followed on the map: what it is, what it's doing and its next four steps. Its driver or car is a crumb further on. |
-| **› Building** | Who's inside (a building clicked on the map). Each person is a crumb further on. |
+| **› A town** | Its congestion (below), then its most congested streets: each the street's name, as its signs have it in the game (both use `StreetNaming`), with the streets at the ends of the stretch on a smaller line under it ("Elm Street to Oak Lane"); then a tab for each sort of thing out in it now: Cars (residents', commuters', through traffic), Vans, Buses, People (workers, students, out on errands, commuters on foot, wanderers), Parked, Boats. Each tab shows its count, and tabs with none out are hidden. A tab lists 40 at a time, each with the simulation's line ("Driving to work"); "Show more" adds 40. |
+| **› Car 12 / Person 40** | One car or townsperson, followed on the map: what it is, what it's doing and its next four steps. Its driver or car (the person/car button) takes its place, so toggling between them stays one crumb under the town or building. |
+| **› Building n** | Who's inside (a building clicked on the map, by its number). Each person is a crumb further on. |
 
 How the crumbs move:
 
 - Clicking a town in the county goes into it, and the map fits to it.
-- Clicking someone in a town's list, a building or a focus (a driver, their
-  car) adds a crumb and follows them.
+- Clicking someone in a town's list or a building adds a crumb and follows
+  them.
+- A focus's driver or car button swaps the last crumb for them: back and forth
+  between a van and its driver is always County › town › one of them.
 - Clicking a car, person or building on the map starts again from the
   county: County › its town › it.
 - The **Whole county** button goes back to the first crumb.
