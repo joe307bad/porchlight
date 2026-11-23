@@ -19,11 +19,13 @@ import { ALL_WAY, LAMPS, PERSON, SPEEDS, STOP_SIGN, type Layers } from './render
 import { REACH } from './world.ts';
 import { ZONES } from './zoning.ts';
 import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, streetName, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife } from './life.ts';
-import { PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
+import { CONGESTION, PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
 
 const REFRESH_MS = 250;
 
 interface Props {
+  /** A person's name, once heard (their focus): for their crumb. */
+  personName: (town: string, id: number) => string | undefined;
   who: Me;
   map: CountyMap;
   status: FeedStatus;
@@ -118,7 +120,7 @@ export function Panel(p: Props) {
       </header>
       {key && <KeyModal sim={simMissing} layers={p.layers} onLayers={p.onLayers} hidden={p.hidden} onHidden={p.onHidden} onClose={() => setKey(false)} />}
       {open && (
-        <div className="panel-body">
+        <div className={`panel-body ${top.at === 'town' ? 'fill' : ''}`}>
           {simMissing && (
             <button className="warn line" role="status" onClick={() => setKey(true)} title="Why, and how to start it">
               {simMissing.title}
@@ -129,10 +131,10 @@ export function Panel(p: Props) {
               {p.crumbs.map((c, i) => (
                 <li key={i}>
                   {i === p.crumbs.length - 1 ? (
-                    <span aria-current="page">{crumbLabel(c, townName)}</span>
+                    <span aria-current="page">{crumbLabel(c, townName, p.personName)}</span>
                   ) : (
                     <button className="link" onClick={() => p.onCrumb(i)}>
-                      {crumbLabel(c, townName)}
+                      {crumbLabel(c, townName, p.personName)}
                     </button>
                   )}
                 </li>
@@ -181,7 +183,11 @@ function Towns({ towns, lives, picked, onTown }: { towns: CountyMap['towns']; li
   );
 }
 
-/** A town: its congestion, then everything out in it now, a tab a sort; click one to follow it. */
+/**
+ * A town: collapsible sections, as the game's own sidebar has them (Sidebar.cs): its congestion, then one for each
+ * sort of thing out in it now, with how many. Opening one closes the others; the open one scrolls on its own between
+ * the headings, which stay put above and below it, so the sidebar never scrolls past them. Click someone to follow.
+ */
 function TownView({
   townKey,
   life,
@@ -200,8 +206,9 @@ function TownView({
   // As it was left (Memory), and kept there as it changes.
   const [m, setM] = useState<TownMemory>(() => memory.of(townKey));
   const change = (patch: Partial<TownMemory>) => setM(memory.set(townKey, patch));
+  const toggle = (id: string) => change({ open: m.open === id ? null : id });
   const counts = new Map(TABS.map((t) => [t.id, tabEntities(life, t.id).length]));
-  const all = tabEntities(life, m.tab);
+  const all = m.open && m.open !== CONGESTION ? tabEntities(life, m.open) : [];
   const listed = all.slice(0, m.shown);
   const lines = useBriefs(townKey, listed);
   const picked = useRef<HTMLLIElement>(null);
@@ -211,42 +218,61 @@ function TownView({
   }, []);
   if (!life) return <p className="sub line">Not running</p>;
   return (
-    <>
-      <CongestionView townKey={townKey} ago={m.ago} onAgo={(ago) => change({ ago })} onCongestion={onCongestion} onStreet={onStreet} />
-      <div className="tabs" role="tablist" aria-label="Out now">
-        {TABS.filter((t) => counts.get(t.id)! > 0 || t.id === m.tab).map((t) => (
-          <button key={t.id} role="tab" aria-selected={t.id === m.tab} className={`tab ${t.id === m.tab ? 'on' : ''}`} onClick={() => change({ tab: t.id })}>
-            {t.label} <span className="figs">{counts.get(t.id)!.toLocaleString()}</span>
-          </button>
-        ))}
-      </div>
-      <ul className="list" role="tabpanel" aria-label={TABS.find((t) => t.id === m.tab)?.label}>
-        {listed.map((e) => {
-          const id = `${e.of}|${e.slot}`;
-          const on = m.picked === id;
-          return (
-            <li key={id} className={on ? 'sel' : ''} ref={on ? picked : undefined}>
-              <button
-                className="row line"
-                onClick={() => {
-                  change({ picked: id });
-                  onPick(townKey, e.of, e.slot);
-                }}
-                title={lines.get(id) ?? e.kind}
-              >
-                <span className="name">{lines.get(id) ?? e.kind}</span>
-              </button>
-            </li>
-          );
-        })}
-        {all.length === 0 && <li className="sub line">None out now</li>}
-      </ul>
-      {all.length > listed.length && (
-        <button className="btn btn-small more" onClick={() => change({ shown: m.shown + PAGE })}>
-          Show {Math.min(PAGE, all.length - listed.length)} more of {(all.length - listed.length).toLocaleString()}
-        </button>
+    <div className="sections">
+      <Section title="Congestion" open={m.open === CONGESTION} onToggle={() => toggle(CONGESTION)}>
+        <CongestionView townKey={townKey} ago={m.ago} onAgo={(ago) => change({ ago })} onCongestion={onCongestion} onStreet={onStreet} />
+      </Section>
+      {TABS.filter((t) => counts.get(t.id)! > 0 || t.id === m.open).map((t) => (
+        <Section key={t.id} title={t.label} figs={counts.get(t.id)!} open={m.open === t.id} onToggle={() => toggle(t.id)}>
+          <ul className="list">
+            {listed.map((e) => {
+              const id = `${e.of}|${e.slot}`;
+              const on = m.picked === id;
+              return (
+                <li key={id} className={on ? 'sel' : ''} ref={on ? picked : undefined}>
+                  <button
+                    className="row line"
+                    onClick={() => {
+                      change({ picked: id });
+                      onPick(townKey, e.of, e.slot);
+                    }}
+                    title={lines.get(id) ?? e.kind}
+                  >
+                    <span className="name">{lines.get(id) ?? e.kind}</span>
+                  </button>
+                </li>
+              );
+            })}
+            {all.length === 0 && <li className="sub line">None out now</li>}
+          </ul>
+          {all.length > listed.length && (
+            <button className="btn btn-small more" onClick={() => change({ shown: m.shown + PAGE })}>
+              Show {Math.min(PAGE, all.length - listed.length)} more of {(all.length - listed.length).toLocaleString()}
+            </button>
+          )}
+        </Section>
+      ))}
+    </div>
+  );
+}
+
+/** One collapsible section: its heading (a count on it, if any) and, open, what's in it. */
+function Section({ title, figs, open, onToggle, children }: { title: string; figs?: number; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+  return (
+    <section className={`sb-section ${open ? 'open' : ''}`}>
+      <button className="sb-section-head" aria-expanded={open} onClick={onToggle}>
+        <span className="sb-head-label">{title}</span>
+        {figs !== undefined && <span className="sb-head-figs figs">{figs.toLocaleString()}</span>}
+        <span className="sb-section-arrow" aria-hidden="true">
+          ›
+        </span>
+      </button>
+      {open && (
+        <div className="sb-section-body" role="region" aria-label={title}>
+          {children}
+        </div>
       )}
-    </>
+    </section>
   );
 }
 
@@ -310,14 +336,13 @@ function CongestionView({
     onCongestion(c && c.ago === ago ? c.town : null, c && c.ago === ago ? c.streets : null);
   }, [c, ago, onCongestion]);
   useEffect(() => () => onCongestion(null, null), [onCongestion]);
-  if (!c) return null;
+  if (!c) return <p className="sub line">Looking…</p>;
   const bars = holdBars(c.hours);
   const at = c.hours.length - 1 - ago;
   const hour = c.hours[at];
   const until = ago === 0 ? 'now' : c.hours[at + 1]?.time ?? '';
   return (
-    <section className="congestion" aria-label="Congestion">
-      <h2 className="line">Congestion</h2>
+    <div className="congestion">
       <div className="bars" role="group" aria-label="Hold-ups each hour">
         {bars.map((b, i) => (
           <button
@@ -360,7 +385,7 @@ function CongestionView({
         ))}
         {c.streets.length === 0 && <li className="sub line">Nobody held up</li>}
       </ol>
-    </section>
+    </div>
   );
 }
 
@@ -552,7 +577,7 @@ function FocusView({
     <section className="entity" aria-label="Following">
       <header className="focus-head line">
         <h2 title={f.who}>
-          {what} #{f.kind === 'car' && f.van !== undefined && f.van >= 0 ? f.van : f.id} · {town}
+          {f.kind === 'person' && f.name ? f.name : `${what} #${f.kind === 'car' && f.van !== undefined && f.van >= 0 ? f.van : f.id}`} · {town}
         </h2>
         <button className={`icon-btn ${following ? 'on' : ''}`} onClick={() => onFollow(!following)} aria-pressed={following} aria-label="Follow" title={following ? 'Following' : 'Follow'}>
           ◎
@@ -568,6 +593,7 @@ function FocusView({
           </button>
         )}
       </header>
+      {f.kind === 'car' && f.ownerName && <p className="sub line">{f.ownerName}'s car</p>}
       <p className="doing line" title={f.doing}>
         {f.doing}
       </p>

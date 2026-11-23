@@ -1,8 +1,8 @@
 // Where the sidebar is, as breadcrumbs: the county (its towns), a town (its
-// congestion and everything out in it, a tab a sort), then whatever was
+// congestion, then everything out in it, a section a sort, one open at a time), then whatever was
 // clicked in it (a car or person, followed; a building), and on from there (a
 // driver's car, someone in a building). Going back to a crumb picks up as it
-// was left: a town keeps its tab, its hour of congestion, how far down its
+// was left: a town keeps its open section, its hour of congestion, how far down its
 // list was shown and who was clicked from it (Memory). Pure: App.tsx moves the
 // map to match (the whole county, the town, the one followed).
 
@@ -14,7 +14,7 @@ export type Crumb =
   | { at: 'entity'; town: string; target: FocusTarget }
   | { at: 'building'; town: string; building: number };
 
-/** The town's tabs: each a sort of thing out in it (ENTITY_KINDS' ids), every kind in one of them. */
+/** The town's sections after its congestion: each a sort of thing out in it (ENTITY_KINDS' ids), every kind in one of them. */
 export const TABS: { id: string; label: string; kinds: string[] }[] = [
   { id: 'cars', label: 'Cars', kinds: ['car:r', 'car:c', 'car:t'] },
   { id: 'vans', label: 'Vans', kinds: ['car:v'] },
@@ -24,15 +24,19 @@ export const TABS: { id: string; label: string; kinds: string[] }[] = [
   { id: 'boats', label: 'Boats', kinds: ['car:s'] },
 ];
 
-/** How many of a tab are listed at first, and how many more each "Show more" adds. */
+/** The congestion's section (the first, and open the first time in). */
+export const CONGESTION = 'congestion';
+
+/** How many of a section are listed at first, and how many more each "Show more" adds. */
 export const PAGE = 40;
 
 /** What a town's crumb was left showing. */
 export interface TownMemory {
-  tab: string;
+  /** The section open (CONGESTION or a TABS id), or none. */
+  open: string | null;
   /** Hours back the congestion was looking (0: this hour). */
   ago: number;
-  /** How many of the tab were listed. */
+  /** How many of the open section were listed. */
   shown: number;
   /** The one clicked from the list last ("car|12": its record), highlighted on coming back. */
   picked: string | null;
@@ -44,13 +48,13 @@ export class Memory {
   private readonly towns = new Map<string, TownMemory>();
 
   of(town: string): TownMemory {
-    return this.towns.get(town) ?? { tab: TABS[0].id, ago: 0, shown: PAGE, picked: null };
+    return this.towns.get(town) ?? { open: CONGESTION, ago: 0, shown: PAGE, picked: null };
   }
 
   set(town: string, patch: Partial<TownMemory>): TownMemory {
     const m = { ...this.of(town), ...patch };
-    // A tab picked anew starts at its first page.
-    if (patch.tab !== undefined && patch.tab !== this.of(town).tab && patch.shown === undefined) m.shown = PAGE;
+    // A section opened anew starts at its first page.
+    if (patch.open !== undefined && patch.open !== this.of(town).open && patch.shown === undefined) m.shown = PAGE;
     this.towns.set(town, m);
     return m;
   }
@@ -90,21 +94,25 @@ export function sameTarget(a: FocusTarget, b: FocusTarget): boolean {
   return a.town === b.town && a.kind === b.kind && a.id === b.id;
 }
 
-/** A crumb's word: the county, a town's name, "Car 12", "Person 40", "Building 7" (its number, as the map's hover has it). */
-export function crumbLabel(c: Crumb, townName: (key: string) => string): string {
+/**
+ * A crumb's word: the county, a town's name, "Car 12", a person's name once it's known ("Ada Brekke"; till then
+ * "Person 40"), "Building 7" (its number, as the map's hover has it).
+ */
+export function crumbLabel(c: Crumb, townName: (key: string) => string, personName?: (town: string, id: number) => string | undefined): string {
   switch (c.at) {
     case 'county':
       return 'County';
     case 'town':
       return townName(c.town);
     case 'entity':
-      return `${c.target.kind === 'car' ? 'Car' : 'Person'} ${c.target.id}`;
+      if (c.target.kind === 'car') return `Car ${c.target.id}`;
+      return personName?.(c.town, c.target.id) ?? `Person ${c.target.id}`;
     case 'building':
       return `Building ${c.building}`;
   }
 }
 
-/** Each of a tab's sort out now in a town: [kind, its record], cars then people as ENTITY_KINDS has them. */
+/** Each of a section's sort out now in a town: [kind, its record], cars then people as ENTITY_KINDS has them. */
 export function tabEntities(life: TownLife | undefined, tab: string): { of: 'car' | 'person'; slot: number; kind: string }[] {
   const t = TABS.find((x) => x.id === tab);
   if (!life || !t) return [];

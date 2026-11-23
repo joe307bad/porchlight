@@ -131,6 +131,8 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   // The car or townsperson focused on: who (followed by id), what the simulation last said, and whether the map follows them.
   const [target, setTarget] = useState<FocusTarget | null>(null);
   const [focus, setFocus] = useState<EntityFocus | null>(null);
+  /** People's names heard from their focus ("town|id"), for their crumbs. */
+  const names = useRef(new Map<string, string>());
   const [focusNote, setFocusNote] = useState<string | null>(null);
   const [followingFocus, setFollowingFocus] = useState(false);
   /** Where the sidebar is (crumbs.ts), and what each crumb was left showing. */
@@ -248,6 +250,9 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
       const a = await focusOn(target.town, target.kind, 'id', target.id).catch(() => null);
       if (stopped) return;
       if (isFocus(a)) {
+        // Each person's name, as heard: their crumb says it.
+        if (a.kind === 'person' && a.name) names.current.set(`${a.town}|${a.id}`, a.name);
+        if (a.kind === 'car' && a.ownerName && a.owner !== undefined && a.owner >= 0) names.current.set(`${a.town}|${a.owner}`, a.ownerName);
         setFocus(a);
         setFocusNote(null);
       } else setFocusNote("Lost track of them: the server isn't running that town now.");
@@ -430,6 +435,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         </div>
       </div>
       <Panel
+        personName={(town, id) => names.current.get(`${town}|${id}`)}
         who={who}
         map={map}
         status={status}

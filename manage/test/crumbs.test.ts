@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { COUNTY, Memory, PAGE, TABS, backTo, crumbLabel, intoTown, onTo, onToBuilding, population, tabEntities } from '../src/crumbs.ts';
+import { CONGESTION, COUNTY, Memory, PAGE, TABS, backTo, crumbLabel, intoTown, onTo, onToBuilding, population, tabEntities } from '../src/crumbs.ts';
 import { ENTITY_KINDS, type TownLife } from '../src/life.ts';
 
 const names = (k: string) => ({ a: 'Lanternport', b: 'Porchlight' })[k] ?? k;
@@ -42,16 +42,18 @@ test('going back drops the crumbs after it, never the county', () => {
   assert.equal(words(backTo(deep, -3)), 'County');
 });
 
-test('a town picks up as it was left: its tab, hour, how far down and who was clicked', () => {
+test('a town picks up as it was left: its open section, hour, how far down and who was clicked', () => {
   const m = new Memory();
-  assert.deepEqual(m.of('a'), { tab: TABS[0].id, ago: 0, shown: PAGE, picked: null }, 'first time: the first tab, this hour');
-  m.set('a', { tab: 'vans' });
+  assert.deepEqual(m.of('a'), { open: CONGESTION, ago: 0, shown: PAGE, picked: null }, 'first time: its congestion open, this hour');
+  m.set('a', { open: 'vans' });
   m.set('a', { ago: 5, shown: PAGE * 2, picked: 'car|12' });
-  assert.deepEqual(m.of('a'), { tab: 'vans', ago: 5, shown: PAGE * 2, picked: 'car|12' }, 'as left');
-  assert.deepEqual(m.of('b'), { tab: TABS[0].id, ago: 0, shown: PAGE, picked: null }, 'each town its own');
-  m.set('a', { tab: 'people' });
-  assert.equal(m.of('a').shown, PAGE, 'another tab starts at its first page');
+  assert.deepEqual(m.of('a'), { open: 'vans', ago: 5, shown: PAGE * 2, picked: 'car|12' }, 'as left');
+  assert.deepEqual(m.of('b'), { open: CONGESTION, ago: 0, shown: PAGE, picked: null }, 'each town its own');
+  m.set('a', { open: 'people' });
+  assert.equal(m.of('a').shown, PAGE, 'another section starts at its first page');
   assert.equal(m.of('a').ago, 5, 'and keeps the hour');
+  m.set('a', { open: null });
+  assert.equal(m.of('a').open, null, 'all closed, if that was how it was left');
 });
 
 test('every kind of car and person is under one tab, and a tab lists its own', () => {

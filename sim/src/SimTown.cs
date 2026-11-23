@@ -255,13 +255,20 @@ namespace Porchlight.Sim
                 {
                     // The townsfolk records: the wanderers, then the life's people slots, then drivers put out of cars someone took.
                     int slot = i - (basePeople - life.personSlots.Length);
+                    // A wanderer, out for a walk: nobody's record in the town's life, but named all the same (PersonNames).
+                    if (slot < 0 && i >= 0)
+                    {
+                        string name = PersonNames.Wanderer(life.seed, i);
+                        return new { wanderer = true, name, doing = PersonNames.WANDERING, line = $"{name} · {PersonNames.WANDERING}" };
+                    }
                     if (slot < 0 || slot >= life.personSlots.Length) return new { wanderer = true };
                     id = life.PersonInSlot(slot);
                 }
                 if (id < 0) return new { empty = true };
             }
             // Just a line (the map's hover): who, what they're doing, and where in their day.
-            if (brief) return new { id, line = car ? life.BriefCar(id) : life.BriefPerson(id) };
+            // With a person's name and what they're doing on its own, for the tag over them in the game.
+            if (brief) return car ? (object)new { id, line = life.BriefCar(id) } : new { id, line = life.BriefPerson(id), name = life.NameOf(id), doing = life.DoingOf(id) };
             var index = BuildingIndex();
             Func<int, int> building = b => index.TryGetValue(b, out int k) ? k : -1;
             object o = car ? life.FocusCar(id, building) : life.FocusPerson(id, building);

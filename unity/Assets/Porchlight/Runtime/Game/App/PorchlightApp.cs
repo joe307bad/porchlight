@@ -2507,6 +2507,23 @@ namespace Porchlight.App
             netFrame = new NetFrame(iso);
             net = new Multiplayer(netFrame, playing, origin, platform, timers);
             netFrame.Room = () => net?.RoomKey;
+            // Who a townsperson is, where the server runs the town: its quick word on them (/mp/sim/focus, brief).
+            iso.AskWho = (record, done) =>
+            {
+                var key = net?.RoomKey;
+                if (key == null)
+                {
+                    done(null, null);
+                    return;
+                }
+                platform.Request("GET", $"{origin}/mp/sim/focus?town={Uri.EscapeDataString(key)}&kind=person&slot={record}&brief=1", null, (status, text) =>
+                {
+                    object json = null;
+                    try { json = status >= 200 && status < 300 ? Json.Parse(text) : null; }
+                    catch (Exception) { }
+                    done(Json.Str(json, "name"), Json.Str(json, "doing"));
+                });
+            };
             net.onStatus = s =>
             {
                 netState = s.state;

@@ -305,6 +305,13 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     // The first townsfolk records are the wanderers: they've no day to explain.
     const first = await focus('person', 'slot', 0);
     assert.ok(first?.wanderer || first?.kind === 'person' || first?.empty, 'a wanderer, or someone of the town\'s life');
+    // Named all the same (PersonNames): the game's tag over them, Manage's list.
+    if (first?.wanderer) {
+      const w = (await pool.ask(key, 'brief-person', 0, 'slot')) as { name: string; doing: string; line: string };
+      assert.match(w.name, /^\S+( \S+)+$/, 'a wanderer has a first and last name');
+      assert.equal(w.doing, 'Out for a walk');
+      assert.equal(w.line, `${w.name} · Out for a walk`);
+    }
 
     // Someone out and drawn: found by where, and back again by who.
     const people = new DataView(town.people.buffer, town.people.byteOffset, town.people.byteLength);
@@ -317,9 +324,14 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
       const again = await focus('person', 'id', f.id);
       assert.equal(again?.id, f.id);
       // The map's hover line on them: who, what, and how far through their day.
-      const brief = (await pool.ask(key, 'brief-person', i, 'slot')) as { id: number; line: string } | null;
+      const brief = (await pool.ask(key, 'brief-person', i, 'slot')) as { id: number; line: string; name: string; doing: string } | null;
       assert.equal(brief?.id, f.id);
-      assert.match(brief!.line, /^Person #\d+ · .+ · trip \d+ of \d+ today$/);
+      // By name, the one their focus has, and what they're doing on its own for the game's tag ("Going to work").
+      assert.equal(brief!.name, (f as { name?: string }).name, 'the same name as their focus');
+      assert.match(brief!.name, /^\S+( \S+)+$/);
+      assert.match(brief!.doing, /^(Going (home|to work|to school|to the shops)|Out for lunch|Visiting|Leaving town|Passing through)$/);
+      assert.equal(brief!.line.startsWith(`${brief!.name} · ${brief!.doing}, by `), true, brief!.line);
+      assert.match(brief!.line, / · trip \d+ of \d+ today$/);
       break;
     }
     assert.equal(await pool.ask('no-such-town', 'focus-car', 0, 'slot'), null);

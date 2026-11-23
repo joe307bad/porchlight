@@ -188,6 +188,9 @@ export interface EntityFocus {
   time: string;
   /** Who they are ("Works, and lives in town"; "A car"). */
   who: string;
+  /** A person's name (PersonNames: the same as over them in the game); a car's driver's. Older servers: none. */
+  name?: string;
+  ownerName?: string | null;
   /** What they're doing, in a line. */
   doing: string;
   /** A person: Inside, OnTrip or OffMap; their car (-1: none). */

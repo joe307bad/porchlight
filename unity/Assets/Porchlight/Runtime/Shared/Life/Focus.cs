@@ -87,6 +87,7 @@ namespace Porchlight.Life
                 ["id"] = p.id,
                 ["clock"] = Now,
                 ["time"] = TownClock.Format(Now),
+                ["name"] = NameOf(p.id),
                 ["who"] = KindText(p.kind),
                 ["home"] = PlaceMap(p.home, building),
                 ["work"] = p.kind == PersonKind.AtHome ? null : PlaceMap(p.work, building),
@@ -208,6 +209,7 @@ namespace Porchlight.Life
                 ["time"] = TownClock.Format(Now),
                 ["who"] = c.bus >= 0 ? "The town bus" : c.van >= 0 ? "A van on its rounds" : "A car",
                 ["owner"] = c.owner,
+                ["ownerName"] = c.owner >= 0 ? NameOf(c.owner) : null,
                 ["bus"] = c.bus,
                 ["van"] = c.van,
                 ["state"] = c.state.ToString(),
@@ -305,6 +307,20 @@ namespace Porchlight.Life
             return $"leg {t.leg + 1} of {t.legs.Count}: {Lower(LegText(p, t, t.leg, null))}";
         }
 
+        /// <summary>Their name (PersonNames): the same everywhere, every day.</summary>
+        public string NameOf(int id) => PersonNames.Of(seed, id);
+
+        /// <summary>
+        /// What they're doing, in a few words, for the tag over them in the game: "Going to work", "Going home",
+        /// "Going to the shops"; out of a trip, where they are.
+        /// </summary>
+        public string DoingOf(int id)
+        {
+            if (id < 0 || id >= people.Count) return null;
+            var p = people[id];
+            return p.trip != null ? PurposeText(p.trip.purpose) : p.where == Where.OffMap ? "Out of town" : "Indoors";
+        }
+
         /// <summary>A line for the map's hover: who, what they're doing, and where in their day.</summary>
         public string BriefPerson(int id)
         {
@@ -316,7 +332,7 @@ namespace Porchlight.Life
             for (int k = p.next; k < p.plan.Count; k++) if (p.plan[k].depart >= 0 && TownClock.DayOf(DayStart(p.day) + p.plan[k].depart) == today) left++;
             string doing = p.trip != null ? $"{PurposeText(p.trip.purpose)}, by {ModeText(p.trip.mode)}" : p.where == Where.OffMap ? "Out of town" : "Indoors";
             string where = p.trip != null ? $"trip {done + 1} of {done + 1 + left} today" : $"{done} trip{(done == 1 ? "" : "s")} today, {left} to go";
-            return $"Person #{p.id} · {doing} · {where}";
+            return $"{NameOf(p.id)} · {doing} · {where}";
         }
 
         /// <summary>A line for the map's hover: the car, what it's doing, and whose errand.</summary>
@@ -329,7 +345,7 @@ namespace Porchlight.Life
             string doing = CarDoing(c, null);
             if (c.owner < 0) return $"Car #{c.id} · {doing}";
             var o = people[c.owner];
-            return $"Car #{c.id} · {doing} · person #{o.id}{(o.trip != null ? $", {Lower(PurposeText(o.trip.purpose))}" : "")}";
+            return $"Car #{c.id} · {doing} · {NameOf(o.id)}{(o.trip != null ? $", {Lower(PurposeText(o.trip.purpose))}" : "")}";
         }
 
         // --- People's trees -----------------------------------------------------------------------

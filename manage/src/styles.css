@@ -990,32 +990,6 @@ p {
   text-decoration: underline;
 }
 
-/* A town's tabs, a sort of thing out in it each, wrapping rather than scrolling. */
-.tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 14px 0 6px;
-  border-bottom: 1px solid var(--line);
-}
-.tab {
-  padding: 5px 8px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: none;
-  color: var(--muted);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-.tab.on {
-  color: inherit;
-  border-bottom-color: var(--accent);
-}
-.tab .figs {
-  margin-left: 2px;
-  font-size: 11px;
-}
 .more {
   margin-top: 6px;
   width: 100%;
@@ -1035,4 +1009,81 @@ p {
   font-size: 0.8em;
   opacity: 0.7;
   margin-top: 1px;
+}
+
+/* A town's sections, as the game's sidebar has them (Sidebar.cs, Porchlight.uss .sb-section): a heading each,
+   one open at a time. The sidebar itself doesn't scroll then: the open section scrolls between the headings,
+   which stay where they are above and below it. */
+.panel-body.fill {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.panel-body.fill > * {
+  flex: none;
+}
+.panel-body.fill > .sections {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sb-section {
+  flex: none;
+  border-bottom: 1px solid #383530;
+}
+.sb-section.open {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sb-section-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.sb-head-label {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.9px;
+  color: #a99f88;
+}
+.sb-head-figs {
+  font-size: 11px;
+  color: #a99f88;
+}
+.sb-section-arrow {
+  font-size: 16px;
+  line-height: 1;
+  color: #a99f88;
+  transition: rotate 0.15s;
+}
+.sb-section.open > .sb-section-head > .sb-section-arrow {
+  rotate: 90deg;
+}
+.sb-section-head:hover > .sb-head-label,
+.sb-section-head:hover > .sb-head-figs,
+.sb-section-head:hover > .sb-section-arrow {
+  color: #efe6cf;
+}
+.sb-section-head:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.sb-section-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
 }

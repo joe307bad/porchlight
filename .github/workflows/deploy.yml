@@ -131,6 +131,7 @@ jobs:
         run: |
           dotnet run --project "unity/Tools~/Checks" -c Release -- clock
           dotnet run --project "unity/Tools~/Checks" -c Release -- furniture server/towns
+          dotnet run --project "unity/Tools~/Checks" -c Release -- names server/towns
       # The web build grows and builds the towns ahead a share at a time: no share long enough to stall
       # the car (a shared runner is slower than a desk: twice the limit), and the same towns as all at once.
       - name: Game — the county built a share at a time, as the web build does

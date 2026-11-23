@@ -61,6 +61,7 @@ static class Program
         if (args.Length > 0 && args[0] == "servers") return ServersCheck.Run();
         if (args.Length > 0 && args[0] == "clock") return ClockCheck.Run();
         if (args.Length > 0 && args[0] == "furniture") return FurnitureCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "names") return NamesCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
         if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();
         if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();

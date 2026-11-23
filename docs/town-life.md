@@ -540,6 +540,57 @@ The kinds:
 **Cars:** 90% of workers and 70% of the at-home have one, parked at home.
 Commuters and through drivers arrive in theirs.
 
+### Their names
+
+Everyone has a name (`Life/PersonNames.cs`). The first and last names come
+from faker-js's English lists (`@faker-js/faker`, MIT), copied in as data by
+`unity/Tools~/names/generate.mjs` into `PersonNames.Lists.cs`: 3,005 first
+names and 473 last. Only the lists come over; picking one is ours:
+
+- One of the town's people (`TownLife.people`) is named by
+  `Rng("<town seed>::person::<id>")`; a wanderer by
+  `Rng("<town seed>::wanderer::<k>")`, `k` its place among them (the first
+  townsfolk records).
+- So the same person has the same name in every player's game, on the server
+  and in Manage, every day, without it being sent anywhere. Their id in
+  another town is someone else.
+
+`TownLife.DoingOf` says what they're doing in a few words: their trip's
+purpose ("Going to work", "Going home", "Going to the shops", "Visiting"…),
+or "Indoors" / "Out of town" between trips. A wanderer is always "Out for a
+walk".
+
+**Over them in the game.** Walk up to a townsperson and stay by them for
+0.9 s (`NAME_DELAY` in `ExploreView.cs`, within 1.6 tiles): a tag comes up
+over their head (the players' `NameTag`, in a quiet cream) with their name,
+and what they're doing on a smaller line under it. Step away, or to someone
+else, and it goes. Where the town is run:
+
+- **here** (playing alone, or the room's host): from the town's life, looked
+  at again every 2 s, so it changes when they get where they were going;
+- **on the server:** the game asks it once (`GET /mp/sim/focus?…&brief=1` by
+  their record, `ExploreView.AskWho`, set in `PorchlightApp.Connect`). The
+  delay covers the wait, and an answer that comes after you've moved on is
+  dropped.
+
+**In Manage** the same name heads their focus and their crumb, and starts
+their line in a town's People list and the map's hover. A car's line and
+focus name its driver.
+
+`Checks names` (in CI) builds each starter town:
+
+- everyone is named "First Last", and different people get different names
+  (98% or more);
+- the town built again hours later gives the same names;
+- at 8:15 AM people are going to work, each as their trip has it, and at
+  5:30 PM they're going home;
+- everyone drawn walking has a name and something they're doing;
+- the same ids in the next town are other people.
+
+`server/test/sim.test.ts` checks the sim's brief answer: a name and doing
+for someone out walking, matching their focus, and "Out for a walk" for a
+wanderer.
+
 ### A day
 
 Each person's plan is a chain of stops with departure times. It's seeded by
@@ -803,9 +854,15 @@ what each one is for:
 | Crumb | Shows |
 | --- | --- |
 | **County** | The towns, a line each with its people. |
-| **› A town** | Its congestion (below), then its most congested streets: each the street's name, as its signs have it in the game (both use `StreetNaming`), with the streets at the ends of the stretch on a smaller line under it ("Elm Street to Oak Lane"); then a tab for each sort of thing out in it now: Cars (residents', commuters', through traffic), Vans, Buses, People (workers, students, out on errands, commuters on foot, wanderers), Parked, Boats. Each tab shows its count, and tabs with none out are hidden. A tab lists 40 at a time, each with the simulation's line ("Driving to work"); "Show more" adds 40. |
-| **› Car 12 / Person 40** | One car or townsperson, followed on the map: what it is, what it's doing and its next four steps. Its driver or car (the person/car button) takes its place, so toggling between them stays one crumb under the town or building. |
+| **› A town** | Collapsible sections, as the game's own sidebar has them (`Sidebar.cs`: a heading with a › that turns when open). First its congestion (below), then one for each sort of thing out in it now, with how many: Cars (residents', commuters', through traffic), Vans, Buses, People (workers, students, out on errands, commuters on foot, wanderers), Parked, Boats. Sorts with none out are left out. Opening one closes the others, and clicking an open heading closes it. A list shows 40 at a time, each with the simulation's line ("Ada Brekke · Going to work, by car · trip 1 of 3 today"); "Show more" adds 40. |
+| **› Car 12 / Ada Brekke** | One car or townsperson (by name, once their focus has answered), followed on the map: what it is, what it's doing and its next four steps. A car says whose it is ("Ada Brekke's car"). Its driver or car (the person/car button) takes its place, so toggling between them stays one crumb under the town or building. |
 | **› Building n** | Who's inside (a building clicked on the map, by its number). Each person is a crumb further on. |
+
+**Room for it all.** Inside a town the sidebar itself never scrolls. The
+headings stay where they are, the ones before the open section above it and
+the ones after below, and only the open section's body scrolls, in whatever
+height is left. So a heading is never scrolled out of the window, however
+long the list (`.panel-body.fill`, `.sb-section.open` in `styles.css`).
 
 How the crumbs move:
 
@@ -834,7 +891,7 @@ layers (cars, people, lights, stop signs, land use, players, streets,
 names, trails, reach) and each kind of car and person, a checkbox each.
 
 **Congestion.** To see where the town's traffic jams, and when, a town's
-crumb starts with its last day of hold-ups (`GET /mp/sim/congestion`, asked
+first section (open the first time in) is its last day of hold-ups (`GET /mp/sim/congestion`, asked
 again every 10 s while it's open):
 
 - a bar for each of the last 24 hours (this one so far on the right), as
@@ -1177,14 +1234,17 @@ signs:
 through the real sidebar in Chromium against a stand-in server:
 
 - the towns with their people and nothing else;
-- into a town: its most congested street by name, a tab a sort with counts,
-  and no box that scrolls on its own;
-- picking an hour, the Vans tab, a van (a crumb on, followed), then its
-  driver (another crumb);
-- back along the crumbs: the van followed again, then the town as it was
-  left (its tab, its hour, the van highlighted), then the county with the
-  town highlighted;
-- into another town: its own state, from the first tab.
+- into a town: a heading for its congestion (open) then each sort with its
+  count; its most congested street by name, the cross streets under it;
+- Cars opened: the congestion closes; with 203 cars the list scrolls on its
+  own while the sidebar and the page don't, and every heading stays in the
+  window, scrolled to the end too; clicked again, it closes;
+- a building hovered: its number;
+- picking an hour, Vans, a van (a crumb on, followed, its driver named), then
+  its driver and back (by name, in its place: never a crumb more);
+- back along the crumbs: the town as it was left (Vans open, the van
+  highlighted, the hour), then the county with the town highlighted;
+- into another town: its own state, its congestion open.
 
 `manage/test/crumbs.test.ts` covers where each click takes the crumbs,
 going back, and each town's memory.
@@ -1263,3 +1323,9 @@ contributors, Apache-2.0) describes in its design documents:
 implementation of those ideas, written for our towns, wire and game. No
 A/B Street source was copied or translated, so the Apache licence's terms
 for derivative works don't apply. We credit it anyway, gladly.
+
+The townsfolk's first and last names are the English name lists from
+[faker-js](https://github.com/faker-js/faker) (`@faker-js/faker` 9.9.0, MIT,
+Copyright (c) 2022–present Faker contributors), copied in as data by
+`unity/Tools~/names/generate.mjs`. Which name each person gets is our own
+(`PersonNames`).
