@@ -72,9 +72,9 @@ say "Erasing Porchlight from this Mac:"
 if [ ${#found[@]} -eq 0 ] && [ -z "$receipts" ] && [ ${#set_vars[@]} -eq 0 ]; then
   echo "  (nothing there)"
 else
-  for p in "${found[@]}"; do echo "  $p"; done
+  for p in ${found[@]+"${found[@]}"}; do echo "  $p"; done
   for r in $receipts; do echo "  the installer's receipt $r"; done
-  for v in "${set_vars[@]}"; do echo "  $v, set for apps (launchctl)"; done
+  for v in ${set_vars[@]+"${set_vars[@]}"}; do echo "  $v, set for apps (launchctl)"; done
 fi
 [ "$INSTALL" = 1 ] && echo "then installing the newest release from github.com/$REPO and opening it."
 if [ "$ASK" = 1 ]; then
@@ -98,14 +98,14 @@ pkill -9 -f "/Porchlight( Dev)?\.app/Contents/MacOS/" 2>/dev/null || true
 
 # 2. Erased.
 LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-for p in "${found[@]}"; do
+for p in ${found[@]+"${found[@]}"}; do
   case "$p" in *.app) [ -x "$LSREGISTER" ] && "$LSREGISTER" -u "$p" >/dev/null 2>&1 || true ;; esac
   case "$p" in /Applications/*|/tmp/*) sudo rm -rf "$p" ;; *) rm -rf "$p" ;; esac
 done
 # The preferences daemon keeps its own copy of a plist: told to forget it too.
 for b in "${BUNDLES[@]}"; do defaults delete "$b" >/dev/null 2>&1 || true; done
 for r in $receipts; do sudo pkgutil --forget "$r" >/dev/null; done
-for v in "${set_vars[@]}"; do launchctl unsetenv "$v"; done
+for v in ${set_vars[@]+"${set_vars[@]}"}; do launchctl unsetenv "$v"; done
 # Set in this shell, it would only reach an app started from here, which open(1) doesn't do; worth knowing all the same.
 for v in "${VARS[@]}"; do [ -n "${!v:-}" ] && echo "note: $v is set in this shell (unset it if you start the app from here)."; done
 say "Erased."
