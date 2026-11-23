@@ -507,6 +507,10 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
 - [ ] **Congestion-aware routing:** BPR edge costs from the last ~15 minutes
   of flow. Re-route a random ~10% of drivers each simulated day, which
   converges towards Wardrop equilibrium cheaply, as MATSim does [T14][T15][T21].
+  Routing by the traffic is in (PR #18: each lane's hold-up measured as cars
+  leave it, routes costed by it, and held-up drivers taking a quicker way;
+  `Life/Congestion.cs`, [town-life.md](town-life.md)), but not BPR costs or
+  day-to-day re-routing towards equilibrium.
 - [x] **Parking as a real step:** kerb and driveway spots (PR #19). Arriving
   cars take a free spot near the door, or hunt for one (jittered, so hunters
   fan out), then walk to the door [T17][T18]. Car parks are still to come.
@@ -632,11 +636,12 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
   accuracy. Light needs (hunger, fun) can choose errands later.
 - [x] **Going indoors:** people enter and leave buildings through their
   doors, and parked cars pick up and drop off their drivers (PR #19).
-- [ ] **Manage views:**
+- [x] **Manage views:**
   - [x] people by activity: who's indoors in each building, out, or out of
     town (PR #19)
   - [x] trips by hour (PR #19: the busiest hour and each mode's share)
-  - [ ] each street's flow (counted, not drawn yet)
+  - [x] each street's flow and hold-ups (PR #18: Manage's congestion slider,
+    the last 24 hours, with each hour's worst streets drawn on the map)
   - [x] the junctions that jam (PR #19: the slow junctions, as a count)
 
 ## 6. Randomness: matches, concerts and the logistics they bring
