@@ -286,7 +286,7 @@ export class SimPool {
    */
   ask(
     key: string,
-    kind: 'car' | 'person' | 'building' | 'focus-car' | 'focus-person' | 'brief-car' | 'brief-person' | 'signals' | 'congestion',
+    kind: 'car' | 'person' | 'building' | 'focus-car' | 'focus-person' | 'brief-car' | 'brief-person' | 'signals' | 'congestion' | 'ground',
     i: number,
     by?: 'slot' | 'id',
   ): Promise<unknown> {

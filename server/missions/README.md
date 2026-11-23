@@ -21,6 +21,13 @@ A mission that earns something says what, so the Journal can show the reward bef
 # unlocks: animals
 ```
 
+And how long it takes at the very least, in seconds (20 if it doesn't say): the server doesn't count it as finished any sooner. `# race: yes` says that finishing it is running the town's race course (`course`), which the server watches and times; only those missions keep times (`record`).
+
+```ink
+# least: 60
+# race: yes
+```
+
 ## What the story says
 
 Each line is shown on its own, and the player reads on with Enter or A. A line that starts with a role and a colon is spoken by whoever plays that role. `you:` is the player:

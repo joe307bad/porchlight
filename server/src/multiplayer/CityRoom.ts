@@ -25,6 +25,7 @@ import { StateView } from '@colyseus/schema';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { Interest } from './interest.ts';
 import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, clampToBounds, creditAfter, creditAt, inBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
+import { played, RaceWatch, type CourseLine } from './played.ts';
 import { cleanLook, STARTER_TOWNS, type EndReason, type Snapshot } from './persistence.ts';
 import { County, mineSlot } from '../county.ts';
 import {
@@ -65,6 +66,7 @@ import {
   type SpawnMessage,
 } from './protocol.ts';
 import { CityState, ParkedCar, Player } from './schema.ts';
+import type { Mission } from '../missions.ts';
 import { sim } from '../sim/link.ts';
 import type { SimTown } from '../sim/pool.ts';
 
@@ -86,6 +88,12 @@ const LOOK_SAVE_DELAY_MS = 2_000;
 const TELEPORT_GAP_MS = 1_000;
 /** Shutdown doesn't wait longer than this on the database. */
 const SHUTDOWN_SAVE_MS = 8_000;
+/** How close (tiles) the server must have someone to a car they get into: the game's own reach (1), and what the network lags. */
+const TAKE_REACH = 6;
+/** Least time between one player's cars (ms). */
+const TAKE_GAP_MS = 1_000;
+/** How often a room without its town's ground (the race course, the parked cars) asks the simulation again (ms). */
+const GROUND_RETRY_MS = 5_000;
 /** Most cars a town's `taken` list holds. */
 const MAX_TAKEN = 4_000;
 
@@ -127,6 +135,14 @@ interface PlayerRuntime {
   /** When a ride they asked for was last refused (ms). */
   rideRefusedAt: number;
   lastTeleportAt: number;
+  /** When they last got into one of the town's cars (ms). */
+  lastTakeAt: number;
+  /** They've been placed by a move, so the next one's distance means something. */
+  moves: boolean;
+  /** Their way along the town's race course, once it's known. */
+  race: RaceWatch | null;
+  /** What they say they've earned, checked one thing at a time, in order. */
+  earning: Promise<void>;
   /** When they were last sent the whole town on asking (ms): once a second at most. */
   worldWantAt: number;
   /** Their game follows the server's town (JoinOptions.follows). While anyone's doesn't, a player hosts. */
@@ -251,6 +267,9 @@ export class CityRoom extends Room<{ state: CityState }> {
   bounds: Bounds = { width: 0, height: 0 };
   private readonly runtime = new Map<string, PlayerRuntime>();
   private readonly interest = new Interest();
+  /** The town's race course and its parked cars, as the simulation has them (null: not known). */
+  private ground: { course: CourseLine | null; parked: [number, number][] } | null = null;
+  private groundAskedAt = 0;
   /** The `taken` list, as a set. */
   private readonly taken = new Set<string>();
   /** When the host was chosen, and last sent the world. */
@@ -341,20 +360,27 @@ export class CityRoom extends Room<{ state: CityState }> {
       const rt = this.admit(client);
       const what = (raw as { what?: unknown } | null)?.what;
       if (!rt || typeof what !== 'string' || !UNLOCKS.includes(what) || rt.unlocks.includes(what)) return;
-      rt.unlocks.push(what);
-      // The account's: its other characters playing right now have it too.
-      for (const o of online.values()) o.room.granted(rt, o.sessionId, what);
-      this.deps.persistence.unlock(rt.accountId, what).catch((err: Error) => console.error(`city: couldn't keep ${rt.accountId}'s unlock ${what}:`, err.message));
+      this.earn(rt, async () => {
+        const mission = (await this.deps.missions.list()).find((m) => m.unlocks === what);
+        if (rt.unlocks.includes(what)) return;
+        if (!mission || !this.finished(rt, mission, false)) return console.warn(`city: ${rt.characterId} hasn't earned ${what}`);
+        rt.unlocks.push(what);
+        // The account's: its other characters playing right now have it too.
+        for (const o of online.values()) o.room.granted(rt, o.sessionId, what);
+        await this.deps.persistence.unlock(rt.accountId, what);
+      });
     });
     this.onMessage(MSG_MISSION_DONE, (client, raw: unknown) => {
       const rt = this.admit(client);
       const id = (raw as { id?: unknown } | null)?.id;
       if (!rt || typeof id !== 'string') return;
       // Only real missions: nothing's kept for any other name a client makes up.
-      this.deps.missions
-        .get(id)
-        .then((mission) => (mission ? this.deps.persistence.completeMission(rt.accountId, rt.characterId, id) : undefined))
-        .catch((err: Error) => console.error(`city: couldn't keep ${rt.accountId} finishing ${id}:`, err.message));
+      this.earn(rt, async () => {
+        const mission = await this.deps.missions.get(id);
+        if (!mission) return;
+        if (!this.finished(rt, mission, true)) return console.warn(`city: ${rt.characterId} hasn't finished ${id}`);
+        await this.deps.persistence.completeMission(rt.accountId, rt.characterId, id);
+      });
     });
 
     this.onMessage(MSG_NIGHT, (client, raw: unknown) => {
@@ -367,7 +393,8 @@ export class CityRoom extends Room<{ state: CityState }> {
     this.onMessage(MSG_TAKE, (client, raw: unknown) => {
       const rt = this.admit(client);
       const car = (raw as { car?: unknown } | null)?.car;
-      if (!rt || typeof car !== 'string' || !/^[pt]\d{1,5}$/.test(car) || this.taken.has(car) || this.taken.size >= MAX_TAKEN) return;
+      if (!rt || typeof car !== 'string' || !/^[pt]\d{1,5}$/.test(car) || this.taken.has(car) || this.taken.size >= MAX_TAKEN || !this.mayTake(rt, car, Date.now())) return;
+      rt.lastTakeAt = Date.now();
       this.taken.add(car);
       this.state.taken = [...this.taken].join(',');
       sim()?.takenChanged(this.town);
@@ -430,8 +457,10 @@ export class CityRoom extends Room<{ state: CityState }> {
       if (account.banned) throw new ServerError(403, 'This account is banned.');
       const character = await d.persistence.character(account.id, String(options.character ?? ''));
       if (!character) throw new ServerError(404, 'No such character.');
+      // This room's town, whatever they asked for: matchmaking finds any room at all for someone who doesn't name one.
+      if (options.town !== this.town) throw new ServerError(400, 'bad town');
       // A town someone made is theirs alone: only Porchlight (and the others that come with the game) is everyone's.
-      if (!(await d.persistence.mayEnter(account.id, typeof options.town === 'string' ? options.town : ''))) throw new ServerError(403, "That town is someone else's.");
+      if (!(await d.persistence.mayEnter(account.id, this.town))) throw new ServerError(403, "That town is someone else's.");
       return { accountId: account.id, characterId: character.id, name: character.name, look: character.look };
     } catch (err) {
       if (err instanceof ServerError) throw err;
@@ -492,6 +521,10 @@ export class CityRoom extends Room<{ state: CityState }> {
         lastInputAt: Date.now(),
         rideRefusedAt: 0,
         lastTeleportAt: 0,
+        lastTakeAt: 0,
+        moves: false,
+        race: null,
+        earning: Promise.resolve(),
         // Moves come about 30 a second, and the host's world 10: room for those and the odd teleport, look or car.
         rate: new RateLimit(60),
         worldRate: new RateLimit(WORLD_PER_SECOND),
@@ -521,6 +554,46 @@ export class CityRoom extends Room<{ state: CityState }> {
       console.error('city: join failed:', (err as Error).message);
       throw new ServerError(503, 'Service unavailable. Try again in a moment.');
     }
+  }
+
+  /** Check, and keep, something a player says they've earned: after whatever they said before it. */
+  private earn(rt: PlayerRuntime, check: () => Promise<void>): void {
+    rt.earning = rt.earning.then(check).catch((err: Error) => console.error(`city: couldn't keep what ${rt.accountId} earned:`, err.message));
+  }
+
+  /** Can they have played this mission to its end? Started, with time and ground enough since; and a race run, where its course is known. */
+  private finished(rt: PlayerRuntime, mission: Mission, spend: boolean): boolean {
+    if (mission.race && this.ground?.course && !played.hasRaced(rt.characterId)) return false;
+    return played.couldHaveFinished(rt.accountId, mission, spend);
+  }
+
+  /** Is this one of the town's cars, beside them? (As far as the server can tell: without the simulation, only that they aren't taking one after another.) */
+  private mayTake(rt: PlayerRuntime, car: string, now: number): boolean {
+    if (!rt.track.anchored || now - rt.lastTakeAt < TAKE_GAP_MS) return false;
+    const i = Number(car.slice(1));
+    const near = (x: number, z: number) => Math.hypot(x - rt.player.x, z - rt.player.z) <= TAKE_REACH;
+    if (car[0] === 'p') {
+      if (!this.ground) return true;
+      const at = this.ground.parked[i];
+      return !!at && near(at[0], at[1]);
+    }
+    const cars = sim()?.running(this.town, now)?.cars;
+    if (!cars) return true;
+    if ((i + 1) * 7 > cars.byteLength) return false;
+    const v = new DataView(cars.buffer, cars.byteOffset + i * 7, 4);
+    return near(v.getUint16(0) / 100, v.getUint16(2) / 100);
+  }
+
+  /** The town's race course and parked cars, from the simulation (asked again now and then until it answers). */
+  private learnGround(now: number): void {
+    if (this.ground || now - this.groundAskedAt < GROUND_RETRY_MS || !sim()?.running(this.town, now)) return;
+    this.groundAskedAt = now;
+    sim()!
+      .pool.ask(this.town, 'ground', 0)
+      .then((a) => {
+        if (a) this.ground = a as NonNullable<typeof this.ground>;
+      })
+      .catch((err: Error) => console.error(`city: couldn't learn ${this.town}'s ground:`, err.message));
   }
 
   /** A message to one of this room's sessions (Manage's goto); false if it isn't connected here. */
@@ -679,6 +752,7 @@ export class CityRoom extends Room<{ state: CityState }> {
         rt.player.anim = ANIM_IDLE;
       }
     }
+    this.learnGround(now);
     // Run by the server only if every game here can follow it (an older one would see the traffic stand still).
     const town = this.allFollow() ? sim()?.running(this.town, now) : null;
     if (town) {
@@ -764,6 +838,13 @@ export class CityRoom extends Room<{ state: CityState }> {
     rt.lastInputAt = at;
     const p = rt.player;
     const moved = p.x !== m.x || p.z !== m.z;
+    if (moved && rt.moves) played.moved(rt.accountId, Math.hypot(p.x - m.x, p.z - m.z));
+    rt.moves = true;
+    if (this.ground?.course) {
+      rt.race ??= new RaceWatch(this.ground.course);
+      const seconds = rt.race.step(m.x, m.z, m.car === 0 && m.ride === '' && m.anim < ANIM_DRIVE && m.y < 1, at);
+      if (seconds !== null) played.raced(rt.characterId, this.town, seconds);
+    }
     this.place(rt, m.x, m.y, m.z);
     p.rotY = quantizeYaw(m.yaw);
     p.t = m.t;
@@ -795,6 +876,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     rt.lastTeleportAt = at;
     const c = clampToBounds(this.bounds, x, z);
     Object.assign(rt.track, { anchored: true, x: c.x, y: 0, z: c.z, t: at, grace: 0, credit: 0 });
+    rt.race?.lost();
     rt.player.car = 0;
     rt.player.ride = '';
     rt.player.anim = ANIM_IDLE;

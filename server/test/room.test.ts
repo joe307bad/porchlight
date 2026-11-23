@@ -7,6 +7,7 @@ import { Client, type Room } from '@colyseus/sdk';
 import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
+import { played } from '../src/multiplayer/played.ts';
 import { MemoryPersistence, STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
 import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_GOTO, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type GotoMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
@@ -45,6 +46,15 @@ const town = { town: 'seed=test', width: 128, height: 128 };
 let seq = 0;
 const move = (room: Room, x: number, z: number, epoch = 0, extra: { anim?: number; car?: number; ride?: string } = {}) =>
   room.send('move', { seq: ++seq & 0xffff, t: Math.round(performance.now()), epoch, x, y: 0, z, yaw: 0, anim: 1, car: 0, ride: '', ...extra });
+
+/** Played right through, as the server sees it: the mission's story fetched, and time and ground enough since. */
+async function play(sub: string, mission: string): Promise<void> {
+  assert.equal((await api(sub, 'GET', `/mp/missions/${mission}`)).status, 200);
+  played.moved((await persistence.account(sub, '')).id, 50);
+  skipAhead += 61_000;
+}
+let skipAhead = 0;
+played.now = () => Date.now() + skipAhead;
 
 before(async () => {
   game = await startGameServer({
@@ -155,10 +165,12 @@ test('animals are for accounts that have unlocked them, and an unlock is kept', 
   first.room.send(MSG_LOOK, { model: 'animals/animal-penguin' });
   first.room.send(MSG_LOOK, { model: 'people/character-b-1' });
   await until('the person look', () => me().appearance === 'people/character-b-1');
+  await play('keeper', 'chase');
   // Unlocked (twice, kept once; something there's no such unlock for, not at all): now a penguin will do.
   first.room.send(MSG_UNLOCK, { what: 'animals' });
   first.room.send(MSG_UNLOCK, { what: 'animals' });
   first.room.send(MSG_UNLOCK, { what: 'flying' });
+  await new Promise((r) => setTimeout(r, 200)); // checked first
   first.room.send(MSG_LOOK, { model: 'animals/animal-penguin' });
   await until('the penguin look', () => me().appearance === 'animals/animal-penguin');
   await first.room.leave();
@@ -182,6 +194,7 @@ test('what one character earns, all the account\'s characters have, at once and 
   move(a, 20, 20);
   move(b, 20, 20);
   await until('them to be placed', () => b.state.players?.get(b.sessionId)?.x === 20 && a.state.players?.get(a.sessionId)?.x === 20);
+  await play('family', 'firefighter');
   a.send(MSG_UNLOCK, { what: 'firefighter' });
   assert.deepEqual((await told).unlocks, ['firefighter']);
   // So the other one, in another town, can be the firefighter straight away.
@@ -201,9 +214,19 @@ test('each town keeps its own best times for a mission, one per account', async 
   const empty = await api('runner', 'GET', `/mp/records?town=${key}&mission=marathon`);
   assert.equal(empty.status, 200);
   assert.deepEqual(empty.json, { best: [], mine: null });
+  // Nobody saw it run: not kept. (Nor one run in another town.)
+  const post = (seconds: number) => api('runner', 'POST', '/mp/records', { town: 'seed=marathon1', mission: 'marathon', character: runner.id, seconds });
+  assert.equal((await post(312)).status, 409);
+  played.raced(runner.id, 'seed=elsewhere', 310);
+  assert.equal((await post(312)).status, 409);
+  // A time far shorter than the server's: the server's is kept.
+  played.raced(runner.id, 'seed=marathon1', 400);
+  assert.equal((await post(1)).json.mine, 400);
+  assert.equal((await post(1)).status, 409); // one time a race
+  played.raced(runner.id, 'seed=marathon1', 313);
   const kept = await api('runner', 'POST', '/mp/records', { town: 'seed=marathon1', mission: 'marathon', character: runner.id, seconds: 312.345 });
   assert.equal(kept.status, 200);
-  assert.equal(kept.json.before, null);
+  assert.equal(kept.json.before, 400);
   assert.equal(kept.json.mine, 312.35);
   assert.deepEqual(kept.json.best.map((r: { name: string; mine: boolean }) => [r.name, r.mine]), [['Runner', true]]);
   // Another town's board is its own; nonsense is refused.
@@ -227,9 +250,11 @@ test('missions finished are the account\'s, and can be played again', async () =
   for (const character of [one.id, two.id]) {
     const room = await client('finisher').joinOrCreate('city', { ...town, character });
     await new Promise<SpawnMessage>((r) => room.onMessage(MSG_SPAWN, r));
-    room.send(MSG_MISSION_DONE, { id: 'chase' });
-    room.send(MSG_MISSION_DONE, { id: 'no-such-mission' });
+    await play('finisher', 'chase');
     room.send(MSG_UNLOCK, { what: 'animals' });
+    room.send(MSG_MISSION_DONE, { id: 'chase' });
+    room.send(MSG_MISSION_DONE, { id: 'chase' }); // once a play
+    room.send(MSG_MISSION_DONE, { id: 'no-such-mission' });
     await new Promise((r) => setTimeout(r, 100));
     await room.leave();
   }
@@ -306,7 +331,8 @@ test('the town editor saves a town by name: its own key, once, and it counts tow
   assert.deepEqual([saved.json.name, saved.json.key, saved.json.mine], ['My Town', key, true]);
   const again = await api('someone', 'POST', '/mp/towns', { name: 'Copy', key });
   assert.equal(again.status, 409);
-  assert.match(again.json.error, /My Town/);
+  assert.doesNotMatch(again.json.error, /My Town/); // what it's called is its maker's
+  assert.match((await api('editor', 'POST', '/mp/towns', { name: 'Copy', key })).json.error, /My Town/);
   assert.equal((await api('someone', 'POST', '/mp/towns', { name: 'Maple', key: STARTER_TOWNS[0].key })).status, 409);
   for (const bad of ['nonsense', 'seed=', 'seed=a&b=<script>', 'x=1&seed=a', 5, `seed=${'a'.repeat(512)}`]) {
     assert.equal((await api('editor', 'POST', '/mp/towns', { name: 'Bad', key: bad })).status, 400, String(bad));
@@ -594,4 +620,91 @@ test("Manage's right-click: the account's characters playing are listed, and one
   assert.equal((await fetch(`${base}/mp/goto`)).status, 401);
   void stranger;
   await r.leave();
+});
+
+// --- Between accounts (docs/cross-account.md) ---
+
+test("someone else's town: no way in, no word of who's there, and not its board", async () => {
+  const secret = (await api('owner', 'POST', '/mp/towns', { name: 'Secret' })).json;
+  const own = (await api('owner', 'POST', '/mp/characters', { name: 'Owner' })).json;
+  const spy = (await api('spy', 'POST', '/mp/characters', { name: 'Owner' })).json; // the same name is fine
+  const room = await client('owner').joinOrCreate('city', { town: secret.key, width: 128, height: 128, character: own.id });
+  room.onMessage('*', () => {});
+  move(room, 20, 20);
+  await until('them to be seen', () => room.state.players?.get(room.sessionId)?.x === 20);
+
+  const size = { width: 128, height: 128, character: spy.id };
+  await assert.rejects(client('spy').joinOrCreate('city', { ...size, town: secret.key }), /someone else/);
+  // Matchmaking finds any room for someone who names no town; the room turns them away.
+  await assert.rejects(client('spy').joinOrCreate('city', size), /bad town/);
+  await assert.rejects(client('spy').joinById(room.roomId, size), /bad town/);
+  await assert.rejects(client('spy').joinById(room.roomId, { ...size, town: STARTER_TOWNS[0].key }), /bad town/);
+  await assert.rejects(client('spy').joinById(room.roomId, { ...size, town: secret.key }), /someone else/);
+  assert.equal(room.state.players.size, 1);
+
+  assert.equal((await api('spy', 'GET', `/mp/players/${own.id}`)).status, 404);
+  assert.equal((await api('owner', 'GET', `/mp/players/${own.id}`)).json.town, secret.key);
+  const key = encodeURIComponent(secret.key);
+  assert.equal((await api('spy', 'GET', `/mp/records?town=${key}&mission=marathon`)).status, 403);
+  played.raced(spy.id, secret.key, 100);
+  assert.equal((await api('spy', 'POST', '/mp/records', { town: secret.key, mission: 'marathon', character: spy.id, seconds: 100 })).status, 403);
+  assert.equal((await api('owner', 'GET', `/mp/records?town=${key}&mission=marathon`)).status, 200);
+  const same = await api('spy', 'POST', '/mp/towns', { name: 'Copy', key: secret.key });
+  assert.equal(same.status, 409);
+  assert.doesNotMatch(same.json.error, /Secret/);
+  await room.leave();
+});
+
+test("what's earned has to have been played, for long enough, moving about", async () => {
+  const me = (await api('cheat', 'POST', '/mp/characters', { name: 'Cheat' })).json;
+  const account = (await persistence.account('cheat', '')).id;
+  const room = await client('cheat').joinOrCreate('city', { ...town, character: me.id });
+  room.onMessage('*', () => {});
+  let x = 20;
+  move(room, x, 20);
+  await until('them to be seen', () => room.state.players?.get(room.sessionId)?.x === 20);
+  const tryIt = async () => {
+    room.send(MSG_UNLOCK, { what: 'animals' });
+    room.send(MSG_MISSION_DONE, { id: 'chase' });
+    await new Promise((r) => setTimeout(r, 150));
+    return [(await persistence.unlocks(account)).length, (await persistence.progress(account)).completions.length];
+  };
+  assert.deepEqual(await tryIt(), [0, 0]); // never started
+  await api('cheat', 'GET', '/mp/missions/chase');
+  assert.deepEqual(await tryIt(), [0, 0]); // just started
+  skipAhead += 61_000;
+  assert.deepEqual(await tryIt(), [0, 0]); // hasn't moved
+  for (let i = 0; i < 12; i++) {
+    move(room, (x += 1), 20);
+    await new Promise((r) => setTimeout(r, 80));
+  }
+  assert.deepEqual(await tryIt(), [1, 1]);
+  assert.deepEqual(await tryIt(), [1, 1]);
+  await room.leave();
+});
+
+test("the town's cars are taken one at a time", async () => {
+  const me = (await api('thief', 'POST', '/mp/characters', { name: 'Thief' })).json;
+  const room = await client('thief').joinOrCreate('city', { town: 'seed=thief', width: 128, height: 128, character: me.id });
+  room.onMessage('*', () => {});
+  room.send(MSG_TAKE, { car: 'p1' }); // not placed yet
+  move(room, 20, 20);
+  for (let i = 10; i < 40; i++) room.send(MSG_TAKE, { car: `p${i}` });
+  await until('one car', () => room.state.taken === 'p10');
+  await new Promise((r) => setTimeout(r, 1_050));
+  room.send(MSG_TAKE, { car: 'p50' });
+  await until('another', () => room.state.taken === 'p10,p50');
+  await room.leave();
+});
+
+test('a house in a town that comes with the game is claimed by the one tile it goes by', async () => {
+  const start = STARTER_TOWNS[0];
+  const id = (await api('settler', 'GET', '/mp/towns')).json.towns.find((t: { key: string }) => t.key === start.key).id;
+  const me = (await api('settler', 'POST', '/mp/characters', { name: 'Settler' })).json;
+  await api('settler', 'PUT', `/mp/characters/${me.id}/town`, { town: id });
+  const [x, y] = start.houses[0];
+  const taken = new Set(start.houses.map((h) => h.join()));
+  const beside = [[x + 1, y], [x, y + 1], [x + 1, y + 1], [x - 1, y]].find((t) => t[0] >= 0 && !taken.has(t.join()))!;
+  assert.equal((await api('settler', 'PUT', `/mp/characters/${me.id}/home`, { x: beside[0], y: beside[1] })).status, 404);
+  assert.equal((await api('settler', 'PUT', `/mp/characters/${me.id}/home`, { x, y })).status, 200);
 });

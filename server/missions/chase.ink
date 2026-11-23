@@ -1,6 +1,7 @@
 # title: Penguin on the run
 # summary: You're a penguin, and you want to see the town! Waddle out of the zoo gate, then stay away from the police for one whole minute. You can hop in a car or a plane to get away.
 # unlocks: animals
+# least: 60
 
 // Everything this mission is lives in this file: that you're a penguin, the
 // zoo you start in, the police who come after you, how long you must stay

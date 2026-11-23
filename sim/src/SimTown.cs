@@ -30,6 +30,7 @@ namespace Porchlight.Sim
         public readonly int id;
         public readonly string key;
         readonly IsoLayout layout;
+        readonly int width, height;
         /// <summary>Each street's name, as the game's directions say it (Explore/Names.cs).</summary>
         readonly StreetNames streets;
         /// <summary>What each of its buildings is for (Zoning.cs), for Manage's land-use map.</summary>
@@ -57,6 +58,8 @@ namespace Porchlight.Sim
             var (seed, p) = ParseKey(key);
             var model = Generator.Generate(seed, p);
             layout = Layout.Build(model);
+            width = model.width;
+            height = model.height;
             streets = StreetNaming.Name(model, layout.roads);
             zoning = Zoning.Plan(model, layout);
             // ExploreView.Populate, in the same order, so each car and person here is the game's.
@@ -305,6 +308,21 @@ namespace Porchlight.Sim
             for (int i = 0; i < layout.roads.Count; i++)
                 if (layout.roads[i].points != null && layout.roads[i].points.Count >= 2) o.Add(NameOf(i));
             return o;
+        }
+
+        /// <summary>
+        /// What the server checks players' word against: the race course as the game lays it out (each point [x, y,
+        /// half the road's width]; null: none) and where the town's parked cars are, in the game's order ("p3" is the third on).
+        /// </summary>
+        public object Ground()
+        {
+            double R(double v) => Math.Round(v * 100) / 100;
+            var c = Course.Longest(layout.roads, width, height);
+            return new
+            {
+                course = c == null ? null : new { points = c.points.Select((p, i) => new[] { R(p.x), R(p.y), R(c.half[i]) }).ToList() },
+                parked = layout.cars.Select(p => new[] { R(p.x), R(p.y) }).ToList(),
+            };
         }
 
         public byte[] Cars() => WorldSync.EncodeCars(traffic.cars);

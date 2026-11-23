@@ -11,6 +11,10 @@
 //   # summary: Three neighbours need boxes run across town.
 // and, if finishing it earns something, says what (one of the UNLOCKS):
 //   # unlocks: animals
+// how long it takes at the very least (seconds: sooner, and the server won't believe it), and whether
+// finishing it is running the town's race course (which the server watches: multiplayer/played.ts):
+//   # least: 60
+//   # race: yes
 // The game's side of the story (its EXTERNAL functions and @ choices) is in
 // server/missions/README.md.
 
@@ -18,6 +22,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { LEAST_SECONDS } from './multiplayer/played.ts';
 import { Compiler, CompilerOptions, Story } from 'inkjs/full';
 
 const PREFIX = '/mp/missions';
@@ -31,6 +36,10 @@ export interface Mission {
   summary: string;
   /** What finishing it earns (`# unlocks:`), or null. */
   unlocks: string | null;
+  /** The least time it can be played in (`# least:`, seconds). */
+  least: number;
+  /** Finishing it is running the town's race course (`# race: yes`), and it keeps times. */
+  race: boolean;
   /** The compiled story (ink's JSON), or null if it didn't compile. */
   story: string | null;
   /** Why it didn't compile (ink's own messages). */
@@ -58,11 +67,14 @@ export function compileMission(id: string, source: string): Mission {
       if (at > 0) tags.set(tag.slice(0, at).trim().toLowerCase(), tag.slice(at + 1).trim());
     }
   }
+  const least = Number.parseFloat(tags.get('least') ?? '');
   return {
     id,
     title: tags.get('title') || id,
     summary: tags.get('summary') || '',
     unlocks: tags.get('unlocks') || null,
+    least: Number.isFinite(least) && least >= 0 ? least : LEAST_SECONDS,
+    race: tags.get('race') === 'yes',
     story,
     error: errors.length > 0 ? errors.join('\n') : null,
   };
@@ -108,8 +120,8 @@ export class MissionStore {
   }
 }
 
-/** Handles the mission routes; false if the request isn't one of them. */
-export function createMissionRoutes(store: MissionStore) {
+/** Handles the mission routes; false if the request isn't one of them. `started`: someone's been sent a mission's story (the game asks for it each time it starts one). */
+export function createMissionRoutes(store: MissionStore, started?: (req: IncomingMessage, id: string) => Promise<void>) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const route = (req.url ?? '/').split('?')[0];
     if (route !== PREFIX && !route.startsWith(`${PREFIX}/`)) return false;
@@ -127,6 +139,7 @@ export function createMissionRoutes(store: MissionStore) {
       const mission = await store.get(decodeURIComponent(route.slice(PREFIX.length + 1)));
       if (!mission) return send(404, { error: 'No such mission.' });
       if (!mission.story) return send(422, { error: `This mission has errors:\n${mission.error}` });
+      await started?.(req, mission.id);
       return send(200, { id: mission.id, title: mission.title, summary: mission.summary, story: mission.story });
     } catch (err) {
       console.error(err);

@@ -11,6 +11,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence, STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
+import { RaceWatch, type CourseLine } from '../src/multiplayer/played.ts';
 import { MSG_SPAWN, MSG_WORLD, MSG_WORLD_DELTA, MSG_WORLD_WANT, SERVER_HOST } from '../src/multiplayer/protocol.ts';
 import { findWorker } from '../src/sim/pool.ts';
 
@@ -205,4 +206,38 @@ test('the feed has every town\'s traffic, nobody in them; towns not looked at cl
   assert.ok(full >= 1 && full <= 4, `the other town in full ${full} times in ${later.length}`);
   ctl.abort();
   await reading;
+});
+
+test("the server knows the town's race course and parked cars: a car far off isn't taken", { skip, timeout: 60_000 }, async () => {
+  const ground = (await game.sim!.pool.ask(KEY, 'ground', 0)) as { course: { points: number[][] }; parked: [number, number][] };
+  assert.ok(ground.course.points.length > 2 && ground.parked.length > 10);
+  const id = (await (await fetch(`${base}/mp/characters`, { method: 'POST', headers: { ...headers('taker'), 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Taker' }) })).json()).id;
+  const c = new Client(`${base}/mp`);
+  c.auth.token = token('taker');
+  const room = await c.joinOrCreate('city', { town: KEY, width: 256, height: 256, character: id, follows: 1 });
+  room.onMessage('*', () => {});
+  const far = ground.parked.findIndex((p) => Math.hypot(p[0] - ground.parked[0][0], p[1] - ground.parked[0][1]) > 30);
+  const [x, z] = ground.parked[0];
+  room.send('move', { seq: 1, t: 1, epoch: 0, x, y: 0, z, yaw: 0, anim: 0, car: 0, ride: '' });
+  await new Promise((r) => setTimeout(r, 1_000)); // the room has learnt the ground
+  room.send('take', { car: `p${far}` });
+  room.send('take', { car: 'p99999' });
+  room.send('take', { car: 't99999' });
+  room.send('take', { car: 'p0' });
+  await until('the car beside them', () => room.state.taken !== '');
+  assert.equal(room.state.taken, 'p0');
+  await room.leave();
+});
+
+test("a marathon is run along the town's own course", { skip, timeout: 60_000 }, async () => {
+  const { course } = (await game.sim!.pool.ask(KEY, 'ground', 0)) as { course: CourseLine };
+  const w = new RaceWatch(course);
+  assert.ok(w.length > 100);
+  let t = 0, got: number | null = null;
+  for (let k = 1; k < course.points.length; k++) {
+    const [a, b] = [course.points[k - 1], course.points[k]];
+    const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    for (let s = 0; s <= d; s += 0.2) got = w.step(a[0] + ((b[0] - a[0]) * s) / (d || 1), a[1] + ((b[1] - a[1]) * s) / (d || 1), true, (t += 33)) ?? got;
+  }
+  assert.ok(got !== null && got * 6.2 > w.length * 0.8, `${got} s for ${w.length}`);
 });
