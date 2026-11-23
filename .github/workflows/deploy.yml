@@ -125,6 +125,13 @@ jobs:
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- traffic-day server/towns 2
       - name: Game — the town's life, rule by rule (players in the road, signals, parking, buses, the wire)
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- life server/towns
+      # The county clock (US Eastern, daylight saving and all, on a 12-hour clock) and the junctions' signals
+      # and stop signs: one on the drivers' kerb at every lane in, the lights amber then red in step with the cars.
+      - name: Game — Eastern time on a 12-hour clock; a signal or stop sign at every lane in, lit as the cars go
+        run: |
+          dotnet run --project "unity/Tools~/Checks" -c Release -- clock
+          dotnet run --project "unity/Tools~/Checks" -c Release -- furniture server/towns
+          dotnet run --project "unity/Tools~/Checks" -c Release -- names server/towns
       # The web build grows and builds the towns ahead a share at a time: no share long enough to stall
       # the car (a shared runner is slower than a desk: twice the limit), and the same towns as all at once.
       - name: Game — the county built a share at a time, as the web build does

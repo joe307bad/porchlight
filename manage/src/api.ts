@@ -16,6 +16,8 @@ export interface CountyMap {
     private: boolean;
     /** Each street: [kind (0 main, 1 street, 2 path), width, x0, y0, x1, y1, ...] in the town's tiles. */
     roads: number[][] | null;
+    /** Each street's name, in roads' order (the game's: Explore/Names.cs; "" for a path); null if not known. */
+    roadNames?: string[] | null;
     /** What its buildings are for, the town's figures (Zoning.cs); null until known. */
     zoning: { homes: number; residents: number; workers: number; jobs: number } | null;
     /** Each building: [zone (zoning.ts ZONES), x0, y0, x1, y1 (tiles, exclusive), homes, jobs] in the town's tiles. */
@@ -93,4 +95,31 @@ export async function congestionOf(town: string, ago: number): Promise<import('.
   const res = await fetch(`/mp/sim/congestion?town=${encodeURIComponent(town)}&ago=${ago}`, { cache: 'no-store', credentials: 'same-origin' });
   if (!res.ok) return null;
   return (await res.json()) as import('./life.ts').Congestion;
+}
+
+/** One of your characters playing right now, and the town (room) they're in. */
+export interface Playing {
+  id: string;
+  name: string;
+  town: string;
+}
+
+/** Your characters playing right now (the right-click menu's). */
+export async function playingNow(): Promise<Playing[]> {
+  const res = await fetch('/mp/goto', { cache: 'no-store', credentials: 'same-origin' });
+  if (!res.ok) return [];
+  return ((await res.json()) as { playing: Playing[] }).playing;
+}
+
+/** Send one of your characters directions to a spot in a town (its tiles), or there; the server's error if it can't. */
+export async function sendTo(character: string, town: string, x: number, y: number, how: 'directions' | 'transport', label: string): Promise<string | null> {
+  const res = await fetch('/mp/goto', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ character, town, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, how, label }),
+  });
+  if (res.ok) return null;
+  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  return body?.error ?? `Couldn't (${res.status}).`;
 }

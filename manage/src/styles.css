@@ -449,8 +449,6 @@ p {
 .building ul {
   margin: 4px 0 0;
   padding-left: 16px;
-  max-height: 180px;
-  overflow-y: auto;
 }
 
 /* Focus: one car or townsperson, why they do what they do and what's next. */
@@ -770,8 +768,6 @@ p {
 }
 .focus .list {
   margin-top: 6px;
-  max-height: 320px;
-  overflow-y: auto;
 }
 .queue li.line {
   display: flex;
@@ -913,4 +909,181 @@ p {
   padding: 0;
   margin: 4px 0 0;
   list-style: none;
+}
+
+/* The map's right-click menu (SpotMenu.tsx). */
+.spot-menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 220px;
+  max-width: 260px;
+  padding: 6px;
+  background: #151c24;
+  border: 1px solid #2c3a48;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  font-size: 13px;
+}
+.spot-title {
+  padding: 4px 8px 6px;
+  color: #c9d4df;
+  font-weight: 600;
+  border-bottom: 1px solid #22303d;
+  margin-bottom: 4px;
+}
+.spot-none,
+.spot-said {
+  padding: 6px 8px;
+  color: #8193a6;
+}
+.spot-who + .spot-who {
+  border-top: 1px solid #1d2733;
+  margin-top: 2px;
+  padding-top: 2px;
+}
+.spot-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  color: #dbe4ec;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font: inherit;
+}
+.spot-menu button:hover,
+.spot-menu button:focus-visible {
+  background: #22303d;
+  outline: none;
+}
+
+/* The sidebar's breadcrumbs (crumbs.ts): County › Lanternport › Car 12. */
+.crumbs ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  list-style: none;
+  margin: 10px 0 8px;
+  padding: 0;
+  font-size: 13px;
+}
+.crumbs li + li::before {
+  content: '›';
+  margin-right: 6px;
+  color: var(--muted);
+}
+.crumbs [aria-current] {
+  font-weight: 600;
+}
+.crumbs .link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.crumbs .link:hover {
+  text-decoration: underline;
+}
+
+.more {
+  margin-top: 6px;
+  width: 100%;
+}
+.entity .focus-head {
+  margin-bottom: 4px;
+}
+
+/* A congested street's whole name, over two lines if need be. */
+.name.wrap {
+  white-space: normal;
+  flex: 1;
+}
+/* A congested street's second line: the streets at the ends of the stretch. */
+.name .between {
+  display: block;
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-top: 1px;
+}
+
+/* A town's sections, as the game's sidebar has them (Sidebar.cs, Porchlight.uss .sb-section): a heading each,
+   one open at a time. The sidebar itself doesn't scroll then: the open section scrolls between the headings,
+   which stay where they are above and below it. */
+.panel-body.fill {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.panel-body.fill > * {
+  flex: none;
+}
+.panel-body.fill > .sections {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sb-section {
+  flex: none;
+  border-bottom: 1px solid #383530;
+}
+.sb-section.open {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sb-section-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.sb-head-label {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.9px;
+  color: #a99f88;
+}
+.sb-head-figs {
+  font-size: 11px;
+  color: #a99f88;
+}
+.sb-section-arrow {
+  font-size: 16px;
+  line-height: 1;
+  color: #a99f88;
+  transition: rotate 0.15s;
+}
+.sb-section.open > .sb-section-head > .sb-section-arrow {
+  rotate: 90deg;
+}
+.sb-section-head:hover > .sb-head-label,
+.sb-section-head:hover > .sb-head-figs,
+.sb-section-head:hover > .sb-section-arrow {
+  color: #efe6cf;
+}
+.sb-section-head:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+.sb-section-body {
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
 }

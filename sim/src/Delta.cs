@@ -9,6 +9,9 @@
 //   u16 cars, u16 people          (how many the town has: a client of another count waits for the next full)
 //   u16 n, n × (u16 index, record) for cars
 //   u16 n, n × (u16 index, record) for people
+//   u8 n, n × (u8 green stage, u16 ms until it ends)   the town's traffic lights, every
+//                                 delta (StreetFurniture.EncodeLights): they change early for
+//                                 a waiting car, so a player's can't be worked out from the clock
 //
 // big-endian, as the records are. What's predicted is worked out from the records as
 // sent (to their hundredths of a tile), as a client has them.
@@ -41,7 +44,7 @@ namespace Porchlight.Sim
         Sent[] cars = new Sent[0], people = new Sent[0];
 
         /// <summary>The delta from what was last sent to these records (now, in seconds), and what's sent kept as the new base.</summary>
-        public byte[] Next(byte[] carBytes, byte[] peopleBytes, double now)
+        public byte[] Next(byte[] carBytes, byte[] peopleBytes, double now, byte[] lights = null)
         {
             int nc = carBytes.Length / RECORD, np = peopleBytes.Length / RECORD;
             var o = new List<byte>(8 + (nc + np) * 2);
@@ -49,6 +52,7 @@ namespace Porchlight.Sim
             U16(o, np);
             Changed(o, carBytes, ref cars, now, car: true);
             Changed(o, peopleBytes, ref people, now, car: false);
+            if (lights != null) o.AddRange(lights);
             return o.ToArray();
         }
 

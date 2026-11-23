@@ -164,42 +164,27 @@ namespace Porchlight.Life
         /// </summary>
         public Dictionary<string, object> Signals(bool withStops = false)
         {
-            var lights = new List<object>();
-            var stops = new List<double[]>();
-            var nodes = new List<int>(net.junctions.Keys);
-            nodes.Sort();
-            foreach (int node in nodes)
+            // The lamps and signs where the game's models stand (StreetFurniture), junctions in node order.
+            var byNode = new Dictionary<int, List<double[]>>();
+            var order = new List<int>();
+            foreach (var p in StreetFurniture.Signals(net))
             {
-                var j = net.junctions[node];
-                if (withStops && (j.control == Control.Stop || j.control == Control.AllWayStop))
+                if (!byNode.TryGetValue(p.node, out var lamps))
                 {
-                    // A stop sign on the kerb by the line of each lane that stops (1: an all-way stop).
-                    var at = new HashSet<int>();
-                    foreach (int id in j.movements)
-                    {
-                        var m = net.movements[id];
-                        if (!m.stops || !at.Add(m.from)) continue;
-                        var l = net.lanes[m.from];
-                        var (p, _) = net.LanePoint(l.road, l.dir, l.end, net.roads[l.road].width / 4 + 0.35);
-                        stops.Add(new[] { Math.Round(p.x, 2), Math.Round(p.y, 2), j.control == Control.AllWayStop ? 1 : 0 });
-                    }
+                    byNode[p.node] = lamps = new List<double[]>();
+                    order.Add(p.node);
                 }
-                if (j.control != Control.Signal) continue;
-                var (stage, ends) = RoadNet.Stage(j, Now);
-                var lamps = new List<double[]>();
-                var seen = new HashSet<int>();
-                foreach (int id in j.movements)
-                {
-                    var m = net.movements[id];
-                    if (!seen.Add(m.from)) continue;
-                    var l = net.lanes[m.from];
-                    var (p, _) = net.LanePoint(l.road, l.dir, l.end, net.roads[l.road].width / 4 + 0.35);
-                    lamps.Add(new[] { Math.Round(p.x, 2), Math.Round(p.y, 2), m.stage });
-                }
-                lights.Add(new Dictionary<string, object> { ["node"] = node, ["stage"] = stage, ["ends"] = ends, ["lamps"] = lamps });
+                lamps.Add(new[] { Math.Round(p.at.x, 2), Math.Round(p.at.y, 2), p.stage });
+            }
+            var lights = new List<object>();
+            foreach (int node in order)
+            {
+                var (stage, ends) = RoadNet.Stage(net.junctions[node], Now);
+                lights.Add(new Dictionary<string, object> { ["node"] = node, ["stage"] = stage, ["ends"] = ends, ["lamps"] = byNode[node] });
             }
             var answer = new Dictionary<string, object> { ["now"] = Now, ["stageMs"] = RoadNet.STAGE_MS, ["lights"] = lights };
-            if (withStops) answer["stops"] = stops;
+            if (withStops)
+                answer["stops"] = StreetFurniture.Stops(net).ConvertAll(s => new[] { Math.Round(s.at.x, 2), Math.Round(s.at.y, 2), s.allWay ? 1 : 0 });
             return answer;
         }
 

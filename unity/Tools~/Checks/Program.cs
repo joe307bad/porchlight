@@ -59,6 +59,9 @@ static class Program
         if (args.Length > 0 && args[0] == "fingerprint") return Fingerprint.Run(args.Length > 1 ? int.Parse(args[1]) : 0);
         if (args.Length > 0 && args[0] == "ride") return RideCheck.Run();
         if (args.Length > 0 && args[0] == "servers") return ServersCheck.Run();
+        if (args.Length > 0 && args[0] == "clock") return ClockCheck.Run();
+        if (args.Length > 0 && args[0] == "furniture") return FurnitureCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "names") return NamesCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
         if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();
         if (args.Length > 0 && args[0] == "turns") return TurnsCheck.Run();
@@ -233,11 +236,15 @@ static class Program
         string R(double v) => (Math.Round(v * 10) / 10).ToString(System.Globalization.CultureInfo.InvariantCulture);
         var roads = layout.roads.Where(r => r.points != null && r.points.Count >= 2).Select(r =>
             "[" + string.Join(",", new[] { ((int)r.kind).ToString(), R(r.width) }.Concat(r.points.SelectMany(p => new[] { R(p.x), R(p.y) }))) + "]");
+        // Each street's name, as the game's directions say it, in the same order (Manage's labels and lists).
+        var streets = Porchlight.Explore.StreetNaming.Name(model, layout.roads);
+        var names = Enumerable.Range(0, layout.roads.Count).Where(i => layout.roads[i].points != null && layout.roads[i].points.Count >= 2)
+            .Select(i => Quoted(streets.streets[streets.ofRoad[i]].name ?? ""));
         // And what each building is for (Zoning.cs): Manage's land-use map.
         var zoning = Porchlight.Explore.Zoning.Plan(model, layout);
         var buildings = Porchlight.Explore.Zoning.Encode(zoning).Select(b => "[" + string.Join(",", b) + "]");
         string summary = $"{{ \"homes\": {zoning.homes}, \"residents\": {zoning.residents}, \"workers\": {zoning.workers}, \"jobs\": {zoning.jobs} }}";
-        System.IO.File.WriteAllText(output, $"{{\n  \"key\": {Quoted(key)},\n  \"roads\": [\n    {string.Join(",\n    ", roads)}\n  ],\n  \"zoning\": {summary},\n  \"buildings\": [\n    {string.Join(",\n    ", buildings)}\n  ]\n}}\n");
+        System.IO.File.WriteAllText(output, $"{{\n  \"key\": {Quoted(key)},\n  \"roads\": [\n    {string.Join(",\n    ", roads)}\n  ],\n  \"names\": [{string.Join(", ", names)}],\n  \"zoning\": {summary},\n  \"buildings\": [\n    {string.Join(",\n    ", buildings)}\n  ]\n}}\n");
         Console.WriteLine($"{doc.GetProperty("name").GetString()}: {layout.roads.Count} streets, {zoning.buildings.Count} buildings ({zoning.homes} homes, {zoning.jobs} jobs) to {output}");
         return 0;
     }

@@ -38,7 +38,7 @@ function until(pool: SimPool, ok: (towns: SimTown[]) => boolean, ms = 20_000): P
 }
 
 /** A delta (sim/src/Delta.cs) applied to records as a client has them. */
-function applyDelta(cars: Uint8Array, people: Uint8Array, d: Uint8Array): { cars: number; people: number; changed: number } {
+function applyDelta(cars: Uint8Array, people: Uint8Array, d: Uint8Array): { cars: number; people: number; changed: number; lights: number } {
   const v = new DataView(d.buffer, d.byteOffset, d.byteLength);
   const nc = v.getUint16(0), np = v.getUint16(2);
   let o = 4, changed = 0;
@@ -50,8 +50,16 @@ function applyDelta(cars: Uint8Array, people: Uint8Array, d: Uint8Array): { cars
       changed++;
     }
   }
+  // Then the town's traffic lights (StreetFurniture.EncodeLights): u8 n, n × (u8 green stage, u16 ms until it ends).
+  const lights = d[o];
+  for (let k = 0; k < lights; k++) {
+    const r = o + 1 + 3 * k;
+    assert.ok(d[r] === 0 || d[r] === 1, 'a light\'s green stage is 0 or 1');
+    assert.ok(v.getUint16(r + 1) <= 30_000, 'and it ends within a stage');
+  }
+  o += 1 + 3 * lights;
   assert.equal(o, d.byteLength, 'the delta ends where it says');
-  return { cars: nc, people: np, changed };
+  return { cars: nc, people: np, changed, lights };
 }
 
 test('the worker runs a town: full records, deltas, players, taken cars', { skip, timeout: 60_000 }, async () => {
@@ -77,6 +85,8 @@ test('the worker runs a town: full records, deltas, players, taken cars', { skip
       const r = applyDelta(cars, people, t.delta);
       assert.equal(r.cars, cars.byteLength / RECORD);
       assert.equal(r.people, people.byteLength / RECORD);
+      // Porchlight has traffic signals: their lights come with every delta, for a player's lamps to show as here.
+      assert.ok(r.lights > 0, 'the town\'s traffic lights come with the delta');
       full += t.cars.byteLength + t.people.byteLength;
       sent += t.delta.byteLength;
     }
@@ -182,7 +192,7 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     const town = pool.town(key)!;
     const life = town.life!;
     assert.ok(Math.abs(life.clock - townNow()) < 5_000, 'its clock is the time now (the towns\' clock)');
-    assert.match(life.time, /^\d\d:\d\d$/);
+    assert.match(life.time, /^(1[0-2]|[1-9]):[0-5]\d [AP]M$/, 'Eastern time, on a 12-hour clock');
     const indoors = life.inside.reduce((n, [, k]) => n + k, 0);
     const people = life.summary.people as number;
     assert.ok(people > 100, `a town of people (${people})`);
@@ -295,6 +305,13 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     // The first townsfolk records are the wanderers: they've no day to explain.
     const first = await focus('person', 'slot', 0);
     assert.ok(first?.wanderer || first?.kind === 'person' || first?.empty, 'a wanderer, or someone of the town\'s life');
+    // Named all the same (PersonNames): the game's tag over them, Manage's list.
+    if (first?.wanderer) {
+      const w = (await pool.ask(key, 'brief-person', 0, 'slot')) as { name: string; doing: string; line: string };
+      assert.match(w.name, /^\S+( \S+)+$/, 'a wanderer has a first and last name');
+      assert.equal(w.doing, 'Out for a walk');
+      assert.equal(w.line, `${w.name} · Out for a walk`);
+    }
 
     // Someone out and drawn: found by where, and back again by who.
     const people = new DataView(town.people.buffer, town.people.byteOffset, town.people.byteLength);
@@ -307,9 +324,14 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
       const again = await focus('person', 'id', f.id);
       assert.equal(again?.id, f.id);
       // The map's hover line on them: who, what, and how far through their day.
-      const brief = (await pool.ask(key, 'brief-person', i, 'slot')) as { id: number; line: string } | null;
+      const brief = (await pool.ask(key, 'brief-person', i, 'slot')) as { id: number; line: string; name: string; doing: string } | null;
       assert.equal(brief?.id, f.id);
-      assert.match(brief!.line, /^Person #\d+ · .+ · trip \d+ of \d+ today$/);
+      // By name, the one their focus has, and what they're doing on its own for the game's tag ("Going to work").
+      assert.equal(brief!.name, (f as { name?: string }).name, 'the same name as their focus');
+      assert.match(brief!.name, /^\S+( \S+)+$/);
+      assert.match(brief!.doing, /^(Going (home|to work|to school|to the shops)|Out for lunch|Visiting|Leaving town|Passing through)$/);
+      assert.equal(brief!.line.startsWith(`${brief!.name} · ${brief!.doing}, by `), true, brief!.line);
+      assert.match(brief!.line, / · trip \d+ of \d+ today$/);
       break;
     }
     assert.equal(await pool.ask('no-such-town', 'focus-car', 0, 'slot'), null);
@@ -330,17 +352,19 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     const jam = (await pool.ask(key, 'congestion', 0)) as {
       ago: number;
       hours: { from: number; time: string; cars: number; hold: number }[];
-      streets: { road: number; kind: number; cars: number; hold: number; mean: number; points: number[] }[];
+      streets: { road: number; name: string; stretch: string; kind: number; cars: number; hold: number; mean: number; points: number[] }[];
     };
     assert.equal(jam.ago, 0);
     assert.equal(jam.hours.length, 24);
     for (let i = 1; i < 24; i++) assert.equal(jam.hours[i].from - jam.hours[i - 1].from, 3_600_000, 'an hour apart');
-    assert.match(jam.hours[23].time, /^\d\d:00$/);
+    assert.match(jam.hours[23].time, /^(1[0-2]|[1-9]):00 [AP]M$/);
     assert.ok(jam.streets.length <= 12, 'at most a dozen streets');
     for (let i = 1; i < jam.streets.length; i++) assert.ok(jam.streets[i].hold <= jam.streets[i - 1].hold, 'worst first');
     for (const st of jam.streets) {
       assert.ok(st.cars > 0 && st.hold > 0 && st.points.length >= 4 && st.points.length % 2 === 0, 'a street that held cars up, and its line');
       assert.ok(st.kind === 0 || st.kind === 1, 'a road cars drive');
+      // By the name on its street signs in the game (StreetNaming, as World.cs has it), never "Main road 12".
+      assert.ok(st.name.length > 0 && st.stretch.startsWith(st.name), `named as signed: ${st.stretch}`);
     }
     assert.ok(jam.streets.reduce((n, st) => n + st.hold, 0) <= jam.hours[23].hold + 1, "no more than the hour's hold-ups");
     // The stop signs, asked for once: one on the kerb by each lane that stops, all-way or not.

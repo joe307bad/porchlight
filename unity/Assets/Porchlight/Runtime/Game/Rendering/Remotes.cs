@@ -72,13 +72,15 @@ namespace Porchlight.Rendering
             set { if (root.activeSelf != value) root.SetActive(value); }
         }
 
-        public NameTag(string label, string key, Transform parent)
+        public NameTag(string label, string key, Transform parent) : this(label, ColourFor(key), parent) { }
+
+        /// <summary>A tag of a given colour (a townsperson's: the same quiet one for all). The label may be rich text, on more than one line.</summary>
+        public NameTag(string label, Color colour, Transform parent)
         {
             root = new GameObject("tag " + label);
             root.transform.SetParent(parent, false);
             var content = new GameObject("badge");
             content.transform.SetParent(root.transform, false);
-            var colour = ColourFor(key);
             var textGo = new GameObject("name");
             textGo.transform.SetParent(content.transform, false);
             text = textGo.AddComponent<TextMeshPro>();

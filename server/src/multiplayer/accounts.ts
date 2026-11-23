@@ -26,7 +26,7 @@ import { SESSION_COOKIE, type SessionPayload } from '../app.ts';
 import { parseCookies, unseal } from '../cookies.ts';
 import type { Mission } from '../missions.ts';
 import { CharacterError, cleanLook, cleanName, cleanSeconds, cleanTownKey, MAX_TOWNS, TOWN_NAME_MAX, type Persistence } from './persistence.ts';
-import { lookAllowed, UNLOCK_NAMES, UNLOCKS } from './protocol.ts';
+import { lookAllowed, MSG_GOTO, UNLOCK_NAMES, UNLOCKS, type GotoMessage } from './protocol.ts';
 
 export interface GameDeps {
   persistence: Persistence;
@@ -42,6 +42,8 @@ export interface GameDeps {
   playingIn(townKey: string): number;
   /** Where a character is playing right now (their room's key, session, and spot in its terms), or null. */
   whereIs?(characterId: string): { town: string; session: string; x: number; z: number; name: string } | null;
+  /** Send a message to whoever's playing this character right now; false if nobody is. */
+  tell?(characterId: string, type: string, message: unknown): boolean;
   /** The missions on offer. */
   missions: { list(): Promise<Mission[]>; get(id: string): Promise<Mission | null> };
 }
@@ -66,6 +68,7 @@ const TOWNS = '/mp/towns';
 const PROGRESS = '/mp/progress';
 const RECORDS = '/mp/records';
 const PLAYERS = '/mp/players';
+const GOTO = '/mp/goto';
 
 async function readJson(req: IncomingMessage, limit = 1024): Promise<unknown> {
   let size = 0;
@@ -90,7 +93,7 @@ export function createCharacterRoutes(deps: GameDeps) {
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const path = (req.url ?? '/').split('?')[0];
     const under = (prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
-    if (!under(PREFIX) && !under(TOWNS) && !under(PLAYERS) && path !== PROGRESS && path !== RECORDS) return false;
+    if (!under(PREFIX) && !under(TOWNS) && !under(PLAYERS) && path !== PROGRESS && path !== RECORDS && path !== GOTO) return false;
     const send = (status: number, body: unknown): true => {
       // Turned away for the server's sake, not the player's: said in the log, so a player's 503s can be found.
       if (status >= 500) console.warn(`${req.method} ${req.url?.split('?')[0]} → ${status}: ${(body as { error?: string })?.error ?? ''}`);
@@ -118,6 +121,30 @@ export function createCharacterRoutes(deps: GameDeps) {
         if (parts.length !== 3 || !parts[2] || parts[2].length > 64) return send(404, { error: 'Not found.' });
         const where = deps.whereIs?.(parts[2]) ?? null;
         return where ? send(200, where) : send(404, { error: 'Not playing right now.' });
+      }
+
+      // Manage's right-click: which of the account's characters are playing (GET), and sending one of them
+      // directions to a spot, or there (POST), on to the game playing them (MSG_GOTO).
+      if (path === GOTO) {
+        if (req.method === 'GET') {
+          const characters = await deps.persistence.listCharacters(account.id);
+          const playing = characters
+            .map((c) => ({ id: c.id, name: c.name, town: deps.presence(c.id, '').town }))
+            .filter((c): c is { id: string; name: string; town: string } => c.town !== null);
+          return send(200, { playing });
+        }
+        if (req.method !== 'POST') return send(405, { error: 'Method not allowed.' });
+        const b = await json<{ character?: unknown; town?: unknown; x?: unknown; y?: unknown; how?: unknown; label?: unknown }>();
+        const how = b.how === 'directions' || b.how === 'transport' ? b.how : null;
+        const town = typeof b.town === 'string' ? cleanTownKey(b.town) : null;
+        const at = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v < 1024;
+        if (typeof b.character !== 'string' || !how || !town || !at(b.x) || !at(b.y)) throw new CharacterError('Who, where and how?');
+        if (!(await deps.persistence.character(account.id, b.character))) return send(404, { error: 'No such character.' });
+        if (!(await deps.persistence.mayEnter(account.id, town))) return send(403, { error: "That town is someone else's." });
+        const label = typeof b.label === 'string' ? b.label.replace(/[\u0000-\u001f]/g, '').slice(0, 80) : '';
+        const message: GotoMessage = { town, x: b.x, y: b.y, how, label };
+        if (!deps.tell?.(b.character, MSG_GOTO, message)) return send(409, { error: 'Not playing right now.' });
+        return send(200, { ok: true });
       }
 
       if (path === PROGRESS) {

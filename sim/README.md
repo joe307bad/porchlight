@@ -17,7 +17,12 @@ copies that state for each viewer:
   carrying each one on along its heading at its speed (`src/Delta.cs`). That's about
   a fifth of the whole. Nobody hosts any more: the room's `host` is `"server"`, and
   every player's game follows (`WorldSync.ReceiveDelta`). A car carried on toward
-  you waits short of you until the server's next word on it.
+  you waits short of you until the server's next word on it. Each delta ends with
+  the town's traffic lights: for each signal, its green stage and the milliseconds
+  until it ends (3 bytes each). A player's lamps show them (`WorldSync.Showing`) a
+  moment behind, like the cars. The game doesn't run the town's life while
+  following, and the server's lights change early for waiting cars, so the clock
+  alone can't give them.
 - **Manage** (`/mp/traffic/feed`) has every town's traffic, whether anyone's in it
   or not. It gets the towns on screen close up ten times a second (it says which:
   `POST /mp/traffic/focus`), and the rest's traffic once a second. While a player

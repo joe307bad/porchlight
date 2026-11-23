@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { MemoryPersistence, STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_GOTO, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type GotoMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -561,4 +561,37 @@ test('following someone from town to town: the roll call names their character, 
   assert.equal((await fetch(`${base}/mp/players/${leader.id}`)).status, 401);
   await a2.leave();
   await b.leave();
+});
+
+test("Manage's right-click: the account's characters playing are listed, and one is sent directions or taken there, by the game playing them", async () => {
+  const me = (await api('pointer', 'POST', '/mp/characters', { name: 'Pointer' })).json;
+  const idle = (await api('pointer', 'POST', '/mp/characters', { name: 'Idle' })).json;
+  const stranger = (await api('stranger', 'POST', '/mp/characters', { name: 'Stranger' })).json;
+  const r = await client('pointer').joinOrCreate('city', { ...town, character: me.id });
+  r.onMessage(MSG_SPAWN, () => {});
+  const got: GotoMessage[] = [];
+  r.onMessage(MSG_GOTO, (m: GotoMessage) => got.push(m));
+  move(r, 10, 10);
+
+  const playing = await api('pointer', 'GET', '/mp/goto');
+  assert.equal(playing.status, 200);
+  assert.deepEqual(playing.json.playing, [{ id: me.id, name: 'Pointer', town: 'seed=test' }], 'only the one playing, in the town they are in');
+
+  const there = { character: me.id, town: 'seed=test', x: 40.5, y: 61, how: 'directions', label: 'near Elm Street' };
+  assert.equal((await api('pointer', 'POST', '/mp/goto', there)).status, 200);
+  await until('the game to be told', () => got.length === 1);
+  assert.deepEqual(got[0], { town: 'seed=test', x: 40.5, y: 61, how: 'directions', label: 'near Elm Street' });
+  assert.equal((await api('pointer', 'POST', '/mp/goto', { ...there, how: 'transport' })).status, 200);
+  await until('the game to be told again', () => got.length === 2);
+  assert.equal(got[1].how, 'transport');
+
+  // Nobody else's character, none not playing, nowhere off the map, and nothing that isn't one of the two.
+  assert.equal((await api('stranger', 'POST', '/mp/goto', there)).status, 404, "someone else's character");
+  assert.equal((await api('pointer', 'POST', '/mp/goto', { ...there, character: idle.id })).status, 409, 'a character not playing');
+  assert.equal((await api('pointer', 'POST', '/mp/goto', { ...there, x: -1 })).status, 400, 'off the map');
+  assert.equal((await api('pointer', 'POST', '/mp/goto', { ...there, how: 'fly' })).status, 400, 'neither directions nor there');
+  assert.deepEqual((await api('stranger', 'GET', '/mp/goto')).json.playing, [], "another account sees none of this one's");
+  assert.equal((await fetch(`${base}/mp/goto`)).status, 401);
+  void stranger;
+  await r.leave();
 });

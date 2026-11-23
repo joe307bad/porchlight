@@ -2507,12 +2507,30 @@ namespace Porchlight.App
             netFrame = new NetFrame(iso);
             net = new Multiplayer(netFrame, playing, origin, platform, timers);
             netFrame.Room = () => net?.RoomKey;
+            // Who a townsperson is, where the server runs the town: its quick word on them (/mp/sim/focus, brief).
+            iso.AskWho = (record, done) =>
+            {
+                var key = net?.RoomKey;
+                if (key == null)
+                {
+                    done(null, null);
+                    return;
+                }
+                platform.Request("GET", $"{origin}/mp/sim/focus?town={Uri.EscapeDataString(key)}&kind=person&slot={record}&brief=1", null, (status, text) =>
+                {
+                    object json = null;
+                    try { json = status >= 200 && status < 300 ? Json.Parse(text) : null; }
+                    catch (Exception) { }
+                    done(Json.Str(json, "name"), Json.Str(json, "doing"));
+                });
+            };
             net.onStatus = s =>
             {
                 netState = s.state;
                 sidebar.SetOnline(s.state, s.here, s.why);
             };
             net.onUnlockedElsewhere = SayUnlocked;
+            net.onGoto = GotoFromManage;
             net.onInUse = () => SwitchCharacter(InUse(playing));
             iso.TeleportHook = (x, z) =>
             {
@@ -2721,6 +2739,99 @@ namespace Porchlight.App
         }
 
         /// <summary>
+        /// Manage's right-click on its map, for this character (MSG_GOTO): the way to that spot, shown as you go
+        /// (from another town, out by the right gate and along the highways first), or straight there, loading its
+        /// town first if it's another.
+        /// </summary>
+        void GotoFromManage(GotoRequest g)
+        {
+            if (iso == null || playing == null) return;
+            var space = TownSpace(g.town);
+            string townName = space?.name ?? (g.town == TownKey ? "this town" : "that town");
+            string label = string.IsNullOrEmpty(g.label) ? "the spot picked in Manage" : g.label;
+            var at = new Vec2(g.x, g.y);
+            if (!g.transport)
+            {
+                DirectionsToSpot(g.town, townName, at, label);
+                return;
+            }
+            if (InTown(g.town))
+            {
+                StopFollowing();
+                iso.JumpBeside(InTownBounds(at));
+                overlay?.Flash($"You're {label}");
+                return;
+            }
+            if (space == null)
+            {
+                overlay?.Flash($"There's no way to {townName} from here");
+                return;
+            }
+            // Off to the town, and there once it's up (TravelTo, then ArriveFromManage).
+            arriving = (g.town, at, label);
+            TravelTo(space);
+        }
+
+        /// <summary>Taken to a spot in another town from Manage: the town's key, the spot and what's there, till it's loaded.</summary>
+        (string town, Vec2 at, string label)? arriving;
+
+        /// <summary>The town loaded is the one Manage sent us to: on to the spot.</summary>
+        void ArriveFromManage()
+        {
+            if (arriving is not { } a) return;
+            arriving = null;
+            if (iso == null || !InTown(a.town)) return;
+            iso.JumpBeside(InTownBounds(a.at));
+            overlay?.Flash($"You're {a.label}");
+        }
+
+        /// <summary>A spot kept a little way in from the town's edge, where the town still has you.</summary>
+        Vec2 InTownBounds(Vec2 at)
+        {
+            var m = iso?.world?.model;
+            if (m == null) return at;
+            const double IN = 2;
+            return new Vec2(Math.Max(IN, Math.Min(m.width - IN, at.x)), Math.Max(IN, Math.Min(m.height - IN, at.y)));
+        }
+
+        /// <summary>The way to a spot picked in Manage, shown as you go; already on the way there: stop.</summary>
+        void DirectionsToSpot(string townKey, string townName, Vec2 spot, string label)
+        {
+            if (iso == null) return;
+            string id = $"spot:{townKey}:{spot.x:0.#}:{spot.y:0.#}";
+            if (tripTo == id)
+            {
+                iso.Trip(null);
+                return;
+            }
+            StopFollowing();
+            if (TownSpace(townKey) == null && townKey != TownKey)
+            {
+                overlay?.Flash($"There's no road to {townName} from here");
+                return;
+            }
+            Choose(Way.Trip, id);
+            tripTo = id;
+            tripTown = townKey;
+            iso.Trip(from =>
+            {
+                if (iso?.world == null) return null;
+                var here = county?.Active;
+                bool there = here != null ? here.kind == SpaceKind.Town && here.townKey == townKey : townKey == TownKey;
+                if (there) return (InTownBounds(spot), label, true, (List<Vec2>)null);
+                var dest = TownSpace(townKey);
+                if (here == null || dest == null) return null;
+                var w = here.ToWorld(from);
+                var stop = CountyRoute.Next(county.map, here, w, dest);
+                if (stop == null) return null;
+                var ahead = CountyRoute.Ahead(county.map, here, w, dest, TRIP_AHEAD, county.Through).Select(here.ToLocal).ToList();
+                return (here.ToLocal(stop.Value.at), stop.Value.name, false, ahead);
+            });
+            overlay?.Flash(townKey == TownKey ? $"Directions to {label}" : $"Directions to {label} in {townName}: {Directions.FormatDistance(TripLength(townKey))} by road");
+            OfferDirections();
+        }
+
+        /// <summary>
         /// The county map's Directions: the way to a town, shown as you go (out by the right gate and along the
         /// highways), till you're in it. Already on the way there: stop.
         /// </summary>
@@ -2783,6 +2894,7 @@ namespace Porchlight.App
                 isoTown = null;
                 enteringTown = true;
                 await Explore();
+                ArriveFromManage();
             });
         }
 

@@ -76,6 +76,30 @@ namespace Porchlight.Explore
             return new StreetNames { streets = streets, ofRoad = ofRoad };
         }
 
+        /// <summary>
+        /// One stretch of a street, between the streets it meets at each end: "High Street, Elm Street to Oak Lane";
+        /// "High Street, from Elm Street" (nothing named at the other end); "High Street" (nothing at either).
+        /// </summary>
+        public static string Stretch(StreetNames names, IReadOnlyList<RoadStroke> roads, int road)
+        {
+            if (road < 0 || road >= names.ofRoad.Count) return "";
+            string self = names.streets[names.ofRoad[road]].name ?? "";
+            string Across(int node)
+            {
+                for (int r = 0; r < roads.Count; r++)
+                {
+                    if (r == road || (roads[r].from != node && roads[r].to != node)) continue;
+                    string other = names.streets[names.ofRoad[r]].name;
+                    if (!string.IsNullOrEmpty(other) && other != self && roads[r].kind != RoadKind.Path) return other;
+                }
+                return null;
+            }
+            string a = Across(roads[road].from), b = Across(roads[road].to);
+            if (a != null && b != null && a != b) return $"{self}, {a} to {b}";
+            if (a != null || b != null) return $"{self}, at {a ?? b}";
+            return self;
+        }
+
         struct End
         {
             public int road;

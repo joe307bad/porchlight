@@ -10,7 +10,9 @@
 // to the next), so a car goes round a corner in one even sweep rather than being
 // guessed ahead and pulled back. Past the last word, a car carries straight on at
 // its speed, as the server expects (Delta.cs). People are eased toward the latest
-// word, carried on in between.
+// word, carried on in between. A delta from the server also ends with the town's
+// traffic lights (StreetFurniture.EncodeLights): each signal's green stage and when
+// it ends, shown the same moment behind as the cars (Showing).
 
 using System;
 using System.Collections.Generic;
@@ -72,6 +74,23 @@ namespace Porchlight.Explore
         bool any;
         /// <summary>This follower's clock (s, by the frames drawn); when the last word came by it, as evened out; and the usual gap between words.</summary>
         double clock, wordAt = double.NaN, lastArrival, gap = 0.1;
+
+        /// <summary>Each signal's green stage as last heard, and when it ends (ms, this follower's clock).</summary>
+        int[] green = new int[0];
+        double[] greenEnds = new double[0];
+
+        /// <summary>How many of the town's signals the server has said how they stand.</summary>
+        public int Lights => green.Length;
+
+        /// <summary>
+        /// What signal `light`'s lamps on `stage` show as the cars are drawn (DELAY behind the latest word): 0 red,
+        /// 1 amber, 2 green; -1 if the server hasn't said.
+        /// </summary>
+        public int Showing(int light, int stage)
+        {
+            if (light < 0 || light >= green.Length) return -1;
+            return Porchlight.Life.StreetFurniture.Showing(green[light], greenEnds[light], stage, (clock - DELAY) * 1000);
+        }
 
         /// <summary>How many townsfolk the host has (its list can grow: drivers put out of their cars).</summary>
         public int PeopleCount => people.Length;
@@ -354,6 +373,25 @@ namespace Porchlight.Explore
             if (!Patch(d, ref at, cars, touched) || !Patch(d, ref at, people, null)) return false;
             double t = Word();
             foreach (int i in touched) Heard(i, t);
+            // The lights, if the server sent them (an older one doesn't): kept on this follower's clock.
+            if (at < d.Length)
+            {
+                int n = d[at];
+                if (at + 1 + 3 * n <= d.Length)
+                {
+                    if (green.Length != n)
+                    {
+                        green = new int[n];
+                        greenEnds = new double[n];
+                    }
+                    for (int k = 0; k < n; k++)
+                    {
+                        int r = at + 1 + 3 * k;
+                        green[k] = d[r];
+                        greenEnds[k] = t * 1000 + ((d[r + 1] << 8) | d[r + 2]);
+                    }
+                }
+            }
             since = 0;
             return true;
         }
@@ -391,6 +429,8 @@ namespace Porchlight.Explore
             cars = new Target[0];
             people = new Target[0];
             tracks = new Track[0];
+            green = new int[0];
+            greenEnds = new double[0];
             any = false;
             wordAt = double.NaN;
         }

@@ -30,6 +30,8 @@ namespace Porchlight.Sim
         public readonly int id;
         public readonly string key;
         readonly IsoLayout layout;
+        /// <summary>Each street's name, as the game's directions say it (Explore/Names.cs).</summary>
+        readonly StreetNames streets;
         /// <summary>What each of its buildings is for (Zoning.cs), for Manage's land-use map.</summary>
         public readonly TownZoning zoning;
         public readonly Traffic traffic;
@@ -55,6 +57,7 @@ namespace Porchlight.Sim
             var (seed, p) = ParseKey(key);
             var model = Generator.Generate(seed, p);
             layout = Layout.Build(model);
+            streets = StreetNaming.Name(model, layout.roads);
             zoning = Zoning.Plan(model, layout);
             // ExploreView.Populate, in the same order, so each car and person here is the game's.
             traffic = new Traffic(model, layout, zoning, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
@@ -229,6 +232,8 @@ namespace Porchlight.Sim
                 return new
                 {
                     road = r.road,
+                    name = NameOf(r.road),
+                    stretch = StreetNaming.Stretch(this.streets, layout.roads, r.road),
                     kind = (int)road.kind,
                     cars = r.cars,
                     hold = R(r.hold),
@@ -250,13 +255,20 @@ namespace Porchlight.Sim
                 {
                     // The townsfolk records: the wanderers, then the life's people slots, then drivers put out of cars someone took.
                     int slot = i - (basePeople - life.personSlots.Length);
+                    // A wanderer, out for a walk: nobody's record in the town's life, but named all the same (PersonNames).
+                    if (slot < 0 && i >= 0)
+                    {
+                        string name = PersonNames.Wanderer(life.seed, i);
+                        return new { wanderer = true, name, doing = PersonNames.WANDERING, line = $"{name} · {PersonNames.WANDERING}" };
+                    }
                     if (slot < 0 || slot >= life.personSlots.Length) return new { wanderer = true };
                     id = life.PersonInSlot(slot);
                 }
                 if (id < 0) return new { empty = true };
             }
             // Just a line (the map's hover): who, what they're doing, and where in their day.
-            if (brief) return new { id, line = car ? life.BriefCar(id) : life.BriefPerson(id) };
+            // With a person's name and what they're doing on its own, for the tag over them in the game.
+            if (brief) return car ? (object)new { id, line = life.BriefCar(id) } : new { id, line = life.BriefPerson(id), name = life.NameOf(id), doing = life.DoingOf(id) };
             var index = BuildingIndex();
             Func<int, int> building = b => index.TryGetValue(b, out int k) ? k : -1;
             object o = car ? life.FocusCar(id, building) : life.FocusPerson(id, building);
@@ -289,7 +301,22 @@ namespace Porchlight.Sim
                 .ToList();
         }
 
+        /// <summary>A road's street's name ("Elm Street"), or "" for none (a path, say).</summary>
+        public string NameOf(int road) =>
+            road >= 0 && road < streets.ofRoad.Count ? streets.streets[streets.ofRoad[road]].name ?? "" : "";
+
+        /// <summary>Each of Roads()'s streets' names, in the same order.</summary>
+        public List<string> RoadNames()
+        {
+            var o = new List<string>();
+            for (int i = 0; i < layout.roads.Count; i++)
+                if (layout.roads[i].points != null && layout.roads[i].points.Count >= 2) o.Add(NameOf(i));
+            return o;
+        }
+
         public byte[] Cars() => WorldSync.EncodeCars(traffic.cars);
         public byte[] People() => WorldSync.EncodePeople(people);
+        /// <summary>The town's traffic lights now, for the end of a delta (StreetFurniture.EncodeLights).</summary>
+        public byte[] Lights() => StreetFurniture.EncodeLights(traffic.life.net, traffic.life.Now);
     }
 }

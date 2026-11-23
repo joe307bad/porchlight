@@ -188,6 +188,9 @@ export interface EntityFocus {
   time: string;
   /** Who they are ("Works, and lives in town"; "A car"). */
   who: string;
+  /** A person's name (PersonNames: the same as over them in the game); a car's driver's. Older servers: none. */
+  name?: string;
+  ownerName?: string | null;
   /** What they're doing, in a line. */
   doing: string;
   /** A person: Inside, OnTrip or OffMap; their car (-1: none). */
@@ -321,11 +324,30 @@ export interface Congestion {
 
 export interface CongestedStreet {
   road: number;
+  /** Its street's name ("High Street"), and this stretch of it ("High Street, Elm Street to Oak Lane"); older servers: none. */
+  name?: string;
+  stretch?: string;
   kind: number;
   cars: number;
   hold: number;
   mean: number;
   points: number[];
+}
+
+/** A congested stretch as listed: its street and the streets at its ends, or (unnamed) what kind of road it is. */
+export function streetText(s: CongestedStreet): string {
+  return s.stretch || s.name || `${s.kind === 0 ? 'Main road' : 'Street'} ${s.road}`;
+}
+
+/** A congested stretch's street ("High Street"), as its signs in the game have it; unnamed, what kind of road it is. */
+export function streetName(s: CongestedStreet): string {
+  return s.name || (s.stretch ? s.stretch.split(', ')[0] : `${s.kind === 0 ? 'Main road' : 'Street'} ${s.road}`);
+}
+
+/** Where along it the stretch is, between the streets at its ends ("Elm Street to Oak Lane", "at Elm Street"), or "". */
+export function streetBetween(s: CongestedStreet): string {
+  const name = streetName(s);
+  return s.stretch && s.stretch.startsWith(`${name}, `) ? s.stretch.slice(name.length + 2) : '';
 }
 
 /** A hold-up in a few characters: "40 s", "12 min", "3.4 h". */

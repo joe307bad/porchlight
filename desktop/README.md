@@ -105,7 +105,10 @@ desktop/prod-mac.sh
 
 The app's Manage link opens Manage served by the app itself, on 127.0.0.1
 (`Game/Net/ManageLink.cs`), since the system browser has no sign-in. It passes
-on to the server only the routes in its `PASSED` list. When Manage starts
+on to the server only the routes in its `PASSED` list, and only three
+POSTs: `/app/front`, `/mp/traffic/focus` and `/mp/goto` (the right-click
+menu's directions and transport). Each is checked to come from the app's
+own page. When Manage starts
 asking the server for something new, add the route there too:
 `server/test/manage-link.test.ts` fails until you do. Without it, Manage in
 the app shows no lights, stop signs, people in buildings or details on a

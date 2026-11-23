@@ -147,6 +147,8 @@ namespace Porchlight.App
         public Action onUnlocks;
         /// <summary>Another of the account's characters, playing right now, earned this.</summary>
         public Action<string> onUnlockedElsewhere;
+        /// <summary>Manage's right-click, for this character: directions to a spot in a town (its key, its tiles), or taken there.</summary>
+        public Action<GotoRequest> onGoto;
         /// <summary>Someone else on the account has this character (we lost our connection, or never had them). We've stopped.</summary>
         public Action onInUse;
         /// <summary>Missions finished before we'd joined: sent once we have.</summary>
@@ -373,6 +375,13 @@ namespace Porchlight.App
                 foreach (var what in list)
                     if (what is string s && unlocks.Add(s)) onUnlockedElsewhere?.Invoke(s);
             });
+            r.OnMessage(Protocol.MSG_GOTO, m =>
+            {
+                if (!(m is Dictionary<string, object> d) || !(d.TryGetValue("town", out var t) && t is string town) || !d.TryGetValue("x", out var x) || !d.TryGetValue("y", out var y)) return;
+                string how = d.TryGetValue("how", out var h) ? h as string : null;
+                if (how != "directions" && how != "transport") return;
+                onGoto?.Invoke(new GotoRequest { town = town, x = MsgPack.Num(x), y = MsgPack.Num(y), transport = how == "transport", label = d.TryGetValue("label", out var l) ? l as string : null });
+            });
             r.OnMessage(Protocol.MSG_CORRECT, m =>
             {
                 if (!(m is Dictionary<string, object> c)) return;
@@ -557,4 +566,17 @@ namespace Porchlight.App
             t = p.Num("t"),
         };
     }
+
+    /// <summary>Manage's right-click on its map (MSG_GOTO): a spot in a town, and whether to show the way or go straight there.</summary>
+    public sealed class GotoRequest
+    {
+        /// <summary>The town's key, and the spot in its own tiles.</summary>
+        public string town;
+        public double x, y;
+        /// <summary>Straight there (else: directions).</summary>
+        public bool transport;
+        /// <summary>What's there ("near Elm Street"), or null.</summary>
+        public string label;
+    }
+
 }

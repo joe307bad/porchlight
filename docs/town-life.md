@@ -43,13 +43,23 @@ run the same code.
 
 ### The clock
 
-The town clock is **real time**, in milliseconds since 1970, shown in the
-county's time zone (`TownClock.ZONE_HOURS = -5`). It's the same in every
-town and for every player, so it's night (20:00–06:30) everywhere at once,
-and rush hour is when it's rush hour where you are.
+The town clock is **real time**, in milliseconds since 1970, shown in US
+Eastern time and on a 12-hour clock ("8:05 AM"). It's the same in every
+town and for every player, so it's night (8 PM–6:30 AM) everywhere at once,
+and rush hour is when it's rush hour on the East Coast.
 
 - `TownClock.Now()` is the clock.
-- `TimeOfDay`, `DayOf`, `At(day, timeOfDay)` and `Format` do the arithmetic.
+- `ZoneHours(moment)` is the county's offset from UTC then: −4 in daylight
+  saving time (from 2 AM on the second Sunday of March to 2 AM on the first
+  Sunday of November, the US rule since 2007), else −5. It's worked out
+  from the date alone, so it doesn't depend on the machine's own zone or
+  time zone database.
+- `TimeOfDay`, `DayOf` and `At(day, timeOfDay)` do the arithmetic in local
+  time. On the spring-forward day `At` takes a time that doesn't exist
+  (2:30 AM) to the hour after it; on the fall-back day, a time that comes
+  twice is the first.
+- `Format` ("8:05 AM"), `FormatSeconds` ("8:05:30 AM") and `Clock12` say a
+  time. Midnight is 12:00 AM, noon 12:00 PM.
 
 ### The event queue
 
@@ -202,6 +212,56 @@ minute in front of an empty main road. `stats.lightsChanged` counts them.
 **Stop signs** cost a 500 ms stop before a car may ask to go. Crossing or
 joining a bigger road from a stop sign is *unprotected*: routes count it as
 an extra 30 s, so drivers prefer the signals.
+
+### Signals and signs you can see
+
+`Life/StreetFurniture.cs` says where each one stands, and both the game and
+Manage draw from it, so they agree:
+
+- a **signal post** at the stop line of every lane into a signal;
+- a **stop sign** at the stop line of every lane that stops.
+
+Each stands on the kerb to the driver's right, a quarter of the road's width
+and 0.35 tiles out from the lane's middle, facing back down the lane.
+`Showing(junction, stage, moment)` gives what a lane's light shows: red
+while the other stage is green, green, then amber for the last
+`AMBER_MS` (3 s; ITE's rule of about a second for each 10 mph) before its
+stage ends. A light that changes early for a waiting car moves the
+junction's offset, so its amber comes early with it.
+
+The models come from `unity/Tools~/streets/signals.py`. It's a Blender
+script, run with `blender --background --python unity/Tools~/streets/signals.py`,
+and writes `Models/props/traffic-signal.glb` and `stop-sign.glb`:
+
+- **traffic-signal:** a mast-arm signal, as American towns hang them. It has
+  a 5.6 m pole on the kerb and a 4.2 m arm with a brace. One three-lamp head
+  hangs over the lane, with a second on the pole for drivers stopped close
+  to it. Its lenses are dark.
+- **stop-sign:** a red octagon with a white border and STOP, on a 2 m post.
+
+`Rendering/Signage.cs` stands them in a town (`ExploreView.Populate`):
+
+- The models are at 0.2 tiles a metre (a tile is 4 m), like the street lamps.
+- Each signal is stretched along its arm, so the head hangs over the middle
+  of its lane, however wide the road.
+- Each lamp is a glowing disc in front of its lens: dark red, amber or green
+  until lit. Lit lamps glow brighter at night.
+- The lamps show the light as the cars obey it:
+  - **Following the server's town** (every multiplayer town): from the
+    server's word. Each delta ends with each signal's green stage and the
+    milliseconds until it ends (`StreetFurniture.EncodeLights`). The player's
+    game doesn't run the town's life then, and the server's lights change
+    early for waiting cars, so the clock alone was wrong 35–49% of the time.
+  - **Running the town here:** from the town's own stages
+    (`traffic.life.Now`).
+- The lamps are drawn `WorldSync.DELAY` behind the latest word, as the cars
+  are. Every stage lasts `STAGE_MS` from its start, even one changed early, so
+  a word's stage began `ends − STAGE_MS` before it. Before that, the other
+  stage was green (`StreetFurniture.Showing`).
+
+`sim --follow` checks it: in each starter town, a player's lamps match what
+the server's showed as the cars are drawn at 99.9% of moments or more (they
+come out at 99.97–100%).
 
 ---
 
@@ -480,6 +540,57 @@ The kinds:
 **Cars:** 90% of workers and 70% of the at-home have one, parked at home.
 Commuters and through drivers arrive in theirs.
 
+### Their names
+
+Everyone has a name (`Life/PersonNames.cs`). The first and last names come
+from faker-js's English lists (`@faker-js/faker`, MIT), copied in as data by
+`unity/Tools~/names/generate.mjs` into `PersonNames.Lists.cs`: 3,005 first
+names and 473 last. Only the lists come over; picking one is ours:
+
+- One of the town's people (`TownLife.people`) is named by
+  `Rng("<town seed>::person::<id>")`; a wanderer by
+  `Rng("<town seed>::wanderer::<k>")`, `k` its place among them (the first
+  townsfolk records).
+- So the same person has the same name in every player's game, on the server
+  and in Manage, every day, without it being sent anywhere. Their id in
+  another town is someone else.
+
+`TownLife.DoingOf` says what they're doing in a few words: their trip's
+purpose ("Going to work", "Going home", "Going to the shops", "Visiting"…),
+or "Indoors" / "Out of town" between trips. A wanderer is always "Out for a
+walk".
+
+**Over them in the game.** Walk up to a townsperson and stay by them for
+0.9 s (`NAME_DELAY` in `ExploreView.cs`, within 1.6 tiles): a tag comes up
+over their head (the players' `NameTag`, in a quiet cream) with their name,
+and what they're doing on a smaller line under it. Step away, or to someone
+else, and it goes. Where the town is run:
+
+- **here** (playing alone, or the room's host): from the town's life, looked
+  at again every 2 s, so it changes when they get where they were going;
+- **on the server:** the game asks it once (`GET /mp/sim/focus?…&brief=1` by
+  their record, `ExploreView.AskWho`, set in `PorchlightApp.Connect`). The
+  delay covers the wait, and an answer that comes after you've moved on is
+  dropped.
+
+**In Manage** the same name heads their focus and their crumb, and starts
+their line in a town's People list and the map's hover. A car's line and
+focus name its driver.
+
+`Checks names` (in CI) builds each starter town:
+
+- everyone is named "First Last", and different people get different names
+  (98% or more);
+- the town built again hours later gives the same names;
+- at 8:15 AM people are going to work, each as their trip has it, and at
+  5:30 PM they're going home;
+- everyone drawn walking has a name and something they're doing;
+- the same ids in the next town are other people.
+
+`server/test/sim.test.ts` checks the sim's brief answer: a name and doing
+for someone out walking, matching their focus, and "Out for a walk" for a
+wanderer.
+
 ### A day
 
 Each person's plan is a chain of stops with departure times. It's seeded by
@@ -732,51 +843,108 @@ serves:
 
 - **On the map,** with land use on, each building has a disc whose area is
   the number of people inside.
-- **Hovering** a building says how many are inside.
+- **Hovering** a building says its number (its place in the town's list of
+  buildings, the same number its breadcrumb shows) and how many are inside.
 - **Clicking** a building lists them at the top of the panel, with when
   each next goes out; click someone for their focus.
 
-**The panel** is as simple as it can be: no explanations and no keys, and
-everything on one line (what doesn't fit is cut short, its whole in a
-tooltip). The ⓘ in its head opens **the key**: how to look closer, what
-each layer's colours and shapes mean, what each kind of thing on the map
-is, and (if so) why there's no traffic and how to start it. Top to bottom:
+**The sidebar** is breadcrumbs (`manage/src/crumbs.ts`), and shows only
+what each one is for:
 
-1. **What's open:** a car or townsperson's focus, who's in a building, a
-   town's tables, or a kind's list. Each has a one-line header with a ✕.
-2. **Towns:** a line each, with its clock, then people · out · cars on the
-   road. Clicking one goes there and opens **its tables**:
-   - the population: a row for each kind of person (workers, students, at
-     home in the day, commuters, through traffic) and a total. The columns
-     are how many, then where each is now, so they add up across: at home,
-     at work or school, elsewhere, walking, driving, on the bus, off the
-     map. The last column is how many own a car;
-   - today: each mode's share of trips and mean trip time, trips made and
-     failed, kerb spots taken, and the busiest hour;
-   - **congestion** (below): a bar for each of the last 24 hours, a slider
-     to pick one, and that hour's worst streets;
-   - the kinds out in that town now, a line each: clicking one lists that
-     town's (its workers, its buses).
-3. **On the map:** the twelve kinds of thing the map shows, a line each
-   with a box to show or hide it, and how many are out now. Clicking its
-   name lists each one out (up to 40, a line each in the simulation's
-   words), in every town, or in one picked from the list's header (the
-   town open, if one is); click one to focus on it and follow it.
-4. **Show:** the other layers, two checkboxes a row.
-5. **Playing,** only when someone is: click to follow them.
+| Crumb | Shows |
+| --- | --- |
+| **County** | The towns, a line each with its people. |
+| **› A town** | Collapsible sections, as the game's own sidebar has them (`Sidebar.cs`: a heading with a › that turns when open). First its congestion (below), then one for each sort of thing out in it now, with how many: Cars (residents', commuters', through traffic), Vans, Buses, People (workers, students, out on errands, commuters on foot, wanderers), Parked, Boats. Sorts with none out are left out. Opening one closes the others, and clicking an open heading closes it. A list shows 40 at a time, each with the simulation's line ("Ada Brekke · Going to work, by car · trip 1 of 3 today"); "Show more" adds 40. |
+| **› Car 12 / Ada Brekke** | One car or townsperson (by name, once their focus has answered), followed on the map: what it is, what it's doing and its next four steps. A car says whose it is ("Ada Brekke's car"). Its driver or car (the person/car button) takes its place, so toggling between them stays one crumb under the town or building. |
+| **› Building n** | Who's inside (a building clicked on the map, by its number). Each person is a crumb further on. |
+
+**Room for it all.** Inside a town the sidebar itself never scrolls. The
+headings stay where they are, the ones before the open section above it and
+the ones after below, and only the open section's body scrolls, in whatever
+height is left. So a heading is never scrolled out of the window, however
+long the list (`.panel-body.fill`, `.sb-section.open` in `styles.css`).
+
+How the crumbs move:
+
+- Clicking a town in the county goes into it, and the map fits to it.
+- Clicking someone in a town's list or a building adds a crumb and follows
+  them.
+- A focus's driver or car button swaps the last crumb for them: back and forth
+  between a van and its driver is always County › town › one of them.
+- Clicking a car, person or building on the map starts again from the
+  county: County › its town › it.
+- The **Whole county** button goes back to the first crumb.
+
+**Going back** to a crumb picks up as it was left, and moves the map to
+match:
+
+- **The county:** the whole county, with the town last opened highlighted.
+- **A town:** the map on the town. It keeps its tab, the hour of congestion
+  it was on, how far down its list was shown, and who was clicked from it
+  (highlighted and scrolled into view). Each town keeps this (`Memory`), so
+  it's the same if you come back to it from the county later.
+- **A car or person:** followed again.
+
+Nothing in the sidebar scrolls on its own; only the sidebar does. Long
+street names wrap. What the map shows is in the ⓘ, with the key: its
+layers (cars, people, lights, stop signs, land use, players, streets,
+names, trails, reach) and each kind of car and person, a checkbox each.
 
 **Congestion.** To see where the town's traffic jams, and when, a town's
-tables end with its last day of hold-ups (`GET /mp/sim/congestion`, asked
+first section (open the first time in) is its last day of hold-ups (`GET /mp/sim/congestion`, asked
 again every 10 s while it's open):
 
 - a bar for each of the last 24 hours (this one so far on the right), as
   tall as that hour's hold-ups in all against the worst hour's;
 - a slider under them (or click a bar) picks an hour: its times, how long
   cars were held up in all, and how many left a lane;
-- that hour's 12 worst streets, worst first: the road's kind and number,
-  its hold-ups in all, and the cars. They're drawn on the map in red,
-  wider the worse, each with its number at its middle. Clicking one takes
-  the map to it.
+- that hour's 12 worst streets, worst first: the street's name and which
+  stretch of it ("High Street, Elm Street to Oak Avenue"; "Main road 4"
+  only if the sim is older than names), its hold-ups in all, and the cars.
+  They're drawn on the map in red, wider the worse, each with its number at
+  its middle. Clicking one takes the map to it.
+
+The names are the game's own (`StreetNaming` in `Explore/Names.cs`, which
+joins road strokes into named streets). `StreetNaming.Stretch` names a
+stretch by the streets at its ends, or "at" the one street it meets.
+
+**Street names on the map.** Every town's streets come with their names
+(`roadNames` in `GET /mp/traffic/county`):
+
+- from `names` in `server/towns/*.roads.json` for the starter towns,
+  written by `Checks roadmap`;
+- from the sim's `READY` for the rest (`SimTown.RoadNames`).
+
+Close in (6 pixels a tile or more, with the roads and names layers on),
+Manage writes each street's name once, along its longest straight stretch
+and never upside down (`streets.ts`, `streetLabels`). Main roads come first,
+and a name that would overlap one already written is left out.
+
+**Right-click: directions, or take me there.** Right-click a spot on the map
+for a menu (`SpotMenu.tsx`):
+
+- It names the spot by its town and the nearest street within 6 tiles
+  ("Lanternport, near Elm Street").
+- For each of your characters playing now (`GET /mp/goto`), it offers
+  **Directions here for …** and **Take … here**.
+- Outside every town it says so. With nobody playing, it says that.
+
+Picking one posts `{character, town, x, y, how, label}` to `/mp/goto`.
+The server checks the request:
+
+- The character must be yours (404 if not) and allowed in the town (403
+  if not).
+- The spot must be 0–1024 tiles (400 if not), and `how` must be
+  `directions` or `transport` (400 if not).
+- The character must be playing (409 if not).
+
+The server then sends `goto` to the game playing them (`CityRoom.tell`). The
+game (`PorchlightApp.GotoFromManage`) does one of two things:
+
+- **directions:** draws the way there as it does for any destination,
+  across the county if need be, with the label as where to;
+- **transport:** puts you beside the spot. In another town, it travels
+  there first, then puts you beside it.
 
 A hold-up is a car's time over a lane less its time at the limit, as
 routing measures it (§4, Routing by the traffic), but with the whole wait
@@ -812,8 +980,9 @@ or left as trails; they're remembered in the browser, like the layers.
   in a dark housing on the kerb by each stop line: green, amber in a
   stage's last 3 s, red. Manage asks for the lights of the towns in view
   once a second, and in between works out each lamp from the stage and
-  when it ends (`lampColor`), as the town does. How the game shows them is
-  still to be decided.
+  when it ends (`lampColor`), as the town does. The lamps are where the
+  game's signal posts stand (`StreetFurniture`), and the game lights its
+  models the same way (§2, Signals and signs you can see).
 - **Stop signs,** at the same zoom, are a small red octagon on the kerb by
   each lane that stops (paler at an all-way stop). They come with a town's
   first lights (`&stops=1`), since they don't change.
@@ -1044,9 +1213,56 @@ weekday:
   back axle is taken to be 0.55 tiles behind the middle, and slower than
   that, a short car's real one is too far off it to tell.
 
+**`Checks clock`** checks the county clock:
+
+- winter and summer offsets;
+- AM, PM, midnight and noon;
+- 2026's changeovers, both ways;
+- a round trip through `At` for moments every 7 h 13 min through a year.
+
+**`Checks furniture server/towns`** checks each starter town's signals and
+signs:
+
+- a signal post at every lane into a signal, and a stop sign at every lane
+  that stops;
+- every post on the drivers' right, square to its lane, and its pole clear
+  of the lane;
+- over a whole cycle, exactly one stage at a time shows green or amber, the
+  one the cars go on: 27 s green, 3 s amber and 30 s red.
+
+**`manage/test-browser/sidebar.mjs`** (`npm run test:browser`) clicks
+through the real sidebar in Chromium against a stand-in server:
+
+- the towns with their people and nothing else;
+- into a town: a heading for its congestion (open) then each sort with its
+  count; its most congested street by name, the cross streets under it;
+- Cars opened: the congestion closes; with 203 cars the list scrolls on its
+  own while the sidebar and the page don't, and every heading stays in the
+  window, scrolled to the end too; clicked again, it closes;
+- a building hovered: its number;
+- picking an hour, Vans, a van (a crumb on, followed, its driver named), then
+  its driver and back (by name, in its place: never a crumb more);
+- back along the crumbs: the town as it was left (Vans open, the van
+  highlighted, the hour), then the county with the town highlighted;
+- into another town: its own state, its congestion open.
+
+`manage/test/crumbs.test.ts` covers where each click takes the crumbs,
+going back, and each town's memory.
+
+**`manage/test-browser/menu.mjs`** (`npm run test:browser`) right-clicks the
+real page in Chromium against a stand-in server. It checks:
+
+- the spot's name;
+- **Take … here** and **Directions here for …**, and what each posts;
+- outside a town;
+- nobody playing.
+
+`server/test/room.test.ts` covers `/mp/goto`'s answers and that the game
+gets `goto`.
+
 **`server/test/sim.test.ts`** runs the real worker:
 
-- the town's life has a clock of now;
+- the town's life has a clock of now, said on a 12-hour clock;
 - indoors + off the map + out add up to everyone;
 - every building index is the town's;
 - the fullest building's people are listed;
@@ -1107,3 +1323,9 @@ contributors, Apache-2.0) describes in its design documents:
 implementation of those ideas, written for our towns, wire and game. No
 A/B Street source was copied or translated, so the Apache licence's terms
 for derivative works don't apply. We credit it anyway, gladly.
+
+The townsfolk's first and last names are the English name lists from
+[faker-js](https://github.com/faker-js/faker) (`@faker-js/faker` 9.9.0, MIT,
+Copyright (c) 2022–present Faker contributors), copied in as data by
+`unity/Tools~/names/generate.mjs`. Which name each person gets is our own
+(`PersonNames`).

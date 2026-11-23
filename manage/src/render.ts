@@ -6,6 +6,7 @@
 
 import type { CountyMap } from './api.ts';
 import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
+import { streetLabels, type StreetLabel } from './streets.ts';
 import { ZONES, buildingIndexAt, describe } from './zoning.ts';
 import { congestionWidth, focusPoint, indoorRadius, indoors, lampColor, type CongestedStreet, type EntityFocus, type Signals, type TownLife } from './life.ts';
 
@@ -56,6 +57,8 @@ const SPEED_DIM_PX = SPEEDS.map((s) => pixel(s.color, 0.45));
 
 /** Pixels a tile from which cars are drawn their true shape (further out, as dots). */
 const SHAPED = 4;
+/** From this close in (pixels a tile), streets are named on the map. */
+const STREET_NAMES = 6;
 
 /** A colour (#rrggbb) and opacity as one pixel of an ImageData, as a little-endian Uint32Array holds it. */
 function pixel(hex: string, alpha: number): number {
@@ -98,6 +101,8 @@ interface StreetPaths {
   towns: CountyMap['towns'];
   spaces: Path2D;
   bounds: { x0: number; y0: number; x1: number; y1: number };
+  /** Where each street's name is written (streets.ts), main roads first. */
+  labels: StreetLabel[];
 }
 
 function buildPaths(map: CountyMap): StreetPaths {
@@ -135,7 +140,7 @@ function buildPaths(map: CountyMap): StreetPaths {
   for (const s of map.spaces) spaces.rect(s.x0, s.y0, s.width, s.height);
   // Paths under streets, streets under main roads.
   const streets = [...byKey.values()].sort((a, b) => b.kind - a.kind || a.width - b.width);
-  return { streets, zones, highways, towns: map.towns, spaces, bounds: { x0, y0, x1, y1 } };
+  return { streets, zones, highways, towns: map.towns, spaces, labels: streetLabels(map.towns), bounds: { x0, y0, x1, y1 } };
 }
 
 export class MapRenderer {
@@ -192,6 +197,8 @@ export class MapRenderer {
   onHoverEntity: (e: { key: string; kind: 'car' | 'person'; slot: number; x: number; y: number } | null) => void = () => {};
   /** A car or townsperson clicked: its town, and its place in the feed's records. */
   onEntity: (e: { key: string; kind: 'car' | 'person'; slot: number }) => void = () => {};
+  /** A right-click on the map: where on the page (for the menu), and the spot in the county's tiles. */
+  onContext: (c: { clientX: number; clientY: number; x: number; y: number }) => void = () => {};
   /** The camera's stopped following the focus (the map was dragged). */
   onFocusFollowEnd: () => void = () => {};
   /** The car or townsperson focused on (Manage's focus view), drawn with its way ahead; followed, if `followingFocus`. */
@@ -219,6 +226,7 @@ export class MapRenderer {
     canvas.addEventListener('pointercancel', this.up);
     canvas.addEventListener('pointerleave', this.leave);
     canvas.addEventListener('dblclick', this.dbl);
+    canvas.addEventListener('contextmenu', this.context);
     if (loop) this.raf = requestAnimationFrame(this.frame);
   }
 
@@ -233,6 +241,7 @@ export class MapRenderer {
     c.removeEventListener('pointercancel', this.up);
     c.removeEventListener('pointerleave', this.leave);
     c.removeEventListener('dblclick', this.dbl);
+    c.removeEventListener('contextmenu', this.context);
   }
 
   setMap(map: CountyMap): void {
@@ -272,10 +281,10 @@ export class MapRenderer {
     this.selected = sid;
   }
 
-  /** The car or townsperson focused on, as the simulation last said (null: none). */
+  /** The car or townsperson focused on, as the simulation last said (null: none, or not heard yet). Following
+   * carries on through a null, so switching between a car and its driver keeps the map on them. */
   setFocus(f: EntityFocus | null): void {
     this.focused = f;
-    if (!f) this.followingFocus = false;
   }
 
   /** Keep the focus in the middle of the map (and close enough in to see it), or stop. */
@@ -447,12 +456,21 @@ export class MapRenderer {
     this.zoomAt(p.x, p.y, this.cam.scale * Math.exp(-e.deltaY * lines * 0.0015));
   };
 
+  /** Right-click: the menu for that spot (its place on screen, and in the county's tiles). */
+  private readonly context = (e: MouseEvent) => {
+    e.preventDefault();
+    const p = this.local(e);
+    this.onContext({ clientX: e.clientX, clientY: e.clientY, ...this.toWorld(p.x, p.y) });
+  };
+
   private readonly dbl = (e: MouseEvent) => {
     const p = this.local(e);
     this.zoomAt(p.x, p.y, this.cam.scale * 2);
   };
 
   private readonly down = (e: PointerEvent) => {
+    // The right button is the menu's (contextmenu), never a drag or a click.
+    if (e.button === 2) return;
     this.canvas.setPointerCapture(e.pointerId);
     this.pointers.set(e.pointerId, this.local(e));
     this.dragged = false;
@@ -497,6 +515,7 @@ export class MapRenderer {
   };
 
   private readonly up = (e: PointerEvent) => {
+    if (e.button === 2) return;
     const p = this.local(e);
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.pinch = null;
@@ -598,7 +617,7 @@ export class MapRenderer {
         const b = i >= 0 ? t.buildings![i] : null;
         const life = this.life.get(t.key);
         const inside = life && i >= 0 ? (indoors(life).get(i) ?? 0) : null;
-        text = b ? `${describe(b)}${inside === null ? '' : ` · ${inside.toLocaleString()} inside`} · ${t.name}` : t.name;
+        text = b ? `Building ${i} · ${describe(b)}${inside === null ? '' : ` · ${inside.toLocaleString()} inside`} · ${t.name}` : t.name;
         this.hoverBuilding = b && life ? { key: t.key, i } : null;
       }
     }
@@ -708,6 +727,8 @@ export class MapRenderer {
         ctx.stroke(s.path);
       }
     }
+    // The streets' names, close in: along each street's longest stretch, where the name fits, never over another.
+    if (this.layers.names && this.layers.roads && scale >= STREET_NAMES) this.drawStreetNames(ctx);
     // The towns' names.
     if (this.layers.names) {
       ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -719,6 +740,37 @@ export class MapRenderer {
         ctx.fillStyle = '#8193a6';
         ctx.fillText(t.name, s.x, s.y - 4);
       }
+    }
+  }
+
+  /** Each street's name along its longest stretch, in screen pixels: main roads first, none over another. */
+  private drawStreetNames(ctx: CanvasRenderingContext2D): void {
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    const taken: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    for (const l of this.paths.labels) {
+      const s = this.toScreen(l.x, l.y);
+      if (s.x < -100 || s.y < -20 || s.x > this.width + 100 || s.y > this.height + 20) continue;
+      ctx.font = l.kind === 0 ? '600 12px system-ui, sans-serif' : '500 11px system-ui, sans-serif';
+      const w = ctx.measureText(l.name).width;
+      if (w + 8 > l.length * this.cam.scale) continue;
+      // Its box on screen (axis-aligned, enough to keep names apart).
+      const hw = (Math.abs(Math.cos(l.angle)) * w + Math.abs(Math.sin(l.angle)) * 12) / 2 + 2;
+      const hh = (Math.abs(Math.sin(l.angle)) * w + Math.abs(Math.cos(l.angle)) * 12) / 2 + 2;
+      const box = { x0: s.x - hw, y0: s.y - hh, x1: s.x + hw, y1: s.y + hh };
+      if (taken.some((b) => b.x0 < box.x1 && box.x0 < b.x1 && b.y0 < box.y1 && box.y0 < b.y1)) continue;
+      taken.push(box);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(l.angle);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#0b0f14';
+      ctx.strokeText(l.name, 0, 0);
+      ctx.fillStyle = l.kind === 0 ? '#c9d4df' : '#9fb0c0';
+      ctx.fillText(l.name, 0, 0);
+      ctx.restore();
     }
   }
 

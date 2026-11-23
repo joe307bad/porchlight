@@ -108,6 +108,8 @@ export interface CountyMapJson {
     private: boolean;
     /** Its streets (town's own frame): [kind, width, x0, y0, x1, y1, ...], when known (saved, or the simulation's once it's made the town). */
     roads: number[][] | null;
+    /** Each street's name, in roads' order ("Elm Street"; "" for none), as for roads: saved, or the simulation's. */
+    roadNames: string[] | null;
     /** What its buildings are for (Zoning.cs), as for roads: saved, or the simulation's. */
     zoning: TownZoning['figures'] | null;
     /** Each building: [zone, x0, y0, x1, y1 (tiles, exclusive), homes, jobs], the town's frame. */
@@ -122,6 +124,7 @@ export interface CountyMapJson {
 /** A town's map as Manage draws it: its streets and, if known, what its buildings are for. */
 export interface TownMap {
   roads: number[][];
+  roadNames?: string[] | null;
   zoning: TownZoning | null;
 }
 
@@ -135,8 +138,8 @@ function mapOf(key: string): TownMap | null {
       for (const f of readdirSync(dir)) {
         if (!f.endsWith('.roads.json')) continue;
         try {
-          const doc = JSON.parse(readFileSync(new URL(f, dir), 'utf8')) as { key: string; roads: number[][]; zoning?: TownZoning['figures']; buildings?: number[][] };
-          starterMaps.set(doc.key, { roads: doc.roads, zoning: doc.zoning && doc.buildings ? { figures: doc.zoning, buildings: doc.buildings } : null });
+          const doc = JSON.parse(readFileSync(new URL(f, dir), 'utf8')) as { key: string; roads: number[][]; names?: string[]; zoning?: TownZoning['figures']; buildings?: number[][] };
+          starterMaps.set(doc.key, { roads: doc.roads, roadNames: doc.names ?? null, zoning: doc.zoning && doc.buildings ? { figures: doc.zoning, buildings: doc.buildings } : null });
         } catch (err) {
           console.error(`traffic: couldn't read ${f}:`, (err as Error).message);
         }
@@ -176,8 +179,9 @@ export function countyMapJson(county: County, names: Map<string, string>, made: 
         const saved = mapOf(key);
         const sim = made(key);
         const roads = saved?.roads ?? sim?.roads ?? null;
+        const roadNames = (saved ? saved.roadNames : sim?.roadNames) ?? null;
         const zoning = saved?.zoning ?? sim?.zoning ?? null;
-        return { key, name: names.get(key) ?? 'A town', ...box(s), private: s.isPrivate, roads, zoning: zoning?.figures ?? null, buildings: zoning?.buildings ?? null };
+        return { key, name: names.get(key) ?? 'A town', ...box(s), private: s.isPrivate, roads, roadNames, zoning: zoning?.figures ?? null, buildings: zoning?.buildings ?? null };
       }),
     spaces: county.spaces.filter((s) => s.kind === 'junction' || s.kind === 'vacant').map((s) => ({ kind: s.kind, ...box(s) })),
     highways: county.highways.map((h) => h.points.flatMap((p) => [round1(p.x), round1(p.y)])),
@@ -365,7 +369,7 @@ export class TrafficFeed {
       return send(200, {
         ...countyMapJson(county, names, (key) => {
           const t = this.sim?.pool.town(key);
-          return t?.roads ? { roads: t.roads, zoning: t.zoning } : null;
+          return t?.roads ? { roads: t.roads, roadNames: t.roadNames, zoning: t.zoning } : null;
         }),
         sim: this.sim !== null,
       });

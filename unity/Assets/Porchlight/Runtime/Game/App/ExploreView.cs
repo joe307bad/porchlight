@@ -199,6 +199,22 @@ namespace Porchlight.App
         readonly List<Vec2> trail = new List<Vec2>();
         /// <summary>The townsperson who's stopped to look at you (jump asks them along), or null.</summary>
         Pedestrian noticing;
+
+        /// <summary>
+        /// Asks the server who's in a townsfolk record (where the server runs the town): their name and what they're
+        /// doing, or nulls. Set by the app while it's in a room; null otherwise.
+        /// </summary>
+        public Action<int, Action<string, string>> AskWho;
+        /// <summary>Seconds by someone before their tag comes up, how near counts (tiles), and how often what they're doing is looked at again.</summary>
+        const double NAME_DELAY = 0.9, NAME_REACH = 1.6, NAME_REFRESH = 2;
+        /// <summary>Where the tag's point sits over a townsperson's head, at their own scale (as RemotePlayers' over a player's).</summary>
+        const double NAME_HEIGHT = 0.54;
+        /// <summary>The townsperson you're by, how long you've been by them, their tag, and the answers' count (a late one for someone else is dropped).</summary>
+        Pedestrian naming;
+        double namingFor, namedAt;
+        NameTag nameTag;
+        string nameLabel;
+        int nameAsks;
         bool followersAboard;
         Vec2? lastSpot;
         /// <summary>How near a townsperson notices you, how far back a follower can be sent off from, and the trail's spacing and length (tiles).</summary>
@@ -210,6 +226,8 @@ namespace Porchlight.App
         const double FOLLOW_SPACING = 0.55;
         Traffic traffic;
         Fleet fleet;
+        /// <summary>The junctions' traffic signals (lit by the town's own stages) and stop signs.</summary>
+        Signage signage;
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
         double chaseSwing;
@@ -406,6 +424,9 @@ namespace Porchlight.App
             remotes?.Clear();
             world?.Dispose();
             fleet?.Dispose();
+            signage?.Dispose();
+            SetNameTag(null);
+            naming = null;
             foreach (var a in avatars) a?.Dispose();
             unmade.Clear();
             playerAvatar?.Dispose();
@@ -529,6 +550,7 @@ namespace Porchlight.App
             // town clock, the same in every player's game and on the server (sim/SimTown.cs, in this order).
             traffic = new Traffic(model, world.layout, null, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             fleet = new Fleet(traffic, library, world.root.transform);
+            signage = new Signage(traffic.life.net, library, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
@@ -584,6 +606,10 @@ namespace Porchlight.App
             remotes?.Clear();
             fleet?.Dispose();
             fleet = null;
+            signage?.Dispose();
+            signage = null;
+            SetNameTag(null);
+            naming = null;
             traffic = null;
             foreach (var a in avatars) a?.Dispose();
             unmade.Clear();
@@ -1872,6 +1898,83 @@ namespace Porchlight.App
             Notice(near);
         }
 
+        /// <summary>
+        /// On foot by a townsperson for a moment (NAME_DELAY): their name over them, and what they're doing under it
+        /// ("Going to work"). The same name everywhere (PersonNames): a wanderer's from its place among them; one of
+        /// the town's people's from the town's life, run here, or the server's word on them.
+        /// </summary>
+        void NameNear(double dt)
+        {
+            var p = player;
+            Pedestrian near = null;
+            if (p != null && !InCar && !Deserted && world != null && traffic != null)
+            {
+                double bestD = NAME_REACH;
+                foreach (var q in people)
+                {
+                    if (q.hidden) continue;
+                    double d = Numbers.Hypot(q.x - p.x, q.y - p.y);
+                    if (d < bestD)
+                    {
+                        bestD = d;
+                        near = q;
+                    }
+                }
+            }
+            if (near != naming)
+            {
+                naming = near;
+                namingFor = 0;
+                namedAt = -1;
+                nameAsks++;
+                SetNameTag(null);
+            }
+            if (naming == null) return;
+            namingFor += dt;
+            if (namingFor >= NAME_DELAY && (namedAt < 0 || (authority && namingFor - namedAt >= NAME_REFRESH)))
+            {
+                namedAt = namingFor;
+                WhoIs(naming);
+            }
+            nameTag?.Place(naming.x, NAME_HEIGHT * naming.scale + naming.lift, naming.y);
+        }
+
+        /// <summary>Who `q` is and what they're doing: then their tag (nothing known: none).</summary>
+        void WhoIs(Pedestrian q)
+        {
+            int record = people.IndexOf(q);
+            int wanderers = basePeople - traffic.walkers.Count;
+            if (record < 0 || record >= basePeople) return;
+            var seed = world.model.seed;
+            if (record < wanderers)
+            {
+                SetNameTag(Porchlight.Life.PersonNames.Wanderer(seed, record), Porchlight.Life.PersonNames.WANDERING);
+                return;
+            }
+            if (authority)
+            {
+                var life = traffic.life;
+                int id = life.PersonInSlot(record - wanderers);
+                if (id >= 0) SetNameTag(life.NameOf(id), life.DoingOf(id));
+                return;
+            }
+            // The server's town: its word on who's in that record (asked once; the answer kept if they're still the one).
+            int ask = nameAsks;
+            AskWho?.Invoke(record, (name, doing) =>
+            {
+                if (ask == nameAsks && naming == q && name != null) SetNameTag(name, doing);
+            });
+        }
+
+        void SetNameTag(string name, string doing = null)
+        {
+            string label = name == null ? null : string.IsNullOrEmpty(doing) ? name : $"{name}\n<size=72%>{doing}</size>";
+            if (label == nameLabel) return;
+            nameLabel = label;
+            nameTag?.Dispose();
+            nameTag = label == null || world == null ? null : new NameTag(label, Coords.Hex(0xefe6cf), world.root.transform);
+        }
+
         void Notice(Pedestrian q)
         {
             if (noticing != null && noticing != q) noticing.lookAt = null;
@@ -2883,8 +2986,12 @@ namespace Porchlight.App
                 remotes.HideAll = Deserted;
             }
             remotes?.Update(dt, driving != null && p != null ? new Vec2(p.x, p.y) : (Vec2?)null, dusk);
+            NameNear(dt);
             if (riding != null) FollowRide();
             fleet?.Update(dusk, Emptied ? Anywhere : (Func<double, double, bool>)null);
+            // Running the town here: its own lights. Following the server's: as it says they stand (the
+            // town's life isn't run here, so its clock and junctions stand still).
+            if (traffic != null) signage?.Update(authority ? traffic.life.Now : Porchlight.Life.TownClock.Now(), dusk, authority ? null : sync);
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);

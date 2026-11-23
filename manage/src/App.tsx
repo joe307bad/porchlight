@@ -8,6 +8,8 @@ import { briefOn, buildingLife, county, focusOn, signalsOf, inDesktopApp, me, si
 import { isFocus, type BuildingLife, type CongestedStreet, type EntityFocus, type FocusAnswer, type FocusTarget, type TownLife } from './life.ts';
 import { Feed, type FeedStatus } from './feed.ts';
 import { Panel } from './Panel.tsx';
+import { COUNTY, Memory, backTo, intoTown, onTo, onToBuilding, type Crumb } from './crumbs.ts';
+import { SpotMenu, type SpotClick } from './SpotMenu.tsx';
 import { backToApp, backToGame, embedded } from './embed.ts';
 import { DEFAULT_LAYERS, MapRenderer, type Hover, type Layers } from './render.ts';
 import { World } from './world.ts';
@@ -115,11 +117,13 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   const [renderer, setRenderer] = useState<MapRenderer | null>(null);
   const [status, setStatus] = useState<FeedStatus>({ state: 'connecting' });
   const [layers, setLayers] = useState<Layers>(savedLayers);
+  /** The right-click menu's spot, while it's open. */
+  const [spot, setSpot] = useState<SpotClick | null>(null);
+  const closeSpot = useCallback(() => setSpot(null), []);
   const [hidden, setHidden] = useState<Set<string>>(savedHidden);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [following, setFollowing] = useState<string | null>(null);
+  const [, setSelected] = useState<string | null>(null);
+  const [, setFollowing] = useState<string | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
-  const [feed, setFeed] = useState<Feed | null>(null);
   const [lives, setLives] = useState<Map<string, TownLife>>(new Map());
   /** Whether the towns' life has been asked for at least once (so "none running" means it, not "not asked yet"). */
   const [livesAsked, setLivesAsked] = useState(false);
@@ -127,8 +131,18 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   // The car or townsperson focused on: who (followed by id), what the simulation last said, and whether the map follows them.
   const [target, setTarget] = useState<FocusTarget | null>(null);
   const [focus, setFocus] = useState<EntityFocus | null>(null);
+  /** People's names heard from their focus ("town|id"), for their crumbs. */
+  const names = useRef(new Map<string, string>());
   const [focusNote, setFocusNote] = useState<string | null>(null);
   const [followingFocus, setFollowingFocus] = useState(false);
+  /** Where the sidebar is (crumbs.ts), and what each crumb was left showing. */
+  const [crumbs, setCrumbs] = useState<Crumb[]>([COUNTY]);
+  const memory = useMemo(() => new Memory(), []);
+  /** The map's clicks, as the latest render has them (the renderer's set up once). */
+  const clicks = useRef<{ entity: (e: { key: string; kind: 'car' | 'person'; slot: number }) => void; building: (b: { key: string; i: number } | null) => void }>({
+    entity: () => {},
+    building: () => {},
+  });
 
   useEffect(() => {
     const r = new MapRenderer(canvas.current!, world, map);
@@ -140,19 +154,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     };
     r.onFollowEnd = () => setFollowing(null);
     r.onFocusFollowEnd = () => setFollowingFocus(false);
-    r.onEntity = (e) => {
-      void focusOn(e.key, e.kind, 'slot', e.slot).then((a) => {
-        if (!isFocus(a)) {
-          setTarget(null);
-          setFocus(null);
-          setFocusNote(nobody(a));
-          return;
-        }
-        setFocusNote(null);
-        setFocus(a);
-        setTarget({ town: e.key, kind: a.kind, id: a.id });
-      });
-    };
+    r.onEntity = (e) => clicks.current.entity(e);
     // Hovering a car or townsperson: the map's own line straight away, then the simulation's (who, what they're
     // doing, where in their day) once it answers, if the pointer's still on them.
     let hovered = '';
@@ -176,26 +178,14 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         show(line);
       });
     };
-    r.onBuilding = (b) => {
-      if (!b) return setBuilding(null);
-      void buildingLife(b.key, b.i)
-        .catch(() => null)
-        .then((got) => {
-          setBuilding(got);
-          if (!got) {
-            setFocus(null);
-            setTarget(null);
-            setFocusNote("Can't tell who's in it: the server's simulation isn't running that town.");
-          }
-        });
-    };
+    r.onContext = (c) => setSpot(c);
+    r.onBuilding = (b) => clicks.current.building(b);
     setRenderer(r);
     const f = new Feed(world, (s) => {
       setStatus(s);
       if (s.state === 'signedOut') onSignedOut();
     });
     f.start();
-    setFeed(f);
     // Which towns are looked at closely, said as it changes: those come ten times a second.
     const focus = setInterval(() => f.focus(r.townsInView()), 500);
     // Each town's life (who's indoors, the day so far), every few seconds: it changes slowly.
@@ -260,6 +250,9 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
       const a = await focusOn(target.town, target.kind, 'id', target.id).catch(() => null);
       if (stopped) return;
       if (isFocus(a)) {
+        // Each person's name, as heard: their crumb says it.
+        if (a.kind === 'person' && a.name) names.current.set(`${a.town}|${a.id}`, a.name);
+        if (a.kind === 'car' && a.ownerName && a.owner !== undefined && a.owner >= 0) names.current.set(`${a.town}|${a.owner}`, a.ownerName);
         setFocus(a);
         setFocusNote(null);
       } else setFocusNote("Lost track of them: the server isn't running that town now.");
@@ -276,9 +269,11 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     renderer?.setFocus(focus);
   }, [renderer, focus]);
 
-  /** Focus on someone by who they are (from the panel: a driver, their car, someone in a building), and follow them there. */
+  /** Focus on someone by who they are, and follow them there: a crumb on (from the map, `fresh`: the county, their town, them). */
   const focusTo = useCallback(
-    (t: FocusTarget) => {
+    (t: FocusTarget, fresh = false) => {
+      setCrumbs((c) => onTo(c, t, fresh));
+      setBuilding(null);
       setFocus(null);
       setFocusNote(null);
       setTarget(t);
@@ -308,12 +303,81 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
           setTarget(null);
           setFocus(null);
           setFocusNote(nobody(a));
+          setFollowingFocus(false);
+          renderer?.followFocus(false);
           return;
         }
         focusTo({ town: key, kind: a.kind, id: a.id });
       });
     },
-    [focusTo],
+    [focusTo, renderer],
+  );
+
+  // A car or person clicked on the map: followed, the county › their town › them.
+  clicks.current.entity = (e) => {
+    void focusOn(e.key, e.kind, 'slot', e.slot).then((a) => {
+      if (!isFocus(a)) {
+        setFocusNote(nobody(a));
+        return;
+      }
+      focusTo({ town: e.key, kind: a.kind, id: a.id }, true);
+    });
+  };
+  // A building clicked on the map: the county › its town › who's inside.
+  clicks.current.building = (b) => {
+    if (!b) return;
+    closeFocus();
+    setCrumbs(onToBuilding(b.key, b.i));
+    setBuilding(null);
+    void buildingLife(b.key, b.i)
+      .catch(() => null)
+      .then((got) => {
+        setBuilding(got);
+        if (!got) setFocusNote("Can't tell who's in it: the server's simulation isn't running that town.");
+      });
+  };
+
+  const fitTown = useCallback(
+    (key: string) => {
+      const t = map.towns.find((x) => x.key === key);
+      if (t) renderer?.fit(t.x0, t.y0, t.width, t.height);
+    },
+    [map, renderer],
+  );
+
+  /** Into a town from the county: its crumb, and the map on it. */
+  const openTown = useCallback(
+    (key: string) => {
+      memory.town = key;
+      closeFocus();
+      setBuilding(null);
+      setCrumbs(intoTown(key));
+      follow(null);
+      fitTown(key);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [memory, fitTown],
+  );
+
+  /** Back to crumb i, as it was left: the county (the whole of it), a town (on it), or whoever was followed there (again). */
+  const goCrumb = useCallback(
+    (i: number) => {
+      const stack = backTo(crumbs, i);
+      const top = stack[stack.length - 1];
+      setCrumbs(stack);
+      if (top.at === 'entity') return focusTo(top.target);
+      closeFocus();
+      if (top.at === 'building') {
+        clicks.current.building({ key: top.town, i: top.building });
+        return;
+      }
+      setBuilding(null);
+      follow(null);
+      if (top.at === 'town') fitTown(top.town);
+      else renderer?.fitAll();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [crumbs, focusTo, fitTown, renderer],
   );
 
   const followFocus = useCallback(
@@ -330,6 +394,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     setFocus(null);
     setFocusNote(null);
     setFollowingFocus(false);
+    renderer?.followFocus(false);
     renderer?.setFocus(null);
   }, [renderer]);
 
@@ -355,6 +420,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
             {hover.text}
           </div>
         )}
+        {spot && <SpotMenu at={spot} map={map} onClose={closeSpot} />}
         <div className="map-buttons">
           {!embedded && inDesktopApp() && (
             <button className="btn btn-primary" onClick={() => void backToApp()} title="Back to the Porchlight app (Manage stays open here)">
@@ -366,40 +432,33 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
               ← Back to the game
             </button>
           )}
-          <button className="btn" onClick={() => { follow(null); renderer?.fitAll(); }} title="The whole county">
+          <button className="btn" onClick={() => goCrumb(0)} title="The whole county">
             Whole county
           </button>
         </div>
       </div>
       <Panel
+        personName={(town, id) => names.current.get(`${town}|${id}`)}
         who={who}
-        world={world}
         map={map}
         status={status}
-        feed={feed}
-        renderer={renderer}
         layers={layers}
         onLayers={setLayers}
         hidden={hidden}
         onHidden={setHidden}
-        onFocusSlot={focusSlot}
-        selected={selected}
         lives={lives}
         livesAsked={livesAsked}
+        crumbs={crumbs}
+        memory={memory}
+        onCrumb={goCrumb}
+        onTown={openTown}
+        onPick={focusSlot}
+        onFocus={focusTo}
         building={building}
-        onCloseBuilding={() => setBuilding(null)}
-        following={following}
-        onFollow={follow}
         focus={focus}
         focusNote={focusNote}
         followingFocus={followingFocus}
         onFollowFocus={followFocus}
-        onCloseFocus={closeFocus}
-        onFocus={focusTo}
-        onTown={(t) => {
-          follow(null);
-          renderer?.fit(t.x0, t.y0, t.width, t.height);
-        }}
         onCongestion={congestion}
         onStreet={street}
       />

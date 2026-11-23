@@ -23,6 +23,7 @@ export const MSG_SPAWN = 'spawn'; // SpawnMessage, once after joining
 export const MSG_CORRECT = 'correct'; // CorrectMessage: snap here
 export const MSG_DOTS = 'dots'; // DotsMessage, once a second: everyone in the room, for the minimap
 export const MSG_UNLOCKS = 'unlocks'; // { unlocks }: another of the account's characters earned something
+export const MSG_GOTO = 'goto'; // GotoMessage: Manage's right-click, for this character: directions to a spot, or taken there
 // MSG_WORLD, passed on from the host to everyone else as it comes; or, where the
 // server runs the town (sim/), the whole town to each player arriving, and then:
 export const MSG_WORLD_DELTA = 'world_delta'; // { d }: what changed since the last (sim/src/Delta.cs), 10 a second
@@ -149,3 +150,15 @@ export const HOST_SILENT_MS = 3_000;
  */
 export const quantizeYaw = (yaw: number): number => Math.round((yaw / (2 * Math.PI)) * 65536) & 0xffff;
 export const yawFromWire = (q: number): number => (q / 65536) * 2 * Math.PI;
+
+/** Manage's right-click on its map, sent on to the game playing the character (POST /mp/goto). */
+export interface GotoMessage {
+  /** The town's key (its room's), and the spot in its own tiles. */
+  town: string;
+  x: number;
+  y: number;
+  /** Show the way there, or take them straight there. */
+  how: 'directions' | 'transport';
+  /** What's there, for the directions' last line ("near Elm Street"). */
+  label: string;
+}
