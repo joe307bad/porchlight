@@ -61,10 +61,17 @@ export function landUse(t: Pick<Town, 'zoning' | 'buildings'>): LandUse | null {
   };
 }
 
+/**
+ * Model.BuildingKind, in its order: a building's [7]. Named only where it says more than the zone does (a
+ * supermarket, not just "Retail"); null for the rest (houses, shops, workshops).
+ */
+export const KINDS: (string | null)[] = [null, null, null, 'Church', 'Hall', 'School', 'Supermarket', 'Petrol station', 'Fire station', 'Clinic'];
+
 /** One building, said: what it's for and what it holds. */
 export function describe(b: number[]): string {
   const zone = ZONES[b[0]]?.label ?? 'Building';
-  const parts: string[] = [zone];
+  const kind = b.length > 7 ? KINDS[b[7]] : null;
+  const parts: string[] = [kind ? `${kind} (${zone})` : zone];
   if (b[5]) parts.push(`${b[5].toLocaleString()} ${b[5] === 1 ? 'home' : 'homes'}`);
   if (b[6]) parts.push(`${b[6].toLocaleString()} ${b[6] === 1 ? 'job' : 'jobs'}`);
   return parts.join(' · ');

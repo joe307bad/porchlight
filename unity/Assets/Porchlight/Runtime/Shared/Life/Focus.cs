@@ -524,9 +524,10 @@ namespace Porchlight.Life
             if (options.infiniteParking) return Why.Info("Where will it stop?", $"By the door of {PlaceText(c.dest, building)}", "Parking's endless in this town (a check's setting).");
             if (c.target >= 0)
             {
-                bool drive = net.spots[c.target].kind == SpotKind.Driveway;
-                var w = Why.Info("Where will it stop?", drive ? "In the driveway at home" : $"A kerb spot it's holding, {Geo.Dist(net.spots[c.target].at, Door(c.dest)):0.0} tiles from the door",
-                    drive ? "Home with a driveway: in it." : "On its last street it takes the free spot nearest the door; nobody else can have it now.");
+                var kind = net.spots[c.target].kind;
+                bool drive = kind == SpotKind.Driveway;
+                var w = Why.Info("Where will it stop?", drive ? "In the driveway at home" : $"A {SpotText(c.target)} it's holding, {Geo.Dist(net.spots[c.target].at, Door(c.dest)):0.0} tiles from the door",
+                    drive ? "Home with a driveway: in it." : kind == SpotKind.CarPark ? "The free bay nearest the door is in the car park behind the high street; nobody else can have it now." : "On its last street it takes the free spot nearest the door; nobody else can have it now.");
                 if (c.hunts > 0) w.Add(new Why("Did it have to hunt?", $"Yes: the street by the door was full ({c.hunts} hunt{(c.hunts == 1 ? "" : "s")})", false, "It took the nearest free spot by road."));
                 return w;
             }
@@ -595,7 +596,7 @@ namespace Porchlight.Life
             }
             string end = c.dest.border ? "Leave the map by the gate"
                 : c.van >= 0 ? $"Drop off at {PlaceText(c.dest, building)}, then on to its next call"
-                : c.target >= 0 ? $"Park: {(net.spots[c.target].kind == SpotKind.Driveway ? "the driveway" : "the kerb spot it holds")} at {PlaceText(c.dest, building)}"
+                : c.target >= 0 ? $"Park: {(net.spots[c.target].kind == SpotKind.Driveway ? "the driveway" : $"the {SpotText(c.target)} it holds")} at {PlaceText(c.dest, building)}"
                 : $"Park near {PlaceText(c.dest, building)} (the free spot nearest the door, or hunt)";
             queue.Add(Item((long)(t * 1000), end, false));
         }
@@ -670,6 +671,8 @@ namespace Porchlight.Life
                     if (s >= to || path.Count >= FOCUS_POINTS) break;
                 }
             }
+            // Into a car park: on from its mouth to the bay.
+            if (c.target >= 0 && net.spots[c.target].kind == SpotKind.CarPark && path.Count < FOCUS_POINTS) path.Add(net.spots[c.target].at);
         }
 
         void WalkPath(Person p, List<Vec2> path)
@@ -746,7 +749,7 @@ namespace Porchlight.Life
             }
         }
 
-        string SpotText(int spot) => net.spots[spot].kind == SpotKind.Driveway ? "driveway" : "kerb spot";
+        string SpotText(int spot) => net.spots[spot].kind switch { SpotKind.Driveway => "driveway", SpotKind.CarPark => "car-park bay", _ => "kerb spot" };
 
         /// <summary>Their age and household in a line ("34, in a family with two children: 4 of them"), or null (from beyond the gates).</summary>
         string HouseholdText(Person p)

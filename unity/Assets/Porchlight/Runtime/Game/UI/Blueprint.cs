@@ -41,6 +41,10 @@ namespace Porchlight.UI
             BuildingKind.Shop => Coords.Hex(0xa0583c),
             BuildingKind.Workshop => Coords.Hex(0x6e6a5e),
             BuildingKind.Church => Coords.Hex(0x7d2e3e),
+            BuildingKind.Supermarket => Coords.Hex(0xc0703a),
+            BuildingKind.PetrolStation => Coords.Hex(0xb8a038),
+            BuildingKind.FireStation => Coords.Hex(0xb03a2e),
+            BuildingKind.Clinic => Coords.Hex(0x4a8a7a),
             _ => Coords.Hex(0x3e5a7d),
         };
         public static readonly Color BuildingEdge = Coords.Hex(0x2e241d);

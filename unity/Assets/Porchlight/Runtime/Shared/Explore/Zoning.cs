@@ -30,6 +30,8 @@ namespace Porchlight.Explore
     public sealed class ZonedBuilding
     {
         public int buildingId;
+        /// <summary>What the building is (a school, a supermarket, a fire station...).</summary>
+        public BuildingKind kind;
         public Zone zone;
         /// <summary>Households it houses.</summary>
         public int homes;
@@ -109,8 +111,8 @@ namespace Porchlight.Explore
                     cy += t.y + 0.5;
                 }
                 int floors = Math.Max(1, h.floors);
-                var z = new ZonedBuilding { buildingId = h.buildingId, floors = floors, area = h.tiles.Count * TILE_M2 * floors, x0 = x0, y0 = y0, x1 = x1, y1 = y1 };
-                Use(z, StartingZone(h.style), h);
+                var z = new ZonedBuilding { buildingId = h.buildingId, kind = h.kind, floors = floors, area = h.tiles.Count * TILE_M2 * floors, x0 = x0, y0 = y0, x1 = x1, y1 = y1 };
+                Use(z, StartingZone(h.kind, h.style), h);
                 town.buildings.Add(z);
                 from[z] = Numbers.Hypot(cx / h.tiles.Count - C.x, cy / h.tiles.Count - C.y) / R;
                 houses[z] = h;
@@ -120,6 +122,13 @@ namespace Porchlight.Explore
             Total(town);
             return town;
         }
+
+        static Zone StartingZone(BuildingKind kind, HouseStyle style) => kind switch
+        {
+            BuildingKind.Supermarket or BuildingKind.PetrolStation => Zone.Retail,
+            BuildingKind.FireStation or BuildingKind.Clinic or BuildingKind.School => Zone.Civic,
+            _ => StartingZone(style),
+        };
 
         static Zone StartingZone(HouseStyle style) => style switch
         {
@@ -254,11 +263,11 @@ namespace Porchlight.Explore
             return false;
         }
 
-        /// <summary>Each building as Manage draws it: [zone, x0, y0, x1, y1, homes, jobs], tiles, the town's frame.</summary>
+        /// <summary>Each building as Manage draws it: [zone, x0, y0, x1, y1, homes, jobs, kind (BuildingKind)], tiles, the town's frame.</summary>
         public static List<int[]> Encode(TownZoning town)
         {
             var o = new List<int[]>(town.buildings.Count);
-            foreach (var b in town.buildings) o.Add(new[] { (int)b.zone, b.x0, b.y0, b.x1, b.y1, b.homes, b.jobs });
+            foreach (var b in town.buildings) o.Add(new[] { (int)b.zone, b.x0, b.y0, b.x1, b.y1, b.homes, b.jobs, (int)b.kind });
             return o;
         }
     }

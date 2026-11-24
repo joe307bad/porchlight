@@ -42,5 +42,9 @@ test('finds and describes the building under a point', () => {
   assert.equal(describe(buildingAt(town, 4.5, 5.9)!), 'Office · 6 jobs');
   assert.equal(describe(buildingAt(town, 1, 4)!), 'Mixed use · 1 home · 4 jobs');
   assert.equal(describe(buildingAt(town, 4, 1)!), 'Residential · 8 homes');
+  // What it is, where that says more than its zone.
+  assert.equal(describe([2, 0, 0, 4, 4, 0, 22, 6]), 'Supermarket (Retail) · 22 jobs');
+  assert.equal(describe([5, 0, 0, 3, 3, 0, 12, 8]), 'Fire station (Civic) · 12 jobs');
+  assert.equal(describe([0, 0, 0, 2, 2, 1, 0, 0]), 'Residential · 1 home');
   assert.equal(buildingAt(town, 2.5, 2.5), null);
 });

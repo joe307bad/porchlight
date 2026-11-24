@@ -10,6 +10,7 @@ using System;
 using System.Collections.Generic;
 using Porchlight.Core;
 using Porchlight.Explore;
+using Porchlight.Gen;
 using Porchlight.Model;
 
 namespace Porchlight.Life
@@ -88,7 +89,8 @@ namespace Porchlight.Life
         public readonly long[] green = { RoadNet.STAGE_MS, RoadNet.STAGE_MS };
     }
 
-    public enum SpotKind { Kerb, Driveway }
+    /// <summary>Where a car parks: at the kerb, in a house's driveway, or in a car park's bay.</summary>
+    public enum SpotKind { Kerb, Driveway, CarPark }
 
     public sealed class ParkingSpot
     {
@@ -99,7 +101,7 @@ namespace Porchlight.Life
         public double s;
         /// <summary>Where the car stands parked, and where its driver gets in and out.</summary>
         public Vec2 at;
-        /// <summary>A driveway's house (building id); -1 at the kerb.</summary>
+        /// <summary>A driveway's house (building id); -1 at the kerb or in a car park.</summary>
         public int building = -1;
         /// <summary>A car the town draws there anyway (Layout's parked cars): never free.</summary>
         public bool scenery;
@@ -651,6 +653,9 @@ namespace Porchlight.Life
 
         // --- Parking ----------------------------------------------------------------------------
 
+        /// <summary>A spot anyone may park in: the kerb or a car park (a driveway is its house's).</summary>
+        public static bool Public(SpotKind k) => k != SpotKind.Driveway;
+
         void MakeSpots(TownModel model, IsoLayout layout)
         {
             int w = model?.width ?? 0, h = model?.height ?? 0;
@@ -707,6 +712,40 @@ namespace Porchlight.Life
                     spots.Add(spot);
                 }
                 // In order along the lane.
+            }
+            // Car parks behind the high street (TownModel.carParks): a bay a paved tile, all entered from where the
+            // lot meets its street, on that side.
+            foreach (var cp in model?.carParks ?? new List<CarPark>())
+            {
+                if (layout.use == null || cp.lotId < 0 || cp.lotId >= model.lots.Count || cp.edgeId < 0 || cp.edgeId >= model.roads.edges.Count) continue;
+                var bays = new List<int>();
+                foreach (int t in Parcels.TilesIn(model.lots[cp.lotId].polygon, null, w, h)) if (layout.use[t] == Use.CAR_PARK) bays.Add(t);
+                if (bays.Count == 0) continue;
+                var street = model.roads.edges[cp.edgeId].points;
+                int gate = bays[0];
+                double gateD = double.PositiveInfinity;
+                foreach (int t in bays)
+                {
+                    double d = Geo.DistToPolyline(new Vec2(t % w + 0.5, t / w + 0.5), street);
+                    if (d < gateD)
+                    {
+                        gateD = d;
+                        gate = t;
+                    }
+                }
+                var mouth = new Vec2(gate % w + 0.5, gate / w + 0.5);
+                int road = NearestRoad(mouth, out double rs);
+                if (road < 0) continue;
+                int side = SideLane(road, rs, mouth);
+                if (side < 0) continue;
+                var l = lanes[side];
+                double done = l.dir > 0 ? rs : lengths[road] - rs;
+                done = Math.Max(l.start, Math.Min(l.end, done));
+                foreach (int t in bays)
+                {
+                    var at = new Vec2(t % w + 0.5, t / w + 0.5);
+                    spots.Add(new ParkingSpot { id = spots.Count, kind = SpotKind.CarPark, lane = side, s = done, at = at, scenery = Occupied(at) });
+                }
             }
             foreach (var lane in lanes) lane.spots.Clear();
             foreach (var s in spots) lanes[s.lane].spots.Add(s.id);

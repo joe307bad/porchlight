@@ -309,33 +309,40 @@ wouldn't give; and all of it the same again from the same key.
 
 ### To-do
 
-- [ ] **A land-value field per tile:** centrality, arterial frontage, corner
+Done in [town-shops.md](town-shops.md) unless marked left.
+
+- [x] **A land-value field per tile:** centrality, arterial frontage, corner
   lots and nearness to parks, minus nearness to industry. Use it to choose
   each building's kind and height, replacing distance alone [P29][P13].
   This is Vanegas et al.'s link between behaviour and geometry, without
   UrbanSim.
-- [ ] **Shops by threshold** (`Zoning.cs`, or a new stage before
-  buildings):
+- [x] **Shops by threshold** (`Zoning.cs`, or a new stage before
+  buildings). Done in `Gen/Retail.cs`, a supermarket from 300 households
+  for game feel and one a 6,000 beyond:
   - one high street of mixed-use buildings along the arterial through the
     centre [P11]
   - one corner store per ~1,000 households, at collector entrances to
     neighbourhoods [P9]
   - a supermarket only from ~6,000 households, or one per town for game
     feel [P9]
-- [ ] **Score shop lots with Huff** [P13]: arterial frontage, a corner
+- [x] **Score shop lots with Huff** [P13]: arterial frontage, a corner
   bonus and passing traffic, minus overlap with existing shops' catchments.
-- [ ] **A petrol station or garage** at the busiest arterial junction
+  Shoppers in the town's life choose shops by Huff too.
+- [x] **A petrol station or garage** at the busiest arterial junction
   outside the centre [P9].
-- [ ] **Industry in a wedge** along the main road out to the county highway,
+- [x] **Industry in a wedge** along the main road out to the county highway,
   or by the docks and rail, not scattered round the edge [P8].
-- [ ] **Civic buildings:**
+- [x] **Civic buildings:**
   - [x] a school and a park per neighbourhood (PR #18);
-  - [ ] a fire station;
-  - [ ] park land at ~10 acres per 1,000 residents (we have residents from
-    zoning) [P5][P14][P16];
-  - [ ] car parks behind the high street.
-- [ ] **Generate the Market landmark** (the plaza on market day: see §6).
-- [ ] **Planning checks** in `Checks zoning`:
+  - [x] a fire station, with the fire engine kept there (and a doctor's
+    office);
+  - [x] park land at ~10 acres per 1,000 residents (we have residents from
+    zoning) [P5][P14][P16]. 4 acres in town: NRPA's 10 counts the
+    countryside's parks, and would make a fifth of our towns park;
+  - [x] car parks behind the high street, whose bays the town's life parks in.
+- [x] **Generate the Market landmark** (the plaza on market day: see §6).
+  The landmark is made; its stalls come with §6's calendar.
+- [x] **Planning checks** in `Checks zoning`:
   - parks per 1,000 residents
   - households per corner store
   - the fire station's road distance to every lot
@@ -516,7 +523,8 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
   day on day.
 - [x] **Parking as a real step:** kerb and driveway spots (PR #19). Arriving
   cars take a free spot near the door, or hunt for one (jittered, so hunters
-  fan out), then walk to the door [T17][T18]. Car parks are still to come.
+  fan out), then walk to the door [T17][T18]. Car parks behind the high
+  street too ([town-shops.md](town-shops.md)).
 - [ ] **Traffic through the gates:**
   - [x] commuters and through traffic arrive and leave by the gates (PR #19);
   - [ ] the county highways get traffic (`docs/highways.md`).
@@ -529,7 +537,8 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
   - [x] bin lorries by zone and weekday: each neighbourhood on its weekday
     from 7:00, stopping in the lane ([town-life.md](town-life.md) §9)
   - [x] emergency vehicles that make others pull over: ambulances and a fire
-    engine on random calls, from beyond the gates (no station in town yet)
+    engine on random calls, the ambulances from beyond the gates and the fire
+    engine from the town's fire station
 
   The models already exist in `Catalog.cs`.
 - [x] **A gridlock check:** `Checks traffic-day` runs a full simulated day
@@ -767,7 +776,8 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
 8. **Better towns:** era rings, transect zones, neighbourhoods with their
    schools and parks, the ring road and a second centre are done (§1, #18).
    The land-value field, shops by threshold, industry wedges and the other
-   civic buildings (§2–3) are left.
+   civic buildings (§2) are done ([town-shops.md](town-shops.md)); §3 is
+   left.
 9. **The calendar and events:** market day first (the plaza is already
    there), then a venue with match days, parades, incidents and shared
    weather (§6).

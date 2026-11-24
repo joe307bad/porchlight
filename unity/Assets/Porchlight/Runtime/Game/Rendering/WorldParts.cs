@@ -744,7 +744,7 @@ namespace Porchlight.Rendering
                     byte use = layout.use[i];
                     byte terrain = tiles.terrain[i];
                     if (tiles.overlay[i] != Overlay.NONE) continue;
-                    if (use == Use.HOUSE || use == Use.SHED || use == Use.GARDEN || use == Use.COMMUNITY_GARDEN || use == Use.DRIVEWAY) continue;
+                    if (use == Use.HOUSE || use == Use.SHED || use == Use.GARDEN || use == Use.COMMUNITY_GARDEN || use == Use.DRIVEWAY || use == Use.CAR_PARK) continue;
                     if (terrain == Terrain.ROCK)
                     {
                         if (rng.Chance(0.22))

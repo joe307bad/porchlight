@@ -12,6 +12,7 @@ using System;
 using System.Collections.Generic;
 using Porchlight.Core;
 using Porchlight.Explore;
+using Porchlight.Model;
 
 namespace Porchlight.Life
 {
@@ -40,6 +41,8 @@ namespace Porchlight.Life
         const double BACKGROUND = 0.1;
 
         readonly List<int> shops = new List<int>(), schools = new List<int>(), homesList = new List<int>();
+        /// <summary>Each shop's size for the Huff model: the people who work there (a supermarket's many, a corner store's few).</summary>
+        readonly Dictionary<int, double> shopSize = new Dictionary<int, double>();
 
         // --- Who lives here ---------------------------------------------------------------------
 
@@ -56,8 +59,13 @@ namespace Porchlight.Life
             {
                 if (!net.access.ContainsKey(b.buildingId)) continue;
                 if (b.homes > 0) homesList.Add(b.buildingId);
-                if (b.zone == Zone.Retail || b.zone == Zone.MixedUse) shops.Add(b.buildingId);
-                if (b.zone == Zone.Civic) schools.Add(b.buildingId);
+                if (b.zone == Zone.Retail || b.zone == Zone.MixedUse)
+                {
+                    shops.Add(b.buildingId);
+                    shopSize[b.buildingId] = Math.Max(1, b.jobs);
+                }
+                // Children go to school: a school, or in a town without one the hall or the church. Never the fire station or the doctor's.
+                if (b.zone == Zone.Civic && b.kind != BuildingKind.FireStation && b.kind != BuildingKind.Clinic) schools.Add(b.buildingId);
                 homesIn[b.buildingId] = b.homes;
                 workerCarry += b.homes * Zoning.WORKERS_A_HOME;
                 residentCarry += b.homes * Zoning.PEOPLE_A_HOME * CROWD;
@@ -73,6 +81,7 @@ namespace Porchlight.Life
                     foreach (var m in h.members)
                         if (m.worker) workerHomes.Add(b.buildingId);
             }
+            if (schools.Exists(id => KindOf(id) == BuildingKind.School)) schools.RemoveAll(id => KindOf(id) != BuildingKind.School);
             if (shops.Count == 0) foreach (var b in zoning?.buildings ?? new List<ZonedBuilding>()) if (b.jobs > 0 && net.access.ContainsKey(b.buildingId)) shops.Add(b.buildingId);
             rng.Shuffle(jobSlots);
 
@@ -295,6 +304,36 @@ namespace Porchlight.Life
             return pick;
         }
 
+        BuildingKind KindOf(int building)
+        {
+            foreach (var b in zoning?.buildings ?? new List<ZonedBuilding>()) if (b.buildingId == building) return b.kind;
+            return BuildingKind.House;
+        }
+
+        /// <summary>
+        /// Where someone at `from` goes shopping, by the Huff model (docs/town-shops.md): each shop's pull is its size over
+        /// the distance squared, and they pick one in proportion, so a supermarket draws from further than a corner store.
+        /// </summary>
+        int Shop(int from, Rng rng)
+        {
+            if (!options.huffShops) return Nearest(shops, from, rng);
+            var at = Door(Place.Building(from));
+            double total = 0;
+            var pull = new double[shops.Count];
+            for (int k = 0; k < shops.Count; k++)
+            {
+                pull[k] = Porchlight.Gen.Retail.Pull(shopSize.TryGetValue(shops[k], out var size) ? size : 1, Geo.Dist(Door(Place.Building(shops[k])), at));
+                total += pull[k];
+            }
+            double r = rng.Range(0, total);
+            for (int k = 0; k < shops.Count; k++)
+            {
+                r -= pull[k];
+                if (r < 0) return shops[k];
+            }
+            return shops[shops.Count - 1];
+        }
+
         public Vec2 Door(Place p) => p.border ? net.borders[p.id].at : net.access.TryGetValue(p.id, out var a) ? a.door : new Vec2(0, 0);
 
         // --- Their days -------------------------------------------------------------------------
@@ -333,7 +372,7 @@ namespace Porchlight.Life
                     double off = start + rng.Range(8, 9.5);
                     if (!p.home.border && shops.Count > 0 && rng.Chance(0.35))
                     {
-                        Go(off, Place.Building(Nearest(shops, p.home.id, rng)), Purpose.Shop);
+                        Go(off, Place.Building(Shop(p.home.id, rng)), Purpose.Shop);
                         off = Hours() + rng.Range(0.3, 0.8);
                     }
                     Go(off, p.home, Purpose.Home);
@@ -356,7 +395,7 @@ namespace Porchlight.Life
                 }
                 default:
                 {
-                    if (shops.Count > 0) Go(rng.Range(9, 11.5), Place.Building(Nearest(shops, p.home.id, rng)), Purpose.Shop);
+                    if (shops.Count > 0) Go(rng.Range(9, 11.5), Place.Building(Shop(p.home.id, rng)), Purpose.Shop);
                     Go(Hours() + rng.Range(0.5, 1.5), p.home, Purpose.Home);
                     if (rng.Chance(0.5)) Visit(rng, p, rng.Range(13, 16.5), Go, Hours);
                     if (rng.Chance(BACKGROUND)) Visit(rng, p, rng.Range(Math.Max(Hours() + 0.5, 17), 21), Go, Hours);
@@ -375,7 +414,7 @@ namespace Porchlight.Life
         void Visit(Rng rng, Person p, double hours, Action<double, Place, Purpose> go, Func<double> now)
         {
             if (homesList.Count == 0 || p.home.border) return;
-            int where = rng.Chance(0.6) ? Nearest(homesList, p.home.id, rng) : shops.Count > 0 ? Nearest(shops, p.home.id, rng) : rng.Pick(homesList);
+            int where = rng.Chance(0.6) ? Nearest(homesList, p.home.id, rng) : shops.Count > 0 ? Shop(p.home.id, rng) : rng.Pick(homesList);
             go(hours, Place.Building(where), Purpose.Visit);
             go(now() + rng.Range(0.5, 2), p.home, Purpose.Home);
         }
