@@ -16,6 +16,9 @@ namespace Porchlight.Life
 {
     public enum Control { Free, Stop, AllWayStop, Signal }
 
+    /// <summary>Which way a movement turns, as its driver sees it (they drive on the right).</summary>
+    public enum Turn { Straight, Right, Left, UTurn }
+
     public sealed class Lane
     {
         public int id, road, dir;
@@ -45,6 +48,8 @@ namespace Porchlight.Life
         public int local;
         public double length, speed;
         public bool uturn;
+        /// <summary>Straight on, right, left or back.</summary>
+        public Turn turn;
         /// <summary>The signal stage it goes in (0 or 1), at a signal.</summary>
         public int stage;
         /// <summary>From a stop sign onto a bigger road: routes avoid these.</summary>
@@ -143,6 +148,8 @@ namespace Porchlight.Life
         const double SHORTEST_DEAD_END = 4;
         /// <summary>Kerb spots: the parking lane's slots (Layout.ParkCars'), from 2.5 tiles in, every 2.6.</summary>
         const double SPOT_FIRST = 2.5, SPOT_EVERY = 2.6;
+        /// <summary>A turn of less than this (radians) is straight on.</summary>
+        const double STRAIGHT_TURN = 0.5;
         /// <summary>How long a signal stage lasts.</summary>
         public const long STAGE_MS = 30_000;
 
@@ -434,6 +441,7 @@ namespace Porchlight.Life
                 for (int i = 0; i <= CURVE_POINTS; i++) pts.Add(Cubic(a, new Vec2(a.x + f.x * k1, a.y + f.y * k1), new Vec2(tip.x - gx * k2, tip.y - gy * k2), tip, i / (double)CURVE_POINTS));
                 for (int i = 1; i <= CURVE_POINTS; i++) pts.Add(Cubic(tip, new Vec2(tip.x + gx * k2, tip.y + gy * k2), new Vec2(b.x + f.x * k1, b.y + f.y * k1), b, i / (double)CURVE_POINTS));
                 m.speed = UTURN_SPEED;
+                m.turn = Turn.UTurn;
             }
             else
             {
@@ -454,6 +462,10 @@ namespace Porchlight.Life
                 for (int i = 0; i <= CURVE_POINTS; i++) pts.Add(Cubic(a, p1, p2, b, i / (double)CURVE_POINTS));
                 bool straight = fa.x * fb.x + fa.y * fb.y > 0.85;
                 m.speed = Math.Min(from.speed, to.speed) * (straight ? 1 : TURN_SHARE);
+                // Lane +1 drives on the side SideLane calls left of the road's direction (the tile frame is
+                // mirrored): the driver's right is that side, so a turn that way is a right turn.
+                double angle = Math.Atan2(fa.x * fb.y - fa.y * fb.x, fa.x * fb.x + fa.y * fb.y);
+                m.turn = Math.Abs(angle) < STRAIGHT_TURN ? Turn.Straight : angle > 0 ? Turn.Right : Turn.Left;
             }
             m.points = pts;
             m.at = new List<double> { 0 };

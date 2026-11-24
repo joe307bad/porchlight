@@ -503,6 +503,7 @@ namespace Porchlight.Life
             if (verdict == Verdict.Go && change) ChangeLight(j, m.stage);
             if (m.stops && !c.stopped && verdict != Verdict.StopFirst) c.stopped = true;
             if (by != null) blockedBy[c.id] = by;
+            if (verdict == Verdict.NoGap) stats.noGap++;
             if (verdict != Verdict.Go)
             {
                 Schedule(K_CAR, c.id, again);
@@ -534,6 +535,8 @@ namespace Porchlight.Life
             Red,
             /// <summary>Green, but not for long enough to get round before it changes.</summary>
             TooLateOnGreen,
+            /// <summary>It gives way here, and what it gives way to is coming too soon to turn in front of.</summary>
+            NoGap,
             /// <summary>A player's standing on the turn.</summary>
             PlayerOnTurn,
             /// <summary>Townsfolk are crossing the road it's turning into or out of.</summary>
@@ -603,6 +606,19 @@ namespace Porchlight.Life
                     return Verdict.TooLateOnGreen;
                 }
             }
+            if (GivesWayAt(j))
+            {
+                double tc = CriticalGap(c, m, j);
+                long clear = GapClear(m, j, tc, out int coming, out double eta);
+                bool gap = clear < 0;
+                explain?.Add(new Why("Is there a gap in the traffic it gives way to?", gap ? $"Yes: nothing it gives way to within {tc:0.0} s" : $"No: car {coming} is {eta:0.0} s away, under its {tc:0.0} s", gap,
+                    "Gap acceptance (HCM): a driver turning across or into traffic that has the right of way waits for a gap at least the critical gap long, and takes a shorter one the longer they've waited."));
+                if (!gap)
+                {
+                    again = clear;
+                    return Verdict.NoGap;
+                }
+            }
             bool player = !double.IsNaN(queues[Lanes + m.id].blockAt);
             explain?.Add(new Why("Is a player standing on the turn?", player ? "Yes: it waits for them to go" : "No", !player));
             if (player)
@@ -661,6 +677,96 @@ namespace Porchlight.Life
             int top = 0;
             foreach (int r in j.legs) top = Math.Max(top, RoadNet.Rank(net.roads[r]));
             return top;
+        }
+
+        /// <summary>
+        /// The critical gaps a driver needs (s): HCM's base critical headways for a two-way stop on a two-lane major
+        /// road (HCM 2010 Exhibit 19-10, kept in the 6th edition): a left turn off the major road across what's coming
+        /// the other way, and a right turn, straight across, or a left turn out of the minor road.
+        /// </summary>
+        const double GAP_MAJOR_LEFT = 4.1, GAP_MINOR_RIGHT = 6.2, GAP_MINOR_THROUGH = 6.5, GAP_MINOR_LEFT = 7.1;
+        /// <summary>
+        /// Impatience: the longer a driver's waited, the shorter a gap they'll take (Mahmassani &amp; Sheffi 1981,
+        /// "Using gap sequences to estimate gap acceptance functions": the critical gap falls with the wait). Down by
+        /// GAP_CUT over IMPATIENT_S of waiting, and never under GAP_FLOOR.
+        /// </summary>
+        const double GAP_CUT = 2, IMPATIENT_S = 60, GAP_FLOOR = 3;
+
+        /// <summary>Does anyone give way to anyone at `j`: stop signs on the smaller roads, and lefts at a signal across what's coming.</summary>
+        static bool GivesWayAt(Junction j) => j.control == Control.Stop || j.control == Control.Signal;
+
+        /// <summary>
+        /// Does turn `a` give way to turn `b` at `j` (they cross or merge, and both may go now)? At a two-way stop, a
+        /// turn that stops gives way to one that doesn't; between two that have the road (both off the major road, or
+        /// both on the same green at a signal), a left turn (or U-turn) gives way to what's coming straight or right.
+        /// </summary>
+        bool GivesWay(Movement a, Movement b, Junction j)
+        {
+            if (a.id == b.id || a.from == b.from || !j.conflicts[a.local][b.local]) return false;
+            if (j.control == Control.Stop)
+            {
+                if (a.stops) return !b.stops;
+                if (b.stops) return false;
+            }
+            else if (j.control != Control.Signal || b.stage != a.stage) return false;
+            bool aLeft = a.turn == Turn.Left || a.turn == Turn.UTurn;
+            bool bLeft = b.turn == Turn.Left || b.turn == Turn.UTurn;
+            return aLeft && !bLeft;
+        }
+
+        /// <summary>The gap car `c` needs to take turn `m` (s): HCM's for the turn, shorter the longer it's waited.</summary>
+        double CriticalGap(Car c, Movement m, Junction j)
+        {
+            double tc = !m.stops ? GAP_MAJOR_LEFT : m.turn == Turn.Right ? GAP_MINOR_RIGHT : m.turn == Turn.Straight ? GAP_MINOR_THROUGH : GAP_MINOR_LEFT;
+            double waited = c.arrived >= 0 ? Math.Max(0, Now - c.arrived) / 1000.0 : 0;
+            return Math.Max(GAP_FLOOR, tc - GAP_CUT * Math.Min(1, waited / IMPATIENT_S));
+        }
+
+        /// <summary>
+        /// Is there a gap of `tc` seconds in the traffic turn `m` gives way to at `j`? -1 if so; if not, when the
+        /// cars too near to turn in front of will be through (when to ask again), with the nearest (`coming`, `eta`
+        /// seconds off). A car coming is one moving up its lane to take a turn `m` gives way to: one stood at the line
+        /// is the junction's to judge (it holds the lane behind it too), and one that'll meet a red is no gap's worry.
+        /// </summary>
+        long GapClear(Movement m, Junction j, double tc, out int coming, out double eta)
+        {
+            coming = -1;
+            eta = 0;
+            long until = -1;
+            long ends = j.control == Control.Signal ? RoadNet.Stage(j, Now).endsAt : long.MaxValue;
+            foreach (int id in j.movements)
+            {
+                var b = net.movements[id];
+                if (!GivesWay(m, b, j)) continue;
+                // Each lane once: the first of its turns that `m` gives way to.
+                bool seen = false;
+                foreach (int other in j.movements)
+                {
+                    if (other == id) break;
+                    var o = net.movements[other];
+                    if (o.from == b.from && GivesWay(m, o, j)) { seen = true; break; }
+                }
+                if (seen) continue;
+                var lane = net.lanes[b.from];
+                foreach (int fid in queues[b.from].cars)
+                {
+                    var f = cars[fid];
+                    if (f.state != CarState.Crossing) break;
+                    double t = Math.Max(0, lane.Span - Front(f)) / Math.Max(0.3, PlanSpeed(f, Now));
+                    if (t > tc || Now + t * 1000 >= ends) break;
+                    if (f.route == null || f.step + 1 >= f.route.Count || f.route[f.step + 1] < Lanes) continue;
+                    var fm = net.movements[f.route[f.step + 1] - Lanes];
+                    if (fm.node != j.node || !GivesWay(m, fm, j)) continue;
+                    long through = Now + (long)Math.Ceiling((t + (fm.length + f.length) / Math.Max(0.3, fm.speed)) * 1000);
+                    until = Math.Max(until, through);
+                    if (coming < 0 || t < eta)
+                    {
+                        coming = fid;
+                        eta = t;
+                    }
+                }
+            }
+            return until;
         }
 
         /// <summary>A light stays green at least this long before it changes for someone waiting the other way.</summary>

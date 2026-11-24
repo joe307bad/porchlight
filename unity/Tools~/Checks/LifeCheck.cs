@@ -66,7 +66,7 @@ static class LifeCheck
         yield return ("Manage's town table: everyone counted once, by who they are and where they are now", PopulationTable);
         yield return ("a parked car stays where it's parked: its driver gets out and walks off from it, and walks back up to it", ParkedStays);
         yield return ("Manage's congestion slider: each hour's hold-ups, and its worst streets worst first", CongestionByHour);
-        yield return ("the morning rush travels smart: routes by the traffic, spots held, drivers let in, lights that change for a car", TravelsSmart);
+        yield return ("the morning rush travels smart: routes by the traffic, spots held, drivers let in, lights that change for a car, gaps waited for", TravelsSmart);
         yield return ("no car drives through a player standing in a junction", JunctionPlayer);
         yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
         yield return ("with parking everywhere, nobody hunts for a spot", InfiniteParking);
@@ -713,7 +713,8 @@ static class LifeCheck
     /// <summary>
     /// Given a town's morning rush (07:30-09:30), then: the router's been told the lanes' hold-ups; drivers going to a
     /// building hold a kerb spot near its door, none more than RESERVE_REACH away; a driver waiting to pull out was let
-    /// in; a light changed for a car waiting at red with nobody coming the other way (if the town has lights); and in a
+    /// in; a light changed for a car waiting at red with nobody coming the other way (if the town has lights); a driver
+    /// gave way, waiting for a gap in the traffic (if the town has stop signs); and in a
     /// town big enough to queue, a held-up driver took a quicker way.
     /// </summary>
     static string TravelsSmart(TownModel model, IsoLayout layout, TownZoning zoning)
@@ -733,6 +734,8 @@ static class LifeCheck
         }
         bool lights = life.net.junctions.Values.Any(j => j.control == Control.Signal);
         if (lights && s.lightsChanged == 0) return "no light changed for a car waiting with nobody coming the other way";
+        bool stops = life.net.junctions.Values.Any(j => j.control == Control.Stop);
+        if (stops && s.noGap == 0) return "nobody at a stop sign, or turning left across traffic, waited for a gap";
         if (life.people.Count > 10000 && s.rerouted == 0) return "in a town this big, no held-up driver took another way";
         if (life.people.Count > 10000 && s.letIn == 0) return "in a town this big, no driver let anyone pull out";
         return null;

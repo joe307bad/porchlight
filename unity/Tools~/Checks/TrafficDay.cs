@@ -141,7 +141,7 @@ static class TrafficDay
                  $"  streets by day: {100 * busySum / Math.Max(1, busyN):0}% of {blocks} blocks with a car on them (at the quietest {100 * busyLow:0}%)\n" +
                  $"  peak {peakCars} cars on the road at {peakAt}, {peakOut} out; drawn at most {peakDrawnCars}/{life.carSlots.Length} cars, {peakDrawnPeople}/{life.personSlots.Length} people\n" +
                  $"  {Turns(life)}\n" +
-                 $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, gave up {s.gaveUp}, rerouted {s.rerouted}, lights changed {s.lightsChanged}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
+                 $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, gave up {s.gaveUp}, rerouted {s.rerouted}, lights changed {s.lightsChanged}, gaps refused {s.noGap}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
         return errs;
     }
 

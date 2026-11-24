@@ -64,8 +64,6 @@ namespace Porchlight.Life
         const int FOCUS_POINTS = 400;
         /// <summary>The junctions ahead listed in a car's queue: at most this many.</summary>
         const int FOCUS_JUNCTIONS = 12;
-        /// <summary>A turn this sharp or less (radians) is straight on.</summary>
-        const double STRAIGHT = 0.5;
 
         /// <summary>Who's drawn in person slot `slot` now (-1: nobody).</summary>
         public int PersonInSlot(int slot) => slot >= 0 && slot < personSlots.Length ? personSlots[slot].who : -1;
@@ -709,17 +707,13 @@ namespace Porchlight.Life
         // --- Words --------------------------------------------------------------------------------
 
         /// <summary>Which way turn `m` goes, to its driver: left, right, straight on, or a U-turn.</summary>
-        public string TurnText(Movement m)
+        public string TurnText(Movement m) => m.turn switch
         {
-            if (m.uturn) return "a U-turn";
-            var a = net.LanePoint(net.lanes[m.from], net.lanes[m.from].end).along;
-            var b = net.LanePoint(net.lanes[m.to], net.lanes[m.to].start).along;
-            double angle = Math.Atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
-            if (Math.Abs(angle) < STRAIGHT) return "straight on";
-            // Lane +1 drives on the side RoadNet.SideLane calls left of the road's direction (the tile frame is
-            // mirrored): the driver's right is that side, so a turn that way is a right turn.
-            return angle > 0 ? "turn right" : "turn left";
-        }
+            Turn.UTurn => "a U-turn",
+            Turn.Straight => "straight on",
+            Turn.Right => "turn right",
+            _ => "turn left",
+        };
 
         static string VerdictText(Verdict v)
         {
@@ -728,6 +722,7 @@ namespace Porchlight.Life
                 case Verdict.StopFirst: return "stopping at the sign";
                 case Verdict.Red: return "its light's red";
                 case Verdict.TooLateOnGreen: return "not enough green left to get round";
+                case Verdict.NoGap: return "waiting for a gap in the traffic it gives way to";
                 case Verdict.PlayerOnTurn: return "a player's on the turn";
                 case Verdict.PeopleCrossing: return "townsfolk are crossing";
                 case Verdict.Blocked: return "a crossing turn's under way, or there's no room beyond";

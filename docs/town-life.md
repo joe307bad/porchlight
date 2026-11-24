@@ -213,6 +213,34 @@ minute in front of an empty main road. `stats.lightsChanged` counts them.
 joining a bigger road from a stop sign is *unprotected*: routes count it as
 an extra 30 s, so drivers prefer the signals.
 
+**Gap acceptance** (`GivesWay`, `CriticalGap`, `GapClear`). A driver who
+gives way waits for a gap in the traffic they give way to, as the HCM's
+two-way-stop method has it [T12](city-research.md#references):
+
+- at a two-way stop, a turn that stops gives way to the turns that don't;
+- between two turns that both have the road (both off the major road at a
+  stop, or on the same green at a signal), a left turn or U-turn gives way to
+  what's coming straight on or turning right.
+
+A car coming is one moving up a lane towards a turn it gives way to; one
+standing at the line is the junction's to judge, and one that'll meet a red
+before it arrives leaves no gap to worry about. The gap needed is the HCM's
+base critical headway for a two-lane major road (HCM 2010 Exhibit 19-10):
+
+| Turn | Critical gap |
+| --- | --- |
+| left off the major road, across what's coming | 4.1 s |
+| right out of the minor road | 6.2 s |
+| straight across from the minor road | 6.5 s |
+| left out of the minor road | 7.1 s |
+
+The longer a driver has waited, the shorter the gap they'll take: 2 s
+shorter after a minute, never under 3 s (Mahmassani & Sheffi 1981 measured
+the critical gap falling with the wait). Without that, a side street on a
+busy main road can starve. Refused, a car asks again when the cars too near
+have gone through. `stats.noGap` counts the refusals. Which way a turn goes,
+from its driver's seat, is `Movement.turn`.
+
 ### Signals and signs you can see
 
 `Life/StreetFurniture.cs` says where each one stands, and both the game and
@@ -346,6 +374,7 @@ order:
 
 - it hasn't made its stop yet (stop signs);
 - its turn isn't green, or can't be finished on this green (signals);
+- it gives way, and there's no gap long enough in what it gives way to;
 - **someone's standing on the turn** (a player, below);
 - a walker is on a crossing it would cut;
 - a turn under way conflicts with its own;
