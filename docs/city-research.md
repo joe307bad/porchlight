@@ -5,7 +5,8 @@ traffic and townsfolk need to look like a living population, and how events
 (a match, a concert, a market) could shake things up. It follows on from
 [land-use.md](land-use.md), which zones every building as homes, work or both.
 
-Each section has three parts: **where Porchlight is today** (from the code),
+Each section has three parts: **where Porchlight was** when this was written
+(from the code, before PRs #18–#22; the to-do lists say what has landed since),
 **what the research says** (cited), and **the to-do list**. The whole list,
 in order, is at the end. Citations: `[P#]` are planning and procedural
 generation, `[T#]` traffic, population and events; both lists are at the
@@ -260,10 +261,10 @@ wouldn't give; and all of it the same again from the same key.
 
 ### Today
 
-- `PickKind` (`Gen/Buildings.cs:390-395`) decides by distance from the
-  centre alone:
-  - inside the downtown radius, a shop or tower with probability
-    `towerShare`
+- `PickKind` (`Gen/Buildings.cs:496-501`) decides by the block's transect and its distance
+  from the centre, nothing else:
+  - a shop with probability `towerShare` × the block's transect `shopShare`
+    (T5–T6, the centre and core)
   - beyond 70% of the radius, a workshop with probability 0.25
   - otherwise a house
 - Main-road frontage plays no part. The only use of it anywhere is
@@ -752,16 +753,17 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
    (#19); the road hierarchy tags and their check (§1) are done (#18).
 2. **A town clock** shared by the server and clients (§5): done (#19).
    Night still comes from the client's sky.
-3. **People:** daily plans are done (#19). Household make-up and jobs by
-   gravity model (§5) are left.
+3. **People:** daily plans are done (#19); household make-up and jobs by
+   gravity model (§5) are done (#22). Weekends, shifts and school drop-offs
+   are left.
 4. **Trips:** cars driving those plans, and traffic through the gates, are
    done (#19). Traffic on the highways (§4) is left.
 5. **Junction control** (stops and signals), don't-block-the-box and the
    gridlock check (§4): done (#19). Gap acceptance and Webster cycles are
-   left.
+   done (#22).
 6. **Parking as a trip step**, with going indoors (§4, §5): done (#19).
-7. **Queue-based server traffic** (§4): done (#19). IDM near players and
-   congestion-aware re-routing are left.
+7. **Queue-based server traffic** (§4): done (#19). Congestion-aware
+   re-routing is done (#18, BPR and habits in #22). IDM near players is left.
 8. **Better towns:** era rings, transect zones, neighbourhoods with their
    schools and parks, the ring road and a second centre are done (§1, #18).
    The land-value field, shops by threshold, industry wedges and the other
@@ -770,7 +772,7 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
    there), then a venue with match days, parades, incidents and shared
    weather (§6).
 10. **Manage** shows each layer as it lands. Activities, trips by hour and
-    jams are done (#19); street flows and events are left.
+    jams are done (#19); street flows are done (#18). Events are left.
 
 ---
 

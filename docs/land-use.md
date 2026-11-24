@@ -129,10 +129,11 @@ most of this, from the zoning here:
 
 - **Generation:** everyone is simulated, not sampled.
 - **Distribution:** jobs are filled at random from the slots, with
-  commuters in and out by the gates. A gravity model is still to come.
+  commuters in and out by the gates; since PR #22, by a doubly-constrained
+  gravity model with the gates as zones.
 - **Mode choice:** walk under 240 m, drive, or bus.
-- **Assignment:** routing on free-flow times. Re-routing on BPR costs is
-  still to come.
+- **Assignment:** routing by measured hold-ups (PR #18), and since PR #22
+  by BPR costs with day-to-day habits.
 - **Time of day:** the plans' peaks.
 
 Below is the plan as it was written.
