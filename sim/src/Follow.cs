@@ -45,6 +45,8 @@ namespace Porchlight.Sim
         const double BACK = 0.55;
         /// <summary>How far behind each slot's middle its back axle is (tiles): half its wheelbase, as it's drawn (Traffic).</summary>
         public readonly double[] back;
+        /// <summary>Each slot's car parking, pulling out or parked on the server: placed in its spot, not driven there (Traffic).</summary>
+        public readonly bool[] placed;
 
         readonly double[] x, y, h, w, v;
         readonly int[] run;
@@ -57,6 +59,7 @@ namespace Porchlight.Sim
             x = new double[n]; y = new double[n]; h = new double[n]; w = new double[n]; v = new double[n];
             run = new int[n];
             back = new double[n];
+            placed = new bool[n];
             Array.Fill(back, BACK);
         }
 
@@ -66,7 +69,7 @@ namespace Porchlight.Sim
             {
                 var c = cars[i];
                 // Boats (sailing their loops on the water) aren't the town's traffic.
-                if (c.hidden || c.taken || c.loop >= 0) { run[i] = 0; continue; }
+                if (c.hidden || c.taken || c.loop >= 0 || placed[i]) { run[i] = 0; continue; }
                 double dx = c.x - x[i], dy = c.y - y[i], d = Numbers.Hypot(dx, dy);
                 if (run[i] > 0 && d > 1) run[i] = 0; // put somewhere new (a slot handed to another car): start again
                 double turn = run[i] > 0 ? Orbit.ShortestTurn(h[i], c.heading) / dt : 0, speed = d / dt;
@@ -164,7 +167,11 @@ namespace Porchlight.Sim
                     // Each slot's back axle, by what's in it (a lorry's is well behind its middle; it turns on it).
                     var slots = server.traffic.life.carSlots;
                     for (int i = 0; i < Math.Min(slots.Length, look.back.Length); i++)
-                        if (slots[i].who >= 0) look.back[i] = Traffic.WheelBase(server.traffic.life.cars[slots[i].who].length) / 2;
+                    {
+                        var sc = slots[i].who >= 0 ? server.traffic.life.cars[slots[i].who] : null;
+                        if (sc != null) look.back[i] = Traffic.WheelBase(sc.length) / 2;
+                        look.placed[i] = sc != null && (sc.seg < 0 || sc.state == CarState.Parking || sc.state == CarState.Unparking);
+                    }
                     // A tenth of a second at 60 frames a second, as the game draws.
                     for (int f = 0; f < 6; f++)
                     {

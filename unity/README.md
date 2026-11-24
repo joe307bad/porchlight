@@ -69,6 +69,7 @@ dotnet run --project "unity/Tools~/Checks" -- plan         # towns planned like 
 dotnet run --project "unity/Tools~/Checks" -- zoning       # every building zoned, towns balanced; shops, services, parks and industry where real towns put them (docs/town-shops.md)
 dotnet run --project "unity/Tools~/Checks" -c Release -- traffic-day server/towns 2   # a whole day of each town's life: nobody stuck, the same twice
 dotnet run --project "unity/Tools~/Checks" -c Release -- life server/towns            # the town's life rule by rule (docs/town-life.md §12)
+dotnet run --project "unity/Tools~/Checks" -c Release -- calendar server/towns        # weekends, holidays, 180 school days, the school run, market day (docs/town-calendar.md)
 dotnet run --project "unity/Tools~/Checks" -- county server/test/county-vectors.json   # the county lays out, drives end to end, and the server's copy agrees
 
 node unity/Tools~/net/server.ts                              # a game server; prints a line of JSON

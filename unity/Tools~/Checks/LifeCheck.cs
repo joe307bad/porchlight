@@ -720,7 +720,7 @@ static class LifeCheck
             if (Sum("walking") + Sum("driving") + Sum("onBus") != onTrip) return $"{when}: {Sum("walking") + Sum("driving") + Sum("onBus")} out in the table, {onTrip} on a trip";
             if (Sum("offMap") != off) return $"{when}: {Sum("offMap")} off the map in the table, {off} off it";
             var workers = rows.Where(row => (string)row[0] == "Worker" || (string)row[0] == "Student").ToList();
-            long residents = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through").Sum(row => Col(row, "people"));
+            long residents = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through" && (string)row[0] != "Stallholder").Sum(row => Col(row, "people"));
             if (at < TrafficDay.Morning + 12 * TownClock.HOUR)
             {
                 long busy = workers.Sum(row => Col(row, "workOrSchool")), all = workers.Sum(row => Col(row, "people"));
@@ -728,7 +728,7 @@ static class LifeCheck
             }
             else
             {
-                long home = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through").Sum(row => Col(row, "home"));
+                long home = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through" && (string)row[0] != "Stallholder").Sum(row => Col(row, "home"));
                 if (home != residents) return $"{when}: {home} of {residents} residents at home";
             }
         }

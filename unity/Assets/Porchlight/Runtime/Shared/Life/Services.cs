@@ -200,7 +200,7 @@ namespace Porchlight.Life
         }
 
         /// <summary>The day of the week at `t` (0 Sunday): 1 January 1970 was a Thursday.</summary>
-        static int Weekday(long t) => (int)(((TownClock.DayOf(t) + 4) % 7 + 7) % 7);
+        static int Weekday(long t) => TownCalendar.Weekday(TownClock.DayOf(t));
 
         void StartServices(long from)
         {

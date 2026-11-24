@@ -4,7 +4,7 @@
 // keeps a side street from being empty. How many are out follows real commercial
 // traffic hour by hour (WORKING: Batterman, Cook & Justin 2015, Table 7, Detroit's
 // commercial weekday profile): a quarter of them at 3 am, nearly all through the
-// morning, fewer by evening. Each van has its place in line (Layout.Hash of its
+// morning, fewer by evening; about half as many on a Saturday, a third on a Sunday. Each van has its place in line (Layout.Hash of its
 // number): it's out while the share working is above it, so as the share rises
 // vans come out in turn and as it falls the last in go off first, none flickering
 // on and off. Vans sit out the rushes (RUSHES), which have the commuters. A van starts at a building, drives to the next call (the nearest of a
@@ -38,6 +38,11 @@ namespace Porchlight.Life
         /// then only holds them up: vans out through them doubled Ember Crossing's rush-hour drives.
         /// </summary>
         static readonly (double from, double to)[] RUSHES = { (7.75, 9.25), (16.25, 18.25) };
+        /// <summary>
+        /// Commercial traffic at the weekend and on holidays, of a weekday's: about half on a Saturday and a third on a
+        /// Sunday (FHWA's Traffic Monitoring Guide day-of-week factors for trucks; docs/town-calendar.md).
+        /// </summary>
+        const double SATURDAY_VANS = 0.5, SUNDAY_VANS = 0.33, HOLIDAY_VANS = 0.4;
         /// <summary>How far on a van looks for when it's next out (it's out every day: a day is far enough).</summary>
         const long LOOK_STEP = 5 * TownClock.MINUTE;
         /// <summary>A van's next call is the nearest of this many picked at random.</summary>
@@ -82,7 +87,13 @@ namespace Porchlight.Life
         /// <summary>Whether van `k` is out at `t`: its turn in the hour's share, and not a rush.</summary>
         static bool OnDuty(int k, long t)
         {
-            if (VanPlace(k) >= Working(t)) return false;
+            long day = TownClock.DayOf(t);
+            int weekday = TownCalendar.Weekday(day);
+            bool holiday = TownCalendar.Holiday(day) != null;
+            double share = weekday == 6 ? SATURDAY_VANS : weekday == 0 ? SUNDAY_VANS : holiday ? HOLIDAY_VANS : 1;
+            if (VanPlace(k) >= Working(t) * share) return false;
+            // No rushes to sit out at the weekend or on a holiday.
+            if (share < 1) return true;
             double h = TownClock.Hours(t), late = Layout.Hash(k * 31 + 13, 1931) / 6;
             foreach (var (from, to) in RUSHES)
                 if (h >= from && h < to + late) return false;

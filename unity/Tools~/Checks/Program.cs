@@ -22,6 +22,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- ways              # one way shown at a time: a spot on the map is instead of following someone or a trip (WayCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- steering          # your own steering: a tap a nudge, a held turn full, straight easy to hold (SteeringCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- where             # the line under your name says where you are now (WhereCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- calendar [dir]    # weekends, holidays, 180 school days, the school run, market day (CalendarCheck.cs)
 
 using System;
 using Porchlight.County;
@@ -64,6 +65,7 @@ static class Program
         if (args.Length > 0 && args[0] == "habits") return HabitsCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : "lanternport", args.Length > 3 ? int.Parse(args[3]) : 3);
         if (args.Length > 0 && args[0] == "population") return PopulationCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "services") return ServicesCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "calendar") return CalendarCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "names") return NamesCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
         if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();

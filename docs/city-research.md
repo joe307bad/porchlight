@@ -341,7 +341,7 @@ Done in [town-shops.md](town-shops.md) (#23).
     countryside's parks, and would make a fifth of our towns park;
   - [x] car parks behind the high street, whose bays the town's life parks in.
 - [x] **Generate the Market landmark** (the plaza on market day: see §6).
-  The landmark is made; its stalls come with §6's calendar.
+  The landmark is made; its stalls came with §6's calendar (#24).
 - [x] **Planning checks** in `Checks zoning`:
   - parks per 1,000 residents
   - households per corner store
@@ -630,7 +630,8 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
   than jobs dealt at random: the friction is shallow.
 - [x] **A daily plan per person (ActivitySim-style)** [T30]. PR #19: work
   (with lunch and shops on the way home), school, errands and visits, about
-  3 trips a day. Weekends, shifts and school drop-offs are still to come.
+  3 trips a day. Weekends, shifts and school drop-offs are done (#24,
+  [town-calendar.md](town-calendar.md)).
   - the day: work, school or home, plus 0–2 stops (shop, leisure, errand),
     for ~3 trips a day [T33]
   - workers: shift starts around 8:00 ± 60 min, plus some retail, evening
@@ -711,12 +712,14 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
 
 ### To-do
 
-- [ ] **A seeded calendar per town:** derive each day's schedule from
+- [x] **A seeded calendar per town:** derive each day's schedule from
   hash(town seed, day), so the server and every client agree without
-  syncing.
-  - weekly market in the plaza (Saturday 8–13, a continuous event)
-  - bin day by district
-  - school terms and bell times
+  syncing. Done in [town-calendar.md](town-calendar.md) (#24): weekdays and
+  weekends, the US holidays, rosters and shifts.
+  - [x] weekly market in the plaza (Saturday 8–13, 9–12 in winter): stalls,
+    stallholders and shoppers (#24)
+  - [x] bin day by district (#19; now read from the calendar)
+  - [x] school terms and bell times: 180 days, breaks and the school run (#24)
   - a monthly match or concert if the town has a venue
   - an annual festival or parade
 - [ ] **A venue:** a sports ground or arena on the edge of larger towns, on
@@ -749,7 +752,9 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
   stacking them, as RimWorld and L4D do [T46][T47]. Keep it seeded from
   (town seed, day) so it replays.
 - [ ] **Events in Manage:** the calendar, today's events, closures, and the
-  arrival and departure curves against the traffic actually seen.
+  arrival and departure curves against the traffic actually seen. The
+  calendar, today's events and the market are shown (#24); closures and the
+  curves are left.
 
 ---
 
@@ -764,7 +769,7 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
    Night still comes from the client's sky.
 3. **People:** daily plans are done (#19); household make-up and jobs by
    gravity model (§5) are done (#22). Weekends, shifts and school drop-offs
-   are left.
+   are done (#24).
 4. **Trips:** cars driving those plans, and traffic through the gates, are
    done (#19). Traffic on the highways (§4) is left.
 5. **Junction control** (stops and signals), don't-block-the-box and the
@@ -778,11 +783,12 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
    The land-value field, shops by threshold, industry wedges and the other
    civic buildings (§2) are done (#23, [town-shops.md](town-shops.md)); §3
    is left.
-9. **The calendar and events:** market day first (the plaza is already
-   there), then a venue with match days, parades, incidents and shared
-   weather (§6).
+9. **The calendar and events:** the calendar and market day are done (#24,
+   [town-calendar.md](town-calendar.md)); a venue with match days, parades,
+   incidents and shared weather are left (§6).
 10. **Manage** shows each layer as it lands. Activities, trips by hour and
-    jams are done (#19); street flows are done (#18). Events are left.
+    jams are done (#19); street flows are done (#18); the calendar and the
+   market are done (#24). Other events are left.
 
 ---
 

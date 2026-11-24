@@ -161,13 +161,49 @@ namespace Porchlight.Sim
             stops = traffic.life.busStops.Select(b => new[] { Math.Round(b.at.x, 1), Math.Round(b.at.y, 1) }).ToList(),
             summary = traffic.life.Summary(),
             kinds = Kinds(),
+            calendar = Calendar(),
+            market = Market(),
         };
+
+        /// <summary>Today and the week ahead in the town's calendar (Life/Calendar.cs), for Manage's town view.</summary>
+        public object Calendar()
+        {
+            var life = traffic.life;
+            long today = TownClock.DayOf(traffic.Clock);
+            var bins = life.services.Where(s => s.kind == ServiceKind.Bins).ToList();
+            return Enumerable.Range(0, 8).Select(i =>
+            {
+                var td = life.Day(today + i);
+                var events = td.Events();
+                var round = bins.Where(s => s.weekday == td.weekday).ToList();
+                if (round.Count > 0) events.Add($"Bins: {round.Sum(s => s.stops.Count)} stops");
+                return new { day = td.day, name = td.Name, weekend = td.Weekend, holiday = td.holiday, school = td.schoolDay, market = td.market, events };
+            }).ToList();
+        }
+
+        /// <summary>The market in the plaza now: its stalls, how many are up today, and who's there.</summary>
+        public object Market()
+        {
+            var life = traffic.life;
+            if (life.market == null) return null;
+            var td = life.Today;
+            long tod = traffic.Clock - TownClock.At(td.day, 0);
+            return new
+            {
+                stalls = life.market.stalls.Count,
+                up = life.StallsUp(td),
+                open = td.market && tod >= td.marketOpen && tod < td.marketClose,
+                hours = td.market ? $"{TownClock.Clock12(td.marketOpen / 1000, false)} to {TownClock.Clock12(td.marketClose / 1000, false)}" : null,
+                people = life.AtMarketNow,
+                at = new[] { Math.Round(life.market.middle.x, 1), Math.Round(life.market.middle.y, 1) },
+            };
+        }
 
         /// <summary>
         /// What each of the tick's car and person records is (Manage shows and hides each kind, and lists them), a
         /// letter a record, '-' for an empty one. Cars: r a resident's car, c a commuter's, t through traffic, v a van
         /// (or taxi) on its rounds, b a bus, g a bin lorry, e an ambulance or fire engine, s a boat. People: w a worker, s a student, h someone at home in the day
-        /// (out on errands), c a commuter on foot, x a wanderer (strolling, with no day).
+        /// (out on errands), c a commuter on foot, m at the market (shopping, or at their stall), x a wanderer (strolling, with no day).
         /// </summary>
         public object Kinds()
         {
@@ -194,7 +230,7 @@ namespace Porchlight.Sim
                 if (i < wanderers) { people.Append('x'); continue; }
                 int slot = i - wanderers;
                 int id = slot < life.personSlots.Length ? life.PersonInSlot(slot) : -1;
-                people.Append(id >= 0 ? PersonLetter(life.people[id].kind, onFoot: true) : slot < life.personSlots.Length ? '-' : 'h');
+                people.Append(id >= 0 ? (life.people[id].browseSince >= 0 ? 'm' : PersonLetter(life.people[id].kind, onFoot: true)) : slot < life.personSlots.Length ? '-' : 'h');
             }
             return new { cars = cars.ToString(), people = people.ToString() };
         }

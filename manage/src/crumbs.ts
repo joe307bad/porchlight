@@ -20,13 +20,16 @@ export const TABS: { id: string; label: string; kinds: string[] }[] = [
   { id: 'vans', label: 'Vans', kinds: ['car:v'] },
   { id: 'buses', label: 'Buses', kinds: ['car:b'] },
   { id: 'services', label: 'Services', kinds: ['car:g', 'car:e'] },
-  { id: 'people', label: 'People', kinds: ['person:w', 'person:s', 'person:h', 'person:c', 'person:x'] },
+  { id: 'people', label: 'People', kinds: ['person:w', 'person:s', 'person:h', 'person:c', 'person:m', 'person:x'] },
   { id: 'parked', label: 'Parked', kinds: ['car:p'] },
   { id: 'boats', label: 'Boats', kinds: ['car:s'] },
 ];
 
 /** The congestion's section (the first, and open the first time in). */
 export const CONGESTION = 'congestion';
+
+/** The calendar's section: today, the week ahead, and the market. */
+export const CALENDAR = 'calendar';
 
 /** How many of a section are listed at first, and how many more each "Show more" adds. */
 export const PAGE = 40;

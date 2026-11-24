@@ -398,6 +398,14 @@ namespace Porchlight.Life
             {
                 c.state = CarState.Queued;
                 var q = queues[c.seg];
+                // Stood short of where it meant to be: the car behind (planned while this one was going on) plans
+                // again, to stop behind it rather than run up on its back.
+                int i = q.cars.IndexOf(c.id);
+                if (i >= 0 && i + 1 < q.cars.Count)
+                {
+                    var f = cars[q.cars[i + 1]];
+                    if (f.state == CarState.Crossing && double.IsNaN(f.stopAt)) Refresh(f);
+                }
                 // Held by a player: it waits for them (looking again now and then), and does nothing else.
                 if (q.blockFirst == c.id) Schedule(K_CAR, c.id, Now + 2000);
                 return;
@@ -462,6 +470,12 @@ namespace Porchlight.Life
             }
         }
 
+        /// <summary>
+        /// How soon a car whose back isn't out of the segment it left yet is looked at again (ms): well inside the
+        /// time the car behind takes to close the gap behind it at a turn's speed (FOLLOWING at about 1.2 tiles/s, 200 ms).
+        /// </summary>
+        const long CLEAR_AGAIN_MS = 100;
+
         void OnClear(Car c)
         {
             if (c.laggy < 0) return;
@@ -474,8 +488,10 @@ namespace Porchlight.Life
                 if (slower && c.state == CarState.Crossing && Front(c) < c.s1 - 1e-6) SetInterval(c, Front(c), c.s1);
                 return;
             }
+            // Looked at again when it should be clear, and often: the car behind rolls up on its back meanwhile, and
+            // would sit at the line, stopped dead, if its clearing were noticed late.
             double left = c.length - Front(c);
-            Schedule(K_CLEAR, c.id, Now + Math.Max(250, (long)Math.Ceiling(left / Math.Max(0.05, Math.Min(SegSpeed(c.seg), SegSpeed(c.laggy))) * 1000)));
+            Schedule(K_CLEAR, c.id, Now + Math.Max(CLEAR_AGAIN_MS, (long)Math.Ceiling(left / Math.Max(0.05, Math.Min(SegSpeed(c.seg), SegSpeed(c.laggy))) * 1000)));
         }
 
         /// <summary>A car's back is clear of the segment it left.</summary>

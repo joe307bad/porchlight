@@ -11,6 +11,7 @@
 //   Cars.cs       lanes as queues, junctions, parking
 //   People.cs     who lives and works here, their days, their trips
 //   Walking.cs    on foot, crossing at junctions
+//   Calendar.cs   what each day is: weekdays, weekends, holidays, school, market day
 //   Buses.cs      the bus loop
 //   Analytics.cs  counts for Manage and the checks
 //
@@ -67,7 +68,7 @@ namespace Porchlight.Life
 
     public sealed partial class TownLife
     {
-        const long K_CAR = 1, K_CLEAR = 2, K_TRIP = 3, K_WALK = 4, K_BUS = 5, K_VAN = 6, K_SWEEP = 7, K_RETIME = 8, K_SERVICE = 9, K_SIREN = 10;
+        const long K_CAR = 1, K_CLEAR = 2, K_TRIP = 3, K_WALK = 4, K_BUS = 5, K_VAN = 6, K_SWEEP = 7, K_RETIME = 8, K_SERVICE = 9, K_SIREN = 10, K_RIDE = 11;
 
         public readonly TownModel model;
         public readonly TownZoning zoning;
@@ -137,6 +138,7 @@ namespace Porchlight.Life
             for (int i = 0; i < queues.Length; i++) queues[i] = new Queue { length = SegLength(i) };
             spotHolder = new int[net.spots.Count];
             for (int i = 0; i < spotHolder.Length; i++) spotHolder[i] = -1;
+            MakeMarket();
             MakePeople();
             MakeBusRoute();
             if (this.options.vans) MakeVans();
@@ -247,6 +249,7 @@ namespace Porchlight.Life
                 case K_RETIME: Retime(); break;
                 case K_SERVICE: OnServiceDue(id); break;
                 case K_SIREN: SirenTick(id); break;
+                case K_RIDE: OnRideWait(people[id]); break;
             }
         }
 

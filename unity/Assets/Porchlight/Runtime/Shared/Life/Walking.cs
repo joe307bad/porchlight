@@ -6,6 +6,7 @@
 // Crossing at a junction is a request, as a car's turn is: not while a car is
 // under way over that road there, not against the lights (walkers go while the
 // road they cross is shown red, and only if they'll be over before it changes), and
+// not in front of a car coming up at speed to go on round without stopping, and
 // not while a car wanting that road has already waited longer than the crossing
 // takes and a little more (so walkers can't keep cars waiting for ever). A car
 // likewise waits while someone's crossing in front of it.
@@ -151,6 +152,20 @@ namespace Porchlight.Life
             if (underway.TryGetValue(j.node, out var going))
                 foreach (var (car, local) in going)
                     if (Touches(net.movements[j.movements[local]], piece.road)) return -1;
+            // Not in front of a car coming up to the junction at speed, meaning to go on round without stopping (it
+            // couldn't stop short in time, and would stop dead at the line): after it's gone. Twice the crossing's time,
+            // for a crowded kerb's half pace.
+            foreach (int mi in j.movements)
+            {
+                var m = net.movements[mi];
+                if (!Touches(m, piece.road) || m.from < 0 || m.from >= Lanes) continue;
+                var q = queues[m.from];
+                if (q.cars.Count == 0) continue;
+                var c = cars[q.cars[0]];
+                if (c.seg != m.from || c.vb <= 1e-9 || c.t1 <= Now || c.t1 > Now + 2 * over + WALKER_YIELD_MS) continue;
+                if (c.s1 < SegLength(c.seg) - 1e-6 || c.step + 1 >= c.route.Count || c.route[c.step + 1] != Lanes + mi) continue;
+                return c.t1 + 1;
+            }
             if (waitingAt.TryGetValue(j.node, out var waiting))
             {
                 foreach (int id in waiting)
@@ -184,6 +199,7 @@ namespace Porchlight.Life
         /// <summary>Where someone out is drawn, and the way they face.</summary>
         public (Vec2 at, Vec2 along) PersonPoint(Person p)
         {
+            if (p.browseSince >= 0 && p.trip == null && market != null) return MarketPoint(p);
             if (p.walk != null && p.piece < p.walk.Count)
             {
                 var piece = p.walk[p.piece];

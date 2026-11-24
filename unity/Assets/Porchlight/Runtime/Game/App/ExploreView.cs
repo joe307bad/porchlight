@@ -228,6 +228,7 @@ namespace Porchlight.App
         Fleet fleet;
         /// <summary>The junctions' traffic signals (lit by the town's own stages) and stop signs.</summary>
         Signage signage;
+        MarketStalls market;
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
         double chaseSwing;
@@ -425,6 +426,7 @@ namespace Porchlight.App
             world?.Dispose();
             fleet?.Dispose();
             signage?.Dispose();
+            market?.Dispose();
             SetNameTag(null);
             naming = null;
             foreach (var a in avatars) a?.Dispose();
@@ -551,6 +553,7 @@ namespace Porchlight.App
             traffic = new Traffic(model, world.layout, null, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             fleet = new Fleet(traffic, library, world.root.transform);
             signage = new Signage(traffic.life.net, library, world.root.transform);
+            market = new MarketStalls(model, traffic.life.market, library, world.root.transform);
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
@@ -608,6 +611,8 @@ namespace Porchlight.App
             fleet = null;
             signage?.Dispose();
             signage = null;
+            market?.Dispose();
+            market = null;
             SetNameTag(null);
             naming = null;
             traffic = null;
@@ -2992,6 +2997,7 @@ namespace Porchlight.App
             // Running the town here: its own lights. Following the server's: as it says they stand (the
             // town's life isn't run here, so its clock and junctions stand still).
             if (traffic != null) signage?.Update(authority ? traffic.life.Now : Porchlight.Life.TownClock.Now(), dusk, authority ? null : sync);
+            if (traffic != null) market?.Update(authority ? traffic.life.Now : Porchlight.Life.TownClock.Now());
             foreach (var v in othersParked.Values) v.Lights(dusk);
             if (Attract) targetYaw += dt * 0.06;
             foreach (var k in keepers.Values) if (k.avatar.Visible) k.avatar.Update(k.walker, dt);

@@ -18,8 +18,8 @@ import type { FeedStatus } from './feed.ts';
 import { ALL_WAY, LAMPS, PERSON, SPEEDS, STOP_SIGN, type Layers } from './render.ts';
 import { REACH } from './world.ts';
 import { ZONES } from './zoning.ts';
-import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, streetName, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife } from './life.ts';
-import { CONGESTION, PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
+import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, streetName, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife, marketText } from './life.ts';
+import { CALENDAR, CONGESTION, PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
 
 const REFRESH_MS = 250;
 /** What a service vehicle's called in its focus heading (sim's ServiceKind). */
@@ -221,6 +221,11 @@ function TownView({
   if (!life) return <p className="sub line">Not running</p>;
   return (
     <div className="sections">
+      {life.calendar && life.calendar.length > 0 && (
+        <Section title="Calendar" open={m.open === CALENDAR} onToggle={() => toggle(CALENDAR)}>
+          <CalendarView life={life} />
+        </Section>
+      )}
       <Section title="Congestion" open={m.open === CONGESTION} onToggle={() => toggle(CONGESTION)}>
         <CongestionView townKey={townKey} ago={m.ago} onAgo={(ago) => change({ ago })} onCongestion={onCongestion} onStreet={onStreet} />
       </Section>
@@ -259,6 +264,29 @@ function TownView({
 }
 
 /** One collapsible section: its heading (a count on it, if any) and, open, what's in it. */
+/** Today and the week ahead: what's on each day, and the market. */
+function CalendarView({ life }: { life: TownLife }) {
+  const days = life.calendar ?? [];
+  const market = marketText(life);
+  return (
+    <div className="calendar">
+      {market && (
+        <p className="sub line">
+          <strong>Market</strong> {market}
+        </p>
+      )}
+      <ol className="list calendar-days">
+        {days.map((d, i) => (
+          <li key={d.day} className={`${d.weekend ? 'weekend' : ''} ${d.holiday ? 'holiday' : ''}`}>
+            <span className="calendar-name">{i === 0 ? `Today, ${d.name}` : d.name}</span>
+            <span className="sub">{d.events.length > 0 ? d.events.join(' · ') : d.weekend ? 'The weekend' : 'An ordinary day'}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function Section({ title, figs, open, onToggle, children }: { title: string; figs?: number; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
     <section className={`sb-section ${open ? 'open' : ''}`}>

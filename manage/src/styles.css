@@ -1087,3 +1087,18 @@ p {
   overflow-y: auto;
   padding-bottom: 16px;
 }
+
+/* The town's calendar (Panel.tsx CalendarView): a day a line, the weekend and holidays marked. */
+.calendar-days li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 0;
+}
+.calendar-days li.weekend .calendar-name,
+.calendar-days li.holiday .calendar-name {
+  color: var(--accent, inherit);
+}
+.calendar-name {
+  font-weight: 600;
+}
