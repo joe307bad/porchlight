@@ -474,20 +474,19 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
   home, a job, a shop, a gate) and is routed over the lanes on free-flow
   travel time (`Life/Router.cs`, not `StreetRoute`). This is the change
   everything else builds on.
-- [ ] **Junction control by road class** (PR #19: ranked by functional
+- [x] **Junction control by road class** (PR #19: ranked by functional
   class, arterial 3, collector 2, local 1; [town-life.md](town-life.md) §2):
   - [x] equal roads crossing (four legs): all-way stop (MUTCD 2B.07 [T50]);
     a T of equal roads, the stem stops (MUTCD 2B.04)
-  - [ ] collector × local: two-way stop with HCM gap acceptance (4.1 s /
-    6.2 s) [T12]. Stop signs on the smaller roads are in (MUTCD 2B.04, A/B
-    Street's `ControlStopSign`), a 500 ms stop then first come first served,
-    but there's no gap acceptance yet.
-  - [ ] arterial × arterial: fixed-time signal, cycle from Webster on the
-    expected peak flows, worked out when the town is made [T10]. Signals
-    where arterials cross (the MUTCD's warrants [T49], with class for
-    volume) are in, two-stage 30 s, changing early for a car waiting with
-    nobody coming the other way (PR #19), but the cycle isn't from Webster
-    yet.
+  - [x] collector × local: two-way stop with HCM gap acceptance (4.1 s /
+    6.2 s) [T12]. Drivers who give way wait for a gap by the HCM's critical
+    gaps for their turn, and take a shorter one the longer they've waited
+    ([town-life.md](town-life.md) §2, gap acceptance).
+  - [x] arterial × arterial: signal with its cycle from Webster [T10]. Not
+    worked out once when the town is made: every quarter hour each signal
+    is retimed from the cars counted through it, never shorter than its
+    slowest turn or widest crossing needs, and it still changes early for a
+    car waiting with nobody coming the other way (`Life/Signals.cs`).
 - [x] **Turns at a comfortable cornering speed:** √(a / curvature) with
   a = 0.32 g (AASHTO side friction at 15 mph [T48]), over a car's length.
   Now 0.38 g, with the limits a tenth over a real town's (see below).
@@ -504,27 +503,32 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
   streets 2.6, about 37 km/h), slower on bends and turns (PR #19). Real
   towns' 50 and 30 km/h looked like crawling at a game's scale, so the
   limits are a fifth over, and cars corner a little brisker (PR #18).
-- [ ] **Congestion-aware routing:** BPR edge costs from the last ~15 minutes
+- [x] **Congestion-aware routing:** BPR edge costs from the last ~15 minutes
   of flow. Re-route a random ~10% of drivers each simulated day, which
   converges towards Wardrop equilibrium cheaply, as MATSim does [T14][T15][T21].
   Routing by the traffic is in (PR #18: each lane's hold-up measured as cars
   leave it, routes costed by it, and held-up drivers taking a quicker way;
-  `Life/Congestion.cs`, [town-life.md](town-life.md)), but not BPR costs or
-  day-to-day re-routing towards equilibrium.
+  `Life/Congestion.cs`, [town-life.md](town-life.md)). Now a lane costs the
+  larger of its measured hold-up and BPR's forecast from the last 15
+  minutes' flow, and drivers keep to lanes they know (×0.8) with a tenth
+  working their way out afresh each day, so routes settle towards Wardrop
+  day on day.
 - [x] **Parking as a real step:** kerb and driveway spots (PR #19). Arriving
   cars take a free spot near the door, or hunt for one (jittered, so hunters
   fan out), then walk to the door [T17][T18]. Car parks are still to come.
 - [ ] **Traffic through the gates:**
   - [x] commuters and through traffic arrive and leave by the gates (PR #19);
   - [ ] the county highways get traffic (`docs/highways.md`).
-- [ ] **Vehicles with jobs:**
+- [x] **Vehicles with jobs:**
   - [x] buses on a timetable that stop and hold up the lane (PR #19: one
     loop a town, every 20 minutes, ridden by the timetable)
   - [x] delivery vans and taxis, more or fewer by the hour as real
     commercial traffic runs, day and night, out of the rushes (PR #19:
     [town-life.md](town-life.md) §9, [T52])
-  - [ ] bin lorries by zone and weekday
-  - [ ] emergency vehicles that make others pull over
+  - [x] bin lorries by zone and weekday: each neighbourhood on its weekday
+    from 7:00, stopping in the lane ([town-life.md](town-life.md) §9)
+  - [x] emergency vehicles that make others pull over: ambulances and a fire
+    engine on random calls, from beyond the gates (no station in town yet)
 
   The models already exist in `Catalog.cs`.
 - [x] **A gridlock check:** `Checks traffic-day` runs a full simulated day
@@ -596,20 +600,24 @@ Most of this is in with the town's life (PR #19, [town-life.md](town-life.md)).
 
 - [x] **Fix walking pace:** 0.22–0.34 tiles/s (2–3 mph), with 5% joggers
   (PR #19).
-- [ ] **Households** for every home zoning makes, seeded from the town:
+- [x] **Households** for every home zoning makes, seeded from the town:
   single, couple, family with 1–3 children, retirees. Use a fixed mix, with
   PopulationSim-style rebalancing only if totals drift [T27][T29]. This
   turns zoning's `residents` into actual people. PR #19 makes the people (1.2
-  working residents a home, by the proletariat robot), but not their
-  households' make-up.
-- [ ] **A job for every worker**, by a doubly-constrained gravity model:
+  working residents a home, by the proletariat robot). Now each building
+  is filled with households from a Census-rounded mix, each member with a
+  role and an age; filling to zoning's figure keeps the totals, so no
+  rebalancing is needed (`Life/Population.cs`).
+- [x] **A job for every worker**, by a doubly-constrained gravity model:
   P(job j | home i) ∝ jobs_j · e^(−β·t_ij), filling each job once [T35].
   - The town's surplus jobs (~0.2 a household) go to commuters from
     neighbouring towns, which puts peaks on the county highways.
   - Some residents work out of town.
 
-  PR #19 fills jobs at random from the slots (commuters in, residents out
-  through the gates), not by gravity yet.
+  Done with NCHRP 716's home-based-work friction, Furness balancing and the
+  gates as zones (15 minutes on to the town beyond), the times scaled to a
+  real town of the same people. Commutes in town come out 3–5% shorter
+  than jobs dealt at random: the friction is shallow.
 - [x] **A daily plan per person (ActivitySim-style)** [T30]. PR #19: work
   (with lunch and shops on the way home), school, errands and visits, about
   3 trips a day. Weekends, shifts and school drop-offs are still to come.
