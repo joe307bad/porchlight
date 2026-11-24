@@ -55,9 +55,16 @@ function applyDelta(cars: Uint8Array, people: Uint8Array, d: Uint8Array): { cars
   for (let k = 0; k < lights; k++) {
     const r = o + 1 + 3 * k;
     assert.ok(d[r] === 0 || d[r] === 1, 'a light\'s green stage is 0 or 1');
-    assert.ok(v.getUint16(r + 1) <= 30_000, 'and it ends within a stage');
+    assert.ok(v.getUint16(r + 1) <= 65_000, 'and it ends within a stage (Webster: up to a minute, a slow crossing a little more)');
   }
   o += 1 + 3 * lights;
+  // Then each light's greens (Signals.cs): u8 n, n × (u8 seconds, u8 seconds). Older workers: none.
+  if (o < d.byteLength) {
+    const n = d[o];
+    assert.equal(n, lights, 'a pair of greens for each light');
+    for (let k = 0; k < n; k++) for (const g of [d[o + 1 + 2 * k], d[o + 2 + 2 * k]]) assert.ok(g >= 12 && g <= 65, `a green of 12–65 s (${g})`);
+    o += 1 + 2 * n;
+  }
   assert.equal(o, d.byteLength, 'the delta ends where it says');
   return { cars: nc, people: np, changed, lights };
 }
@@ -211,7 +218,7 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     const kinds = now.life!.kinds!;
     assert.equal(kinds.cars.length, now.cars.byteLength / RECORD, 'a letter a car record');
     assert.ok(kinds.people.length >= now.people.byteLength / RECORD - 2, 'a letter a person record');
-    assert.match(kinds.cars, /^[-rctvbsp]*$/);
+    assert.match(kinds.cars, /^[-rctvbgesp]*$/);
     assert.match(kinds.people, /^[-wshcx]*$/);
     assert.ok(/[wshc]/.test(kinds.people) || /x/.test(kinds.people), 'some townsfolk of a kind');
     // Who's in the fullest building, and when each next goes out.
@@ -337,12 +344,13 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
     assert.equal(await pool.ask('no-such-town', 'focus-car', 0, 'slot'), null);
 
     // The traffic lights Manage draws: each signal's stage and when it ends, a lamp at each stop line on a stage.
-    const signals = (await pool.ask(key, 'signals', 0)) as { now: number; stageMs: number; lights: { stage: number; ends: number; lamps: number[][] }[] };
+    const signals = (await pool.ask(key, 'signals', 0)) as { now: number; stageMs: number; lights: { stage: number; ends: number; greens: number[]; lamps: number[][] }[] };
     assert.ok(signals && Array.isArray(signals.lights), 'the lights');
     assert.equal(signals.stageMs, 30_000);
     for (const l of signals.lights) {
       assert.ok(l.stage === 0 || l.stage === 1);
-      assert.ok(l.ends > signals.now && l.ends <= signals.now + signals.stageMs, 'its stage ends within a stage from now');
+      assert.ok(l.greens.length === 2 && l.greens.every((g) => g >= 12_000 && g <= 60_000), "each stage's green, as Webster split it");
+      assert.ok(l.ends > signals.now && l.ends <= signals.now + l.greens[l.stage], 'its stage ends within its green from now');
       assert.ok(l.lamps.length >= 3 && l.lamps.every((p) => p.length === 3 && (p[2] === 0 || p[2] === 1)), 'a lamp on each way in');
       assert.ok(new Set(l.lamps.map((p) => p[2])).size === 2, 'some ways go on each stage');
     }

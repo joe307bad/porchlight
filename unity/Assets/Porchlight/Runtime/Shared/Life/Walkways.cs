@@ -37,6 +37,8 @@ namespace Porchlight.Life
         /// <summary>For each path end (path * 2 + end): (other end, cost, link kind: 0 along, 1 link, 2 junction crossing).</summary>
         readonly List<(int to, double cost, byte kind)>[] edges;
         readonly Dictionary<long, (int node, int road)> crossings = new Dictionary<long, (int, int)>();
+        /// <summary>The longest crossing over each road at each junction (tiles), by (node, road): what a light must give walkers time for.</summary>
+        public readonly Dictionary<(int node, int road), double> longestCrossing = new Dictionary<(int, int), double>();
         readonly int[] sibling;
         /// <summary>Each path's points bucketed by 8-tile cell, for finding the nearest quickly.</summary>
         readonly Dictionary<long, List<int>> cells = new Dictionary<long, List<int>>();
@@ -83,6 +85,12 @@ namespace Porchlight.Life
                     bool cross = net.crossings.Contains(key);
                     edges[e].Add((f, d, cross ? (byte)2 : (byte)1));
                     if (cross && !crossings.ContainsKey(key)) crossings[key] = CrossingAt(new Vec2((a.x + b.x) / 2, (a.y + b.y) / 2));
+                    if (cross && crossings[key].node >= 0)
+                    {
+                        var x = crossings[key];
+                        longestCrossing.TryGetValue((x.node, x.road), out double was);
+                        longestCrossing[(x.node, x.road)] = Math.Max(was, d);
+                    }
                 }
             }
         }

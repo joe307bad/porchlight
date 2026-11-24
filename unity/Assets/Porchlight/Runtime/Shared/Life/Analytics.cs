@@ -28,7 +28,7 @@ namespace Porchlight.Life
         public readonly Dictionary<int, Wait> carWaits = new Dictionary<int, Wait>(), walkerWaits = new Dictionary<int, Wait>();
         public readonly List<Problem> problems = new List<Problem>();
         public long problemCount;
-        public long gridlockBroken, gaveUp, rerouted, lightsChanged, letIn, reserved, waitedTooLong, hunts, noSpot, turnedRound, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
+        public long retimed, habits, keptWay, binStops, binSkipped, callsAnswered, pulledOver, sirenWaits, sirenOnRed, gridlockBroken, gaveUp, rerouted, lightsChanged, letIn, reserved, waitedTooLong, noGap, hunts, noSpot, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
         /// <summary>The longest any trip took (ms), and which.</summary>
         public long longestTrip;
 
@@ -180,7 +180,8 @@ namespace Porchlight.Life
             foreach (int node in order)
             {
                 var (stage, ends) = RoadNet.Stage(net.junctions[node], Now);
-                lights.Add(new Dictionary<string, object> { ["node"] = node, ["stage"] = stage, ["ends"] = ends, ["lamps"] = byNode[node] });
+                var j = net.junctions[node];
+                lights.Add(new Dictionary<string, object> { ["node"] = node, ["stage"] = stage, ["ends"] = ends, ["greens"] = new[] { j.green[0], j.green[1] }, ["lamps"] = byNode[node] });
             }
             var answer = new Dictionary<string, object> { ["now"] = Now, ["stageMs"] = RoadNet.STAGE_MS, ["lights"] = lights };
             if (withStops)

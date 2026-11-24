@@ -27,6 +27,8 @@ export const ENTITY_KINDS: { id: string; of: 'car' | 'person'; letter: string; l
   { id: 'car:t', of: 'car', letter: 't', label: 'Through traffic' },
   { id: 'car:v', of: 'car', letter: 'v', label: 'Vans on their rounds' },
   { id: 'car:b', of: 'car', letter: 'b', label: 'Buses' },
+  { id: 'car:g', of: 'car', letter: 'g', label: 'Bin lorries' },
+  { id: 'car:e', of: 'car', letter: 'e', label: 'Ambulances and fire engines' },
   { id: 'car:s', of: 'car', letter: 's', label: 'Boats' },
   { id: 'car:p', of: 'car', letter: 'p', label: 'Parked cars' },
   { id: 'person:w', of: 'person', letter: 'w', label: 'Workers' },
@@ -188,6 +190,8 @@ export interface EntityFocus {
   time: string;
   /** Who they are ("Works, and lives in town"; "A car"). */
   who: string;
+  /** A person's age and household in a line ("34, an adult, in a household of 4 (a family with two children)"). Older servers: none. */
+  household?: string | null;
   /** A person's name (PersonNames: the same as over them in the game); a car's driver's. Older servers: none. */
   name?: string;
   ownerName?: string | null;
@@ -201,6 +205,9 @@ export interface EntityFocus {
   bus?: number;
   /** A van on its rounds: which one (-1: not a van). */
   van?: number;
+  /** A service vehicle's kind (Bins, Ambulance, FireEngine), and whether its siren's going. Older servers: none. */
+  service?: string | null;
+  siren?: boolean;
   state?: string;
   /** What they're drawn as now (a person driving is drawn as their car), and its place in the feed's records. */
   drawn: 'car' | 'person' | 'none';
@@ -281,13 +288,15 @@ export function focusPoint(f: EntityFocus, room: FocusRoom | null | undefined): 
   return { x: room.ox + f.at[0], y: room.oy + f.at[1], live: false };
 }
 
-/** A town's traffic lights (sim's TownLife.Signals): each signal's stage showing green and when it ends, and its lamps. */
+/** A town's traffic lights (sim's TownLife.Signals): each signal's stage showing green and when it ends, its timing, and its lamps. */
 export interface Signals {
   town: string;
   /** The town's clock when asked (ms). */
   now: number;
+  /** A stage's green before the signals were retimed by the traffic (an older server's every stage). */
   stageMs: number;
-  lights: { node: number; stage: number; ends: number; lamps: [number, number, number][] }[];
+  /** `greens`: each stage's green (ms, amber included), Webster's split of the traffic measured (absent from an older server). */
+  lights: { node: number; stage: number; ends: number; greens?: [number, number]; lamps: [number, number, number][] }[];
   /** Its stop signs, when asked for (&stops=1): x, y, 1 if an all-way stop. */
   stops?: [number, number, number][];
 }
@@ -297,18 +306,18 @@ export const AMBER_MS = 3_000;
 
 /**
  * A lamp's colour at town time `now`: green if its stage is the one showing (amber in its last seconds), red if not.
- * Past `ends` the stages take turns, a stage each, as the server's lights do (until it says one changed early).
+ * Before and past the stage it was asked in, the stages take turns on the light's own greens (each `stageMs` from an
+ * older server), as the server's lights do until it says one changed early (StreetFurniture.Showing).
  */
-export function lampColor(light: { stage: number; ends: number }, lampStage: number, now: number, stageMs: number): 'green' | 'amber' | 'red' {
-  let stage = light.stage;
-  let ends = light.ends;
-  if (now >= ends) {
-    const k = Math.floor((now - ends) / stageMs) + 1;
-    stage = (stage + k) % 2;
-    ends += k * stageMs;
-  }
-  if (lampStage !== stage) return 'red';
-  return ends - now <= AMBER_MS ? 'amber' : 'green';
+export function lampColor(light: { stage: number; ends: number; greens?: [number, number] }, lampStage: number, now: number, stageMs: number): 'green' | 'amber' | 'red' {
+  const [g0, g1] = light.greens ?? [stageMs, stageMs];
+  const period = Math.max(1, g0 + g1);
+  const anchor = light.stage === 0 ? g0 : period;
+  const into = (((anchor - (light.ends - now)) % period) + period) % period;
+  const showing = into < g0 ? 0 : 1;
+  const left = (showing === 0 ? g0 : period) - into;
+  if (lampStage !== showing) return 'red';
+  return left <= AMBER_MS ? 'amber' : 'green';
 }
 
 /** GET /mp/sim/congestion (sim's SimTown.Congestion): the last day's hold-ups an hour at a time, and the streets that held cars up most in the hour asked about. */

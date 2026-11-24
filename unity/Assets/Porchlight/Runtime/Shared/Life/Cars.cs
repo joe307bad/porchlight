@@ -30,6 +30,10 @@ namespace Porchlight.Life
         public const double FOLLOWING = 0.25;
         /// <summary>How far short of a player standing in the lane a car stops (tiles).</summary>
         const double STAND_OFF = 1.2;
+        /// <summary>Braking for someone in the road, tiles/s² (about 0.6 g: firm, not a skid).</summary>
+        const double FIRM = 1.5;
+        /// <summary>A car stops at least this short of someone in its way (tiles), however hard it must brake.</summary>
+        const double CLOSEST = 0.3;
         /// <summary>The stop at a stop sign.</summary>
         const long STOP_MS = 500;
         /// <summary>Pulling into and out of a spot: at the kerb, and in a driveway.</summary>
@@ -40,8 +44,6 @@ namespace Porchlight.Life
         const long LOOK_AGAIN_MS = 300;
         /// <summary>Waited this long at a junction, a car goes anyway (a last resort: the knot check should have freed it).</summary>
         const long GIVE_WAY_MS = 3 * TownClock.MINUTE;
-        /// <summary>Held up by a player this long, a car turns round.</summary>
-        const long PATIENCE_MS = 15_000;
         /// <summary>Not let out of its spot this many times (each a few seconds apart), a trip's given up.</summary>
         const int MOST_TRIES = 40;
 
@@ -122,17 +124,20 @@ namespace Porchlight.Life
             double p = Lerp(c);
             var q = queues[c.seg];
             int i = q.cars.IndexOf(c.id);
-            if (i > 0)
+            // A siren goes by those pulled over for it.
+            int k = i - 1;
+            if (c.siren) while (k >= 0 && cars[q.cars[k]].pulledOver) k--;
+            if (i > 0 && k >= 0)
             {
-                var lead = cars[q.cars[i - 1]];
+                var lead = cars[q.cars[k]];
                 p = Math.Min(p, Front(lead) - lead.length - FOLLOWING);
             }
-            else if (i == 0 && q.laggy >= 0 && q.laggy != c.id)
+            else if (i >= 0 && q.laggy >= 0 && q.laggy != c.id)
             {
                 var lag = cars[q.laggy];
                 if (lag.seg >= 0) p = Math.Min(p, q.length + Front(lag) - lag.length - FOLLOWING);
             }
-            if (q.blockFirst == c.id && !double.IsNaN(q.blockAt)) p = Math.Min(p, q.blockAt - STAND_OFF);
+            if (q.blockFirst == c.id && !double.IsNaN(q.blockStop)) p = Math.Min(p, q.blockStop);
             if (q.held == c.id) p = Math.Min(p, q.heldAt);
             p = Math.Max(p, Math.Min(c.s0, -c.length));
             frontMemo[c.id] = p;
@@ -150,15 +155,26 @@ namespace Porchlight.Life
             c.t0 = Now;
             // No faster than the turn it's still coming out of (its back's there): it swings round, not snaps.
             double speed = Math.Max(0.05, c.laggy >= 0 ? Math.Min(SegSpeed(c.seg), SegSpeed(c.laggy)) : SegSpeed(c.seg));
+            if (c.pulledOver) speed = Math.Min(speed, PULL_SPEED);
             // The car ahead stopped, or stopping: it brakes to stop behind it, rather than running up to its back.
             var q = c.seg >= 0 ? queues[c.seg] : null;
             int i = q != null ? q.cars.IndexOf(c.id) : -1;
             c.stopAt = double.NaN;
-            if (i > 0)
+            int ahead = i - 1;
+            if (c.siren) while (ahead >= 0 && cars[q.cars[ahead]].pulledOver) ahead--;
+            if (i > 0 && ahead >= 0)
             {
-                var lead = cars[q.cars[i - 1]];
+                var lead = cars[q.cars[ahead]];
                 double at = StopsAt(lead, c.seg);
                 if (!double.IsNaN(at) && at - lead.length - FOLLOWING < c.s1 - 1e-6) c.stopAt = Math.Max(from, at - lead.length - FOLLOWING);
+            }
+            // A player in the way: it brakes to stop short of them (SetObstacles has where it can), and doesn't
+            // speed up meanwhile; stopped, it stays stopped till they've gone.
+            if (q != null && q.blockFirst == c.id && !double.IsNaN(q.blockStop) && q.blockStop < c.s1 - 1e-6)
+            {
+                c.stopAt = Math.Max(from, double.IsNaN(c.stopAt) ? q.blockStop : Math.Min(c.stopAt, q.blockStop));
+                speed = Math.Min(speed, va);
+                if (speed < 0.05) c.stopAt = from;
             }
             if (double.IsNaN(c.stopAt)) Drive(c, c.s1 - from, va, speed, Math.Min(speed, ExitSpeed(c)));
             else Drive(c, c.stopAt - from, va, speed, 0);
@@ -364,7 +380,8 @@ namespace Porchlight.Life
                     FinishParking(c);
                     return;
                 case CarState.AtStop:
-                    LeaveStop(c);
+                    if (c.service >= 0) ServiceLeaves(c);
+                    else LeaveStop(c);
                     return;
                 default:
                     Arrive(c);
@@ -381,15 +398,10 @@ namespace Porchlight.Life
             {
                 c.state = CarState.Queued;
                 var q = queues[c.seg];
-                if (q.blockFirst == c.id)
-                {
-                    if (c.heldSince < 0) c.heldSince = Now;
-                    if (Now - c.heldSince >= PATIENCE_MS && TurnRound(c)) return;
-                    Schedule(K_CAR, c.id, Now + 2000);
-                }
+                // Held by a player: it waits for them (looking again now and then), and does nothing else.
+                if (q.blockFirst == c.id) Schedule(K_CAR, c.id, Now + 2000);
                 return;
             }
-            c.heldSince = -1;
             bool last = c.step >= c.route.Count - 1;
             if (last)
             {
@@ -445,6 +457,7 @@ namespace Porchlight.Life
                 c.laneSince = Now;
                 c.laneFrom = 0;
                 stats.Flow(net.lanes[next].road, Now);
+                FlowOnto(next);
                 if (last) OnLastLane(c);
             }
         }
@@ -503,6 +516,14 @@ namespace Porchlight.Life
             if (verdict == Verdict.Go && change) ChangeLight(j, m.stage);
             if (m.stops && !c.stopped && verdict != Verdict.StopFirst) c.stopped = true;
             if (by != null) blockedBy[c.id] = by;
+            if (verdict == Verdict.NoGap) stats.noGap++;
+            if (verdict == Verdict.Siren) stats.sirenWaits++;
+            if (verdict == Verdict.Go && j.control == Control.Signal && RoadNet.Stage(j, Now).stage != m.stage)
+            {
+                // Only a siren, or a driver clearing the way for one, goes on red: noted, for the checks.
+                c.wentOnRed = Now;
+                if (c.siren) stats.sirenOnRed++;
+            }
             if (verdict != Verdict.Go)
             {
                 Schedule(K_CAR, c.id, again);
@@ -520,6 +541,7 @@ namespace Porchlight.Life
             if (going == null) underway[j.node] = going = new List<(int, int)>();
             going.Add((c.id, m.local));
             Commit(m.to, c);
+            Counted(m);
             stats.Delay(j.node, Now - c.arrived, car: true);
             Advance(c, Lanes + mid);
         }
@@ -534,6 +556,10 @@ namespace Porchlight.Life
             Red,
             /// <summary>Green, but not for long enough to get round before it changes.</summary>
             TooLateOnGreen,
+            /// <summary>It gives way here, and what it gives way to is coming too soon to turn in front of.</summary>
+            NoGap,
+            /// <summary>An emergency vehicle's coming to the junction with its siren going: it waits for it.</summary>
+            Siren,
             /// <summary>A player's standing on the turn.</summary>
             PlayerOnTurn,
             /// <summary>Townsfolk are crossing the road it's turning into or out of.</summary>
@@ -557,7 +583,12 @@ namespace Porchlight.Life
             by = null;
             knot = false;
             change = false;
-            if (m.stops)
+            // On a call with its siren going, or clearing the way for one behind it: no stopping, no waiting for a
+            // green or a gap (only for what's actually in the way).
+            bool urgent = c.siren || ClearingFor(c);
+            if (urgent) explain?.Add(new Why("Is its siren going, or one behind it?", c.siren ? "Yes: it goes on red and through stop signs, carefully" : "One's behind it: it goes, to clear the way", true,
+                "Drivers make way for an emergency vehicle; it treats a red light and a stop sign as a give-way."));
+            if (m.stops && !urgent)
             {
                 bool served = c.stopped || Now >= c.arrived + STOP_MS;
                 explain?.Add(new Why("Must it stop first?", served ? "Yes, and it has" : $"Yes: stopping until {TownClock.FormatSeconds(c.arrived + STOP_MS)}", served,
@@ -568,25 +599,25 @@ namespace Porchlight.Life
                     return Verdict.StopFirst;
                 }
             }
-            if (j.control == Control.Signal)
+            if (j.control == Control.Signal && !urgent)
             {
                 var (stage, ends) = RoadNet.Stage(j, Now);
                 long through = (long)Math.Ceiling((m.length + c.length + FOLLOWING) / m.speed * 1000);
                 bool green = stage == m.stage;
                 explain?.Add(new Why("Is its light green?", green ? $"Yes, until {TownClock.FormatSeconds(ends)}" : $"No: green at {TownClock.FormatSeconds(ends)}", green,
-                    $"Two stages of {RoadNet.STAGE_MS / 1000} s; its turn goes in stage {m.stage + 1}, now it's stage {stage + 1}."));
+                    $"Two stages, {j.green[0] / 1000.0:0} s and {j.green[1] / 1000.0:0} s green (Webster's split of the traffic measured); its turn goes in stage {m.stage + 1}, now it's stage {stage + 1}."));
                 if (!green && options.skipEmpty)
                 {
                     // Nobody coming the way that's green, and it's been green a while: the light changes for it.
-                    bool long_ = Now - (ends - RoadNet.STAGE_MS) >= MIN_GREEN_MS;
+                    bool long_ = Now - (ends - j.green[stage]) >= MIN_GREEN_MS;
                     bool empty = long_ && NobodyComing(j, stage);
-                    explain?.Add(new Why("Is anyone coming the way that's green?", !long_ ? $"Green only since {TownClock.FormatSeconds(ends - RoadNet.STAGE_MS)}: it stays at least {MIN_GREEN_MS / 1000} s" : empty ? "No: its light changes for it now" : "Yes", empty,
+                    explain?.Add(new Why("Is anyone coming the way that's green?", !long_ ? $"Green only since {TownClock.FormatSeconds(ends - j.green[stage])}: it stays at least {MIN_GREEN_MS / 1000} s" : empty ? "No: its light changes for it now" : "Yes", empty,
                         "A signal with nobody coming on its green changes for a car waiting the other way."));
                     if (empty)
                     {
                         green = true;
                         change = true;
-                        ends = Now + RoadNet.STAGE_MS;
+                        ends = Now + j.green[m.stage];
                     }
                 }
                 if (!green)
@@ -599,8 +630,31 @@ namespace Porchlight.Life
                     "Never start what can't be finished on this green."));
                 if (!time)
                 {
-                    again = ends + RoadNet.STAGE_MS + 1;
+                    again = ends + j.green[1 - m.stage] + 1;
                     return Verdict.TooLateOnGreen;
+                }
+            }
+            if (!urgent && sirens.Count > 0)
+            {
+                int e = SirenComing(j, c);
+                explain?.Add(new Why("Is a siren coming?", e >= 0 ? $"Yes: car {e}; it waits for it to go by" : "No", e < 0));
+                if (e >= 0)
+                {
+                    again = Now + 1000;
+                    return Verdict.Siren;
+                }
+            }
+            if (GivesWayAt(j) && !urgent)
+            {
+                double tc = CriticalGap(c, m, j);
+                long clear = GapClear(m, j, tc, out int coming, out double eta);
+                bool gap = clear < 0;
+                explain?.Add(new Why("Is there a gap in the traffic it gives way to?", gap ? $"Yes: nothing it gives way to within {tc:0.0} s" : $"No: car {coming} is {eta:0.0} s away, under its {tc:0.0} s", gap,
+                    "Gap acceptance (HCM): a driver turning across or into traffic that has the right of way waits for a gap at least the critical gap long, and takes a shorter one the longer they've waited."));
+                if (!gap)
+                {
+                    again = clear;
+                    return Verdict.NoGap;
                 }
             }
             bool player = !double.IsNaN(queues[Lanes + m.id].blockAt);
@@ -663,6 +717,96 @@ namespace Porchlight.Life
             return top;
         }
 
+        /// <summary>
+        /// The critical gaps a driver needs (s): HCM's base critical headways for a two-way stop on a two-lane major
+        /// road (HCM 2010 Exhibit 19-10, kept in the 6th edition): a left turn off the major road across what's coming
+        /// the other way, and a right turn, straight across, or a left turn out of the minor road.
+        /// </summary>
+        const double GAP_MAJOR_LEFT = 4.1, GAP_MINOR_RIGHT = 6.2, GAP_MINOR_THROUGH = 6.5, GAP_MINOR_LEFT = 7.1;
+        /// <summary>
+        /// Impatience: the longer a driver's waited, the shorter a gap they'll take (Mahmassani &amp; Sheffi 1981,
+        /// "Using gap sequences to estimate gap acceptance functions": the critical gap falls with the wait). Down by
+        /// GAP_CUT over IMPATIENT_S of waiting, and never under GAP_FLOOR.
+        /// </summary>
+        const double GAP_CUT = 2, IMPATIENT_S = 60, GAP_FLOOR = 3;
+
+        /// <summary>Does anyone give way to anyone at `j`: stop signs on the smaller roads, and lefts at a signal across what's coming.</summary>
+        static bool GivesWayAt(Junction j) => j.control == Control.Stop || j.control == Control.Signal;
+
+        /// <summary>
+        /// Does turn `a` give way to turn `b` at `j` (they cross or merge, and both may go now)? At a two-way stop, a
+        /// turn that stops gives way to one that doesn't; between two that have the road (both off the major road, or
+        /// both on the same green at a signal), a left turn (or U-turn) gives way to what's coming straight or right.
+        /// </summary>
+        bool GivesWay(Movement a, Movement b, Junction j)
+        {
+            if (a.id == b.id || a.from == b.from || !j.conflicts[a.local][b.local]) return false;
+            if (j.control == Control.Stop)
+            {
+                if (a.stops) return !b.stops;
+                if (b.stops) return false;
+            }
+            else if (j.control != Control.Signal || b.stage != a.stage) return false;
+            bool aLeft = a.turn == Turn.Left || a.turn == Turn.UTurn;
+            bool bLeft = b.turn == Turn.Left || b.turn == Turn.UTurn;
+            return aLeft && !bLeft;
+        }
+
+        /// <summary>The gap car `c` needs to take turn `m` (s): HCM's for the turn, shorter the longer it's waited.</summary>
+        double CriticalGap(Car c, Movement m, Junction j)
+        {
+            double tc = !m.stops ? GAP_MAJOR_LEFT : m.turn == Turn.Right ? GAP_MINOR_RIGHT : m.turn == Turn.Straight ? GAP_MINOR_THROUGH : GAP_MINOR_LEFT;
+            double waited = c.arrived >= 0 ? Math.Max(0, Now - c.arrived) / 1000.0 : 0;
+            return Math.Max(GAP_FLOOR, tc - GAP_CUT * Math.Min(1, waited / IMPATIENT_S));
+        }
+
+        /// <summary>
+        /// Is there a gap of `tc` seconds in the traffic turn `m` gives way to at `j`? -1 if so; if not, when the
+        /// cars too near to turn in front of will be through (when to ask again), with the nearest (`coming`, `eta`
+        /// seconds off). A car coming is one moving up its lane to take a turn `m` gives way to: one stood at the line
+        /// is the junction's to judge (it holds the lane behind it too), and one that'll meet a red is no gap's worry.
+        /// </summary>
+        long GapClear(Movement m, Junction j, double tc, out int coming, out double eta)
+        {
+            coming = -1;
+            eta = 0;
+            long until = -1;
+            long ends = j.control == Control.Signal ? RoadNet.Stage(j, Now).endsAt : long.MaxValue;
+            foreach (int id in j.movements)
+            {
+                var b = net.movements[id];
+                if (!GivesWay(m, b, j)) continue;
+                // Each lane once: the first of its turns that `m` gives way to.
+                bool seen = false;
+                foreach (int other in j.movements)
+                {
+                    if (other == id) break;
+                    var o = net.movements[other];
+                    if (o.from == b.from && GivesWay(m, o, j)) { seen = true; break; }
+                }
+                if (seen) continue;
+                var lane = net.lanes[b.from];
+                foreach (int fid in queues[b.from].cars)
+                {
+                    var f = cars[fid];
+                    if (f.state != CarState.Crossing) break;
+                    double t = Math.Max(0, lane.Span - Front(f)) / Math.Max(0.3, PlanSpeed(f, Now));
+                    if (t > tc || Now + t * 1000 >= ends) break;
+                    if (f.route == null || f.step + 1 >= f.route.Count || f.route[f.step + 1] < Lanes) continue;
+                    var fm = net.movements[f.route[f.step + 1] - Lanes];
+                    if (fm.node != j.node || !GivesWay(m, fm, j)) continue;
+                    long through = Now + (long)Math.Ceiling((t + (fm.length + f.length) / Math.Max(0.3, fm.speed)) * 1000);
+                    until = Math.Max(until, through);
+                    if (coming < 0 || t < eta)
+                    {
+                        coming = fid;
+                        eta = t;
+                    }
+                }
+            }
+            return until;
+        }
+
         /// <summary>A light stays green at least this long before it changes for someone waiting the other way.</summary>
         const long MIN_GREEN_MS = 8_000;
         /// <summary>A car this near the line (seconds at its lane's limit) is coming.</summary>
@@ -687,12 +831,11 @@ namespace Porchlight.Life
             return true;
         }
 
-        /// <summary>Junction `j`'s light changes now to `stage`, green for a whole stage; those waiting there ask again.</summary>
+        /// <summary>Junction `j`'s light changes now to `stage`, green for the whole of its green; those waiting there ask again.</summary>
         void ChangeLight(Junction j, int stage)
         {
-            // Stage(j, t) = ((t + offset) / STAGE) mod 2: from now, `stage`, a stage's length.
-            long period = 2 * RoadNet.STAGE_MS;
-            j.offset = ((stage * RoadNet.STAGE_MS - Now) % period + period) % period;
+            // From now, `stage`, its whole green.
+            j.offset = RoadNet.OffsetFor(j, stage, j.green[stage], Now);
             stats.lightsChanged++;
             Wake(j.node);
         }
@@ -949,7 +1092,9 @@ namespace Porchlight.Life
                 }
             }
             if (targets.Count == 0) return false;
-            var route = router.Route(lane, d, targets, out int k, out double seconds);
+            // A driver who's made this trip before keeps to the way they know, unless another's clearly quicker.
+            var driver = c.owner >= 0 && c.bus < 0 && c.van < 0 ? people[c.owner] : null;
+            var route = HabitualRoute(driver, from, dest, lane, d, targets, out int k, out double seconds);
             if (route == null) return false;
             c.route = route;
             c.routeS = seconds;
@@ -1073,7 +1218,7 @@ namespace Porchlight.Life
         /// <summary>On the last lane of its way: find a spot ahead to stop for, near the door, or hunt for one.</summary>
         void OnLastLane(Car c)
         {
-            if (c.bus >= 0 || c.van >= 0 || c.dest.border || options.infiniteParking || c.target >= 0) return;
+            if (c.bus >= 0 || c.van >= 0 || c.service >= 0 || c.dest.border || options.infiniteParking || c.target >= 0) return;
             if (!net.access.TryGetValue(c.dest.id, out var a)) return;
             var lane = net.lanes[c.seg];
             double door = net.DoneFor(lane, a) - lane.start;
@@ -1183,6 +1328,11 @@ namespace Porchlight.Life
             if (c.bus >= 0)
             {
                 AtStop(c);
+                return;
+            }
+            if (c.service >= 0)
+            {
+                ServiceReached(c);
                 return;
             }
             if (c.van >= 0)
@@ -1295,6 +1445,7 @@ namespace Porchlight.Life
                 int first = q.blockFirst;
                 q.blockAt = double.NaN;
                 q.blockFirst = -1;
+                q.blockStop = double.NaN;
                 version++;
                 if (first >= 0) Refresh(cars[first]);
                 // A turn clear again: those waiting to take it may.
@@ -1304,26 +1455,40 @@ namespace Porchlight.Life
             foreach (var kv in want)
             {
                 var q = queues[kv.Key];
+                // The first car they're not behind: the one they're in front of, or beside (it stays where it is).
+                // Just behind a car's back, they're in front of the next one: that one stops for them.
                 int first = -1;
                 foreach (int id in q.cars)
                 {
-                    if (Front(cars[id]) <= kv.Value)
+                    if (Front(cars[id]) - cars[id].length <= kv.Value)
                     {
                         first = id;
                         break;
                     }
                 }
                 int was = q.blockFirst;
-                double wasAt = q.blockAt;
+                double wasStop = q.blockStop;
+                // Where it stops: STAND_OFF short of them, or as soon as it can brake firmly if that's further, but
+                // never nearer than CLOSEST (stepped out right in front of it, it brakes as hard as it must). Never
+                // behind where it is: it only ever slows down for them, it doesn't jump back.
+                double stop = double.NaN;
+                if (first >= 0)
+                {
+                    var f = cars[first];
+                    double front = Front(f), v = Math.Max(0, PlanSpeed(f, Now));
+                    stop = Math.Max(front, Math.Max(kv.Value - STAND_OFF, Math.Min(front + v * v / (2 * FIRM), kv.Value - CLOSEST)));
+                }
                 q.blockAt = kv.Value;
                 q.blockFirst = first;
+                q.blockStop = stop;
                 blocked.Add(kv.Key);
-                if (was != first || !(Math.Abs(wasAt - kv.Value) < 1e-3))
+                // Plans again when it changes: at once if they're nearer (it mustn't carry on speeding up), and if
+                // they've moved on further by more than a little.
+                if (was != first || double.IsNaN(wasStop) != double.IsNaN(stop) || stop < wasStop - 1e-4 || stop > wasStop + 0.02)
                 {
                     version++;
                     if (was >= 0 && was != first) Refresh(cars[was]);
-                    // Moved on further: the car behind may go on a little.
-                    if (first >= 0 && (double.IsNaN(wasAt) || kv.Value > wasAt)) Refresh(cars[first]);
+                    if (first >= 0) Refresh(cars[first]);
                 }
             }
         }
@@ -1356,56 +1521,5 @@ namespace Porchlight.Life
             return along;
         }
 
-        /// <summary>Held up too long by a player: round, back the other way, and a new way from there.</summary>
-        bool TurnRound(Car c)
-        {
-            if (c.seg >= Lanes || c.bus >= 0) return false;
-            var lane = net.lanes[c.seg];
-            var back = net.Reverse(lane);
-            double p = Front(c);
-            double d = Math.Max(0, Math.Min(back.Span, lane.Span - p + c.length));
-            var dest = c.dest;
-            int target = c.target;
-            var saved = (c.route, c.step, c.goal);
-            RemoveFromRoad(c);
-            if (target >= 0 && spotHolder[target] == c.id) spotHolder[target] = -1;
-            c.target = -1;
-            c.spot = -1;
-            c.parkedBy = -1;
-            c.startLane = back.id;
-            c.startD = d;
-            if (!PutOnRoad(c, back.id, d))
-            {
-                // No gap there either: back where it was, still waiting.
-                PutOnRoad(c, lane.id, Math.Max(0, p));
-                (c.route, c.step, c.goal) = saved;
-                c.state = CarState.Queued;
-                c.heldSince = Now;
-                Schedule(K_CAR, c.id, Now + 2000);
-                return true;
-            }
-            stats.turnedRound++;
-            var targets = new List<(int, double)>();
-            if (dest.border) targets.Add((net.borders[dest.id].exit, net.lanes[net.borders[dest.id].exit].Span));
-            else if (net.access.TryGetValue(dest.id, out var a))
-                foreach (int l in net.LanesFor(a)) targets.Add((l, Math.Max(0, Math.Min(net.lanes[l].Span, net.DoneFor(net.lanes[l], a) - net.lanes[l].start))));
-            int k = -1;
-            var route = targets.Count > 0 ? router.Route(back.id, d, targets, out k, out _) : null;
-            if (route == null)
-            {
-                RemoveFromRoad(c);
-                if (c.owner >= 0) Fail(people[c.owner], "turned round with nowhere to go");
-                if (c.van >= 0) RemoveVan(c);
-                return true;
-            }
-            c.route = route;
-            c.step = 0;
-            c.goal = targets[k].Item2;
-            c.heldSince = -1;
-            c.state = CarState.Crossing;
-            SetInterval(c, d, route.Count == 1 ? c.goal : SegLength(c.seg));
-            if (route.Count == 1) OnLastLane(c);
-            return true;
-        }
     }
 }

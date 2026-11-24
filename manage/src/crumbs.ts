@@ -19,6 +19,7 @@ export const TABS: { id: string; label: string; kinds: string[] }[] = [
   { id: 'cars', label: 'Cars', kinds: ['car:r', 'car:c', 'car:t'] },
   { id: 'vans', label: 'Vans', kinds: ['car:v'] },
   { id: 'buses', label: 'Buses', kinds: ['car:b'] },
+  { id: 'services', label: 'Services', kinds: ['car:g', 'car:e'] },
   { id: 'people', label: 'People', kinds: ['person:w', 'person:s', 'person:h', 'person:c', 'person:x'] },
   { id: 'parked', label: 'Parked', kinds: ['car:p'] },
   { id: 'boats', label: 'Boats', kinds: ['car:s'] },

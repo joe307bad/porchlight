@@ -61,8 +61,8 @@ static class TrafficDay
         return new TownLife(model, layout, zoning, options);
     }
 
-    /// <summary>The life's options, with any named in LIFE_OFF (comma-separated: liveRoutes, reserveSpots, letIn, skipEmpty, nearErrands, vans) off: to see what each does.</summary>
-    static LifeOptions Options()
+    /// <summary>The life's options, with any named in LIFE_OFF (comma-separated: liveRoutes, habits, reserveSpots, letIn, skipEmpty, nearErrands, vans, services) off: to see what each does.</summary>
+    public static LifeOptions Options()
     {
         var o = new LifeOptions();
         foreach (var name in (Environment.GetEnvironmentVariable("LIFE_OFF") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries))
@@ -141,7 +141,7 @@ static class TrafficDay
                  $"  streets by day: {100 * busySum / Math.Max(1, busyN):0}% of {blocks} blocks with a car on them (at the quietest {100 * busyLow:0}%)\n" +
                  $"  peak {peakCars} cars on the road at {peakAt}, {peakOut} out; drawn at most {peakDrawnCars}/{life.carSlots.Length} cars, {peakDrawnPeople}/{life.personSlots.Length} people\n" +
                  $"  {Turns(life)}\n" +
-                 $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, gave up {s.gaveUp}, rerouted {s.rerouted}, lights changed {s.lightsChanged}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
+                 $"  junction wait {life.stats.MeanCarWait() / 1000:0.0} s mean; gridlock broken {s.gridlockBroken}, gave up {s.gaveUp}, rerouted {s.rerouted}, lights changed {s.lightsChanged}, retimed {s.retimed}, gaps refused {s.noGap}, bin stops {s.binStops}, calls {s.callsAnswered}, pulled over {s.pulledOver}, hunts {s.hunts}, no spot {s.noSpot}, main-road crossings {s.mainCrossings}, problems {s.problemCount}; kerb spots {taken}/{total} at 03:00; longest trip {s.longestTrip / 60000} min";
         return errs;
     }
 
@@ -181,6 +181,8 @@ static class TrafficDay
         foreach (var (lead, follow) in life.Pairs())
         {
             double gap = life.Front(lead) - lead.length - life.Front(follow);
+            // A siren going by a driver pulled over for it: alongside, not behind.
+            if ((follow.siren && lead.pulledOver) || (lead.siren && follow.pulledOver)) continue;
             if (gap < TownLife.FOLLOWING - 1e-6)
                 errs.Add($"{TownClock.Format(t)}: car {follow.id} {gap:0.000} tiles behind car {lead.id} on segment {lead.seg}{(lead.seg >= life.net.lanes.Count ? " (turn)" : "")}: " +
                          $"lead {lead.state} front {life.Front(lead):0.00} len {lead.length:0.00} [{lead.s0:0.00}->{lead.s1:0.00}] laggy {lead.laggy}; follow {follow.state} front {life.Front(follow):0.00} [{follow.s0:0.00}->{follow.s1:0.00}] laggy {follow.laggy} step {follow.step}");

@@ -63,8 +63,6 @@ namespace Porchlight.Life
         /// <summary>When it last got to the front of a junction and began waiting, and served its stop sign there.</summary>
         public long arrived = -1;
         public bool stopped;
-        /// <summary>Since when a player has stood in its way.</summary>
-        public long heldSince = -1;
         /// <summary>When it came onto the lane it's on, and how far along (for the lane's measured hold-up).</summary>
         public long laneSince;
         public double laneFrom;
@@ -78,6 +76,16 @@ namespace Porchlight.Life
         /// <summary>A van on its rounds: which one (-1: not a van), and when it set off for the call it's making.</summary>
         public int van = -1;
         public long callFrom = -1;
+        /// <summary>A service vehicle (TownLife.services: a bin lorry, an ambulance, a fire engine), or -1.</summary>
+        public int service = -1;
+        /// <summary>Its siren's going (an emergency vehicle on its way to a call): it goes on red, and drivers make way.</summary>
+        public bool siren;
+        /// <summary>Pulled over for a siren: creeping along by the kerb till it's past.</summary>
+        public bool pulledOver;
+        /// <summary>When it last pulled over or pulled out again (drawn easing towards the kerb or back over PULL_MS).</summary>
+        public long pullAt = long.MinValue / 2;
+        /// <summary>When it last went on red (for a siren, or clearing the way for one), or -1.</summary>
+        public long wentOnRed = -1;
         /// <summary>A bus: which one (-1: not a bus), and the stop it's at or last left.</summary>
         public int bus = -1;
         public int busStop;
@@ -114,6 +122,8 @@ namespace Porchlight.Life
         /// <summary>Lanes: a player standing in it, how far along, and the first car behind them.</summary>
         public double blockAt = double.NaN;
         public int blockFirst = -1;
+        /// <summary>Lanes: where that first car's front stops for them: short of them if it can brake to it, never behind where it is.</summary>
+        public double blockStop = double.NaN;
         /// <summary>Lanes: a car being let in from the kerb (-1: none), the car held back for it, and how far along that one stops.</summary>
         public int letting = -1;
         public int held = -1;
@@ -214,6 +224,10 @@ namespace Porchlight.Life
         public int id;
         public PersonKind kind;
         public Place home, work;
+        /// <summary>Their household (TownLife.households; -1: none, from beyond the gates), who they are in it, and how old.</summary>
+        public int household = -1;
+        public Role role;
+        public int age;
         public bool hasCar;
         /// <summary>Their car (Car id), -1 if none.</summary>
         public int car = -1;
@@ -221,6 +235,8 @@ namespace Porchlight.Life
         /// <summary>Where they are when not on a trip.</summary>
         public Place at;
         public readonly List<Planned> plan = new List<Planned>();
+        /// <summary>The lanes they took last time on each trip they drive, by where from and where to (Congestion.HabitualRoute).</summary>
+        public Dictionary<long, HashSet<int>> habits;
         public int next;
         /// <summary>The day `plan` is for (TownClock.DayOf).</summary>
         public long day;

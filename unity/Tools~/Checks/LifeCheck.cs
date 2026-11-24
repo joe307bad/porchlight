@@ -59,6 +59,7 @@ static class LifeCheck
     {
         yield return ("a car stops for a player standing in its way", StopsForPlayer);
         yield return ("nobody's run over: a player stepping out in front of any car, anywhere", NobodyRunOver);
+        yield return ("a player walking up to a car only slows it: it never backs up, lurches or sets off", WalkUpToCar);
         yield return ("Manage's focus: every person and car out explained, its queue in order, its way drawn from where it is", Focus);
         yield return ("Manage's focus only looks: a morning watched closely comes out the same as one not", FocusOnlyLooks);
         yield return ("turns are named the driver's way: right turns are the tight ones", TurnNames);
@@ -66,7 +67,7 @@ static class LifeCheck
         yield return ("Manage's town table: everyone counted once, by who they are and where they are now", PopulationTable);
         yield return ("a parked car stays where it's parked: its driver gets out and walks off from it, and walks back up to it", ParkedStays);
         yield return ("Manage's congestion slider: each hour's hold-ups, and its worst streets worst first", CongestionByHour);
-        yield return ("the morning rush travels smart: routes by the traffic, spots held, drivers let in, lights that change for a car", TravelsSmart);
+        yield return ("the morning rush travels smart: routes by the traffic, spots held, drivers let in, lights that change for a car, gaps waited for", TravelsSmart);
         yield return ("no car drives through a player standing in a junction", JunctionPlayer);
         yield return ("a day: no car starts a turn on red, no two cars share a spot, buses dwell, everyone's somewhere, home by night", Day);
         yield return ("with parking everywhere, nobody hunts for a spot", InfiniteParking);
@@ -239,9 +240,14 @@ static class LifeCheck
                     var j = life.net.junctions[m.node];
                     if (j.control == Control.Signal && !m.uturn)
                     {
-                        // The moment it started: its interval's start, if that's still the turn's first.
+                        // The moment it started: its interval's start, if that's still the turn's first. (A retiming
+                        // since, on the quarter hour, has the light's timing as it is now, not as it was then.)
                         long began = c.t0;
-                        if (life.Front(c) < m.length && RoadNet.Stage(j, began).stage != m.stage)
+                        long quarter = (long)Math.Floor(t / (double)TownLife.RETIME_MS) * TownLife.RETIME_MS;
+                        bool retimed = began < quarter && quarter <= t;
+                        // A siren goes on red, and so does a driver clearing the way for one (Services.cs).
+                        bool forSiren = c.wentOnRed >= began - 1000;
+                        if (!retimed && !forSiren && life.Front(c) < m.length && RoadNet.Stage(j, began).stage != m.stage)
                             return $"car {c.id} started turn {m.id} (stage {m.stage}) at {TownClock.Format(began)}, stage {RoadNet.Stage(j, began).stage} green";
                         turnsChecked++;
                     }
@@ -308,9 +314,12 @@ static class LifeCheck
     }
 
     /// <summary>
-    /// Given the morning rush drawn ten times a second (as the server sends it), when every car's drawn speed is
-    /// followed frame to frame, then speed changes as a driver's does (no more than HARSH tiles/s² but rarely),
-    /// and a car that's started round a corner doesn't stop on it with nothing in its way.
+    /// Given the morning rush drawn ten times a second (as the server sends it), when every car is followed frame
+    /// to frame, then its driver changes speed as a driver does (no more than HARSH tiles/s² but rarely), what's
+    /// drawn never lurches (SLAM) or jumps, and a car that's started round a corner doesn't stop on it with nothing
+    /// in its way. HARSH is timed on the driver's speed along the road, not the drawn car's: the drawing pulls the
+    /// back wheels round after the front (Traffic.Pose), and on a turn of a tile or so the car's middle slows by
+    /// half and speeds up again though the driver keeps a steady pace. That's geometry, not braking.
     /// </summary>
     static string Smooth(TownModel model, IsoLayout layout, TownZoning zoning)
     {
@@ -324,6 +333,10 @@ static class LifeCheck
         var x = new double[n];
         var y = new double[n];
         var v = new double[n];
+        // And as the town's life has it: on which segment, how far along, and how fast (the driver's speed).
+        var seg = new int[n];
+        var along = new double[n];
+        var pv = new double[n];
         for (int i = 0; i < n; i++) who[i] = -1;
         int moments = 0, harsh = 0, slams = 0, jumps = 0, onTurns = 0, harshOnTurns = 0, stalls = 0;
         int L = life.net.lanes.Count;
@@ -343,22 +356,32 @@ static class LifeCheck
                     x[i] = c.x;
                     y[i] = c.y;
                     v[i] = double.NaN;
+                    seg[i] = driving ? car.seg : -1;
+                    along[i] = driving ? life.Front(car) : 0;
+                    pv[i] = double.NaN;
                     continue;
                 }
                 double now = Numbers.Hypot(c.x - x[i], c.y - y[i]) / DT;
                 x[i] = c.x;
                 y[i] = c.y;
+                // The driver's speed along the way (not over a segment's end: the next frame has it again).
+                double fr = life.Front(car), ps = car.seg == seg[i] ? (fr - along[i]) / DT : double.NaN;
+                double pa = double.IsNaN(ps) || double.IsNaN(pv[i]) ? double.NaN : Math.Abs(ps - pv[i]) / DT;
+                seg[i] = car.seg;
+                along[i] = fr;
+                pv[i] = ps;
                 if (now * DT > JUMPED) jumps++;
                 if (!double.IsNaN(v[i]))
                 {
                     double a = Math.Abs(now - v[i]) / DT;
                     moments++;
-                    if (a > HARSH) harsh++;
+                    bool hard = !double.IsNaN(pa) && pa > HARSH;
+                    if (hard) harsh++;
                     if (a > SLAM) slams++;
                     if (car.seg >= L)
                     {
                         onTurns++;
-                        if (a > HARSH) harshOnTurns++;
+                        if (hard) harshOnTurns++;
                         if (now < 0.02 && v[i] > 0.3) stalls++;
                     }
                 }
@@ -509,7 +532,7 @@ static class LifeCheck
                     if (o["dest"] is double[] d && path.Count < 400)
                     {
                         double end = Numbers.Hypot(path[^1][0] - d[0], path[^1][1] - d[1]);
-                        if (end > 1.5) return $"car {c.id}: its way ends {end:0.00} tiles from where it's going";
+                        if (end > 1.5) return $"car {c.id} (service {c.service}, bus {c.bus}, van {c.van}, siren {c.siren}, pulled {c.pulledOver}, {c.state}, dest {c.dest}, route end {c.route[^1]} at {c.goal:0.0}): its way ends {end:0.00} tiles from where it's going";
                     }
                 }
                 if (c.slot >= 0 && life.carSlots[c.slot].shown && life.CarInSlot(c.slot) != c.id) return $"car {c.id}: slot {c.slot} leads to {life.CarInSlot(c.slot)}";
@@ -713,7 +736,8 @@ static class LifeCheck
     /// <summary>
     /// Given a town's morning rush (07:30-09:30), then: the router's been told the lanes' hold-ups; drivers going to a
     /// building hold a kerb spot near its door, none more than RESERVE_REACH away; a driver waiting to pull out was let
-    /// in; a light changed for a car waiting at red with nobody coming the other way (if the town has lights); and in a
+    /// in; a light changed for a car waiting at red with nobody coming the other way (if the town has lights); a driver
+    /// gave way, waiting for a gap in the traffic (if the town has stop signs); and in a
     /// town big enough to queue, a held-up driver took a quicker way.
     /// </summary>
     static string TravelsSmart(TownModel model, IsoLayout layout, TownZoning zoning)
@@ -733,6 +757,8 @@ static class LifeCheck
         }
         bool lights = life.net.junctions.Values.Any(j => j.control == Control.Signal);
         if (lights && s.lightsChanged == 0) return "no light changed for a car waiting with nobody coming the other way";
+        bool stops = life.net.junctions.Values.Any(j => j.control == Control.Stop);
+        if (stops && s.noGap == 0) return "nobody at a stop sign, or turning left across traffic, waited for a gap";
         if (life.people.Count > 10000 && s.rerouted == 0) return "in a town this big, no held-up driver took another way";
         if (life.people.Count > 10000 && s.letIn == 0) return "in a town this big, no driver let anyone pull out";
         return null;
@@ -808,6 +834,65 @@ static class LifeCheck
             for (int f = 0; f < 5; f++) t.Update(0.1, null);
         }
         return tried == 0 ? "no car on the move to step out in front of" : null;
+    }
+
+    /// <summary>
+    /// Given the morning rush, when a player walks up to a car on a lane from 4 tiles in front of it, along its
+    /// lane at a walk, on past its side to behind it, then (frame by frame, as drawn and as the town's life has
+    /// it) the car never moves backwards, never speeds up while they're in front of or beside it, and stays
+    /// within 0.3 tiles of them... no nearer. Tried on 40 cars, moving and stopped.
+    /// </summary>
+    static string WalkUpToCar(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var t = Rush(model, layout, zoning);
+        var life = t.life;
+        int tried = 0;
+        const double WALK = 0.3, DT = 0.1;
+        for (int round = 0; round < 600 && tried < 40; round++)
+        {
+            for (int f = 0; f < 20; f++) t.Update(DT, null);
+            Car car = null;
+            for (int i = 0; i < life.busSlotsFrom && car == null; i++)
+            {
+                int k = (round * 13 + i) % life.busSlotsFrom;
+                if (t.cars[k].hidden) continue;
+                var c = life.cars[life.carSlots[k].who];
+                if (c.seg < 0 || c.seg >= life.net.lanes.Count || c.state == CarState.Parking || c.state == CarState.Unparking) continue;
+                var ln = life.net.lanes[c.seg];
+                double fr = life.Front(c);
+                if (fr - c.length < 1 || fr + 5 > ln.Span) continue;
+                car = c;
+            }
+            if (car == null) continue;
+            tried++;
+            var lane = life.net.lanes[car.seg];
+            double along = life.Front(car) + 4;
+            double last = life.Front(car), lastV = double.NaN;
+            // Walk back down the lane towards it and past it, to a car's length behind its back.
+            for (int f = 0; f < 200; f++)
+            {
+                if (car.seg != lane.id) break;
+                along -= WALK * DT;
+                double nose = life.Front(car);
+                if (along < nose - car.length - 1) break;
+                var you = new List<Vec2> { life.net.LanePoint(lane, lane.start + Math.Max(0, along)).at };
+                t.Update(DT, you);
+                // Pulled into a kerb spot (stopping anyway): that's the end of this one.
+                if (car.seg < 0 || car.state == CarState.Parking) break;
+                if (car.seg != lane.id) return $"car {car.id} drove off its lane through a player walking up to it ({Describe(life, car)})";
+                double now = life.Front(car), v = (now - last) / DT;
+                if (now < last - 1e-6) return $"car {car.id} went back {last - now:0.000} tiles with a player {along - now:0.00} ahead of its nose ({Describe(life, car)})";
+                // In front of it or beside it (the car's body, not the margin behind: there it's let go).
+                bool inFront = along > now - car.length + 0.1;
+                if (inFront && !double.IsNaN(lastV) && v > lastV + 0.05) return $"car {car.id} sped up from {lastV:0.00} to {v:0.00} tiles/s with a player {along - now:0.00} ahead of its nose ({Describe(life, car)})";
+                // Within 0.3 tiles of them and still driving at them (not they walking up the last bit to it).
+                if (inFront && along > now && along - now < 0.3 - 1e-6 && v > 0.05) return $"car {car.id} drove to {along - now:0.00} tiles of a player in front of it";
+                last = now;
+                lastV = inFront ? v : double.NaN;
+            }
+            for (int f = 0; f < 30; f++) t.Update(DT, null);
+        }
+        return tried == 0 ? "no car to walk up to" : null;
     }
 
     static string Describe(TownLife life, Car c)

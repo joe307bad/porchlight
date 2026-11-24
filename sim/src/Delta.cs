@@ -12,6 +12,8 @@
 //   u8 n, n × (u8 green stage, u16 ms until it ends)   the town's traffic lights, every
 //                                 delta (StreetFurniture.EncodeLights): they change early for
 //                                 a waiting car, so a player's can't be worked out from the clock
+//   u8 n, n × (u8 s, u8 s)        each light's two greens, whole seconds: retimed by the
+//                                 traffic (Signals.cs); an older player stops reading before it
 //
 // big-endian, as the records are. What's predicted is worked out from the records as
 // sent (to their hundredths of a tile), as a client has them.

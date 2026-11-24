@@ -34,6 +34,12 @@ namespace Porchlight.Life
         public bool vans = true;
         /// <summary>Routes by the traffic as measured, and drivers held up thinking again (Congestion.cs).</summary>
         public bool liveRoutes = true;
+        /// <summary>Drivers keep to the ways they know, and one in ten a day works theirs out afresh (Congestion.HabitualRoute).</summary>
+        public bool habits = true;
+        /// <summary>Bin lorries on their rounds, and ambulances and a fire engine on calls (Services.cs).</summary>
+        public bool services = true;
+        /// <summary>Emergency calls this many times as often as the national rates (the checks, to see plenty).</summary>
+        public double callRate = 1;
         /// <summary>A parking spot near the door held from setting off (Cars.cs Plan), not looked for on arrival.</summary>
         public bool reserveSpots = true;
         /// <summary>Drivers let a car waiting to pull out in (Cars.cs PullOut).</summary>
@@ -59,7 +65,7 @@ namespace Porchlight.Life
 
     public sealed partial class TownLife
     {
-        const long K_CAR = 1, K_CLEAR = 2, K_TRIP = 3, K_WALK = 4, K_BUS = 5, K_VAN = 6, K_SWEEP = 7;
+        const long K_CAR = 1, K_CLEAR = 2, K_TRIP = 3, K_WALK = 4, K_BUS = 5, K_VAN = 6, K_SWEEP = 7, K_RETIME = 8, K_SERVICE = 9, K_SIREN = 10;
 
         public readonly TownModel model;
         public readonly TownZoning zoning;
@@ -68,6 +74,8 @@ namespace Porchlight.Life
         public readonly Walkways walkways;
         public readonly LifeOptions options;
         public readonly string seed;
+        /// <summary>The seed as a number, the same on every machine (string.GetHashCode isn't).</summary>
+        readonly long seedHash;
 
         public readonly List<Car> cars = new List<Car>();
         public readonly List<Person> people = new List<Person>();
@@ -96,6 +104,16 @@ namespace Porchlight.Life
         readonly HashSet<int> takenSlots = new HashSet<int>();
         /// <summary>Buses' slots come last, drawn as a bus.</summary>
         public readonly int busSlotsFrom;
+        /// <summary>The service vehicles' slots (one each: bin lorries, then emergency vehicles) start here, after the buses'.</summary>
+        public readonly int serviceSlotsFrom;
+
+        /// <summary>The model slot `slot` is drawn as: a bus's or a service vehicle's own, or null (any car: the drawing picks).</summary>
+        public string SlotModel(int slot)
+        {
+            if (slot >= serviceSlotsFrom && slot - serviceSlotsFrom < services.Count) return ServiceModel(services[slot - serviceSlotsFrom].kind);
+            if (slot >= busSlotsFrom && slot < serviceSlotsFrom) return Traffic.BUS_MODEL;
+            return null;
+        }
 
         public TownLife(TownModel model, IsoLayout layout, TownZoning zoning, LifeOptions options = null)
         {
@@ -103,6 +121,13 @@ namespace Porchlight.Life
             this.zoning = zoning;
             this.options = options ?? new LifeOptions();
             seed = model?.seed ?? "town";
+            ulong sh = 1469598103934665603UL;
+            foreach (char ch in seed)
+            {
+                sh ^= ch;
+                sh *= 1099511628211UL;
+            }
+            seedHash = (long)sh;
             net = new RoadNet(model, layout);
             router = new Router(net);
             walkways = new Walkways(layout.sidewalks ?? new SidewalkNetwork(), net);
@@ -113,11 +138,13 @@ namespace Porchlight.Life
             MakePeople();
             MakeBusRoute();
             if (this.options.vans) MakeVans();
+            if (this.options.services) MakeServices();
             int carN = this.options.carSlots >= 0 ? this.options.carSlots : CarSlotsFor(people.Count) + vans.Count;
             int personN = this.options.peopleSlots >= 0 ? this.options.peopleSlots : PersonSlotsFor(people.Count);
             int busN = busRoute != null ? buses.Count : 0;
             busSlotsFrom = carN;
-            carSlots = new Pose[carN + busN];
+            serviceSlotsFrom = carN + busN;
+            carSlots = new Pose[carN + busN + services.Count];
             personSlots = new Pose[personN];
             for (int i = 0; i < carSlots.Length; i++) carSlots[i].who = -1;
             for (int i = 0; i < personSlots.Length; i++) personSlots[i].who = -1;
@@ -127,6 +154,11 @@ namespace Porchlight.Life
             {
                 buses[k].slot = carN + k;
                 carSlots[carN + k].who = buses[k].id;
+            }
+            for (int k = 0; k < services.Count; k++)
+            {
+                services[k].car.slot = serviceSlotsFrom + k;
+                carSlots[serviceSlotsFrom + k].who = services[k].car.id;
             }
             frontMemo = new double[cars.Count + 16];
             frontStamp = new long[cars.Count + 16];
@@ -157,7 +189,10 @@ namespace Porchlight.Life
             Settle(from);
             StartBuses(from);
             StartVans(from);
+            StartServices(from);
             Schedule(K_SWEEP, 0, from + TownClock.MINUTE);
+            countedSince = from;
+            Schedule(K_RETIME, 0, NextQuarter(from));
             RunUntil(moment);
         }
 
@@ -207,6 +242,9 @@ namespace Porchlight.Life
                 case K_BUS: OnBusDue(id); break;
                 case K_VAN: OnVanDue(id); break;
                 case K_SWEEP: Sweep(); break;
+                case K_RETIME: Retime(); break;
+                case K_SERVICE: OnServiceDue(id); break;
+                case K_SIREN: SirenTick(id); break;
             }
         }
 
@@ -250,7 +288,7 @@ namespace Porchlight.Life
 
         void FreeCarSlot(Car c)
         {
-            if (c.slot < 0 || c.bus >= 0) return;
+            if (c.slot < 0 || c.bus >= 0 || c.service >= 0) return;
             parkedShown.Remove(c.id);
             carSlots[c.slot] = new Pose { who = -1 };
             if (!takenSlots.Contains(c.slot)) freeCarSlots.Push(c.slot);
@@ -323,7 +361,12 @@ namespace Porchlight.Life
             var back = PointBehindFront(c, c.length - 0.15).at;
             double dx = front.x - back.x, dy = front.y - back.y, l = Numbers.Hypot(dx, dy);
             if (l < 1e-6) return PointBehindFront(c, c.length / 2);
-            return (new Vec2((front.x + back.x) / 2, (front.y + back.y) / 2), new Vec2(dx / l, dy / l));
+            var along = new Vec2(dx / l, dy / l);
+            var mid = new Vec2((front.x + back.x) / 2, (front.y + back.y) / 2);
+            // Pulled over for a siren: towards the kerb (the driver's right: see RoadNet.SideLane).
+            double aside = Aside(c);
+            if (aside > 0) mid = new Vec2(mid.x - along.y * aside, mid.y + along.x * aside);
+            return (mid, along);
         }
 
         (Vec2 at, Vec2 along) PointBehindFront(Car c, double back)
@@ -369,6 +412,11 @@ namespace Porchlight.Life
                 TakeBus(c);
                 return;
             }
+            if (c.service >= 0)
+            {
+                TakeService(c);
+                return;
+            }
             RemoveFromRoad(c);
             c.slot = -1;
             carSlots[slot] = new Pose { who = -1 };
@@ -394,7 +442,8 @@ namespace Porchlight.Life
         {
             foreach (int s in takenSlots)
             {
-                if (s >= busSlotsFrom) RestoreBus(s);
+                if (s >= serviceSlotsFrom) RestoreService(s);
+                else if (s >= busSlotsFrom) RestoreBus(s);
                 else if (carSlots[s].who < 0) freeCarSlots.Push(s);
             }
             takenSlots.Clear();

@@ -16,6 +16,9 @@ namespace Porchlight.Life
 {
     public enum Control { Free, Stop, AllWayStop, Signal }
 
+    /// <summary>Which way a movement turns, as its driver sees it (they drive on the right).</summary>
+    public enum Turn { Straight, Right, Left, UTurn }
+
     public sealed class Lane
     {
         public int id, road, dir;
@@ -45,6 +48,8 @@ namespace Porchlight.Life
         public int local;
         public double length, speed;
         public bool uturn;
+        /// <summary>Straight on, right, left or back.</summary>
+        public Turn turn;
         /// <summary>The signal stage it goes in (0 or 1), at a signal.</summary>
         public int stage;
         /// <summary>From a stop sign onto a bigger road: routes avoid these.</summary>
@@ -76,6 +81,11 @@ namespace Porchlight.Life
         public readonly List<double> legPriority = new List<double>();
         /// <summary>Where in the signal cycle it starts (ms).</summary>
         public long offset;
+        /// <summary>
+        /// Each signal stage's green (ms, its amber the last StreetFurniture.AMBER_MS of it): STAGE_MS each to start,
+        /// then split by Webster's method from the traffic measured (Signals.cs). The cycle is the two together.
+        /// </summary>
+        public readonly long[] green = { RoadNet.STAGE_MS, RoadNet.STAGE_MS };
     }
 
     public enum SpotKind { Kerb, Driveway }
@@ -143,6 +153,8 @@ namespace Porchlight.Life
         const double SHORTEST_DEAD_END = 4;
         /// <summary>Kerb spots: the parking lane's slots (Layout.ParkCars'), from 2.5 tiles in, every 2.6.</summary>
         const double SPOT_FIRST = 2.5, SPOT_EVERY = 2.6;
+        /// <summary>A turn of less than this (radians) is straight on.</summary>
+        const double STRAIGHT_TURN = 0.5;
         /// <summary>How long a signal stage lasts.</summary>
         public const long STAGE_MS = 30_000;
 
@@ -434,6 +446,7 @@ namespace Porchlight.Life
                 for (int i = 0; i <= CURVE_POINTS; i++) pts.Add(Cubic(a, new Vec2(a.x + f.x * k1, a.y + f.y * k1), new Vec2(tip.x - gx * k2, tip.y - gy * k2), tip, i / (double)CURVE_POINTS));
                 for (int i = 1; i <= CURVE_POINTS; i++) pts.Add(Cubic(tip, new Vec2(tip.x + gx * k2, tip.y + gy * k2), new Vec2(b.x + f.x * k1, b.y + f.y * k1), b, i / (double)CURVE_POINTS));
                 m.speed = UTURN_SPEED;
+                m.turn = Turn.UTurn;
             }
             else
             {
@@ -454,6 +467,10 @@ namespace Porchlight.Life
                 for (int i = 0; i <= CURVE_POINTS; i++) pts.Add(Cubic(a, p1, p2, b, i / (double)CURVE_POINTS));
                 bool straight = fa.x * fb.x + fa.y * fb.y > 0.85;
                 m.speed = Math.Min(from.speed, to.speed) * (straight ? 1 : TURN_SHARE);
+                // Lane +1 drives on the side SideLane calls left of the road's direction (the tile frame is
+                // mirrored): the driver's right is that side, so a turn that way is a right turn.
+                double angle = Math.Atan2(fa.x * fb.y - fa.y * fb.x, fa.x * fb.x + fa.y * fb.y);
+                m.turn = Math.Abs(angle) < STRAIGHT_TURN ? Turn.Straight : angle > 0 ? Turn.Right : Turn.Left;
             }
             m.points = pts;
             m.at = new List<double> { 0 };
@@ -602,11 +619,34 @@ namespace Porchlight.Life
         static double Side(Vec2 a, Vec2 b, Vec2 p) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
 
         /// <summary>The signal stage showing green at a junction at `moment`, and when it ends.</summary>
-        public static (int stage, long endsAt) Stage(Junction j, long moment)
+        public static (int stage, long endsAt) Stage(Junction j, long moment) => Stage(j.green[0], j.green[1], j.offset, moment);
+
+        /// <summary>
+        /// The stage showing green at `moment` on a cycle of stage 0 for `g0` ms then stage 1 for `g1`, started at
+        /// −`offset`, and when it ends. Pure: any two copies of the town with the same timing agree on it.
+        /// </summary>
+        public static (int stage, long endsAt) Stage(long g0, long g1, long offset, long moment)
         {
-            long t = moment + j.offset;
-            long cycle = (long)Math.Floor(t / (double)STAGE_MS);
-            return ((int)(((cycle % 2) + 2) % 2), (cycle + 1) * STAGE_MS - j.offset);
+            long period = Math.Max(1, g0 + g1);
+            long t = moment + offset;
+            long start = (long)Math.Floor(t / (double)period) * period;
+            long into = t - start;
+            return into < g0 ? (0, start + g0 - offset) : (1, start + period - offset);
+        }
+
+        /// <summary>A signal's whole cycle (ms): both stages' greens.</summary>
+        public static long Cycle(Junction j) => j.green[0] + j.green[1];
+
+        /// <summary>
+        /// The offset that has stage `stage` green at `moment` with `left` ms of it to go (no more than its green):
+        /// a light changed early, or retimed without its stage ending sooner than it would have.
+        /// </summary>
+        public static long OffsetFor(Junction j, int stage, long left, long moment)
+        {
+            long period = Math.Max(1, Cycle(j));
+            left = Math.Max(1, Math.Min(left, j.green[stage]));
+            long into = (stage == 0 ? 0 : j.green[0]) + j.green[stage] - left;
+            return ((into - moment) % period + period) % period;
         }
 
         // --- Parking ----------------------------------------------------------------------------

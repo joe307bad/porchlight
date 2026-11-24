@@ -146,7 +146,7 @@ namespace Porchlight.Life
                 int green = leg >= 0 ? j.legStage[leg] : -1;
                 var (stage, ends) = RoadNet.Stage(j, Now);
                 if (stage == green) return ends + 1;
-                if (Now + over > ends) return ends + RoadNet.STAGE_MS + 1;
+                if (Now + over > ends) return ends + j.green[1 - stage] + 1;
             }
             if (underway.TryGetValue(j.node, out var going))
                 foreach (var (car, local) in going)

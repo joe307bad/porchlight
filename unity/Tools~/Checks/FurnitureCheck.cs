@@ -19,6 +19,11 @@ using Porchlight.Life;
 
 static class FurnitureCheck
 {
+    /// <summary>A post this near a sidewalk's end (tiles) stands on its corner: a quarter of a sidewalk in, and a little over.</summary>
+    const double CORNER_NEAR = 0.3;
+    /// <summary>A corner across the road from a post is within this (tiles): the widest road, both parking lanes and sidewalks.</summary>
+    const double ACROSS = 5;
+
     public static int Run(string dir)
     {
         var fails = new List<string>();
@@ -53,31 +58,69 @@ static class FurnitureCheck
             int askew = all.Count(p => Math.Abs(p.inward.x * p.along.x + p.inward.y * p.along.y) > 1e-6 || Math.Abs(Math.Sqrt(p.inward.x * p.inward.x + p.inward.y * p.inward.y) - 1) > 1e-6);
             Expect(left == 0, $"{name}: every post on the kerb to the drivers' right ({left} on the left)");
             Expect(askew == 0, $"{name}: every post looks square back down its lane ({askew} askew)");
+            // On the corner of the sidewalks: by the end of a sidewalk (where Layout stops it at the cross street's).
+            var ends = layout.sidewalks.paths.SelectMany(q => new[] { q.points[0], q.points[q.points.Count - 1] }).ToList();
+            // At a corner, or level with one across the road (a T's far side): a sidewalk's end within a road's
+            // width, no more than CORNER_NEAR along the road from it.
+            bool AtCorner((Vec2 at, Vec2 along, Vec2 inward) p) => ends.Any(e =>
+            {
+                double dx = e.x - p.at.x, dy = e.y - p.at.y;
+                return Math.Sqrt(dx * dx + dy * dy) <= ACROSS && Math.Abs(dx * p.along.x + dy * p.along.y) <= CORNER_NEAR;
+            });
+            int offCorner = all.Count(p => !AtCorner(p));
+            Expect(offCorner <= all.Count / 50, $"{name}: posts stand on the corner of the sidewalks, within {CORNER_NEAR} tiles of where a sidewalk ends, or (a T's far side) level with the corner across the road ({offCorner} of {all.Count} not)");
+            int offSidewalk = all.Count(p => !layout.sidewalks.paths.Any(q => Enumerable.Range(0, q.points.Count - 1).Any(k => Geo.DistToSegment(p.at, q.points[k], q.points[k + 1]) <= Layout.SIDEWALK / 2)));
+            // (Where Layout cuts a T's far sidewalk short at a bend, there's a gap: Lanternport has one post in one.)
+            Expect(offSidewalk <= all.Count / 100, $"{name}: every post stands on a sidewalk, or nearly every one ({offSidewalk} off one)");
             int onLane = signals.Count(s => s.reach < 0.5);
             Expect(onLane == 0, $"{name}: every signal's pole stands clear of its lane, its arm reaching over it ({onLane} too close)");
         }
         Expect(allSignals > 0, $"the starter towns have traffic signals ({allSignals} posts)");
         Expect(allStops > 0, $"the starter towns have stop signs ({allStops})");
 
-        // The timing, over a whole cycle a second at a time, at a junction with an offset.
-        var j = new Junction { offset = 12_345 };
-        int[,] seconds = new int[2, 3];
-        bool oneGreen = true;
-        long t0 = 1_800_000_000_000;
-        for (long t = t0; t < t0 + 2 * RoadNet.STAGE_MS; t += 1000)
+        // The timing, over a whole cycle a second at a time, at a junction with an offset: as it starts (both stages
+        // STAGE_MS), and retimed by Webster (a long main-road green, a short side-street one).
+        foreach (var (g0, g1) in new[] { (RoadNet.STAGE_MS, RoadNet.STAGE_MS), (40_000L, 15_000L) })
         {
-            int a = StreetFurniture.Showing(j, 0, t), b = StreetFurniture.Showing(j, 1, t);
-            seconds[0, a]++;
-            seconds[1, b]++;
-            if ((a == 0) == (b == 0)) oneGreen = false;
-            // Not red just when the cars on that stage may go (RoadNet.Stage, which the cars obey).
-            if ((a != 0) != (RoadNet.Stage(j, t).stage == 0)) oneGreen = false;
+            var j = new Junction { offset = 12_345 };
+            j.green[0] = g0;
+            j.green[1] = g1;
+            int[,] seconds = new int[2, 3];
+            bool oneGreen = true, wordAgrees = true;
+            long t0 = 1_800_000_000_000;
+            for (long t = t0; t < t0 + g0 + g1; t += 1000)
+            {
+                int a = StreetFurniture.Showing(j, 0, t), b = StreetFurniture.Showing(j, 1, t);
+                seconds[0, a]++;
+                seconds[1, b]++;
+                if ((a == 0) == (b == 0)) oneGreen = false;
+                // Not red just when the cars on that stage may go (RoadNet.Stage, which the cars obey).
+                if ((a != 0) != (RoadNet.Stage(j, t).stage == 0)) oneGreen = false;
+                // A player told how it stood 7 s ago, and its timing, shows the same now (WorldSync).
+                var (said, ends) = RoadNet.Stage(j, t - 7000);
+                for (int st = 0; st < 2; st++)
+                    if (StreetFurniture.Showing(said, ends, st, t, g0, g1) != StreetFurniture.Showing(j, st, t)) wordAgrees = false;
+            }
+            string timing = $"{g0 / 1000} s and {g1 / 1000} s greens";
+            Expect(oneGreen, $"{timing}: one stage at a time shows green or amber: the one the cars go on");
+            Expect(wordAgrees, $"{timing}: a player's lamps from an earlier word and the timing show what the town's do");
+            long amber = StreetFurniture.AMBER_MS / 1000;
+            long[] green = { g0 / 1000, g1 / 1000 };
+            for (int s = 0; s < 2; s++)
+                Expect(seconds[s, 0] == green[1 - s] && seconds[s, 1] == amber && seconds[s, 2] == green[s] - amber,
+                    $"{timing}: stage {s}: {seconds[s, 2]} s green, {seconds[s, 1]} s amber, {seconds[s, 0]} s red a cycle");
         }
-        Expect(oneGreen, "one stage at a time shows green or amber: the one the cars go on");
-        long amber = StreetFurniture.AMBER_MS / 1000, stage = RoadNet.STAGE_MS / 1000;
-        for (int s = 0; s < 2; s++)
-            Expect(seconds[s, 0] == stage && seconds[s, 1] == amber && seconds[s, 2] == stage - amber,
-                $"stage {s}: {seconds[s, 2]} s green, {seconds[s, 1]} s amber, {seconds[s, 0]} s red a cycle");
+
+        // Webster's method (Signals.cs): C0 = (1.5 L + 5) / (1 - Y), the green shared by the flow ratios, each stage
+        // given back its lost time; a quiet junction on the shortest cycle, a busy one split by its traffic.
+        var quiet = TownLife.WebsterGreens(0.3, 0.2);
+        Expect(quiet == (23_000, 17_000), $"Webster at y 0.3 and 0.2: a 40 s cycle (its 34 s held up to the shortest), 23 s and 17 s ({quiet})");
+        var busy = TownLife.WebsterGreens(0.45, 0.3);
+        Expect(busy == (40_000, 28_000), $"Webster at y 0.45 and 0.3: a 68 s cycle, 40 s and 28 s ({busy})");
+        var empty = TownLife.WebsterGreens(0, 0);
+        Expect(empty == (20_000, 20_000), $"Webster with nobody counted: the shortest cycle, shared evenly ({empty})");
+        var jammed = TownLife.WebsterGreens(0.7, 0.4);
+        Expect(jammed.Item1 + jammed.Item2 <= TownLife.MAX_CYCLE_MS && jammed.Item1 <= TownLife.MAX_STAGE_MS, $"Webster over capacity: the longest cycle, no stage over a minute ({jammed})");
 
         Console.WriteLine(fails.Count == 0 ? "furniture: all ok" : $"furniture: {fails.Count} failed");
         return fails.Count == 0 ? 0 : 1;

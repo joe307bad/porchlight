@@ -30,7 +30,7 @@ namespace Porchlight.Life
             List<Car> stuck = null;
             foreach (var c in cars)
             {
-                if (c.seg < 0 || c.bus >= 0)
+                if (c.seg < 0 || c.bus >= 0 || (c.service >= 0 && c.state == CarState.AtStop))
                 {
                     c.seenSeg = -1;
                     continue;
@@ -57,6 +57,11 @@ namespace Porchlight.Life
             if (c.van >= 0)
             {
                 RemoveVan(c);
+                return;
+            }
+            if (c.service >= 0)
+            {
+                ServiceHome(services[c.service]);
                 return;
             }
             var p = c.owner >= 0 ? people[c.owner] : null;
