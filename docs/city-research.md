@@ -309,7 +309,7 @@ wouldn't give; and all of it the same again from the same key.
 
 ### To-do
 
-Done in [town-shops.md](town-shops.md) unless marked left.
+Done in [town-shops.md](town-shops.md) (#23).
 
 - [x] **A land-value field per tile:** centrality, arterial frontage, corner
   lots and nearness to parks, minus nearness to industry. Use it to choose
@@ -776,8 +776,8 @@ tracked in [issue #17](https://github.com/joe307bad/porchlight/issues/17).
 8. **Better towns:** era rings, transect zones, neighbourhoods with their
    schools and parks, the ring road and a second centre are done (§1, #18).
    The land-value field, shops by threshold, industry wedges and the other
-   civic buildings (§2) are done ([town-shops.md](town-shops.md)); §3 is
-   left.
+   civic buildings (§2) are done (#23, [town-shops.md](town-shops.md)); §3
+   is left.
 9. **The calendar and events:** market day first (the plaza is already
    there), then a venue with match days, parades, incidents and shared
    weather (§6).
