@@ -340,7 +340,8 @@ static class LifeCheck
         for (int i = 0; i < n; i++) who[i] = -1;
         int moments = 0, harsh = 0, slams = 0, jumps = 0, onTurns = 0, harshOnTurns = 0, stalls = 0;
         int L = life.net.lanes.Count;
-        for (int f = 0; f < 3000; f++)
+        // Five minutes of the rush; a small town's few drivers, up to twenty, until there's driving enough to judge.
+        for (int f = 0; f < 3000 || (moments < 1000 && f < 12000); f++)
         {
             t.Update(DT, null);
             for (int i = 0; i < n; i++)
@@ -618,7 +619,8 @@ static class LifeCheck
         life.Start(TrafficDay.Morning);
         var wasOnRoad = new bool[life.cars.Count];
         int parkedShown = 0, parkedHidden = 0, walksUp = 0, walksUpShown = 0;
-        for (int f = 0; f < 6000; f++)
+        // Ten minutes more; a small town's, up to forty, until someone's walked out to a parked car.
+        for (int f = 0; f < 6000 || (walksUp == 0 && f < 24000); f++)
         {
             life.RunUntil(life.Now + 100);
             life.Draw();

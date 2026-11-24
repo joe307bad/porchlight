@@ -634,9 +634,13 @@ Spots are made from the town as drawn:
   then every 2.6 tiles. The street's scenery cars (the parked cars drawn
   with the town) take their spots for good.
 - **Driveways** belong to their house: only its residents park there.
+- **Car-park bays:** each paved tile of a car park behind the high street
+  ([town-shops.md](town-shops.md)) is a spot anyone may park in, as at the
+  kerb. All a car park's bays are entered from the lane at its mouth. The
+  car park's scenery cars take their bays for good.
 
-Timings: parking takes 15 s at the kerb and unparking 10 s; a driveway
-takes 5 s either way. A spot is held from the moment a driver picks it, so
+Timings: parking takes 15 s at the kerb and unparking 10 s; a driveway or
+a car-park bay takes 5 s either way. A spot is held from the moment a driver picks it, so
 two cars never make for the same spot.
 
 `LifeOptions.infiniteParking` gives every building a spot at its door. It's
@@ -810,8 +814,11 @@ and a new day comes out different.
 
 A visit goes to a nearby home 60% of the time, otherwise to a shop.
 "Nearby" is the nearest of 6 picked at random (`nearErrands`; 3 without):
-lunch, the shops and visits stay closer to home, so more of them are on
-foot and the drives are shorter. A plan
+lunch and visits stay closer to home, so more of them are on foot and the
+drives are shorter. Which shop is the Huff model's choice (`huffShops`;
+[town-shops.md](town-shops.md)): each shop's pull is the people who work
+there over the distance squared, picked in proportion, so the supermarket
+draws from across town and a corner store from its own streets. A plan
 always ends at home.
 
 ### A trip
@@ -965,8 +972,11 @@ engine. Calls come at random, as a Poisson process: each minute a seeded
 chance of the vehicle's share of the town's calls a year. The rates are
 rough estimates of the national order of magnitude: about 0.09 ambulance
 calls a person a year and 0.04 for a fire engine. They aren't a dataset's
-figures. A call is at a random building with an address. With no hospital
-or fire station in town yet, the vehicle comes in from the gate nearest it.
+figures. A call is at a random building with an address. The fire engine
+is kept at the town's fire station ([town-shops.md](town-shops.md)): it
+pulls out onto the lane in front, and after the call drives back and goes
+in. With no hospital in town, an ambulance comes in from the gate nearest
+the call (and so does the fire engine, in a town with no station).
 
 With its **siren going**:
 
@@ -1044,6 +1054,12 @@ turns those into `TrafficCar`s and puppet `Pedestrian`s for the game.
 - **A car's nose is where the town's life says.** Its back wheels follow it,
   pulled after the front and never sideways, so a car swings round a
   corner the way a real one does.
+  They're pulled, never pushed. A dead end's U-turn is sized for a car, and
+  round its tip a lorry's front (a fire engine's, a bin lorry's: a wheelbase
+  of 2 tiles or more) comes back nearer than its wheelbase. Pulled as a car
+  is, its back wheels would be shoved backwards and the lorry would seem to
+  reverse. Instead they stay put and it swings round on them until its front
+  draws away again.
 - **Taking a car** (a player getting in) takes its slot out of the town's
   life. Its driver's trip is given up: they're put where they were going.
   Letting it go hands the slot back.
@@ -1496,12 +1512,15 @@ weekday:
   |---|---|---|---|
   | Turning frames where the turn rate jumps (over 20 rad/s²) | 1% | 0–0.1% | 10–26% |
   | Frames where speed surges (over 4 tiles/s²) | 3% | 0.3–1.3% | 2–5% |
-  | Frames at speed where the back axle slides (over 10°) | 2% | 0–0.2% | up to 40% |
+  | Frames at speed where the back axle slides (over 10°, and sideways at 0.2 tiles/s or more) | 2% | 0.2–0.9% | up to 40% |
   | Turn-rate step from one frame to the next, 99.9th percentile | 0.6 rad/s | 0.15–0.31 | 1.7–3.1 |
 
-  Boats aren't counted. Sliding is counted from 1.2 tiles/s, because the
-  back axle is taken to be 0.55 tiles behind the middle, and slower than
-  that, a short car's real one is too far off it to tell.
+  Boats aren't counted. Sliding is counted from 1.2 tiles/s, measured at
+  each vehicle's own back axle (half its wheelbase behind its middle, as
+  it's drawn). A lorry swinging round on its back wheels at a dead end
+  barely moves them, so it isn't sliding. Lanternport's bin lorry was, from
+  PR #22 until this was fixed: drawn reversing round a cul-de-sac's tip,
+  at 2.3% of frames.
 
 **`Checks clock`** checks the county clock:
 

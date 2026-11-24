@@ -28,6 +28,7 @@ static class ZoningCheck
             var z = Zoning.Plan(model, layout);
             Report(name, z);
             fails.AddRange(Check(name, model, layout, z, balanced: true));
+            fails.AddRange(ShopsCheck.Check(name, model, layout, z, strict: true));
         }
         if (keys.Length == 0)
         {
@@ -40,6 +41,7 @@ static class ZoningCheck
                 Report($"zoning-{i}", z);
                 // A small town may be all houses, too few to balance: only the bookkeeping is checked.
                 fails.AddRange(Check($"zoning-{i}", model, layout, z, balanced: false));
+                fails.AddRange(ShopsCheck.Check($"zoning-{i}", model, layout, z, strict: false));
             }
         }
         foreach (var f in fails) Console.WriteLine("FAIL " + f);

@@ -26,10 +26,10 @@ street with flats over them. The game uses the same six:
 | --- | --- | --- |
 | Residential | houses; towers turned to flats | homes |
 | Mixed use | high-street shops; houses on a main road with a shop downstairs | homes + jobs |
-| Retail | high-street shops whose upper floors are offices | jobs |
+| Retail | high-street shops whose upper floors are offices; the supermarket and the petrol station | jobs |
 | Office | the towers in the middle | jobs |
-| Industrial | workshops on the edge of town | jobs |
-| Civic | the church and the town hall | jobs |
+| Industrial | workshops in the industrial wedge ([town-shops.md](town-shops.md)) | jobs |
+| Civic | the church, the town hall, the schools, the fire station and the clinic | jobs |
 
 ### Where each use goes
 
@@ -47,8 +47,9 @@ further out, and industry along the edge or the transport corridors:
   worth to it. Offices value access most and outbid everyone in the middle;
   homes win further out, where land is cheap.
 
-The generator already follows the first two loosely: towers in the centre,
-workshops beyond 70% of the radius, houses between. Zoning adds bid-rent
+The generator follows the first two: towers in the centre, houses round
+them, and since [town-shops.md](town-shops.md) a high street along the main
+roads and the workshops in Hoyt's wedge out to one gate. Zoning adds bid-rent
 (towers become flats from the outside in) and Hoyt's strips (houses on the
 main roads open shops).
 
@@ -129,10 +130,11 @@ most of this, from the zoning here:
 
 - **Generation:** everyone is simulated, not sampled.
 - **Distribution:** jobs are filled at random from the slots, with
-  commuters in and out by the gates. A gravity model is still to come.
+  commuters in and out by the gates; since PR #22, by a doubly-constrained
+  gravity model with the gates as zones.
 - **Mode choice:** walk under 240 m, drive, or bus.
-- **Assignment:** routing on free-flow times. Re-routing on BPR costs is
-  still to come.
+- **Assignment:** routing by measured hold-ups (PR #18), and since PR #22
+  by BPR costs with day-to-day habits.
 - **Time of day:** the plans' peaks.
 
 Below is the plan as it was written.

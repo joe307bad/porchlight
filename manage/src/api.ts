@@ -20,7 +20,7 @@ export interface CountyMap {
     roadNames?: string[] | null;
     /** What its buildings are for, the town's figures (Zoning.cs); null until known. */
     zoning: { homes: number; residents: number; workers: number; jobs: number } | null;
-    /** Each building: [zone (zoning.ts ZONES), x0, y0, x1, y1 (tiles, exclusive), homes, jobs] in the town's tiles. */
+    /** Each building: [zone (zoning.ts ZONES), x0, y0, x1, y1 (tiles, exclusive), homes, jobs, kind (zoning.ts KINDS)] in the town's tiles. */
     buildings: number[][] | null;
   }[];
   spaces: { kind: string; x0: number; y0: number; width: number; height: number }[];

@@ -13,10 +13,10 @@
 //   of Siksna's small blocks (~15 × 20 tiles centre to centre) with no cul-de-sacs, and the post-war
 //   edge the most cul-de-sacs a block.
 // - Transect: the zones in order out from the middle; lots narrower and houses taller nearer it; front
-//   yards only in T3; shops in T3 and T4 only at the neighbourhoods' corners.
+//   yards only in T3; shops in T3 and T4 only on the high street or as corner stores (city-research §2).
 // - Neighbourhoods: every block in one, each about 400 m across; each big enough has a park block near
-//   its middle (green, nothing built on it) and a school near its middle, and in a big town shops at
-//   the corners, on an arterial.
+//   its middle (green, nothing built on it) and a school near its middle, and in a big town a corner
+//   store at a neighbourhood's entrance, on a main road or collector.
 // - A second centre: a big town with an airport has one, with T5 blocks round it that the main centre
 //   alone would leave less built up, and offices among them; a small town has none.
 // - And all of it the same again from the same key.
@@ -84,6 +84,11 @@ static class TownPlanCheck
         parks = m.neighbourhoods.Select(n => n.parkBlockId).ToArray(),
         schools = m.neighbourhoods.Select(n => n.schoolBuildingId).ToArray(),
         corners = m.neighbourhoods.SelectMany(n => n.cornerShopIds).ToArray(),
+        parkBlocks = m.parkBlocks.ToArray(),
+        carParks = m.carParks.Select(c => c.lotId).ToArray(),
+        services = new[] { m.services.fireStation, m.services.clinic, m.services.petrolStation }.Concat(m.services.supermarkets).Concat(m.services.cornerStores).ToArray(),
+        kinds = m.buildings.Select(b => (int)b.kind).ToArray(),
+        industry = m.industry == null ? -1 : m.industry.gate,
         second = m.secondCentre == null ? "none" : $"{m.secondCentre.Value.x},{m.secondCentre.Value.y}",
     };
 
@@ -215,14 +220,14 @@ static class TownPlanCheck
                 if (zoneDist[y] / zoneCount[y] >= zoneDist[z] / zoneCount[z]) yield return $"{name}: T{y} blocks are no nearer a centre than T{z} ones";
                 if (zoneLots[z] >= 10 && zoneLots[y] >= 10 && zoneLot[y] / zoneLots[y] >= zoneLot[z] / zoneLots[z]) yield return $"{name}: T{y}'s lots ({zoneLot[y] / zoneLots[y]:0.0} tiles) are no smaller than T{z}'s ({zoneLot[z] / zoneLots[z]:0.0})";
             }
-        var corner = new HashSet<int>(m.neighbourhoods.SelectMany(n => n.cornerShopIds));
+        var corner = new HashSet<int>(m.neighbourhoods.SelectMany(n => n.cornerShopIds).Concat(m.services.highStreet).Concat(m.services.cornerStores));
         var front = Parcels.Ground(m);
         foreach (var b in m.buildings)
         {
             var zone = m.blocks[m.lots[b.lotId].blockId].transect;
             var rule = TownPlan.Rules(zone);
             if (b.kind == BuildingKind.House && (b.floors < rule.houseFloorsMin || b.floors > rule.houseFloorsMax)) yield return $"{name}: a {b.floors}-floor house in {zone}";
-            if (b.kind == BuildingKind.Shop && rule.shopShare == 0 && !corner.Contains(b.id)) yield return $"{name}: shop {b.id} in {zone}, not at a corner";
+            if (b.kind == BuildingKind.Shop && rule.shopShare == 0 && !corner.Contains(b.id)) yield return $"{name}: shop {b.id} in {zone}, not at a corner or on the high street";
             // On the sidewalk outside T3: the front looks straight onto the street.
             if (!rule.setback && m.@params.frontSetback > 0 && Yard(m, b, front) > 1) yield return $"{name}: building {b.id} in {zone} has a front yard";
         }
@@ -275,12 +280,13 @@ static class TownPlanCheck
             foreach (int s in hood.cornerShopIds)
             {
                 var lot = m.lots[m.buildings[s].lotId];
-                bool onArterial = Parcels.AdjacentRoadEdges(Parcels.TilesIn(lot.polygon, null, w, h), front, w, h).Any(kv => kv.Key >= 0 && g.edges[kv.Key].cls == RoadClass.Arterial);
-                if (!onArterial) yield return $"{name}: corner shop {s} isn't on an arterial";
+                // At a neighbourhood's entrance (Gibbs): on the main road or the collector into it.
+                bool onMain = Parcels.AdjacentRoadEdges(Parcels.TilesIn(lot.polygon, null, w, h), front, w, h).Any(kv => kv.Key >= 0 && g.edges[kv.Key].cls != RoadClass.Local);
+                if (!onMain) yield return $"{name}: corner shop {s} isn't on an arterial or collector";
                 if (m.blocks[lot.blockId].neighbourhood != hood.id) yield return $"{name}: corner shop {s} isn't in its neighbourhood";
             }
         }
-        if (big && withCorners == 0) yield return $"{name}: no neighbourhood has shops at its corners";
+        if (big && withCorners == 0) yield return $"{name}: no neighbourhood has a corner store";
         if (strict && bounded * 2 < m.neighbourhoods.Count) yield return $"{name}: only {bounded} of {m.neighbourhoods.Count} neighbourhoods keep within the arterials";
 
         // --- Second centre ---

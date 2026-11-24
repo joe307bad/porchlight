@@ -9,12 +9,13 @@
 // leaves by the nearest gate. The depot is beyond the town.
 //
 // Emergency vehicles. Ambulances and a fire engine answer calls that come at
-// random (a Poisson process at rough national rates a person a year), from
-// beyond the town (there's no hospital or fire station in it yet), with sirens:
-// they go on red and through stop signs without waiting for a gap, drivers ahead
-// of them in the lane slow and pull over to let them by, and drivers about to
-// enter a junction they're coming to wait for them. At the call they stay a
-// while, then go back out of town without sirens.
+// random (a Poisson process at rough national rates a person a year): the fire
+// engine from the town's fire station (Gen/Retail.cs), the ambulances from the
+// hospital beyond the town. With sirens they go on red and through stop signs
+// without waiting for a gap, drivers ahead of them in the lane slow and pull
+// over to let them by, and drivers about to enter a junction they're coming to
+// wait for them. At the call they stay a while, then go back without sirens:
+// the fire engine to its station, the ambulances out of town.
 
 using System;
 using System.Collections.Generic;
@@ -43,6 +44,8 @@ namespace Porchlight.Life
         public int call = -1;
         /// <summary>The cars it's had pull over for it.</summary>
         public readonly List<int> pulled = new List<int>();
+        /// <summary>Where it's kept in town (the fire station, a building id), or -1: it comes in from beyond the gates.</summary>
+        public int station = -1;
     }
 
     public sealed partial class TownLife
@@ -116,7 +119,8 @@ namespace Porchlight.Life
             }
             int ambulances = Math.Max(1, (int)Math.Round(people.Count / (double)PEOPLE_AN_AMBULANCE));
             for (int k = 0; k < ambulances; k++) AddService(new Service { id = services.Count, kind = ServiceKind.Ambulance }, 2.0);
-            AddService(new Service { id = services.Count, kind = ServiceKind.FireEngine }, 3.6);
+            int fire = model?.services?.fireStation ?? -1;
+            AddService(new Service { id = services.Count, kind = ServiceKind.FireEngine, station = fire >= 0 && net.access.ContainsKey(fire) ? fire : -1 }, 3.6);
         }
 
         void AddService(Service s, double length)
@@ -268,8 +272,7 @@ namespace Porchlight.Life
                 }
                 to = net.access[s.call].door;
             }
-            var gate = NearestGate(to);
-            if (!PutOnRoad(c, net.borders[gate].entry, 0))
+            if (!(s.station >= 0 ? OutOfStation(s) : PutOnRoad(c, net.borders[NearestGate(to)].entry, 0)))
             {
                 Schedule(K_SERVICE, k, Now + 5000);
                 return;
@@ -282,6 +285,47 @@ namespace Porchlight.Life
                 Schedule(K_SIREN, s.id, Now + SIREN_TICK_MS);
             }
             if (!ServiceOnward(s)) ServiceHome(s);
+        }
+
+        /// <summary>Its station's lanes out front, a lane at a time: onto the first with a gap. False: none has one.</summary>
+        bool OutOfStation(Service s)
+        {
+            var a = net.access[s.station];
+            foreach (int l in net.LanesFor(a))
+            {
+                var lane = net.lanes[l];
+                if (lane.exit || lane.entry) continue;
+                double d = Math.Max(0, Math.Min(lane.Span, net.DoneFor(lane, a) - lane.start));
+                if (PutOnRoad(s.car, l, d)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Back to its station, siren off. False: no way there.</summary>
+        bool BackToStation(Service s)
+        {
+            var c = s.car;
+            double d = Math.Max(0, Front(c));
+            var to = net.access[s.station];
+            var targets = new List<(int, double)>();
+            foreach (int l in net.LanesFor(to))
+            {
+                if (net.lanes[l].exit || net.lanes[l].entry) continue;
+                double g = Math.Max(0, Math.Min(net.lanes[l].Span, net.DoneFor(net.lanes[l], to) - net.lanes[l].start));
+                if (l == c.seg && g <= d + 0.5)
+                {
+                    // Already at its door.
+                    c.dest = Place.Building(s.station);
+                    ServiceHome(s);
+                    return true;
+                }
+                targets.Add((l, g));
+            }
+            if (targets.Count == 0) return false;
+            var route = router.Route(c.seg, d, targets, out int t, out double seconds);
+            if (route == null || route.Count == 0 || route[0] != c.seg) return false;
+            c.dest = Place.Building(s.station);
+            return Drive(c, route, targets[t].Item2, seconds);
         }
 
         int NearestGate(Vec2 p)
@@ -342,6 +386,7 @@ namespace Porchlight.Life
                     targets.Add((l, g));
                 }
             }
+            else if (s.station >= 0 && s.kind != ServiceKind.Bins) return BackToStation(s);
             else return ServiceOut(c);
             if (targets.Count == 0) return false;
             var route = router.Route(c.seg, d, targets, out int t, out double seconds);
@@ -383,8 +428,9 @@ namespace Porchlight.Life
         void ServiceReached(Car c)
         {
             var s = services[c.service];
-            if (c.dest.border)
+            if (c.dest.border || (s.station >= 0 && s.call < 0 && !c.dest.border && c.dest.id == s.station))
             {
+                // Out of town, or back in its station.
                 ServiceHome(s);
                 return;
             }

@@ -3,7 +3,9 @@
 // calls thirty times as often as real so there are plenty to watch. Fails if a
 // bin lorry doesn't come out on its day, doesn't work through its stops, or is
 // still out by mid-afternoon; if no call is answered; if no driver pulls over or
-// waits for a siren (in a town with traffic); or if a service vehicle gets stuck.
+// waits for a siren (in a town with traffic); if a service vehicle gets stuck;
+// or if the fire engine isn't kept at the town's fire station, going out from it
+// and back to it, never by a gate (docs/town-shops.md).
 //
 //   dotnet run --project "unity/Tools~/Checks" -c Release -- services [towns dir]
 
@@ -38,12 +40,15 @@ static class ServicesCheck
             while ((((day + 4) % 7) + 7) % 7 != first.weekday) day++;
             long start = TownClock.At(day, 6 * TownClock.HOUR);
             life.Start(start);
-            bool outBy = false;
+            bool outBy = false, fireByGate = false;
+            var fire = life.services.First(x => x.kind == ServiceKind.FireEngine);
+            int done0 = fire.done;
             long gaveUp0 = life.stats.gaveUp;
             for (long t = start; t <= start + 9 * TownClock.HOUR; t += TownClock.MINUTE)
             {
                 life.RunUntil(t);
                 if (t <= TownClock.At(day, 7 * TownClock.HOUR + 30 * TownClock.MINUTE) && first.car.seg >= 0) outBy = true;
+                if (fire.car.seg >= 0 && fire.car.dest.border) fireByGate = true;
             }
             var s = life.stats;
             Console.WriteLine($"     {name}: round of {first.stops.Count} stops ({first.stops.Sum(x => x.houses)} houses) on day {first.weekday}, {first.next} made; " +
@@ -53,6 +58,9 @@ static class ServicesCheck
             Expect(s.binSkipped <= Math.Max(1, s.binStops / 20), $"{name}: bin stops left for want of a way there: {s.binSkipped} (at most 1 in 20)");
             Expect(s.callsAnswered > 0, $"{name}: emergency calls are answered ({s.callsAnswered})");
             Expect(life.people.Count < 2000 || s.pulledOver + s.sirenWaits > 0, $"{name}: drivers make way for a siren ({s.pulledOver} pulled over, {s.sirenWaits} waited)");
+            int station = life.model.services.fireStation;
+            Expect(station < 0 || fire.station == station, $"{name}: the fire engine is kept at the fire station (building {station})");
+            if (fire.station >= 0) Expect(!fireByGate && fire.done > done0, $"{name}: it answers its calls from the station and goes back to it ({fire.done - done0} trips), never by a gate");
             bool stuck = life.services.Any(x => x.car.seg >= 0 && x.car.state != CarState.AtStop && life.Now - x.car.movedAt > Gridlock_STUCK);
             Expect(!stuck, $"{name}: no service vehicle stuck");
         }

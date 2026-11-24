@@ -119,6 +119,10 @@ jobs:
       # Road hierarchy (FHWA's shares), the ring road, eras, transect zones, neighbourhood units and a second centre.
       - name: Game — towns planned like real ones
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- plan
+      # Shops and services in realistic places (docs/town-shops.md): park land, corner stores by households, the fire
+      # station's reach, shops on the main roads, industry in its wedge, land value, car parks; and every building zoned.
+      - name: Game — shops, services, parks and industry where real towns put them
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- zoning
       # The town's life (docs/town-life.md): a whole day of each starter town and two generated ones, end to
       # end (nobody stuck, trips made, the same day twice), then its rules one scenario at a time.
       - name: Game — a day of each town's life, start to finish, and the same twice

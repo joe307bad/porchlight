@@ -97,6 +97,8 @@ namespace Porchlight.Explore
         public const byte DOCK = 9;
         /// <summary>The zoo's grounds: walked, not driven.</summary>
         public const byte ZOO = 10;
+        /// <summary>A car park behind the high street (TownModel.carParks): paved bays, a tile each.</summary>
+        public const byte CAR_PARK = 11;
     }
 
     public struct BlockPlan
@@ -234,8 +236,8 @@ namespace Porchlight.Explore
             var buildingOnLot = new Dictionary<int, Building>();
             foreach (var b in model.buildings) buildingOnLot[b.lotId] = b;
 
-            var parks = new HashSet<int>();
-            foreach (var hood in model.neighbourhoods) if (hood.parkBlockId >= 0) parks.Add(hood.parkBlockId);
+            var parks = model.ParkBlockSet();
+            var carParks = model.CarParkLots();
             int seen = 0;
             foreach (var block in model.blocks)
             {
@@ -250,6 +252,15 @@ namespace Porchlight.Explore
                     var lotTiles = Parcels.TilesIn(lot.polygon, null, w, h).FindAll(Open);
                     var own = new HashSet<int>(lotTiles);
                     // The urban zones (where buildings stand on the sidewalk) have no gardens, and a park is all green.
+                    if (carParks.Contains(lot.id))
+                    {
+                        // A car park: paved, a few cars in its bays (the town's life parks more there).
+                        foreach (int t in lotTiles) use[t] = Use.CAR_PARK;
+                        foreach (int t in lotTiles)
+                            if (Hash(lot.id * 131 + t, 6) < CAR_PARK_SCENERY)
+                                cars.Add(new ParkedCar { x = t % w + 0.5, y = t / w + 0.5, angle = CarParkAngle(model, lot), variant = (int)Math.Floor(Hash(t, 7) * 1000) });
+                        continue;
+                    }
                     if (!buildingOnLot.TryGetValue(lot.id, out var b))
                     {
                         bool garden = rule.gardens && !parks.Contains(block.id) && builtLots >= 2 && Hash(lot.id, 1) < 0.45 && !lotTiles.Exists(landings.Contains);
@@ -387,10 +398,41 @@ namespace Porchlight.Explore
         /// <summary>How far in front of the house's front a tile is (0 or less: level with it or behind).</summary>
         static double FrontDistance(int t, House house, int w) => -BackDistance(t, house, w);
 
+        /// <summary>A share of a car park's bays the town draws a car in anyway.</summary>
+        const double CAR_PARK_SCENERY = 0.25;
+
+        /// <summary>How the cars in a car park stand: square to the street it's entered from.</summary>
+        public static double CarParkAngle(TownModel model, Lot lot)
+        {
+            int e = -1;
+            foreach (var c in model.carParks) if (c.lotId == lot.id) e = c.edgeId;
+            if (e < 0 || e >= model.roads.edges.Count) return 0;
+            var pts = model.roads.edges[e].points;
+            var mid = Geo.PolygonCentroid(lot.polygon);
+            // The road's direction near the lot, turned a quarter: nose in from the street.
+            int k = 0;
+            double bestD = double.PositiveInfinity;
+            for (int i = 0; i + 1 < pts.Count; i++)
+            {
+                double d = Geo.Dist(mid, new Vec2((pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2));
+                if (d < bestD)
+                {
+                    bestD = d;
+                    k = i;
+                }
+            }
+            if (pts.Count < 2) return 0;
+            double a = DetMath.Atan2(pts[k + 1].y - pts[k].y, pts[k + 1].x - pts[k].x) + Math.PI / 2;
+            // Snapped to the grid: the bays are tiles.
+            return Math.Round(a / (Math.PI / 2)) * (Math.PI / 2);
+        }
+
         public static HouseStyle StyleOf(BuildingKind k) => k switch
         {
             BuildingKind.House => HouseStyle.House,
             BuildingKind.Shop => HouseStyle.Shop,
+            BuildingKind.Supermarket => HouseStyle.Shop,
+            BuildingKind.PetrolStation => HouseStyle.Shop,
             BuildingKind.Workshop => HouseStyle.Workshop,
             BuildingKind.Church => HouseStyle.Church,
             _ => HouseStyle.Hall,

@@ -57,7 +57,7 @@ namespace Porchlight.Model
     public enum Facing { N = 0, E = 1, S = 2, W = 3 }
 
     /// <summary>What a building is. New kinds go on the end (a school looks like a hall wherever a kind isn't listed).</summary>
-    public enum BuildingKind { House, Shop, Workshop, Church, Hall, School }
+    public enum BuildingKind { House, Shop, Workshop, Church, Hall, School, Supermarket, PetrolStation, FireStation, Clinic }
 
     public enum LandmarkKind { Plaza, Well, Church, Market }
 
@@ -72,6 +72,10 @@ namespace Porchlight.Model
             BuildingKind.Workshop => "workshop",
             BuildingKind.Church => "church",
             BuildingKind.School => "school",
+            BuildingKind.Supermarket => "supermarket",
+            BuildingKind.PetrolStation => "petrol station",
+            BuildingKind.FireStation => "fire station",
+            BuildingKind.Clinic => "clinic",
             _ => "hall",
         };
         public static string Of(LandmarkKind k) => k switch
@@ -158,6 +162,60 @@ namespace Porchlight.Model
         public int schoolBuildingId = -1;
         /// <summary>The shops at its corners (building ids): set by the buildings stage.</summary>
         public List<int> cornerShopIds = new List<int>();
+    }
+
+    /// <summary>
+    /// A car park behind the high street (Gen/Land.cs): a lot left unbuilt and paved, its bays the lot's tiles,
+    /// its way in from the street it fronts.
+    /// </summary>
+    public sealed class CarPark
+    {
+        public int id;
+        public int lotId;
+        /// <summary>The road it's entered from (a road edge id).</summary>
+        public int edgeId;
+    }
+
+    /// <summary>
+    /// The industrial wedge (Hoyt's sectors): out along the main road to one gate, where the county highway
+    /// gives the cheapest transport, from `from` of the town's radius out. Industry goes there, not round the edge.
+    /// </summary>
+    public sealed class IndustryWedge
+    {
+        /// <summary>The gate it reaches (an index into TownModel.gates).</summary>
+        public int gate;
+        /// <summary>Its bearing from the centre (radians, world axes) and half its angle.</summary>
+        public double bearing, halfAngle;
+        /// <summary>Where it starts, a share of the town's radius from the centre.</summary>
+        public double from;
+
+        public bool Contains(Vec2 centre, double radius, Vec2 at)
+        {
+            double dx = at.x - centre.x, dy = at.y - centre.y;
+            if (radius <= 0 || System.Math.Sqrt(dx * dx + dy * dy) < from * radius) return false;
+            double a = System.Math.Atan2(dy, dx) - bearing;
+            while (a > System.Math.PI) a -= 2 * System.Math.PI;
+            while (a < -System.Math.PI) a += 2 * System.Math.PI;
+            return System.Math.Abs(a) <= halfAngle;
+        }
+    }
+
+    /// <summary>
+    /// Where the town's shops and services went (docs/city-research.md §2): the buildings chosen by threshold and
+    /// the Huff model, the petrol station at the busiest junction, the fire station central to every lot by road.
+    /// Building ids; -1 for none.
+    /// </summary>
+    public sealed class TownServices
+    {
+        public List<int> supermarkets = new List<int>();
+        public List<int> cornerStores = new List<int>();
+        public int petrolStation = -1;
+        public int fireStation = -1;
+        public int clinic = -1;
+        /// <summary>The high street's shops: mixed-use buildings on the arterials through the centre.</summary>
+        public List<int> highStreet = new List<int>();
+        /// <summary>Households the town was planned for (estimated from its buildings as zoning will count them).</summary>
+        public int households;
     }
 
     public sealed class Lot
@@ -320,6 +378,33 @@ namespace Porchlight.Model
         public Airport airport;
         /// <summary>Null on a map with no room for one.</summary>
         public Zoo zoo;
+        /// <summary>What a tile's land is worth, 0..1 (LandStage): centrality, main-road frontage, corners, parks, minus industry.</summary>
+        public float[] landValue;
+        /// <summary>The industrial wedge, or null (a town too small for one).</summary>
+        public IndustryWedge industry;
+        /// <summary>Every park block: each neighbourhood's own, and those added to give the town its park land (LandStage).</summary>
+        public List<int> parkBlocks = new List<int>();
+        /// <summary>Car parks behind the high street (LandStage).</summary>
+        public List<CarPark> carParks = new List<CarPark>();
+        /// <summary>The shops and services the buildings stage placed.</summary>
+        public TownServices services = new TownServices();
+
+        /// <summary>The park blocks, as a set: each neighbourhood's own and any more (parkBlocks).</summary>
+        public HashSet<int> ParkBlockSet()
+        {
+            var o = new HashSet<int>(parkBlocks);
+            foreach (var hood in neighbourhoods) if (hood.parkBlockId >= 0) o.Add(hood.parkBlockId);
+            return o;
+        }
+
+        /// <summary>Lots that are car parks.</summary>
+        public HashSet<int> CarParkLots()
+        {
+            var o = new HashSet<int>();
+            foreach (var c in carParks) o.Add(c.lotId);
+            return o;
+        }
+
         /// <summary>Piers out over the lakes, each with its boats (DocksStage).</summary>
         public List<Dock> docks = new List<Dock>();
 

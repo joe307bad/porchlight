@@ -1107,7 +1107,7 @@ namespace Porchlight.Life
             {
                 spotHolder[keep] = c.id;
                 c.target = keep;
-                c.reserved = net.spots[keep].kind == SpotKind.Kerb;
+                c.reserved = RoadNet.Public(net.spots[keep].kind);
             }
             else
             {
@@ -1146,7 +1146,7 @@ namespace Porchlight.Life
             long wait = 0;
             if (c.spot >= 0)
             {
-                wait = net.spots[c.spot].kind == SpotKind.Driveway ? DRIVEWAY_MS : UNPARK_KERB_MS;
+                wait = net.spots[c.spot].kind != SpotKind.Kerb ? DRIVEWAY_MS : UNPARK_KERB_MS;
                 spotHolder[c.spot] = -1;
                 c.spot = -1;
             }
@@ -1277,7 +1277,7 @@ namespace Porchlight.Life
                 spotGrid = new Dictionary<long, List<int>>();
                 for (int s = 0; s < net.spots.Count; s++)
                 {
-                    if (net.spots[s].kind != SpotKind.Kerb || net.spots[s].scenery) continue;
+                    if (!RoadNet.Public(net.spots[s].kind) || net.spots[s].scenery) continue;
                     long key = SpotCell(net.spots[s].at);
                     if (!spotGrid.TryGetValue(key, out var list)) spotGrid[key] = list = new List<int>();
                     list.Add(s);
@@ -1312,7 +1312,7 @@ namespace Porchlight.Life
         bool Free(int spot)
         {
             var s = net.spots[spot];
-            return s.kind == SpotKind.Kerb && !s.scenery && spotHolder[spot] < 0;
+            return RoadNet.Public(s.kind) && !s.scenery && spotHolder[spot] < 0;
         }
 
         void Hold(Car c, int spot)
@@ -1349,7 +1349,7 @@ namespace Porchlight.Life
                 return;
             }
             c.state = CarState.Parking;
-            bool drive = c.target >= 0 && net.spots[c.target].kind == SpotKind.Driveway;
+            bool drive = c.target >= 0 && net.spots[c.target].kind != SpotKind.Kerb;
             Schedule(K_CAR, c.id, Now + (drive ? DRIVEWAY_MS : PARK_KERB_MS));
         }
 

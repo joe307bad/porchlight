@@ -204,14 +204,14 @@ namespace Porchlight.Life
             return most;
         }
 
-        /// <summary>Kerb spots taken, and how many there are (scenery's left out).</summary>
+        /// <summary>Kerb and car-park spots taken, and how many there are (scenery's left out).</summary>
         public (int taken, int total) Parking()
         {
             int taken = 0, total = 0;
             for (int i = 0; i < net.spots.Count; i++)
             {
                 var s = net.spots[i];
-                if (s.kind != SpotKind.Kerb || s.scenery) continue;
+                if (!RoadNet.Public(s.kind) || s.scenery) continue;
                 total++;
                 if (spotHolder[i] >= 0) taken++;
             }

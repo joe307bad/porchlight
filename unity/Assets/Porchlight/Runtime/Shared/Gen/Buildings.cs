@@ -5,8 +5,12 @@
 // room. The building faces the road it fronts. What it is and how tall comes
 // from its block's transect zone (TownPlan.Rules). The biggest lot near the
 // center gets the church, and the building nearest the plaza becomes the hall.
-// Each neighbourhood gets a school near its middle and shops at its corners,
-// where an arterial meets an arterial or a collector (Perry's neighbourhood unit).
+// Each neighbourhood gets a school near its middle (Perry's neighbourhood unit).
+// What a building is comes from the land's value (LandStage): shops where it's
+// highest, a high street of shops along the main roads through the centre,
+// workshops in the industrial wedge. Then the shops and services by threshold
+// (Retail): a fire station, a clinic, supermarkets, the petrol station and the
+// corner stores. The plaza is the market place.
 
 using System;
 using System.Collections.Generic;
@@ -61,15 +65,16 @@ namespace Porchlight.Gen
                 }
             }
 
-            var parks = new HashSet<int>();
-            foreach (var hood in model.neighbourhoods) if (hood.parkBlockId >= 0) parks.Add(hood.parkBlockId);
+            var parks = model.ParkBlockSet();
+            var carParks = model.CarParkLots();
+            bool Arterial(int e) => e >= 0 && e < model.roads.edges.Count && model.roads.edges[e].cls == RoadClass.Arterial;
             var list = new List<Building>();
             var landmarks = new List<Landmark>(model.landmarks);
             int seen = 0;
             foreach (var lot in model.lots)
             {
                 if (++seen % LOTS_A_STEP == 0) yield return "/lots";
-                if (plaza.Contains(lot.id) || parks.Contains(lot.blockId)) continue;
+                if (plaza.Contains(lot.id) || parks.Contains(lot.blockId) || carParks.Contains(lot.id)) continue;
                 bool isChurch = lot.id == church;
                 double d = Math.Min(1, Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / R);
                 var rule = TownPlan.Rules(model.blocks[lot.blockId].transect);
@@ -96,7 +101,12 @@ namespace Porchlight.Gen
                 if (rect == null) continue;
                 SetBack(rect, facingIndex, lotTiles, ReachFor(yard), g, w, h, rng);
 
-                var kind = isChurch ? BuildingKind.Church : PickKind(d, p, rule, rng);
+                var lotMid = Geo.PolygonCentroid(lot.polygon);
+                bool highStreet = false;
+                if (model.blocks[lot.blockId].transect >= Transect.T4 && d < p.downtown + HIGH_STREET_REACH)
+                    foreach (var kv in Parcels.AdjacentRoadEdges(tiles, g, w, h)) if (Arterial(kv.Key)) highStreet = true;
+                bool industrial = model.industry != null && model.industry.Contains(C, R, lotMid);
+                var kind = isChurch ? BuildingKind.Church : PickKind(d, p, rule, LandStage.At(model, lotMid), highStreet, industrial, model.industry != null, rng);
                 // With courtyards about, a lot with no room for a proper tower is one more.
                 if (kind == BuildingKind.Shop && p.courtyards > 0 && rule.courtyards && (rect.x1 - rect.x0 + 1) * (rect.y1 - rect.y0 + 1) < 4) continue;
                 var footprint = new List<Vec2>
@@ -124,6 +134,21 @@ namespace Porchlight.Gen
                 if (isChurch) landmarks.Add(new Landmark { id = landmarks.Count, kind = LandmarkKind.Church, at = Geo.PolygonCentroid(footprint), lotIds = new List<int> { lot.id } });
             }
 
+            // Park land for the people now housed (LandStage.MoreParks): the blocks kept green lose their buildings.
+            yield return "/parks";
+            var planned = model.With();
+            var keep = new HashSet<int>();
+            foreach (var lot in model.lots) if (plaza.Contains(lot.id) || lot.id == church) keep.Add(lot.blockId);
+            var more = LandStage.MoreParks(model, list, b => Retail.Households(model, b), keep);
+            if (more.Count > 0)
+            {
+                var green = new HashSet<int>(more);
+                list = list.FindAll(b => !green.Contains(model.lots[b.lotId].blockId));
+                for (int i = 0; i < list.Count; i++) list[i].id = i;
+                planned.parkBlocks = new List<int>(model.parkBlocks);
+                planned.parkBlocks.AddRange(more);
+                planned.landValue = LandStage.Value(planned, g, planned.industry, planned.ParkBlockSet());
+            }
             Landmark plazaMark = null;
             foreach (var l in model.landmarks) if (l.kind == LandmarkKind.Plaza) { plazaMark = l; break; }
             if (plazaMark != null)
@@ -141,23 +166,40 @@ namespace Porchlight.Gen
                     hall.floors = 2;
                 }
             }
-            var next = model.With();
+            yield return "/schools";
+            var hoods = Neighbourhoods(planned, list, g);
+            yield return "/services";
+            TownServices services = null;
+            foreach (var part in Retail.PlaceSteps(planned, list, g, sv => services = sv)) yield return "/services" + part;
+            // Each corner store is its neighbourhood's.
+            foreach (int id in services.cornerStores)
+            {
+                int hood = model.blocks[model.lots[list[id].lotId].blockId].neighbourhood;
+                if (hood >= 0 && hood < hoods.Count) hoods[hood].cornerShopIds.Add(id);
+            }
+            // The plaza is the market place (stalls on market day: docs/city-research.md §6).
+            if (plazaMark != null) landmarks.Add(new Landmark { id = landmarks.Count, kind = LandmarkKind.Market, at = plazaMark.at, lotIds = new List<int>(plazaMark.lotIds) });
+            var next = planned.With();
             next.buildings = list;
             next.landmarks = landmarks;
-            next.neighbourhoods = Neighbourhoods(model, list, g);
+            next.neighbourhoods = hoods;
+            next.services = services;
             done(next);
         }
 
         /// <summary>A school has at least this many tiles.</summary>
         const int SCHOOL_MIN_TILES = 6;
-        /// <summary>A corner shop is no further than this from the junction it's at (tiles, to its middle).</summary>
-        const double CORNER_REACH = 10;
-        /// <summary>The most corner shops a neighbourhood has.</summary>
-        const int CORNERS = 4;
+        /// <summary>The high street runs this far (a share of the radius) past the centre (downtown) along the main roads.</summary>
+        const double HIGH_STREET_REACH = 0.2;
+        /// <summary>Of the lots on the high street outside the centre, this share are shops; of the industrial wedge's, this share workshops.</summary>
+        const double HIGH_STREET_SHOPS = 0.6, WEDGE_WORKSHOPS = 0.6;
+        /// <summary>The high street's share of shops goes with the town's towerShare, HIGH_STREET_SHOPS at its default.</summary>
+        const double DEFAULT_TOWER_SHARE = 0.6;
+        /// <summary>Workshops outside the wedge, at the edge: a few (a garage, a yard) in a town with a wedge, a quarter without.</summary>
+        const double STRAY_WORKSHOPS = 0.04, EDGE_WORKSHOPS = 0.25;
 
         /// <summary>
-        /// Each neighbourhood with blocks enough: its school, the building nearest its middle (with room enough), and its
-        /// corner shops, a building at each corner where an arterial meets another or a collector, on the arterial.
+        /// Each neighbourhood with blocks enough: its school, the building nearest its middle (with room enough).
         /// The buildings are changed in place (they're this stage's own); the neighbourhoods are copied.
         /// </summary>
         static List<Neighbourhood> Neighbourhoods(TownModel model, List<Building> list, Ground g)
@@ -189,55 +231,16 @@ namespace Porchlight.Gen
                 hood.schoolBuildingId = list[school].id;
             }
 
-            // The corners: junctions of an arterial and another arterial or a collector.
-            var classes = new Dictionary<int, List<RoadClass>>();
-            foreach (var e in model.roads.edges)
-                foreach (int n in new[] { e.from, e.to })
-                {
-                    if (!classes.TryGetValue(n, out var l)) classes[n] = l = new List<RoadClass>();
-                    l.Add(e.cls);
-                }
-            var corners = new List<Vec2>();
-            foreach (var n in model.roads.nodes)
-            {
-                if (!classes.TryGetValue(n.id, out var l) || l.Count < 3) continue;
-                int arterials = l.FindAll(c => c == RoadClass.Arterial).Count, collectors = l.FindAll(c => c == RoadClass.Collector).Count;
-                // An arterial running through counts twice: a corner is where it meets another arterial (three or more) or a collector.
-                if (arterials >= 3 || (arterials >= 1 && collectors >= 1)) corners.Add(n.at);
-            }
-            var onArterial = new bool[list.Count];
-            for (int i = 0; i < list.Count; i++)
-                foreach (var kv in Parcels.AdjacentRoadEdges(Parcels.TilesIn(model.lots[list[i].lotId].polygon, null, w, h), g, w, h))
-                    if (kv.Key >= 0 && kv.Key < model.roads.edges.Count && model.roads.edges[kv.Key].cls == RoadClass.Arterial) onArterial[i] = true;
-            foreach (var hood in hoods)
-            {
-                if (!PlanStage.Served(hood) || !byHood.TryGetValue(hood.id, out var mine)) continue;
-                foreach (var at in corners)
-                {
-                    if (hood.cornerShopIds.Count >= CORNERS) break;
-                    int best = -1;
-                    foreach (int i in mine)
-                    {
-                        if (!onArterial[i] || Civic(list[i]) || Geo.Dist(mid[i], at) > CORNER_REACH) continue;
-                        if (best < 0 || Geo.Dist(mid[i], at) < Geo.Dist(mid[best], at)) best = i;
-                    }
-                    if (best < 0 || hood.cornerShopIds.Contains(list[best].id)) continue;
-                    if (list[best].kind != BuildingKind.Shop)
-                    {
-                        list[best].kind = BuildingKind.Shop;
-                        list[best].floors = 2;
-                    }
-                    hood.cornerShopIds.Add(list[best].id);
-                }
-            }
             return hoods;
         }
 
         public List<string> Check(TownModel model)
         {
             var errors = CheckBuildings(model, Parcels.Ground(model));
-            var parks = new HashSet<int>();
-            foreach (var hood in model.neighbourhoods) if (hood.parkBlockId >= 0) parks.Add(hood.parkBlockId);
+            var parks = model.ParkBlockSet();
+            var carParks = model.CarParkLots();
+            foreach (var b in model.buildings)
+                if (carParks.Contains(b.lotId)) return new List<string> { $"building {b.id} stands in car park on lot {b.lotId}" };
             foreach (var b in model.buildings)
                 if (parks.Contains(model.lots[b.lotId].blockId)) return new List<string> { $"building {b.id} stands in a park (block {model.lots[b.lotId].blockId})" };
             foreach (var hood in model.neighbourhoods)
@@ -245,6 +248,28 @@ namespace Porchlight.Gen
                 if (hood.schoolBuildingId >= 0 && model.buildings[hood.schoolBuildingId].kind != BuildingKind.School) errors.Add($"neighbourhood {hood.id}'s school {hood.schoolBuildingId} is a {Names.Of(model.buildings[hood.schoolBuildingId].kind)}");
                 foreach (int s in hood.cornerShopIds)
                     if (model.buildings[s].kind != BuildingKind.Shop) errors.Add($"neighbourhood {hood.id}'s corner shop {s} is a {Names.Of(model.buildings[s].kind)}");
+            }
+            var sv = model.services;
+            void Is(int id, BuildingKind k, string what)
+            {
+                if (id >= 0 && model.buildings[id].kind != k) errors.Add($"the {what} {id} is a {Names.Of(model.buildings[id].kind)}");
+            }
+            Is(sv.fireStation, BuildingKind.FireStation, "fire station");
+            Is(sv.clinic, BuildingKind.Clinic, "clinic");
+            Is(sv.petrolStation, BuildingKind.PetrolStation, "petrol station");
+            foreach (int id in sv.supermarkets) Is(id, BuildingKind.Supermarket, "supermarket");
+            foreach (int id in sv.cornerStores) Is(id, BuildingKind.Shop, "corner store");
+            foreach (var b in model.buildings)
+            {
+                bool listed = b.kind switch
+                {
+                    BuildingKind.FireStation => b.id == sv.fireStation,
+                    BuildingKind.Clinic => b.id == sv.clinic,
+                    BuildingKind.PetrolStation => b.id == sv.petrolStation,
+                    BuildingKind.Supermarket => sv.supermarkets.Contains(b.id),
+                    _ => true,
+                };
+                if (!listed) errors.Add($"building {b.id} is a {Names.Of(b.kind)} the town doesn't list");
             }
             return errors;
         }
@@ -492,11 +517,16 @@ namespace Porchlight.Gen
         /// <summary>In the city centre, `d` (a share of the town radius) from the middle; a centre of 1 is everywhere.</summary>
         public static bool InCentre(double d, double downtown) => downtown >= 1 || d < downtown;
 
-        /// <summary>Shops (offices and towers, in the centre) in the urban centre and core; workshops out at the edge.</summary>
-        static BuildingKind PickKind(double d, GenParams p, TransectRule rule, Rng rng)
+        /// <summary>
+        /// Shops (offices and towers, in the centre) in the urban centre and core, more where the land's worth more;
+        /// shops along the high street; workshops in the industrial wedge (or, a town without one, out at the edge).
+        /// </summary>
+        static BuildingKind PickKind(double d, GenParams p, TransectRule rule, double value, bool highStreet, bool industrial, bool hasWedge, Rng rng)
         {
-            if (rule.shopShare > 0 && rng.Chance(p.towerShare * rule.shopShare)) return BuildingKind.Shop;
-            if (d > 0.7 && rng.Chance(0.25)) return BuildingKind.Workshop;
+            if (rule.shopShare > 0 && rng.Chance(Math.Min(1, p.towerShare * rule.shopShare * (0.6 + 0.8 * value)))) return BuildingKind.Shop;
+            if (highStreet && rule.shopShare == 0 && rng.Chance(Math.Min(1, HIGH_STREET_SHOPS * p.towerShare / DEFAULT_TOWER_SHARE))) return BuildingKind.Shop;
+            if (industrial && rng.Chance(WEDGE_WORKSHOPS)) return BuildingKind.Workshop;
+            if (d > 0.7 && rng.Chance(hasWedge ? STRAY_WORKSHOPS : EDGE_WORKSHOPS)) return BuildingKind.Workshop;
             return BuildingKind.House;
         }
 

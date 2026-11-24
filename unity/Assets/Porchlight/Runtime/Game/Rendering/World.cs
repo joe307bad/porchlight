@@ -573,6 +573,7 @@ namespace Porchlight.Rendering
                     else if (overlay == Overlay.PLAZA) color = (x + y) % 2 != 0 ? C.plazaA : C.plazaB;
                     else if (use == Use.GARDEN || use == Use.COMMUNITY_GARDEN) color = Jitter(C.soil, 0.08);
                     else if (use == Use.DRIVEWAY) color = C.driveway;
+                    else if (use == Use.CAR_PARK) color = C.parking;
                     else if (terrain == Terrain.SAND) color = Jitter(C.sand, 0.05);
                     else if (terrain == Terrain.ROCK) color = Jitter(C.rock, 0.08);
                     else if (use == Use.YARD || use == Use.SHED) color = Jitter(C.lawn, 0.05);

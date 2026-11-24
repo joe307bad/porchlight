@@ -48,6 +48,8 @@ namespace Porchlight.Life
         public bool skipEmpty = true;
         /// <summary>Errands to places near home more than far (People.cs PlanDay).</summary>
         public bool nearErrands = true;
+        /// <summary>Shoppers choose a shop by the Huff model (its size over the distance squared), not the nearest of a few.</summary>
+        public bool huffShops = true;
         /// <summary>How many cars and people can be drawn at once (the wire's slots); -1: sized to the town.</summary>
         public int carSlots = -1, peopleSlots = -1;
         /// <summary>How long before the start to begin, so trips under way at the start are on the road.</summary>
