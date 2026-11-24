@@ -33,7 +33,7 @@ namespace Porchlight.Sim
     {
         /// <summary>A flick: its turn rate changing faster than this (rad/s²), a third of a radian a second from one frame to the next.</summary>
         public const double FLICK = 20;
-        /// <summary>Sliding: its back axle moving more than this off the way it faces (radians).</summary>
+        /// <summary>Sliding: its back axle moving more than this off the way it faces (radians), and sideways faster than a car going SLIDE_FROM would at that.</summary>
         public const double SLIDE = 10 * Math.PI / 180;
         /// <summary>A surge: speeding up or slowing faster than this (tiles/s², about 16 m/s²; a car brakes at 3).</summary>
         public const double SURGE = 4;
@@ -41,8 +41,10 @@ namespace Porchlight.Sim
         public const double SLIDE_FROM = 1.2;
         /// <summary>A car's turning when its facing turns faster than this (rad/s).</summary>
         const double TURNING = 0.3;
-        /// <summary>How far behind a car's middle its back axle is (tiles): half a typical wheelbase.</summary>
+        /// <summary>How far behind a car's middle its back axle is (tiles), if its length isn't known: half a typical wheelbase.</summary>
         const double BACK = 0.55;
+        /// <summary>How far behind each slot's middle its back axle is (tiles): half its wheelbase, as it's drawn (Traffic).</summary>
+        public readonly double[] back;
 
         readonly double[] x, y, h, w, v;
         readonly int[] run;
@@ -54,6 +56,8 @@ namespace Porchlight.Sim
         {
             x = new double[n]; y = new double[n]; h = new double[n]; w = new double[n]; v = new double[n];
             run = new int[n];
+            back = new double[n];
+            Array.Fill(back, BACK);
         }
 
         public void Frame(IReadOnlyList<TrafficCar> cars, double dt)
@@ -78,9 +82,11 @@ namespace Porchlight.Sim
                     if (speed >= SLIDE_FROM)
                     {
                         fast++;
-                        double rx = (c.x - Math.Cos(c.heading) * BACK) - (x[i] - Math.Cos(h[i]) * BACK);
-                        double ry = (c.y - Math.Sin(c.heading) * BACK) - (y[i] - Math.Sin(h[i]) * BACK);
-                        if (Math.Abs(Orbit.ShortestTurn(c.heading, Math.Atan2(ry, rx))) > SLIDE) slides++;
+                        double rx = (c.x - Math.Cos(c.heading) * back[i]) - (x[i] - Math.Cos(h[i]) * back[i]);
+                        double ry = (c.y - Math.Sin(c.heading) * back[i]) - (y[i] - Math.Sin(h[i]) * back[i]);
+                        // Sideways, and fast enough to see: a lorry swinging round on its back wheels (Traffic) barely moves them.
+                        double sideways = Math.Abs(-rx * Math.Sin(c.heading) + ry * Math.Cos(c.heading)) / dt;
+                        if (Math.Abs(Orbit.ShortestTurn(c.heading, Math.Atan2(ry, rx))) > SLIDE && sideways > SLIDE_FROM * Math.Sin(SLIDE)) slides++;
                     }
                     if (Math.Abs(speed - v[i]) / dt > SURGE) surges++;
                 }
@@ -155,6 +161,10 @@ namespace Porchlight.Sim
                     var delta = server.delta.Next(cars, people, tick * SimTown.TICK, server.Lights());
                     if (tick == 0) sync.Receive(cars, people);
                     else if (!sync.ReceiveDelta(delta)) { Console.WriteLine($"FAIL {key}: tick {tick}'s delta didn't fit"); ok = false; break; }
+                    // Each slot's back axle, by what's in it (a lorry's is well behind its middle; it turns on it).
+                    var slots = server.traffic.life.carSlots;
+                    for (int i = 0; i < Math.Min(slots.Length, look.back.Length); i++)
+                        if (slots[i].who >= 0) look.back[i] = Traffic.WheelBase(server.traffic.life.cars[slots[i].who].length) / 2;
                     // A tenth of a second at 60 frames a second, as the game draws.
                     for (int f = 0; f < 6; f++)
                     {

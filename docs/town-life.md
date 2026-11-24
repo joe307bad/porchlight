@@ -1054,6 +1054,12 @@ turns those into `TrafficCar`s and puppet `Pedestrian`s for the game.
 - **A car's nose is where the town's life says.** Its back wheels follow it,
   pulled after the front and never sideways, so a car swings round a
   corner the way a real one does.
+  They're pulled, never pushed. A dead end's U-turn is sized for a car, and
+  round its tip a lorry's front (a fire engine's, a bin lorry's: a wheelbase
+  of 2 tiles or more) comes back nearer than its wheelbase. Pulled as a car
+  is, its back wheels would be shoved backwards and the lorry would seem to
+  reverse. Instead they stay put and it swings round on them until its front
+  draws away again.
 - **Taking a car** (a player getting in) takes its slot out of the town's
   life. Its driver's trip is given up: they're put where they were going.
   Letting it go hands the slot back.
@@ -1506,12 +1512,15 @@ weekday:
   |---|---|---|---|
   | Turning frames where the turn rate jumps (over 20 rad/s²) | 1% | 0–0.1% | 10–26% |
   | Frames where speed surges (over 4 tiles/s²) | 3% | 0.3–1.3% | 2–5% |
-  | Frames at speed where the back axle slides (over 10°) | 2% | 0–0.2% | up to 40% |
+  | Frames at speed where the back axle slides (over 10°, and sideways at 0.2 tiles/s or more) | 2% | 0.2–0.9% | up to 40% |
   | Turn-rate step from one frame to the next, 99.9th percentile | 0.6 rad/s | 0.15–0.31 | 1.7–3.1 |
 
-  Boats aren't counted. Sliding is counted from 1.2 tiles/s, because the
-  back axle is taken to be 0.55 tiles behind the middle, and slower than
-  that, a short car's real one is too far off it to tell.
+  Boats aren't counted. Sliding is counted from 1.2 tiles/s, measured at
+  each vehicle's own back axle (half its wheelbase behind its middle, as
+  it's drawn). A lorry swinging round on its back wheels at a dead end
+  barely moves them, so it isn't sliding. Lanternport's bin lorry was, from
+  PR #22 until this was fixed: drawn reversing round a cul-de-sac's tip,
+  at 2.3% of frames.
 
 **`Checks clock`** checks the county clock:
 

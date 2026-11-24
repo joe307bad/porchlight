@@ -41,6 +41,8 @@ namespace Porchlight.Explore
     public sealed class Traffic
     {
         const double GAP = 1.6;
+        /// <summary>A wheelbase (tiles) this long or more is a lorry's (a fire engine, a bin lorry): too long for a dead end's U-turn.</summary>
+        const double LONG = 2;
         const double LANE_HALF = 0.42;
         const double SAIL = 1.6;
         /// <summary>A loop at least this long (tiles) gets a second boat.</summary>
@@ -187,6 +189,9 @@ namespace Porchlight.Explore
             foreach (var c in cars) if (c.loop >= 0 && !c.taken) Sail(c, dt, obstacles);
         }
 
+        /// <summary>A car's wheelbase, front wheels to back (tiles), by its length.</summary>
+        public static double WheelBase(double length) => Math.Max(0.4, length - 0.3);
+
         /// <summary>The slots as the town's life has them now.</summary>
         void Pose(double dt)
         {
@@ -208,13 +213,24 @@ namespace Porchlight.Explore
                 parked[i] = parkedNow;
                 // The car's front is where the town's life has it; its back wheels follow the front as a car's
                 // do (pulled after it, never sideways), so it swings round a tight corner the way a car would.
-                double wheelbase = Math.Max(0.4, life.cars[p.who].length - 0.3);
+                double wheelbase = WheelBase(life.cars[p.who].length);
                 double fx = p.x + Math.Cos(p.heading) * wheelbase / 2, fy = p.y + Math.Sin(p.heading) * wheelbase / 2;
                 double rx, ry;
                 if (same)
                 {
                     double bx = fx - rear[i].x, by = fy - rear[i].y, bl = Numbers.Hypot(bx, by);
                     if (bl < 1e-6 || bl > wheelbase * 2) { rx = p.x - (fx - p.x); ry = p.y - (fy - p.y); }
+                    // A lorry's pulled, never pushed: a dead end's U-turn is made for a car, and round its tip a lorry's
+                    // front comes back nearer than its wheelbase, which would shove its back wheels backwards (reversing
+                    // it). They stay where they are and it swings round on them, its front out along the way it's
+                    // turning, till the front's drawn away again. A car's barely pushed, and pulled as before.
+                    else if (bl < wheelbase && wheelbase >= LONG)
+                    {
+                        rx = rear[i].x;
+                        ry = rear[i].y;
+                        fx = rx + bx / bl * wheelbase;
+                        fy = ry + by / bl * wheelbase;
+                    }
                     else { rx = fx - bx / bl * wheelbase; ry = fy - by / bl * wheelbase; }
                 }
                 else
