@@ -118,11 +118,11 @@ test('given what each record is in two towns, then a kind lists each of its own 
   assert.deepEqual(ofKind(new Map([['c', life]]), vans), []);
 });
 
-test('the kinds Manage shows are the twelve the simulation sends: seven of vehicle, five on foot', () => {
-  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').length, 7);
+test('the kinds Manage shows are the fourteen the simulation sends: nine of vehicle, five on foot', () => {
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').length, 9);
   assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').length, 5);
-  assert.equal(new Set(ENTITY_KINDS.map((k) => k.id)).size, 12);
-  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').map((k) => k.letter).join(''), 'rctvbsp');
+  assert.equal(new Set(ENTITY_KINDS.map((k) => k.id)).size, 14);
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').map((k) => k.letter).join(''), 'rctvbgesp');
   assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').map((k) => k.letter).join(''), 'wshcx');
   assert.equal(POPULATION_COLUMNS.length, 9, "the town table's columns: Analytics.POPULATION_COLUMNS");
 });

@@ -22,6 +22,8 @@ import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, street
 import { CONGESTION, PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
 
 const REFRESH_MS = 250;
+/** What a service vehicle's called in its focus heading (sim's ServiceKind). */
+const SERVICE_NAMES: Record<string, string> = { Bins: 'Bin lorry', Ambulance: 'Ambulance', FireEngine: 'Fire engine' };
 
 interface Props {
   /** A person's name, once heard (their focus): for their crumb. */
@@ -571,7 +573,8 @@ function FocusView({
   onFocus: (t: FocusTarget) => void;
 }) {
   if (!f) return <p className="sub line">{note ?? 'Looking…'}</p>;
-  const what = f.kind === 'person' ? 'Person' : f.bus !== undefined && f.bus >= 0 ? 'Bus' : f.van !== undefined && f.van >= 0 ? 'Van' : 'Car';
+  const what =
+    f.kind === 'person' ? 'Person' : f.bus !== undefined && f.bus >= 0 ? 'Bus' : f.service ? SERVICE_NAMES[f.service] ?? 'Vehicle' : f.van !== undefined && f.van >= 0 ? 'Van' : 'Car';
   const next = f.queue.filter((q) => !q.now).slice(0, NEXT);
   return (
     <section className="entity" aria-label="Following">
@@ -594,6 +597,7 @@ function FocusView({
         )}
       </header>
       {f.kind === 'car' && f.ownerName && <p className="sub line">{f.ownerName}'s car</p>}
+      {f.kind === 'person' && f.household && <p className="sub line">{f.household}</p>}
       <p className="doing line" title={f.doing}>
         {f.doing}
       </p>

@@ -31,6 +31,9 @@ run the same code.
 | `Life/Buses.cs` | The bus loop, stops and riders. |
 | `Life/Analytics.cs` | Figures for Manage, and who's indoors where. |
 | `Life/Rounds.cs` | Vans on their rounds: how many, their shifts, their calls. |
+| `Life/Services.cs` | Bin lorries on their weekly rounds, and ambulances and a fire engine on calls, with drivers pulling over for sirens. |
+| `Life/Signals.cs` | Signal timing by Webster's method, every quarter hour. |
+| `Life/Population.cs` | Households, and who works where (a gravity model). |
 | `Life/Gridlock.cs` | Giving up in the traffic: a car that hasn't moved in 10 minutes. |
 | `Life/Congestion.cs` | Routing by the traffic: each lane's hold-up measured, and held-up drivers taking a quicker way. |
 | `Life/Focus.cs` | Manage's focus on one car or person: its decision tree, its queue, and its way ahead. |
@@ -190,22 +193,45 @@ all-way stops, and cars stopped at most corners. Now it's 31 (7 signals,
 OpenStreetMap (osm2streets' `IntersectionControl`); we have no map to read,
 hence the class rule.
 
-**Signals** have two 30-second stages, one per pair of opposite legs: the
+**Signals** have two stages, one per pair of opposite legs: the
 straight-on movements of a pair go together, and turns across them give way
-to cars crossing. At a T, the two legs that run most nearly straight through
+to cars crossing (gap acceptance, below). At a T, the two legs that run most nearly straight through
 share a stage and the stem has the other. This is A/B Street's
 `four_way_two_stage` and `three_way` plans.
 
-- The stage is a pure function of the clock plus a per-junction offset, so
-  any two copies of the town agree on it.
+- The stage is a pure function of the clock, a per-junction offset and the
+  two stages' greens, so any two copies of the town with the same timing
+  agree on it.
+
+**Webster timing** (`Signals.cs`). Each stage starts at 30 s. Every quarter
+hour (the HCM's analysis period) every signal is retimed from the cars it
+let through in the quarter just gone, by Webster's method (Webster 1958,
+*Traffic signal settings*) [T10](city-research.md#references):
+
+- each stage's critical flow ratio y is its busiest lane's flow over the
+  saturation flow, 1,900 cars an hour of green [T8];
+- the cycle is C₀ = (1.5 L + 5) / (1 − Σy), with L = 8 s lost (4 s a
+  stage: starting up, and the end of the amber nobody uses);
+- the green, C₀ − L, is shared in proportion to the y's, and each stage gets
+  its lost time back.
+
+The cycle is held between 40 s (Webster's formula wants less when it's
+quiet, but walkers need to get across) and 120 s, and a stage between 12 s
+and 60 s, in whole seconds. A busy main road crossing a quiet one gets the
+long green, and a quiet junction cycles quickly. The stage showing keeps its
+end (or ends sooner, if its new green is shorter), so no light jumps.
+`stats.retimed` counts the changes. Players following the town are told each
+light's greens with its stage (`EncodeLights`, two bytes a light after the
+stages), and Manage gets them as `greens`. An older player reads the stages
+and stops there, timing them at 30 s.
 - A car never starts a turn it can't finish before its green ends (its
   length plus the turn, at the turn's speed).
 
 **A light changes for a car waiting** (`skipEmpty`). A car at red asks
 again; if nobody is at, near (4 s at the limit) or crossing the junction on
 the turns that are green, and the green has run at least 8 s, the light
-changes now: the junction's offset moves so its stage is the car's, a whole
-stage long from now. Every copy still agrees, since the stage is still the
+changes now: the junction's offset moves so its stage is the car's, its
+whole green from now. Every copy still agrees, since the stage is still the
 clock plus the offset. A quiet side street no longer holds a car for half a
 minute in front of an empty main road. `stats.lightsChanged` counts them.
 
@@ -451,7 +477,8 @@ next junction, and a new route from there.
 - each turn's curve at its speed;
 - a stop's 2 s, and an unprotected turn's 30 s;
 - a signal's 7.5 s (`SIGNAL_S`): the wait, on average, of a car turning up
-  at any moment, red half the time for half a 30 s stage on average.
+  at any moment, red half the time for half a 30 s stage on average (a
+  rough figure since Webster timing, kept so routes stay stable).
 
 Counting signals keeps routes from threading every signal in town when
 there's a way round. Without it, Ember Crossing's long trips all funnelled
@@ -479,6 +506,57 @@ at most every 3 minutes: if there's a way at least a fifth quicker from
 where they are, they take it. `stats.rerouted` counts them. So traffic
 spreads off a jammed main road onto the streets round it, and back when it
 clears.
+
+### BPR: delay before the queue shows
+
+Each lane also counts the cars onto it over the last quarter hour (three
+5-minute buckets), and the BPR curve (Bureau of Public Roads 1964)
+[T14](city-research.md#references) forecasts its delay from that flow v
+and its capacity c:
+
+  delay = t₀ · 0.15 · (v/c)⁴,  t₀ the lane at its limit
+
+held under 10 minutes. A lane's capacity (`Capacity`) is what its end lets
+out:
+
+- through, or onto a free junction: the saturation flow, 1,900 an hour;
+- at a signal: its share of the green, 1,900 · (green − 4 s lost) / cycle;
+- at an all-way stop: a car every 5 s (the HCM's departure headways run
+  about 4 to 7 s);
+- out of a two-way stop: the HCM's potential capacity for each of its turns
+  into the traffic it gives way to (flow v꜀), averaged:
+  c = v꜀ e^(−v꜀ t꜀/3600) / (1 − e^(−v꜀ t_f/3600)), with the critical gaps
+  t꜀ above and the follow-up headways t_f of 3.3 s (right), 4.0 s (straight)
+  and 3.5 s (left) (HCM 2010 Exhibit 19-10).
+
+Every 5 minutes the router takes, lane by lane, the larger of the measured
+hold-up and the forecast. A side street out onto a busy main road costs
+routes more as the main road fills, before any queue has formed.
+
+### Habits: day on day towards equilibrium
+
+Drivers remember the lanes they took on each trip they drive, by where
+from and where to (`Person.habits`). Next time, those lanes cost them a
+fifth less (`Router.FAMILIAR`), so they keep to the way they know unless
+another's clearly quicker: Mahmassani & Chang's (1987) boundedly rational
+drivers, who switch only past an indifference band. And each day one driver
+in ten (seeded by the driver, the trip and the day: `REPLAN_ONE_IN`) works
+the trip out afresh from the traffic as it is, as MATSim's agents replan a
+tenth of their plans each iteration [T21](city-research.md#references).
+Whatever way they take becomes the habit.
+
+So the town's routes settle, day on day, towards Wardrop's user
+equilibrium [T15](city-research.md#references), where nobody's way is
+clearly slower than another they could take, without every driver jumping
+to the same street at once the moment it's quicker. A known driver routes
+with a forward Dijkstra of their own (no shared tree), about as quick in
+these towns. `stats.habits` counts the drives made by habit, and
+`stats.keptWay` those that kept wholly to the lanes they knew. Held-up
+drivers still look for another way on the road.
+
+`Checks habits [towns] [town] [days]` runs a town day after day: from the
+second day at least 60% of drives must be by habit, and no day's mean drive
+more than 15% slower than the first.
 
 Trips to the same lane share one **tree of ways**: a reverse Dijkstra from
 the target over the turns into each lane, made the first time it's asked
@@ -532,42 +610,95 @@ for tests, and for towns where parking isn't the point.
 
 ### Who lives here
 
-The population is made from the town's zoning (`Zoning.cs`), by the
-"proletariat robot" method:
+The population is made from the town's zoning (`Zoning.cs`), household by
+household (`Population.cs`).
 
-- There are **home slots**: 1.2 working residents per household.
-- There are **job slots**: one per job.
-- Each home has **three times** the plan's 2.5 people (`CROWD`). The extra
-  people are all at home in the day: children, the retired, those working
-  from home. The workers and jobs are the plan's, so the rushes are what
-  the roads were laid out for, and the extra people's trips (to the shops,
-  school and visiting) come through the day, mostly on foot. It's per home,
-  so a bigger town gets proportionally more.
-- A household has at most **2 cars a home** (`CARS_A_HOME`): workers' come
-  first, then those at home in the day share what's left.
+**Households.** Each building with homes is filled with households drawn
+from a fixed mix, seeded by the town and the building, until it holds its
+people: three times the plan's 2.5 a home (`CROWD`). The mix is rounded
+from the Census Bureau's *America's Families and Living Arrangements: 2023*
+(the shares are rounded, not checked line by line):
 
-Tripling workers and jobs as well was tried. Rush hour tripled and Ember
-Crossing and Porchlight wedged, without the streets looking much busier
-in between: commuters bunch at the rushes.
-- People = 1.2 × the larger of the two. The extra fifth are through
-  traffic.
-- Each person tries for a home slot, then a job slot. The chances of each
-  are the slots left over the people left, clamped to 0.05–0.9.
-- Anyone without a slot comes in from (or goes out by) a **gate**, one of
-  the town's border roads.
+| Household | Share | Members |
+| --- | --- | --- |
+| single | 18% | one adult |
+| single retiree | 11% | one retiree |
+| couple | 17% | two adults |
+| retired couple | 12% | two retirees |
+| family with one child | 11% | two adults, a child |
+| family with two children | 10% | two adults, two children |
+| family with three children | 6% | two adults, three children |
+| single parent | 8% | an adult, one or two children |
+| sharers | 7% | two or three adults |
+
+That's about 2.3 people a household and 29% living alone, near the
+national figures. Every member has a role (adult, retiree, child) and an
+age (20–64, 65–90, 0–17). Filling each building to zoning's figure keeps
+the totals where zoning has them, so no rebalancing (PopulationSim's
+[T29](city-research.md#references)) is needed. `TownLife.households` lists
+them; each person has their `household`, `role` and `age`.
+
+- **Workers** are the building's working-age adults, as many as the plan's
+  1.2 a home, picked in a seeded order. The plan's workers and jobs are kept
+  so the rushes are what the roads were laid out for; the extra people's
+  trips (to the shops, school and visiting) come through the day, mostly on
+  foot. Tripling workers and jobs as well was tried: rush hour tripled and
+  Ember Crossing and Porchlight wedged, without the streets looking much
+  busier in between.
+- **Children** of 5 to 17 go to school (`Student`), the nearest school.
+- Everyone else is at home in the day (`AtHome`): younger children,
+  retirees, and the working-age adults who aren't the building's workers.
+- A building has at most **2 cars a home** (`CARS_A_HOME`): workers' come
+  first, then adults and retirees at home in the day share what's left.
+  Children don't drive.
+
+**How many work where.** As before households: people = 1.2 × the larger
+of workers and jobs, and the chances of a home in town and a job in town are
+the workers and the jobs over that, clamped to 0.05–0.9. That fixes how many
+residents work in town, how many work out of it, how many commuters come in
+for the town's surplus jobs, and how many only drive through, gate to gate.
+
+**Who works where: a doubly-constrained gravity model** (NCHRP Report 716
+§4.5 [T35](city-research.md#references)). The town is cut into zones 12
+tiles a side, and each gate is a zone standing for the towns beyond. A
+worker in zone i works in zone j with odds ∝ jobsⱼ · F(tᵢⱼ), balanced by
+Furness's method (40 rounds) so each zone's workers are all placed and each
+zone's jobs are each filled once. Residents working out of town work at a
+gate, and commuters in come from one. Then each worker in turn draws a zone
+by what's left of their zone's trips, and takes that zone's next job.
+
+- F is NCHRP 716's home-based-work friction, e^(−0.123 t) for t minutes of
+  driving (its gamma function's power term, −0.02, is all but flat and is
+  left out, so it's `DetMath`'s and the same on every machine).
+- t is the straight line × 1.3 for the roads, at 3 tiles a second, plus 15
+  minutes on beyond a gate. A starter town is drawn far smaller than a real
+  town of its people: Porchlight's 16,500 would spread about 4 km across at
+  an American town's ~1,000 people a km² (Census 2020 urban areas, about
+  2,500 a square mile), not a kilometre. So t is scaled by that ratio
+  (`RealScale`, 2.5–4.5 for the starter towns) and the friction reads real
+  trip lengths, as NCHRP says to calibrate it.
+- At that, commutes in town come out 3–5% shorter than jobs dealt at random
+  (Porchlight 87 tiles against 92), and those working out of town leave by
+  gates nearer them than the average (129 tiles against 143). NCHRP's
+  home-based-work friction is shallow: people will cross a town for a job.
+
+`Checks population [towns]` checks the household mix, that everyone in town
+is in one household, that students are children and workers adults, that
+no building has more workers than jobs, and the two comparisons above.
 
 The kinds:
 
 | Kind | Who |
 | --- | --- |
 | Worker | Lives here and works, here or out of town. |
-| Student | 45% of those without a job slot. |
+| Student | A child of 5 to 17. |
 | AtHome | The rest of the residents. |
 | CommuterIn | Lives out of town, works here. |
 | Through | Drives from one gate to another. |
 
-**Cars:** 90% of workers and 70% of the at-home have one, parked at home.
-Commuters and through drivers arrive in theirs.
+**Cars:** 90% of workers and 70% of adults and retirees at home have one,
+parked at home, up to the building's two a home. Commuters and through
+drivers arrive in theirs.
 
 ### Their names
 
@@ -761,6 +892,88 @@ the traffic like anyone else. In Manage, hovering one says "Van #n · … · on
 its rounds", and focusing on it says where its next call is and when its
 shift ends.
 
+### Bin lorries
+
+Each neighbourhood (from the town plan) is a collection zone, and every home
+belongs to the one whose middle is nearest. The zones take Monday to Friday
+in turn. On a zone's day at 7:00 (a few minutes later for each zone on the
+same day, so they don't all come in together), a lorry comes in by the gate
+nearest the zone's first home and works its way round:
+
+- **The order:** from the home nearest a gate, then the nearest home not yet
+  done, and so on.
+- **Stops:** houses within 6 tiles of the last stop and on the same lane are
+  emptied from it, so it stops for a stretch of kerb, not at every door. It
+  stops in the lane, not at the kerb, and holds up whoever's behind: 20 s a
+  stop plus 8 s for each house after the first, up to a minute (estimates).
+- **Lanes:** a home on a road's gate lane (one that only leads out of town),
+  or on one coming in from the gate, is served from the lane going the other
+  way.
+- A stop it can't get to from where it is gets skipped and counted
+  (`binSkipped`). The check allows 1 in 20; in the starter towns it's 0.
+- When it's done, it leaves by the nearest gate. The depot is beyond the
+  town.
+
+A lorry stands in the lane, never in a kerb spot, so it's left out of
+looking for a spot on its last lane. A held-up lorry re-routes only to the
+stop it's going to, never "the other side of the road" as a resident would.
+Both of those once sent a lorry out of town by a gate in the middle of its
+round.
+
+### Emergency vehicles
+
+A town has an ambulance for every 12,000 people (at least one) and a fire
+engine. Calls come at random, as a Poisson process: each minute a seeded
+chance of the vehicle's share of the town's calls a year. The rates are
+rough estimates of the national order of magnitude: about 0.09 ambulance
+calls a person a year and 0.04 for a fire engine. They aren't a dataset's
+figures. A call is at a random building with an address. With no hospital
+or fire station in town yet, the vehicle comes in from the gate nearest it.
+
+With its **siren going**:
+
+- **It treats a red light and a stop sign as a give-way.** It doesn't stop
+  or wait for a gap, only for what's actually in its way.
+- **Drivers ahead of it in its lane, within 20 tiles, pull over.** They
+  slow to 0.4 tiles a second and are drawn 0.35 of a tile towards the kerb.
+  It goes by them; once it's clear of one, it's ahead of that one in the
+  lane's queue. A driver already at the line goes, on red if need be, to
+  clear the way.
+- **Drivers about to enter a junction it's coming to wait for it**: it's on
+  a turn through it, or within 6 s of it on a lane into it (`Verdict.Siren`).
+  Manage's focus says so: "a siren's coming: it waits for it to go by".
+
+At the call it stands 15 minutes (an ambulance) or 25 (a fire engine), siren
+off. The drivers who pulled over go on. Then it goes back out by the nearest
+gate without its siren, and waits for its next call.
+
+Service vehicles are cars with no owner (`Car.service`), each with a slot
+of its own after the buses', drawn as its own model (`cars/garbage-truck`,
+`cars/ambulance`, `cars/firetruck`). A player can take one; it comes back
+on its next round or call once they let it go. A lorry or an ambulance
+standing at its stop isn't "stuck". In Manage they're under **Services**
+(kinds `g` and `e`). Focusing on one says what it's about, such as "A bin
+lorry on its Monday round (12 of 77 stops)" or "An ambulance on a call,
+siren going".
+
+`Checks services [towns]` runs a weekday morning on which the first zone's
+bins are collected, with calls 30 times as often as real so there are
+plenty. It fails if:
+
+- the lorry isn't out by 7:30, hasn't made every stop and gone by 3 pm, or
+  skipped more than 1 in 20;
+- no call is answered;
+- in a town of 2,000 people or more, nobody pulled over or waited for a
+  siren;
+- a service vehicle is stuck.
+
+| Town | Round | Calls answered | Pulled over | Waited at a junction |
+| --- | --- | --- | --- | --- |
+| Ember Crossing | 77 stops, 108 houses | 32 | 19 | 1,009 |
+| Juniper Falls | 51 stops, 65 houses | 4 | 2 | 60 |
+| Lanternport | 44 stops, 64 houses | 10 | 15 | 926 |
+| Porchlight | 120 stops, 212 houses | 30 | 18 | 1,430 |
+
 ---
 
 ## 10. Drawing it: the slots
@@ -768,7 +981,8 @@ shift ends.
 The game draws a fixed set of **slots**, not every agent:
 
 - **Car slots:** `clamp(ceil(people × 0.05), 12, 900)` plus one a van, with the buses'
-  slots after them. A congested town's rush puts 4–6% of its people on the
+  slots after them, then one for each service vehicle (§9). A bus's or a
+  service vehicle's slot is drawn as its own model (`TownLife.SlotModel`). A congested town's rush puts 4–6% of its people on the
   road at once.
 - **Person slots:** `clamp(ceil(people × 0.06), 16, 1200)`.
 
@@ -1181,7 +1395,16 @@ given/when/then:
   under 0.2% harder than 3 tiles/s², no car jumps more than 0.6 tiles
   between frames, and almost none stall on a turn. With cars at one speed
   per segment (as before), about 4% are harsh (7% on turns) and cars jump.
-  All four towns pass. Run one scenario alone with
+  All four towns pass. The 1 tile/s² limit is timed on the driver's speed
+  along the road; the 3 tiles/s² limit, the jumps and the stalls are timed
+  on the car as drawn. The drawing pulls the back wheels round after the
+  front (§10), so on a tight turn of a tile or so the drawn car's middle
+  slows by half and speeds up again while the driver keeps a steady pace.
+  That's geometry, not braking. Timing the drawn middle failed Lanternport
+  (1.2% on turns) once households put more cars on its short turns; on the
+  driver's speed it's 0.00%, and Porchlight's 0.22%.
+- **No car starts a turn on red**, except a siren or a driver clearing the
+  way for one (`Car.wentOnRed`). Run one scenario alone with
   `Checks life server/towns "drive smoothly"` (a scenario's name has the
   last argument in).
 - **A corner on the wire.** Given a car going round a curve (1.2 tiles

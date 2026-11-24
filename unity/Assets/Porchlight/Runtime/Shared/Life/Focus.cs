@@ -87,6 +87,7 @@ namespace Porchlight.Life
                 ["time"] = TownClock.Format(Now),
                 ["name"] = NameOf(p.id),
                 ["who"] = KindText(p.kind),
+                ["household"] = HouseholdText(p),
                 ["home"] = PlaceMap(p.home, building),
                 ["work"] = p.kind == PersonKind.AtHome ? null : PlaceMap(p.work, building),
                 ["car"] = p.car,
@@ -205,7 +206,9 @@ namespace Porchlight.Life
                 ["id"] = c.id,
                 ["clock"] = Now,
                 ["time"] = TownClock.Format(Now),
-                ["who"] = c.bus >= 0 ? "The town bus" : c.van >= 0 ? "A van on its rounds" : "A car",
+                ["who"] = c.bus >= 0 ? "The town bus" : c.service >= 0 ? ServiceText(c) : c.van >= 0 ? "A van on its rounds" : "A car",
+                ["service"] = c.service >= 0 ? services[c.service].kind.ToString() : null,
+                ["siren"] = c.siren,
                 ["owner"] = c.owner,
                 ["ownerName"] = c.owner >= 0 ? NameOf(c.owner) : null,
                 ["bus"] = c.bus,
@@ -340,6 +343,7 @@ namespace Porchlight.Life
             var c = cars[id];
             if (c.bus >= 0) return $"The bus · {CarDoing(c, null)}";
             if (c.van >= 0) return $"Van #{c.van} · {CarDoing(c, null)} · on its rounds";
+            if (c.service >= 0) return $"{ServiceText(c)} · {CarDoing(c, null)}";
             string doing = CarDoing(c, null);
             if (c.owner < 0) return $"Car #{c.id} · {doing}";
             var o = people[c.owner];
@@ -723,6 +727,7 @@ namespace Porchlight.Life
                 case Verdict.Red: return "its light's red";
                 case Verdict.TooLateOnGreen: return "not enough green left to get round";
                 case Verdict.NoGap: return "waiting for a gap in the traffic it gives way to";
+                case Verdict.Siren: return "a siren's coming: it waits for it to go by";
                 case Verdict.PlayerOnTurn: return "a player's on the turn";
                 case Verdict.PeopleCrossing: return "townsfolk are crossing";
                 case Verdict.Blocked: return "a crossing turn's under way, or there's no room beyond";
@@ -742,6 +747,31 @@ namespace Porchlight.Life
         }
 
         string SpotText(int spot) => net.spots[spot].kind == SpotKind.Driveway ? "driveway" : "kerb spot";
+
+        /// <summary>Their age and household in a line ("34, in a family with two children: 4 of them"), or null (from beyond the gates).</summary>
+        string HouseholdText(Person p)
+        {
+            if (p.household < 0 || p.household >= households.Count) return null;
+            var (kind, members) = households[p.household];
+            string role = p.role == Role.Child ? "a child" : p.role == Role.Retiree ? "retired" : "an adult";
+            return members.Count == 1 ? $"{p.age}, {role}, living alone" : $"{p.age}, {role}, in a household of {members.Count} ({(kind.StartsWith("single") || kind.StartsWith("family") ? "a " : "")}{kind})";
+        }
+
+        /// <summary>What a service vehicle's about, in a few words.</summary>
+        string ServiceText(Car c)
+        {
+            var s = services[c.service];
+            switch (s.kind)
+            {
+                case ServiceKind.Bins:
+                    string[] days = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+                    return $"A bin lorry on its {days[s.weekday]} round ({Math.Min(s.next + 1, s.stops.Count)} of {s.stops.Count} stops)";
+                case ServiceKind.Ambulance:
+                    return c.siren ? "An ambulance on a call, siren going" : c.state == CarState.AtStop ? "An ambulance at a call" : "An ambulance going back";
+                default:
+                    return c.siren ? "A fire engine on a call, siren going" : c.state == CarState.AtStop ? "A fire engine at a call" : "A fire engine going back";
+            }
+        }
 
         static string KindText(PersonKind k)
         {

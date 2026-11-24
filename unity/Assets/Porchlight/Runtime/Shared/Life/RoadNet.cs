@@ -81,6 +81,11 @@ namespace Porchlight.Life
         public readonly List<double> legPriority = new List<double>();
         /// <summary>Where in the signal cycle it starts (ms).</summary>
         public long offset;
+        /// <summary>
+        /// Each signal stage's green (ms, its amber the last StreetFurniture.AMBER_MS of it): STAGE_MS each to start,
+        /// then split by Webster's method from the traffic measured (Signals.cs). The cycle is the two together.
+        /// </summary>
+        public readonly long[] green = { RoadNet.STAGE_MS, RoadNet.STAGE_MS };
     }
 
     public enum SpotKind { Kerb, Driveway }
@@ -614,11 +619,34 @@ namespace Porchlight.Life
         static double Side(Vec2 a, Vec2 b, Vec2 p) => (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
 
         /// <summary>The signal stage showing green at a junction at `moment`, and when it ends.</summary>
-        public static (int stage, long endsAt) Stage(Junction j, long moment)
+        public static (int stage, long endsAt) Stage(Junction j, long moment) => Stage(j.green[0], j.green[1], j.offset, moment);
+
+        /// <summary>
+        /// The stage showing green at `moment` on a cycle of stage 0 for `g0` ms then stage 1 for `g1`, started at
+        /// −`offset`, and when it ends. Pure: any two copies of the town with the same timing agree on it.
+        /// </summary>
+        public static (int stage, long endsAt) Stage(long g0, long g1, long offset, long moment)
         {
-            long t = moment + j.offset;
-            long cycle = (long)Math.Floor(t / (double)STAGE_MS);
-            return ((int)(((cycle % 2) + 2) % 2), (cycle + 1) * STAGE_MS - j.offset);
+            long period = Math.Max(1, g0 + g1);
+            long t = moment + offset;
+            long start = (long)Math.Floor(t / (double)period) * period;
+            long into = t - start;
+            return into < g0 ? (0, start + g0 - offset) : (1, start + period - offset);
+        }
+
+        /// <summary>A signal's whole cycle (ms): both stages' greens.</summary>
+        public static long Cycle(Junction j) => j.green[0] + j.green[1];
+
+        /// <summary>
+        /// The offset that has stage `stage` green at `moment` with `left` ms of it to go (no more than its green):
+        /// a light changed early, or retimed without its stage ending sooner than it would have.
+        /// </summary>
+        public static long OffsetFor(Junction j, int stage, long left, long moment)
+        {
+            long period = Math.Max(1, Cycle(j));
+            left = Math.Max(1, Math.Min(left, j.green[stage]));
+            long into = (stage == 0 ? 0 : j.green[0]) + j.green[stage] - left;
+            return ((into - moment) % period + period) % period;
         }
 
         // --- Parking ----------------------------------------------------------------------------

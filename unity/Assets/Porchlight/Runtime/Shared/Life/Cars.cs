@@ -122,12 +122,15 @@ namespace Porchlight.Life
             double p = Lerp(c);
             var q = queues[c.seg];
             int i = q.cars.IndexOf(c.id);
-            if (i > 0)
+            // A siren goes by those pulled over for it.
+            int k = i - 1;
+            if (c.siren) while (k >= 0 && cars[q.cars[k]].pulledOver) k--;
+            if (i > 0 && k >= 0)
             {
-                var lead = cars[q.cars[i - 1]];
+                var lead = cars[q.cars[k]];
                 p = Math.Min(p, Front(lead) - lead.length - FOLLOWING);
             }
-            else if (i == 0 && q.laggy >= 0 && q.laggy != c.id)
+            else if (i >= 0 && q.laggy >= 0 && q.laggy != c.id)
             {
                 var lag = cars[q.laggy];
                 if (lag.seg >= 0) p = Math.Min(p, q.length + Front(lag) - lag.length - FOLLOWING);
@@ -150,13 +153,16 @@ namespace Porchlight.Life
             c.t0 = Now;
             // No faster than the turn it's still coming out of (its back's there): it swings round, not snaps.
             double speed = Math.Max(0.05, c.laggy >= 0 ? Math.Min(SegSpeed(c.seg), SegSpeed(c.laggy)) : SegSpeed(c.seg));
+            if (c.pulledOver) speed = Math.Min(speed, PULL_SPEED);
             // The car ahead stopped, or stopping: it brakes to stop behind it, rather than running up to its back.
             var q = c.seg >= 0 ? queues[c.seg] : null;
             int i = q != null ? q.cars.IndexOf(c.id) : -1;
             c.stopAt = double.NaN;
-            if (i > 0)
+            int ahead = i - 1;
+            if (c.siren) while (ahead >= 0 && cars[q.cars[ahead]].pulledOver) ahead--;
+            if (i > 0 && ahead >= 0)
             {
-                var lead = cars[q.cars[i - 1]];
+                var lead = cars[q.cars[ahead]];
                 double at = StopsAt(lead, c.seg);
                 if (!double.IsNaN(at) && at - lead.length - FOLLOWING < c.s1 - 1e-6) c.stopAt = Math.Max(from, at - lead.length - FOLLOWING);
             }
@@ -364,7 +370,8 @@ namespace Porchlight.Life
                     FinishParking(c);
                     return;
                 case CarState.AtStop:
-                    LeaveStop(c);
+                    if (c.service >= 0) ServiceLeaves(c);
+                    else LeaveStop(c);
                     return;
                 default:
                     Arrive(c);
@@ -445,6 +452,7 @@ namespace Porchlight.Life
                 c.laneSince = Now;
                 c.laneFrom = 0;
                 stats.Flow(net.lanes[next].road, Now);
+                FlowOnto(next);
                 if (last) OnLastLane(c);
             }
         }
@@ -504,6 +512,13 @@ namespace Porchlight.Life
             if (m.stops && !c.stopped && verdict != Verdict.StopFirst) c.stopped = true;
             if (by != null) blockedBy[c.id] = by;
             if (verdict == Verdict.NoGap) stats.noGap++;
+            if (verdict == Verdict.Siren) stats.sirenWaits++;
+            if (verdict == Verdict.Go && j.control == Control.Signal && RoadNet.Stage(j, Now).stage != m.stage)
+            {
+                // Only a siren, or a driver clearing the way for one, goes on red: noted, for the checks.
+                c.wentOnRed = Now;
+                if (c.siren) stats.sirenOnRed++;
+            }
             if (verdict != Verdict.Go)
             {
                 Schedule(K_CAR, c.id, again);
@@ -521,6 +536,7 @@ namespace Porchlight.Life
             if (going == null) underway[j.node] = going = new List<(int, int)>();
             going.Add((c.id, m.local));
             Commit(m.to, c);
+            Counted(m);
             stats.Delay(j.node, Now - c.arrived, car: true);
             Advance(c, Lanes + mid);
         }
@@ -537,6 +553,8 @@ namespace Porchlight.Life
             TooLateOnGreen,
             /// <summary>It gives way here, and what it gives way to is coming too soon to turn in front of.</summary>
             NoGap,
+            /// <summary>An emergency vehicle's coming to the junction with its siren going: it waits for it.</summary>
+            Siren,
             /// <summary>A player's standing on the turn.</summary>
             PlayerOnTurn,
             /// <summary>Townsfolk are crossing the road it's turning into or out of.</summary>
@@ -560,7 +578,12 @@ namespace Porchlight.Life
             by = null;
             knot = false;
             change = false;
-            if (m.stops)
+            // On a call with its siren going, or clearing the way for one behind it: no stopping, no waiting for a
+            // green or a gap (only for what's actually in the way).
+            bool urgent = c.siren || ClearingFor(c);
+            if (urgent) explain?.Add(new Why("Is its siren going, or one behind it?", c.siren ? "Yes: it goes on red and through stop signs, carefully" : "One's behind it: it goes, to clear the way", true,
+                "Drivers make way for an emergency vehicle; it treats a red light and a stop sign as a give-way."));
+            if (m.stops && !urgent)
             {
                 bool served = c.stopped || Now >= c.arrived + STOP_MS;
                 explain?.Add(new Why("Must it stop first?", served ? "Yes, and it has" : $"Yes: stopping until {TownClock.FormatSeconds(c.arrived + STOP_MS)}", served,
@@ -571,25 +594,25 @@ namespace Porchlight.Life
                     return Verdict.StopFirst;
                 }
             }
-            if (j.control == Control.Signal)
+            if (j.control == Control.Signal && !urgent)
             {
                 var (stage, ends) = RoadNet.Stage(j, Now);
                 long through = (long)Math.Ceiling((m.length + c.length + FOLLOWING) / m.speed * 1000);
                 bool green = stage == m.stage;
                 explain?.Add(new Why("Is its light green?", green ? $"Yes, until {TownClock.FormatSeconds(ends)}" : $"No: green at {TownClock.FormatSeconds(ends)}", green,
-                    $"Two stages of {RoadNet.STAGE_MS / 1000} s; its turn goes in stage {m.stage + 1}, now it's stage {stage + 1}."));
+                    $"Two stages, {j.green[0] / 1000.0:0} s and {j.green[1] / 1000.0:0} s green (Webster's split of the traffic measured); its turn goes in stage {m.stage + 1}, now it's stage {stage + 1}."));
                 if (!green && options.skipEmpty)
                 {
                     // Nobody coming the way that's green, and it's been green a while: the light changes for it.
-                    bool long_ = Now - (ends - RoadNet.STAGE_MS) >= MIN_GREEN_MS;
+                    bool long_ = Now - (ends - j.green[stage]) >= MIN_GREEN_MS;
                     bool empty = long_ && NobodyComing(j, stage);
-                    explain?.Add(new Why("Is anyone coming the way that's green?", !long_ ? $"Green only since {TownClock.FormatSeconds(ends - RoadNet.STAGE_MS)}: it stays at least {MIN_GREEN_MS / 1000} s" : empty ? "No: its light changes for it now" : "Yes", empty,
+                    explain?.Add(new Why("Is anyone coming the way that's green?", !long_ ? $"Green only since {TownClock.FormatSeconds(ends - j.green[stage])}: it stays at least {MIN_GREEN_MS / 1000} s" : empty ? "No: its light changes for it now" : "Yes", empty,
                         "A signal with nobody coming on its green changes for a car waiting the other way."));
                     if (empty)
                     {
                         green = true;
                         change = true;
-                        ends = Now + RoadNet.STAGE_MS;
+                        ends = Now + j.green[m.stage];
                     }
                 }
                 if (!green)
@@ -602,11 +625,21 @@ namespace Porchlight.Life
                     "Never start what can't be finished on this green."));
                 if (!time)
                 {
-                    again = ends + RoadNet.STAGE_MS + 1;
+                    again = ends + j.green[1 - m.stage] + 1;
                     return Verdict.TooLateOnGreen;
                 }
             }
-            if (GivesWayAt(j))
+            if (!urgent && sirens.Count > 0)
+            {
+                int e = SirenComing(j, c);
+                explain?.Add(new Why("Is a siren coming?", e >= 0 ? $"Yes: car {e}; it waits for it to go by" : "No", e < 0));
+                if (e >= 0)
+                {
+                    again = Now + 1000;
+                    return Verdict.Siren;
+                }
+            }
+            if (GivesWayAt(j) && !urgent)
             {
                 double tc = CriticalGap(c, m, j);
                 long clear = GapClear(m, j, tc, out int coming, out double eta);
@@ -793,12 +826,11 @@ namespace Porchlight.Life
             return true;
         }
 
-        /// <summary>Junction `j`'s light changes now to `stage`, green for a whole stage; those waiting there ask again.</summary>
+        /// <summary>Junction `j`'s light changes now to `stage`, green for the whole of its green; those waiting there ask again.</summary>
         void ChangeLight(Junction j, int stage)
         {
-            // Stage(j, t) = ((t + offset) / STAGE) mod 2: from now, `stage`, a stage's length.
-            long period = 2 * RoadNet.STAGE_MS;
-            j.offset = ((stage * RoadNet.STAGE_MS - Now) % period + period) % period;
+            // From now, `stage`, its whole green.
+            j.offset = RoadNet.OffsetFor(j, stage, j.green[stage], Now);
             stats.lightsChanged++;
             Wake(j.node);
         }
@@ -1055,7 +1087,9 @@ namespace Porchlight.Life
                 }
             }
             if (targets.Count == 0) return false;
-            var route = router.Route(lane, d, targets, out int k, out double seconds);
+            // A driver who's made this trip before keeps to the way they know, unless another's clearly quicker.
+            var driver = c.owner >= 0 && c.bus < 0 && c.van < 0 ? people[c.owner] : null;
+            var route = HabitualRoute(driver, from, dest, lane, d, targets, out int k, out double seconds);
             if (route == null) return false;
             c.route = route;
             c.routeS = seconds;
@@ -1179,7 +1213,7 @@ namespace Porchlight.Life
         /// <summary>On the last lane of its way: find a spot ahead to stop for, near the door, or hunt for one.</summary>
         void OnLastLane(Car c)
         {
-            if (c.bus >= 0 || c.van >= 0 || c.dest.border || options.infiniteParking || c.target >= 0) return;
+            if (c.bus >= 0 || c.van >= 0 || c.service >= 0 || c.dest.border || options.infiniteParking || c.target >= 0) return;
             if (!net.access.TryGetValue(c.dest.id, out var a)) return;
             var lane = net.lanes[c.seg];
             double door = net.DoneFor(lane, a) - lane.start;
@@ -1289,6 +1323,11 @@ namespace Porchlight.Life
             if (c.bus >= 0)
             {
                 AtStop(c);
+                return;
+            }
+            if (c.service >= 0)
+            {
+                ServiceReached(c);
                 return;
             }
             if (c.van >= 0)
@@ -1465,7 +1504,7 @@ namespace Porchlight.Life
         /// <summary>Held up too long by a player: round, back the other way, and a new way from there.</summary>
         bool TurnRound(Car c)
         {
-            if (c.seg >= Lanes || c.bus >= 0) return false;
+            if (c.seg >= Lanes || c.bus >= 0 || c.service >= 0) return false;
             var lane = net.lanes[c.seg];
             var back = net.Reverse(lane);
             double p = Front(c);

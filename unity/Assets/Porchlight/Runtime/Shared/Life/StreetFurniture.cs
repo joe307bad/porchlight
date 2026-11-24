@@ -88,31 +88,31 @@ namespace Porchlight.Life
 
         /// <summary>
         /// What a signal shows the lane on `stage` at `moment`: 0 red, 1 amber, 2 green. Amber is the last
-        /// AMBER_MS of its green (the stage's end may come early, for a car waiting the other way: that's
-        /// the junction's offset moving, which Stage already has).
+        /// AMBER_MS of its green (the stage's end may come early, for a car waiting the other way, or move when the
+        /// signal's retimed: that's the junction's offset and greens, which Stage already has).
         /// </summary>
         public static int Showing(Junction j, int stage, long moment)
         {
             var (green, ends) = RoadNet.Stage(j, moment);
-            return Showing(green, ends, stage, moment);
+            return Showing(green, ends, stage, moment, j.green[0], j.green[1]);
         }
 
         /// <summary>
         /// What a light on `stage` shows at `now`, from a word that its junction had `green` on until `ends`
-        /// (both on any one clock). Every stage runs a whole STAGE_MS from its start, one changed early for a
-        /// waiting car too, so `green` began at ends − STAGE_MS: before that (lamps are drawn a moment behind
-        /// the word) the other stage was on, and after `ends` they take turns until the next word.
+        /// (both on any one clock), its stages `g0` and `g1` ms of green each: before the word's stage began
+        /// (lamps are drawn a moment behind the word) and after `ends`, the stages take turns on that timing
+        /// until the next word.
         /// </summary>
-        public static int Showing(int green, double ends, int stage, double now)
+        public static int Showing(int green, double ends, int stage, double now, long g0 = RoadNet.STAGE_MS, long g1 = RoadNet.STAGE_MS)
         {
-            long turns = (long)Math.Floor((now - (ends - RoadNet.STAGE_MS)) / RoadNet.STAGE_MS);
-            if (turns != 0)
-            {
-                if ((turns & 1) != 0) green ^= 1;
-                ends += turns * RoadNet.STAGE_MS;
-            }
-            if (green != stage) return 0;
-            return ends - now <= AMBER_MS ? 1 : 2;
+            double period = Math.Max(1, g0 + g1);
+            // Where `now` falls in the cycle, the word's stage ending at `ends` (stage 0 ends g0 in, stage 1 at the cycle's end).
+            double anchor = green == 0 ? g0 : period;
+            double into = ((anchor - (ends - now)) % period + period) % period;
+            int showing = into < g0 ? 0 : 1;
+            double left = (showing == 0 ? g0 : period) - into;
+            if (showing != stage) return 0;
+            return left <= AMBER_MS ? 1 : 2;
         }
 
         /// <summary>The town's signals, in node order: the order of their lights on the wire.</summary>
@@ -125,15 +125,19 @@ namespace Porchlight.Life
 
         /// <summary>
         /// The town's lights at `moment`, for the players following it (the end of each delta, Delta.cs): u8 n, then
-        /// for each signal (SignalJunctions) u8 the stage that's green and u16 the ms until it ends, big-endian.
-        /// The server's lights change early for a waiting car, so the players' can't be worked out from the clock alone.
+        /// for each signal (SignalJunctions) u8 the stage that's green and u16 the ms until it ends, big-endian; then
+        /// their timing, u8 n again and for each u8 stage 0's green and u8 stage 1's (whole seconds, amber included).
+        /// The server's lights change early for a waiting car and are retimed by the traffic (Signals.cs), so the
+        /// players' can't be worked out from the clock alone. A player too old for the timing reads the lights and
+        /// stops there.
         /// </summary>
         public static byte[] EncodeLights(RoadNet net, long moment)
         {
             var js = SignalJunctions(net);
             int n = Math.Min(js.Count, 255);
-            var o = new byte[1 + 3 * n];
+            var o = new byte[2 + 5 * n];
             o[0] = (byte)n;
+            o[1 + 3 * n] = (byte)n;
             for (int k = 0; k < n; k++)
             {
                 var (green, ends) = RoadNet.Stage(js[k], moment);
@@ -141,6 +145,8 @@ namespace Porchlight.Life
                 o[1 + 3 * k] = (byte)green;
                 o[2 + 3 * k] = (byte)(left >> 8);
                 o[3 + 3 * k] = (byte)left;
+                o[2 + 3 * n + 2 * k] = (byte)Math.Min(255, js[k].green[0] / 1000);
+                o[3 + 3 * n + 2 * k] = (byte)Math.Min(255, js[k].green[1] / 1000);
             }
             return o;
         }

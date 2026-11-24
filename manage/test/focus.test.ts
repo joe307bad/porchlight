@@ -85,3 +85,13 @@ test("a traffic light's lamps: green on its stage, amber at the end of it, red o
   assert.equal(lampColor(light, 0, 31_000, 30_000), 'red');
   assert.equal(lampColor(light, 0, 61_000, 30_000), 'green');
 });
+
+test("a retimed light's lamps take turns on its own greens: a long main-road green, a short side-street one", () => {
+  const light = { stage: 0, ends: 40_000, greens: [40_000, 15_000] as [number, number] };
+  assert.equal(lampColor(light, 0, 1_000, 30_000), 'green');
+  assert.equal(lampColor(light, 1, 41_000, 30_000), 'green');
+  assert.equal(lampColor(light, 1, 55_000 - AMBER_MS + 1, 30_000), 'amber');
+  assert.equal(lampColor(light, 0, 56_000, 30_000), 'green');
+  // Before the stage it was asked in: the side street's green.
+  assert.equal(lampColor(light, 1, -5_000, 30_000), 'green');
+});

@@ -1,8 +1,8 @@
 // The town's people and their days. Who they are comes from the town's zoning
-// alone: every home has its workers and the rest of its household, every building
-// its jobs. Workers are matched to jobs at random, and some of each are matched to
-// the gates instead (a fifth more people than either, so some commute in, some
-// out, and some only pass through). Each person's day is a chain of trips, each
+// alone: every home has its households (Population.cs), every building its jobs.
+// Workers are matched to jobs by a gravity model, and some of each to the gates
+// instead (a fifth more people than either, so some commute in, some out, and
+// some only pass through). Each person's day is a chain of trips, each
 // from where the last ended: to work and home, to school, to the shops, to lunch,
 // to see someone. A trip's legs are on foot, by car (walk to it, drive, park, walk
 // from it) or by bus (walk to the stop, wait, ride, walk on). A trip that can't be
@@ -34,8 +34,6 @@ namespace Porchlight.Life
         const int RECENT = 6;
         /// <summary>Closer than this (tiles: 240 m), people walk.</summary>
         public const double WALK_TILES = 60;
-        /// <summary>Of those at home in the day, this many are children at school.</summary>
-        const double STUDENTS = 0.45;
         /// <summary>Who has a car: workers, and those at home in the day.</summary>
         const double WORKER_CARS = 0.9, AT_HOME_CARS = 0.7;
         /// <summary>A share of people make one more trip, at no particular time.</summary>
@@ -48,9 +46,9 @@ namespace Porchlight.Life
         void MakePeople()
         {
             var rng = new Rng($"{seed}::people");
-            var homeSlots = new List<int>();
+            var built = new List<(int b, List<(string kind, List<Member> members)> households)>();
+            var workerHomes = new List<int>();
             var jobSlots = new List<int>();
-            var stayHome = new List<int>();
             double workerCarry = 0, residentCarry = 0;
             var homesIn = new Dictionary<int, int>();
             var carsIn = new Dictionary<int, int>();
@@ -67,35 +65,60 @@ namespace Porchlight.Life
                 workerCarry -= workers;
                 int residents = (int)Math.Floor(residentCarry);
                 residentCarry -= residents;
-                for (int k = 0; k < workers; k++) homeSlots.Add(b.buildingId);
-                for (int k = 0; k < Math.Max(0, residents - workers); k++) stayHome.Add(b.buildingId);
                 for (int k = 0; k < b.jobs; k++) jobSlots.Add(b.buildingId);
+                if (residents <= 0) continue;
+                var hs = Households(b.buildingId, residents, workers);
+                built.Add((b.buildingId, hs));
+                foreach (var h in hs)
+                    foreach (var m in h.members)
+                        if (m.worker) workerHomes.Add(b.buildingId);
             }
             if (shops.Count == 0) foreach (var b in zoning?.buildings ?? new List<ZonedBuilding>()) if (b.jobs > 0 && net.access.ContainsKey(b.buildingId)) shops.Add(b.buildingId);
-            rng.Shuffle(homeSlots);
             rng.Shuffle(jobSlots);
-            int gates = net.borders.Count;
-            int total = (int)Math.Round(THROUGH * Math.Max(homeSlots.Count, jobSlots.Count));
-            double pHome = Clamp(total == 0 ? 0 : homeSlots.Count / (double)total);
-            double pJob = Clamp(total == 0 ? 0 : jobSlots.Count / (double)total);
-            int h = 0, j = 0;
-            for (int i = 0; i < total; i++)
+
+            // How many work where (as before households: a fifth more people than homes or jobs, so some commute in,
+            // some out, and some pass through), then who works where by the gravity model.
+            int W = workerHomes.Count, J = jobSlots.Count, gates = net.borders.Count;
+            int total = (int)Math.Round(THROUGH * Math.Max(W, J));
+            double pHome = Clamp(total == 0 ? 0 : W / (double)total);
+            double pJob = Clamp(total == 0 ? 0 : J / (double)total);
+            int employed, residentsOut, commutersIn, through;
+            if (gates == 0)
             {
-                Place home, work;
-                if (rng.Chance(pHome) && h < homeSlots.Count) home = Place.Building(homeSlots[h++]);
-                else if (gates > 0) home = Place.Gate(rng.Int(0, gates - 1));
-                else continue;
-                if (rng.Chance(pJob) && j < jobSlots.Count) work = Place.Building(jobSlots[j++]);
-                else if (gates > 0) work = Place.Gate(rng.Int(0, gates - 1));
-                else continue;
-                var kind = !home.border ? PersonKind.Worker : !work.border ? PersonKind.CommuterIn : PersonKind.Through;
-                if (kind == PersonKind.Through && gates > 1 && work.id == home.id) work = Place.Gate((home.id + 1 + rng.Int(0, gates - 2)) % gates);
-                bool car = kind != PersonKind.Worker || work.border || rng.Chance(WORKER_CARS);
-                if (car && !home.border) carsIn[home.id] = carsIn.TryGetValue(home.id, out int had) ? had + 1 : 1;
-                AddPerson(rng, kind, home, work, car);
+                employed = Math.Min(W, J);
+                residentsOut = commutersIn = through = 0;
             }
-            // Workers no job was found for, and everyone else at home: children and the rest.
-            // (Each household's cars, up to CARS_A_HOME a home: the rest go without.)
+            else
+            {
+                employed = Math.Min(W, (int)Math.Round(total * pHome));
+                residentsOut = (int)Math.Round(employed * (1 - pJob));
+                int filled = Math.Min(J, (int)Math.Round(total * pJob));
+                if (employed - residentsOut > filled) residentsOut = employed - filled;
+                commutersIn = Math.Max(0, filled - (employed - residentsOut));
+                through = (int)Math.Round(total * (1 - pHome) * (1 - pJob));
+            }
+            // The employed: a seeded draw of the households' workers (the rest have no job: at home in the day).
+            var order = new List<int>();
+            for (int i = 0; i < W; i++) order.Add(i);
+            rng.Shuffle(order);
+            var employedIdx = new HashSet<int>();
+            for (int i = 0; i < employed; i++) employedIdx.Add(order[i]);
+            var origins = new List<int>();
+            for (int i = 0; i < W; i++) if (employedIdx.Contains(i)) origins.Add(workerHomes[i]);
+            var gateOf = new List<int>();
+            for (int i = 0; i < commutersIn; i++) gateOf.Add(rng.Int(0, gates - 1));
+            foreach (int g in gateOf) origins.Add(-1 - g);
+            var destinations = new List<int>();
+            int inTown = employed - residentsOut + commutersIn;
+            for (int i = 0; i < Math.Min(inTown, J); i++) destinations.Add(jobSlots[i]);
+            for (int i = 0; i < residentsOut; i++) destinations.Add(-1 - i % gates);
+            int population = 0;
+            foreach (var (_, hs) in built) foreach (var h in hs) population += h.members.Count;
+            var jobOf = Gravity(rng, origins, destinations, population);
+            var jobs = new Queue<int>(jobOf);
+
+            Place PlaceOf(int place) => place < 0 ? Place.Gate(-1 - place) : Place.Building(place);
+            // (Each household's cars, up to CARS_A_HOME a home: the workers' first, then the rest who want one.)
             bool CarFor(int b, bool wants)
             {
                 int had = carsIn.TryGetValue(b, out int n) ? n : 0;
@@ -103,17 +126,54 @@ namespace Porchlight.Life
                 carsIn[b] = had + 1;
                 return true;
             }
-            for (; h < homeSlots.Count; h++) AddPerson(rng, PersonKind.AtHome, Place.Building(homeSlots[h]), Place.Building(homeSlots[h]), CarFor(homeSlots[h], rng.Chance(AT_HOME_CARS)));
-            foreach (int b in stayHome)
+            int w = 0;
+            foreach (var (b, hs) in built)
             {
-                bool student = rng.Chance(STUDENTS) && schools.Count > 0;
-                AddPerson(rng, student ? PersonKind.Student : PersonKind.AtHome, Place.Building(b), student ? Place.Building(Nearest(schools, b, rng, 0)) : Place.Building(b), CarFor(b, !student && rng.Chance(AT_HOME_CARS)));
+                var home = Place.Building(b);
+                foreach (var h in hs)
+                {
+                    var members = new List<int>();
+                    foreach (var m in h.members)
+                    {
+                        Person p;
+                        if (m.worker && employedIdx.Contains(w++) && jobs.Count > 0 && jobs.Peek() != int.MinValue)
+                        {
+                            var work = PlaceOf(jobs.Dequeue());
+                            p = AddPerson(rng, PersonKind.Worker, home, work, work.border || CarFor(b, rng.Chance(WORKER_CARS)));
+                        }
+                        else
+                        {
+                            if (m.worker && employedIdx.Contains(w - 1) && jobs.Count > 0) jobs.Dequeue();
+                            bool student = m.role == Role.Child && m.age >= SCHOOL_FROM && schools.Count > 0;
+                            bool drives = m.role != Role.Child && rng.Chance(AT_HOME_CARS);
+                            p = AddPerson(rng, student ? PersonKind.Student : PersonKind.AtHome, home, student ? Place.Building(Nearest(schools, b, rng, 0)) : home, CarFor(b, drives));
+                        }
+                        p.household = households.Count;
+                        p.role = m.role;
+                        p.age = m.age;
+                        members.Add(p.id);
+                    }
+                    households.Add((h.kind, members));
+                }
+            }
+            // Commuters in from beyond the gates (their jobs by the gravity model too), and those passing through.
+            foreach (int g in gateOf)
+            {
+                int job = jobs.Count > 0 ? jobs.Dequeue() : int.MinValue;
+                if (job == int.MinValue || job < 0) continue;
+                AddPerson(rng, PersonKind.CommuterIn, Place.Gate(g), Place.Building(job), true);
+            }
+            for (int i = 0; i < through && gates > 0; i++)
+            {
+                var from = Place.Gate(rng.Int(0, gates - 1));
+                var to = gates > 1 ? Place.Gate((from.id + 1 + rng.Int(0, gates - 2)) % gates) : from;
+                AddPerson(rng, PersonKind.Through, from, to, true);
             }
         }
 
         static double Clamp(double p) => Math.Max(P_LOW, Math.Min(P_HIGH, p));
 
-        void AddPerson(Rng rng, PersonKind kind, Place home, Place work, bool car)
+        Person AddPerson(Rng rng, PersonKind kind, Place home, Place work, bool car)
         {
             var p = new Person { id = people.Count, kind = kind, home = home, work = work, hasCar = car, at = home };
             p.where = home.border ? Where.OffMap : Where.Inside;
@@ -122,6 +182,7 @@ namespace Porchlight.Life
             p.pace = rng.Chance(0.05) ? rng.Range(0.6, 0.8) : rng.Range(0.22, 0.34);
             people.Add(p);
             if (car) GiveCar(p, home);
+            return p;
         }
 
         /// <summary>A car of their own, parked at `at` (off the map, if that's a gate).</summary>

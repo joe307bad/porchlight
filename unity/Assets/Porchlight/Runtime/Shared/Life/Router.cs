@@ -197,6 +197,112 @@ namespace Porchlight.Life
         }
 
         /// <summary>
+        /// As Route, for a driver who knows some lanes (`familiar`): those cost them FAMILIAR of what they cost
+        /// anyone else, so they keep to a way they know unless another's clearly quicker. Searched forward from
+        /// where they are, as their own (no tree is shared). `seconds`: the way's time as Route counts it, unweighted.
+        /// </summary>
+        public List<int> Route(int from, double d, IReadOnlyList<(int lane, double d)> targets, HashSet<int> familiar, out int chosen, out double seconds)
+        {
+            if (familiar == null || familiar.Count == 0) return Route(from, d, targets, out chosen, out seconds);
+            chosen = -1;
+            seconds = double.PositiveInfinity;
+            int n = net.lanes.Count;
+            double Weight(int l) => familiar.Contains(l) ? FAMILIAR : 1;
+            var fl = net.lanes[from];
+            // Arriving at the start of each lane's queue (s, weighted), and the turn taken onto it.
+            var cost = new double[n];
+            var via = new int[n];
+            for (int i = 0; i < n; i++)
+            {
+                cost[i] = double.PositiveInfinity;
+                via[i] = -1;
+            }
+            double best = double.PositiveInfinity;
+            int bestLane = -1;
+            for (int k = 0; k < targets.Count; k++)
+            {
+                if (targets[k].lane != from || targets[k].d < d - 1e-6) continue;
+                double c0 = (targets[k].d - d) / fl.speed * Weight(from);
+                if (c0 < best)
+                {
+                    best = c0;
+                    chosen = k;
+                    bestLane = -2;
+                }
+            }
+            double leave = (Math.Max(0, fl.Span - d) / fl.speed + (delay != null ? delay[from] * Math.Max(0, Math.Min(1, (fl.Span - d) / Math.Max(1e-6, fl.Span))) : 0)) * Weight(from);
+            var heap = new MinHeap();
+            foreach (int mid in fl.outs)
+            {
+                var m = net.movements[mid];
+                double c = leave + TurnTime(m);
+                if (c < cost[m.to] || (c == cost[m.to] && mid < via[m.to]))
+                {
+                    cost[m.to] = c;
+                    via[m.to] = mid;
+                    heap.Push(m.to, c);
+                }
+            }
+            var done = new bool[n];
+            while (heap.Size > 0)
+            {
+                int l = heap.Pop();
+                if (done[l]) continue;
+                done[l] = true;
+                if (cost[l] >= best) break;
+                var lane = net.lanes[l];
+                for (int k = 0; k < targets.Count; k++)
+                {
+                    if (targets[k].lane != l) continue;
+                    double c = cost[l] + targets[k].d / lane.speed * Weight(l);
+                    if (c < best)
+                    {
+                        best = c;
+                        chosen = k;
+                        bestLane = l;
+                    }
+                }
+                double through = LaneTime(lane) * Weight(l);
+                foreach (int mid in lane.outs)
+                {
+                    var m = net.movements[mid];
+                    double c = cost[l] + through + TurnTime(m);
+                    if (c < cost[m.to] || (c == cost[m.to] && mid < via[m.to]))
+                    {
+                        cost[m.to] = c;
+                        via[m.to] = mid;
+                        heap.Push(m.to, c);
+                    }
+                }
+            }
+            if (chosen < 0) return null;
+            List<int> way;
+            if (bestLane == -2) way = new List<int> { from };
+            else
+            {
+                way = new List<int>();
+                int at = bestLane, guard = 2 * n + 2;
+                way.Add(at);
+                while (guard-- > 0)
+                {
+                    int mid = via[at];
+                    if (mid < 0) return null;
+                    way.Add(n + mid);
+                    at = net.movements[mid].from;
+                    way.Add(at);
+                    if (at == from) break;
+                }
+                if (at != from) return null;
+                way.Reverse();
+            }
+            seconds = Left(way, 0, d, targets[chosen].d);
+            return way;
+        }
+
+        /// <summary>A lane a driver knows costs them this share of what it costs anyone else (Congestion.cs: habits).</summary>
+        public const double FAMILIAR = 0.8;
+
+        /// <summary>
         /// Hunting for a parking spot from the end of lane `from`: out over the lanes nearest first, each
         /// turn's cost scaled by a factor in [0.1, 0.9) particular to this car and that lane (so cars
         /// hunting at once spread out), to the first lane with a spot `free` says is free. The way there

@@ -239,9 +239,14 @@ static class LifeCheck
                     var j = life.net.junctions[m.node];
                     if (j.control == Control.Signal && !m.uturn)
                     {
-                        // The moment it started: its interval's start, if that's still the turn's first.
+                        // The moment it started: its interval's start, if that's still the turn's first. (A retiming
+                        // since, on the quarter hour, has the light's timing as it is now, not as it was then.)
                         long began = c.t0;
-                        if (life.Front(c) < m.length && RoadNet.Stage(j, began).stage != m.stage)
+                        long quarter = (long)Math.Floor(t / (double)TownLife.RETIME_MS) * TownLife.RETIME_MS;
+                        bool retimed = began < quarter && quarter <= t;
+                        // A siren goes on red, and so does a driver clearing the way for one (Services.cs).
+                        bool forSiren = c.wentOnRed >= began - 1000;
+                        if (!retimed && !forSiren && life.Front(c) < m.length && RoadNet.Stage(j, began).stage != m.stage)
                             return $"car {c.id} started turn {m.id} (stage {m.stage}) at {TownClock.Format(began)}, stage {RoadNet.Stage(j, began).stage} green";
                         turnsChecked++;
                     }
@@ -308,9 +313,12 @@ static class LifeCheck
     }
 
     /// <summary>
-    /// Given the morning rush drawn ten times a second (as the server sends it), when every car's drawn speed is
-    /// followed frame to frame, then speed changes as a driver's does (no more than HARSH tiles/s² but rarely),
-    /// and a car that's started round a corner doesn't stop on it with nothing in its way.
+    /// Given the morning rush drawn ten times a second (as the server sends it), when every car is followed frame
+    /// to frame, then its driver changes speed as a driver does (no more than HARSH tiles/s² but rarely), what's
+    /// drawn never lurches (SLAM) or jumps, and a car that's started round a corner doesn't stop on it with nothing
+    /// in its way. HARSH is timed on the driver's speed along the road, not the drawn car's: the drawing pulls the
+    /// back wheels round after the front (Traffic.Pose), and on a turn of a tile or so the car's middle slows by
+    /// half and speeds up again though the driver keeps a steady pace. That's geometry, not braking.
     /// </summary>
     static string Smooth(TownModel model, IsoLayout layout, TownZoning zoning)
     {
@@ -324,6 +332,10 @@ static class LifeCheck
         var x = new double[n];
         var y = new double[n];
         var v = new double[n];
+        // And as the town's life has it: on which segment, how far along, and how fast (the driver's speed).
+        var seg = new int[n];
+        var along = new double[n];
+        var pv = new double[n];
         for (int i = 0; i < n; i++) who[i] = -1;
         int moments = 0, harsh = 0, slams = 0, jumps = 0, onTurns = 0, harshOnTurns = 0, stalls = 0;
         int L = life.net.lanes.Count;
@@ -343,22 +355,32 @@ static class LifeCheck
                     x[i] = c.x;
                     y[i] = c.y;
                     v[i] = double.NaN;
+                    seg[i] = driving ? car.seg : -1;
+                    along[i] = driving ? life.Front(car) : 0;
+                    pv[i] = double.NaN;
                     continue;
                 }
                 double now = Numbers.Hypot(c.x - x[i], c.y - y[i]) / DT;
                 x[i] = c.x;
                 y[i] = c.y;
+                // The driver's speed along the way (not over a segment's end: the next frame has it again).
+                double fr = life.Front(car), ps = car.seg == seg[i] ? (fr - along[i]) / DT : double.NaN;
+                double pa = double.IsNaN(ps) || double.IsNaN(pv[i]) ? double.NaN : Math.Abs(ps - pv[i]) / DT;
+                seg[i] = car.seg;
+                along[i] = fr;
+                pv[i] = ps;
                 if (now * DT > JUMPED) jumps++;
                 if (!double.IsNaN(v[i]))
                 {
                     double a = Math.Abs(now - v[i]) / DT;
                     moments++;
-                    if (a > HARSH) harsh++;
+                    bool hard = !double.IsNaN(pa) && pa > HARSH;
+                    if (hard) harsh++;
                     if (a > SLAM) slams++;
                     if (car.seg >= L)
                     {
                         onTurns++;
-                        if (a > HARSH) harshOnTurns++;
+                        if (hard) harshOnTurns++;
                         if (now < 0.02 && v[i] > 0.3) stalls++;
                     }
                 }
@@ -509,7 +531,7 @@ static class LifeCheck
                     if (o["dest"] is double[] d && path.Count < 400)
                     {
                         double end = Numbers.Hypot(path[^1][0] - d[0], path[^1][1] - d[1]);
-                        if (end > 1.5) return $"car {c.id}: its way ends {end:0.00} tiles from where it's going";
+                        if (end > 1.5) return $"car {c.id} (service {c.service}, bus {c.bus}, van {c.van}, siren {c.siren}, pulled {c.pulledOver}, {c.state}, dest {c.dest}, route end {c.route[^1]} at {c.goal:0.0}): its way ends {end:0.00} tiles from where it's going";
                     }
                 }
                 if (c.slot >= 0 && life.carSlots[c.slot].shown && life.CarInSlot(c.slot) != c.id) return $"car {c.id}: slot {c.slot} leads to {life.CarInSlot(c.slot)}";

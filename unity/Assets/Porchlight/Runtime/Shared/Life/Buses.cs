@@ -206,6 +206,7 @@ namespace Porchlight.Life
             }
             c.route = new List<int> { stop.lane };
             c.step = 0;
+            c.goal = stop.d;
             c.busStop = 0;
             AtStopNow(c);
         }

@@ -11,7 +11,7 @@
 // guessed ahead and pulled back. Past the last word, a car carries straight on at
 // its speed, as the server expects (Delta.cs). People are eased toward the latest
 // word, carried on in between. A delta from the server also ends with the town's
-// traffic lights (StreetFurniture.EncodeLights): each signal's green stage and when
+// traffic lights (StreetFurniture.EncodeLights): each signal's green stage, its timing, and when
 // it ends, shown the same moment behind as the cars (Showing).
 
 using System;
@@ -78,6 +78,8 @@ namespace Porchlight.Explore
         /// <summary>Each signal's green stage as last heard, and when it ends (ms, this follower's clock).</summary>
         int[] green = new int[0];
         double[] greenEnds = new double[0];
+        /// <summary>Each signal's two stages' greens (ms), as last heard: stage 0's then stage 1's.</summary>
+        long[] greens = new long[0];
 
         /// <summary>How many of the town's signals the server has said how they stand.</summary>
         public int Lights => green.Length;
@@ -89,7 +91,7 @@ namespace Porchlight.Explore
         public int Showing(int light, int stage)
         {
             if (light < 0 || light >= green.Length) return -1;
-            return Porchlight.Life.StreetFurniture.Showing(green[light], greenEnds[light], stage, (clock - DELAY) * 1000);
+            return Porchlight.Life.StreetFurniture.Showing(green[light], greenEnds[light], stage, (clock - DELAY) * 1000, greens[2 * light], greens[2 * light + 1]);
         }
 
         /// <summary>How many townsfolk the host has (its list can grow: drivers put out of their cars).</summary>
@@ -373,7 +375,8 @@ namespace Porchlight.Explore
             if (!Patch(d, ref at, cars, touched) || !Patch(d, ref at, people, null)) return false;
             double t = Word();
             foreach (int i in touched) Heard(i, t);
-            // The lights, if the server sent them (an older one doesn't): kept on this follower's clock.
+            // The lights, if the server sent them (an older one doesn't): kept on this follower's clock. Then their
+            // timing, if it sent that (an older one's are all STAGE_MS a stage).
             if (at < d.Length)
             {
                 int n = d[at];
@@ -383,13 +386,18 @@ namespace Porchlight.Explore
                     {
                         green = new int[n];
                         greenEnds = new double[n];
+                        greens = new long[2 * n];
                     }
                     for (int k = 0; k < n; k++)
                     {
                         int r = at + 1 + 3 * k;
                         green[k] = d[r];
                         greenEnds[k] = t * 1000 + ((d[r + 1] << 8) | d[r + 2]);
+                        greens[2 * k] = greens[2 * k + 1] = Porchlight.Life.RoadNet.STAGE_MS;
                     }
+                    int g = at + 1 + 3 * n;
+                    if (g < d.Length && d[g] == n && g + 1 + 2 * n <= d.Length)
+                        for (int k = 0; k < 2 * n; k++) greens[k] = Math.Max(1, (int)d[g + 1 + k]) * 1000L;
                 }
             }
             since = 0;

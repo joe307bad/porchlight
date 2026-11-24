@@ -166,7 +166,7 @@ namespace Porchlight.Sim
         /// <summary>
         /// What each of the tick's car and person records is (Manage shows and hides each kind, and lists them), a
         /// letter a record, '-' for an empty one. Cars: r a resident's car, c a commuter's, t through traffic, v a van
-        /// (or taxi) on its rounds, b a bus, s a boat. People: w a worker, s a student, h someone at home in the day
+        /// (or taxi) on its rounds, b a bus, g a bin lorry, e an ambulance or fire engine, s a boat. People: w a worker, s a student, h someone at home in the day
         /// (out on errands), c a commuter on foot, x a wanderer (strolling, with no day).
         /// </summary>
         public object Kinds()
@@ -182,6 +182,7 @@ namespace Porchlight.Sim
                 var car = life.cars[id];
                 if (car.seg < 0 && car.state == CarState.Parked) cars.Append('p');
                 else if (car.bus >= 0) cars.Append('b');
+                else if (car.service >= 0) cars.Append(life.services[car.service].kind == ServiceKind.Bins ? 'g' : 'e');
                 else if (car.van >= 0) cars.Append('v');
                 else if (car.owner >= 0) cars.Append(PersonLetter(life.people[car.owner].kind));
                 else cars.Append('r');

@@ -79,9 +79,12 @@ namespace Porchlight.Explore
             drawn = new int[slots];
             rear = new Vec2[slots];
             parked = new bool[slots];
-            int bus = Array.IndexOf(Catalog.CARS, BUS_MODEL);
+            // A bus's or a service vehicle's slot is drawn as its own model (TownLife.SlotModel); the rest, any car.
             for (int i = 0; i < slots; i++)
-                cars.Add(new TrafficCar { model = i >= life.busSlotsFrom ? bus : pickModel(rng), hidden = true });
+            {
+                string own = life.SlotModel(i);
+                cars.Add(new TrafficCar { model = own != null ? Array.IndexOf(Catalog.CARS, own) : pickModel(rng), hidden = true });
+            }
             var looks = new Rng($"{model.seed}::walkers");
             for (int i = 0; i < life.personSlots.Length; i++) walkers.Add(Pedestrian.Puppet(Catalog.RandomLook(looks), looks.Range(0.85, 1.05)));
             loops = layout.boatLoops;
