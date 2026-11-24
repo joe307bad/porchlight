@@ -59,6 +59,7 @@ static class LifeCheck
     {
         yield return ("a car stops for a player standing in its way", StopsForPlayer);
         yield return ("nobody's run over: a player stepping out in front of any car, anywhere", NobodyRunOver);
+        yield return ("a player walking up to a car only slows it: it never backs up, lurches or sets off", WalkUpToCar);
         yield return ("Manage's focus: every person and car out explained, its queue in order, its way drawn from where it is", Focus);
         yield return ("Manage's focus only looks: a morning watched closely comes out the same as one not", FocusOnlyLooks);
         yield return ("turns are named the driver's way: right turns are the tight ones", TurnNames);
@@ -833,6 +834,65 @@ static class LifeCheck
             for (int f = 0; f < 5; f++) t.Update(0.1, null);
         }
         return tried == 0 ? "no car on the move to step out in front of" : null;
+    }
+
+    /// <summary>
+    /// Given the morning rush, when a player walks up to a car on a lane from 4 tiles in front of it, along its
+    /// lane at a walk, on past its side to behind it, then (frame by frame, as drawn and as the town's life has
+    /// it) the car never moves backwards, never speeds up while they're in front of or beside it, and stays
+    /// within 0.3 tiles of them... no nearer. Tried on 40 cars, moving and stopped.
+    /// </summary>
+    static string WalkUpToCar(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var t = Rush(model, layout, zoning);
+        var life = t.life;
+        int tried = 0;
+        const double WALK = 0.3, DT = 0.1;
+        for (int round = 0; round < 600 && tried < 40; round++)
+        {
+            for (int f = 0; f < 20; f++) t.Update(DT, null);
+            Car car = null;
+            for (int i = 0; i < life.busSlotsFrom && car == null; i++)
+            {
+                int k = (round * 13 + i) % life.busSlotsFrom;
+                if (t.cars[k].hidden) continue;
+                var c = life.cars[life.carSlots[k].who];
+                if (c.seg < 0 || c.seg >= life.net.lanes.Count || c.state == CarState.Parking || c.state == CarState.Unparking) continue;
+                var ln = life.net.lanes[c.seg];
+                double fr = life.Front(c);
+                if (fr - c.length < 1 || fr + 5 > ln.Span) continue;
+                car = c;
+            }
+            if (car == null) continue;
+            tried++;
+            var lane = life.net.lanes[car.seg];
+            double along = life.Front(car) + 4;
+            double last = life.Front(car), lastV = double.NaN;
+            // Walk back down the lane towards it and past it, to a car's length behind its back.
+            for (int f = 0; f < 200; f++)
+            {
+                if (car.seg != lane.id) break;
+                along -= WALK * DT;
+                double nose = life.Front(car);
+                if (along < nose - car.length - 1) break;
+                var you = new List<Vec2> { life.net.LanePoint(lane, lane.start + Math.Max(0, along)).at };
+                t.Update(DT, you);
+                // Pulled into a kerb spot (stopping anyway): that's the end of this one.
+                if (car.seg < 0 || car.state == CarState.Parking) break;
+                if (car.seg != lane.id) return $"car {car.id} drove off its lane through a player walking up to it ({Describe(life, car)})";
+                double now = life.Front(car), v = (now - last) / DT;
+                if (now < last - 1e-6) return $"car {car.id} went back {last - now:0.000} tiles with a player {along - now:0.00} ahead of its nose ({Describe(life, car)})";
+                // In front of it or beside it (the car's body, not the margin behind: there it's let go).
+                bool inFront = along > now - car.length + 0.1;
+                if (inFront && !double.IsNaN(lastV) && v > lastV + 0.05) return $"car {car.id} sped up from {lastV:0.00} to {v:0.00} tiles/s with a player {along - now:0.00} ahead of its nose ({Describe(life, car)})";
+                // Within 0.3 tiles of them and still driving at them (not they walking up the last bit to it).
+                if (inFront && along > now && along - now < 0.3 - 1e-6 && v > 0.05) return $"car {car.id} drove to {along - now:0.00} tiles of a player in front of it";
+                last = now;
+                lastV = inFront ? v : double.NaN;
+            }
+            for (int f = 0; f < 30; f++) t.Update(DT, null);
+        }
+        return tried == 0 ? "no car to walk up to" : null;
     }
 
     static string Describe(TownLife life, Car c)

@@ -19,6 +19,11 @@ using Porchlight.Life;
 
 static class FurnitureCheck
 {
+    /// <summary>A post this near a sidewalk's end (tiles) stands on its corner: a quarter of a sidewalk in, and a little over.</summary>
+    const double CORNER_NEAR = 0.3;
+    /// <summary>A corner across the road from a post is within this (tiles): the widest road, both parking lanes and sidewalks.</summary>
+    const double ACROSS = 5;
+
     public static int Run(string dir)
     {
         var fails = new List<string>();
@@ -53,6 +58,20 @@ static class FurnitureCheck
             int askew = all.Count(p => Math.Abs(p.inward.x * p.along.x + p.inward.y * p.along.y) > 1e-6 || Math.Abs(Math.Sqrt(p.inward.x * p.inward.x + p.inward.y * p.inward.y) - 1) > 1e-6);
             Expect(left == 0, $"{name}: every post on the kerb to the drivers' right ({left} on the left)");
             Expect(askew == 0, $"{name}: every post looks square back down its lane ({askew} askew)");
+            // On the corner of the sidewalks: by the end of a sidewalk (where Layout stops it at the cross street's).
+            var ends = layout.sidewalks.paths.SelectMany(q => new[] { q.points[0], q.points[q.points.Count - 1] }).ToList();
+            // At a corner, or level with one across the road (a T's far side): a sidewalk's end within a road's
+            // width, no more than CORNER_NEAR along the road from it.
+            bool AtCorner((Vec2 at, Vec2 along, Vec2 inward) p) => ends.Any(e =>
+            {
+                double dx = e.x - p.at.x, dy = e.y - p.at.y;
+                return Math.Sqrt(dx * dx + dy * dy) <= ACROSS && Math.Abs(dx * p.along.x + dy * p.along.y) <= CORNER_NEAR;
+            });
+            int offCorner = all.Count(p => !AtCorner(p));
+            Expect(offCorner <= all.Count / 50, $"{name}: posts stand on the corner of the sidewalks, within {CORNER_NEAR} tiles of where a sidewalk ends, or (a T's far side) level with the corner across the road ({offCorner} of {all.Count} not)");
+            int offSidewalk = all.Count(p => !layout.sidewalks.paths.Any(q => Enumerable.Range(0, q.points.Count - 1).Any(k => Geo.DistToSegment(p.at, q.points[k], q.points[k + 1]) <= Layout.SIDEWALK / 2)));
+            // (Where Layout cuts a T's far sidewalk short at a bend, there's a gap: Lanternport has one post in one.)
+            Expect(offSidewalk <= all.Count / 100, $"{name}: every post stands on a sidewalk, or nearly every one ({offSidewalk} off one)");
             int onLane = signals.Count(s => s.reach < 0.5);
             Expect(onLane == 0, $"{name}: every signal's pole stands clear of its lane, its arm reaching over it ({onLane} too close)");
         }

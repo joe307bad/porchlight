@@ -63,8 +63,6 @@ namespace Porchlight.Life
         /// <summary>When it last got to the front of a junction and began waiting, and served its stop sign there.</summary>
         public long arrived = -1;
         public bool stopped;
-        /// <summary>Since when a player has stood in its way.</summary>
-        public long heldSince = -1;
         /// <summary>When it came onto the lane it's on, and how far along (for the lane's measured hold-up).</summary>
         public long laneSince;
         public double laneFrom;
@@ -124,6 +122,8 @@ namespace Porchlight.Life
         /// <summary>Lanes: a player standing in it, how far along, and the first car behind them.</summary>
         public double blockAt = double.NaN;
         public int blockFirst = -1;
+        /// <summary>Lanes: where that first car's front stops for them: short of them if it can brake to it, never behind where it is.</summary>
+        public double blockStop = double.NaN;
         /// <summary>Lanes: a car being let in from the kerb (-1: none), the car held back for it, and how far along that one stops.</summary>
         public int letting = -1;
         public int held = -1;

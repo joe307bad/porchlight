@@ -272,11 +272,33 @@ from its driver's seat, is `Movement.turn`.
 `Life/StreetFurniture.cs` says where each one stands, and both the game and
 Manage draw from it, so they agree:
 
-- a **signal post** at the stop line of every lane into a signal;
-- a **stop sign** at the stop line of every lane that stops.
+- a **signal post** for every lane into a signal;
+- a **stop sign** for every lane that stops.
 
-Each stands on the kerb to the driver's right, a quarter of the road's width
-and 0.35 tiles out from the lane's middle, facing back down the lane.
+Each stands on the **corner of the sidewalk** to the driver's right, facing
+back down the lane:
+
+- **Where:** the corner is where that sidewalk meets the cross street's.
+  Layout ends the sidewalk there, so the post stands where the sidewalk
+  ends. It's a quarter of a sidewalk in from its middle, towards the kerb.
+- **No corner:** on a T's far side, where the sidewalk runs straight past,
+  the post stands level with the corner across the road, so the posts line
+  up across the junction.
+- **Straight-on roads:** the road carrying straight on (within about 30°)
+  isn't a cross street.
+- **Fallback:** a lane with no corner either side keeps the old place, on
+  the kerb at the stop line.
+- **Arm:** a signal's arm reaches from the post to over the middle of the
+  lane, however far that is.
+
+They used to stand 0.35 tiles out from the road's edge, at the stop line,
+which is on the parking strip and short of the corner. `Checks furniture`
+checks two things:
+
+- every post is within 0.3 tiles of a sidewalk's end, or level with one
+  across the road (all 1,158 in the starter towns);
+- it stands on a sidewalk. One in Lanternport stands where Layout cuts a
+  T's far sidewalk short at a bend, so the check allows 1 in 100.
 `Showing(junction, stage, moment)` gives what a lane's light shows: red
 while the other stage is green, green, then amber for the last
 `AMBER_MS` (3 s; ITE's rule of about a second for each 10 mph) before its
@@ -453,19 +475,35 @@ the kerb of a busy street.
 
 `SetObstacles(points)` takes where the players are, on every update:
 
-- **On a lane:** the first car behind them stops 1.2 tiles short. When they
-  move, it goes on from where it is. They stand in the way of each lane
-  whose middle is within 0.7 tiles of them (half a car's width and a
-  margin): their own side's, and the other side's too when they're near the
-  middle of the road. Every road near them counts, not only the nearest:
-  at the mouth of a junction the end of the lane coming in is as near as
-  the road across. Buses stop for them as cars do.
+- **On a lane:** the first car they're in front of, or beside, slows down
+  for them, and that's all it does. It brakes (firmly, about 0.6 g) to stop
+  1.2 tiles short. If they step out nearer than it can stop at that, it
+  brakes as hard as it must, and never comes within 0.3 tiles. It doesn't
+  speed up meanwhile, and a car that's stopped stays stopped. Its stop point
+  only ever moves forward, never back past where the car is, so a player
+  walking up to a car never makes it back up or lurch. A car they're
+  standing beside holds where it is. When they move off, it goes on from
+  where it is. They stand in the way of each lane whose middle is within
+  0.7 tiles of them (half a car's width and a margin): their own side's,
+  and the other side's too when they're near the middle of the road. Every
+  road near them counts, not only the nearest: at the mouth of a junction
+  the end of the lane coming in is as near as the road across. Buses stop
+  for them as cars do.
 - **In a junction:** every turn whose curve passes within 0.5 tiles of them
   is blocked. A car already on that turn stops short. No car may start it
   until they've gone, and going wakes the junction.
 
-A car held behind a player for 15 s turns round if it can: a U-turn at the
-next junction, and a new route from there.
+A car held behind a player waits for them. It used to turn round after
+15 s, but that put it on the other lane in one step, a jump, so now it
+doesn't. A car that hasn't moved in 10 minutes still gives up, as any car
+does (§3).
+
+Before, the first car behind them had its front cut off at 1.2 tiles short
+of them, applied at once. Nearer than that, the car jumped back to it, and
+as the player walked, back and forth with them. `Checks life` "a player
+walking up to a car" walks up to 40 cars from 4 tiles in front of them, past
+their side: none goes back, speeds up or comes within 0.3 tiles. The old
+way, a car went back 0.03 tiles.
 
 ---
 

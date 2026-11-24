@@ -28,7 +28,7 @@ namespace Porchlight.Life
         public readonly Dictionary<int, Wait> carWaits = new Dictionary<int, Wait>(), walkerWaits = new Dictionary<int, Wait>();
         public readonly List<Problem> problems = new List<Problem>();
         public long problemCount;
-        public long retimed, habits, keptWay, binStops, binSkipped, callsAnswered, pulledOver, sirenWaits, sirenOnRed, gridlockBroken, gaveUp, rerouted, lightsChanged, letIn, reserved, waitedTooLong, noGap, hunts, noSpot, turnedRound, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
+        public long retimed, habits, keptWay, binStops, binSkipped, callsAnswered, pulledOver, sirenWaits, sirenOnRed, gridlockBroken, gaveUp, rerouted, lightsChanged, letIn, reserved, waitedTooLong, noGap, hunts, noSpot, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
         /// <summary>The longest any trip took (ms), and which.</summary>
         public long longestTrip;
 

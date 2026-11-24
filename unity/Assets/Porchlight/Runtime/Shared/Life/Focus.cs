@@ -498,7 +498,7 @@ namespace Porchlight.Life
                     if (onTurn && i == 0 && c.step + 1 < c.route.Count)
                         return new Why("Why's it stopped?", $"At the end of its turn, waiting for space at the start of lane {c.route[c.step + 1]}", false);
                     if (i > 0) return new Why("Why's it stopped?", $"Behind car {q.cars[i - 1]}", false, $"Cars keep {FOLLOWING} tiles apart.");
-                    if (q.blockFirst == c.id) return new Why("Why's it stopped?", "A player's standing in its way", false, $"It stops {STAND_OFF} tiles short, and turns round if they stay {PATIENCE_MS / 1000} s.");
+                    if (q.blockFirst == c.id) return new Why("Why's it stopped?", "A player's standing in its way", false, $"It slows to stop {STAND_OFF} tiles short (never backing up), and waits till they've gone.");
                     if (q.laggy >= 0) return new Why("Why's it stopped?", $"Behind car {q.laggy}, still pulling off the lane", false);
                     return new Why("Why's it stopped?", "Queued", false);
                 }

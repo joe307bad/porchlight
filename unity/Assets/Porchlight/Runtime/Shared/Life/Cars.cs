@@ -30,6 +30,10 @@ namespace Porchlight.Life
         public const double FOLLOWING = 0.25;
         /// <summary>How far short of a player standing in the lane a car stops (tiles).</summary>
         const double STAND_OFF = 1.2;
+        /// <summary>Braking for someone in the road, tiles/s² (about 0.6 g: firm, not a skid).</summary>
+        const double FIRM = 1.5;
+        /// <summary>A car stops at least this short of someone in its way (tiles), however hard it must brake.</summary>
+        const double CLOSEST = 0.3;
         /// <summary>The stop at a stop sign.</summary>
         const long STOP_MS = 500;
         /// <summary>Pulling into and out of a spot: at the kerb, and in a driveway.</summary>
@@ -40,8 +44,6 @@ namespace Porchlight.Life
         const long LOOK_AGAIN_MS = 300;
         /// <summary>Waited this long at a junction, a car goes anyway (a last resort: the knot check should have freed it).</summary>
         const long GIVE_WAY_MS = 3 * TownClock.MINUTE;
-        /// <summary>Held up by a player this long, a car turns round.</summary>
-        const long PATIENCE_MS = 15_000;
         /// <summary>Not let out of its spot this many times (each a few seconds apart), a trip's given up.</summary>
         const int MOST_TRIES = 40;
 
@@ -135,7 +137,7 @@ namespace Porchlight.Life
                 var lag = cars[q.laggy];
                 if (lag.seg >= 0) p = Math.Min(p, q.length + Front(lag) - lag.length - FOLLOWING);
             }
-            if (q.blockFirst == c.id && !double.IsNaN(q.blockAt)) p = Math.Min(p, q.blockAt - STAND_OFF);
+            if (q.blockFirst == c.id && !double.IsNaN(q.blockStop)) p = Math.Min(p, q.blockStop);
             if (q.held == c.id) p = Math.Min(p, q.heldAt);
             p = Math.Max(p, Math.Min(c.s0, -c.length));
             frontMemo[c.id] = p;
@@ -165,6 +167,14 @@ namespace Porchlight.Life
                 var lead = cars[q.cars[ahead]];
                 double at = StopsAt(lead, c.seg);
                 if (!double.IsNaN(at) && at - lead.length - FOLLOWING < c.s1 - 1e-6) c.stopAt = Math.Max(from, at - lead.length - FOLLOWING);
+            }
+            // A player in the way: it brakes to stop short of them (SetObstacles has where it can), and doesn't
+            // speed up meanwhile; stopped, it stays stopped till they've gone.
+            if (q != null && q.blockFirst == c.id && !double.IsNaN(q.blockStop) && q.blockStop < c.s1 - 1e-6)
+            {
+                c.stopAt = Math.Max(from, double.IsNaN(c.stopAt) ? q.blockStop : Math.Min(c.stopAt, q.blockStop));
+                speed = Math.Min(speed, va);
+                if (speed < 0.05) c.stopAt = from;
             }
             if (double.IsNaN(c.stopAt)) Drive(c, c.s1 - from, va, speed, Math.Min(speed, ExitSpeed(c)));
             else Drive(c, c.stopAt - from, va, speed, 0);
@@ -388,15 +398,10 @@ namespace Porchlight.Life
             {
                 c.state = CarState.Queued;
                 var q = queues[c.seg];
-                if (q.blockFirst == c.id)
-                {
-                    if (c.heldSince < 0) c.heldSince = Now;
-                    if (Now - c.heldSince >= PATIENCE_MS && TurnRound(c)) return;
-                    Schedule(K_CAR, c.id, Now + 2000);
-                }
+                // Held by a player: it waits for them (looking again now and then), and does nothing else.
+                if (q.blockFirst == c.id) Schedule(K_CAR, c.id, Now + 2000);
                 return;
             }
-            c.heldSince = -1;
             bool last = c.step >= c.route.Count - 1;
             if (last)
             {
@@ -1440,6 +1445,7 @@ namespace Porchlight.Life
                 int first = q.blockFirst;
                 q.blockAt = double.NaN;
                 q.blockFirst = -1;
+                q.blockStop = double.NaN;
                 version++;
                 if (first >= 0) Refresh(cars[first]);
                 // A turn clear again: those waiting to take it may.
@@ -1449,26 +1455,40 @@ namespace Porchlight.Life
             foreach (var kv in want)
             {
                 var q = queues[kv.Key];
+                // The first car they're not behind: the one they're in front of, or beside (it stays where it is).
+                // Just behind a car's back, they're in front of the next one: that one stops for them.
                 int first = -1;
                 foreach (int id in q.cars)
                 {
-                    if (Front(cars[id]) <= kv.Value)
+                    if (Front(cars[id]) - cars[id].length <= kv.Value)
                     {
                         first = id;
                         break;
                     }
                 }
                 int was = q.blockFirst;
-                double wasAt = q.blockAt;
+                double wasStop = q.blockStop;
+                // Where it stops: STAND_OFF short of them, or as soon as it can brake firmly if that's further, but
+                // never nearer than CLOSEST (stepped out right in front of it, it brakes as hard as it must). Never
+                // behind where it is: it only ever slows down for them, it doesn't jump back.
+                double stop = double.NaN;
+                if (first >= 0)
+                {
+                    var f = cars[first];
+                    double front = Front(f), v = Math.Max(0, PlanSpeed(f, Now));
+                    stop = Math.Max(front, Math.Max(kv.Value - STAND_OFF, Math.Min(front + v * v / (2 * FIRM), kv.Value - CLOSEST)));
+                }
                 q.blockAt = kv.Value;
                 q.blockFirst = first;
+                q.blockStop = stop;
                 blocked.Add(kv.Key);
-                if (was != first || !(Math.Abs(wasAt - kv.Value) < 1e-3))
+                // Plans again when it changes: at once if they're nearer (it mustn't carry on speeding up), and if
+                // they've moved on further by more than a little.
+                if (was != first || double.IsNaN(wasStop) != double.IsNaN(stop) || stop < wasStop - 1e-4 || stop > wasStop + 0.02)
                 {
                     version++;
                     if (was >= 0 && was != first) Refresh(cars[was]);
-                    // Moved on further: the car behind may go on a little.
-                    if (first >= 0 && (double.IsNaN(wasAt) || kv.Value > wasAt)) Refresh(cars[first]);
+                    if (first >= 0) Refresh(cars[first]);
                 }
             }
         }
@@ -1501,56 +1521,5 @@ namespace Porchlight.Life
             return along;
         }
 
-        /// <summary>Held up too long by a player: round, back the other way, and a new way from there.</summary>
-        bool TurnRound(Car c)
-        {
-            if (c.seg >= Lanes || c.bus >= 0 || c.service >= 0) return false;
-            var lane = net.lanes[c.seg];
-            var back = net.Reverse(lane);
-            double p = Front(c);
-            double d = Math.Max(0, Math.Min(back.Span, lane.Span - p + c.length));
-            var dest = c.dest;
-            int target = c.target;
-            var saved = (c.route, c.step, c.goal);
-            RemoveFromRoad(c);
-            if (target >= 0 && spotHolder[target] == c.id) spotHolder[target] = -1;
-            c.target = -1;
-            c.spot = -1;
-            c.parkedBy = -1;
-            c.startLane = back.id;
-            c.startD = d;
-            if (!PutOnRoad(c, back.id, d))
-            {
-                // No gap there either: back where it was, still waiting.
-                PutOnRoad(c, lane.id, Math.Max(0, p));
-                (c.route, c.step, c.goal) = saved;
-                c.state = CarState.Queued;
-                c.heldSince = Now;
-                Schedule(K_CAR, c.id, Now + 2000);
-                return true;
-            }
-            stats.turnedRound++;
-            var targets = new List<(int, double)>();
-            if (dest.border) targets.Add((net.borders[dest.id].exit, net.lanes[net.borders[dest.id].exit].Span));
-            else if (net.access.TryGetValue(dest.id, out var a))
-                foreach (int l in net.LanesFor(a)) targets.Add((l, Math.Max(0, Math.Min(net.lanes[l].Span, net.DoneFor(net.lanes[l], a) - net.lanes[l].start))));
-            int k = -1;
-            var route = targets.Count > 0 ? router.Route(back.id, d, targets, out k, out _) : null;
-            if (route == null)
-            {
-                RemoveFromRoad(c);
-                if (c.owner >= 0) Fail(people[c.owner], "turned round with nowhere to go");
-                if (c.van >= 0) RemoveVan(c);
-                return true;
-            }
-            c.route = route;
-            c.step = 0;
-            c.goal = targets[k].Item2;
-            c.heldSince = -1;
-            c.state = CarState.Crossing;
-            SetInterval(c, d, route.Count == 1 ? c.goal : SegLength(c.seg));
-            if (route.Count == 1) OnLastLane(c);
-            return true;
-        }
     }
 }
