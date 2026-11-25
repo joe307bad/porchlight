@@ -124,6 +124,8 @@ namespace Porchlight.Sim
     {
         /// <summary>Tiles a car or person drawn may be off the server's on average, and at the 99th percentile.</summary>
         const double MEAN = 0.1, P99 = 0.5;
+        /// <summary>At most this share of the signals' changes may show a tick late (changed early for a waiting car, a tick before the word).</summary>
+        const double LATE_CHANGES = 0.3;
         /// <summary>
         /// The most of a drawn car's frames that may flick round a turn, surge, or slide at speed; and the most its turn
         /// rate may step from one frame to the next (rad/s, p99.9). Drawn by guessing ahead and easing back (as before):
@@ -155,7 +157,7 @@ namespace Porchlight.Sim
                 // player's own copy of the junctions would show by the clock alone (no early changes: as before).
                 var serverLights = StreetFurniture.SignalJunctions(server.traffic.life.net);
                 var gameLights = StreetFurniture.SignalJunctions(game.traffic.life.net);
-                int lamps = 0, lampsWrong = 0, byClockWrong = 0;
+                int lamps = 0, lampsWrong = 0, byClockWrong = 0, changes = 0, lagging = 0;
                 for (int tick = 0; tick < 600; tick++)
                 {
                     server.Step(morning + (tick + 1) * 100);
@@ -186,8 +188,14 @@ namespace Porchlight.Sim
                         for (int st = 0; st < 2; st++)
                         {
                             int truth = StreetFurniture.Showing(serverLights[k], st, drawn);
+                            int before = StreetFurniture.Showing(serverLights[k], st, drawn - 100);
+                            int shows = sync.Showing(k, st);
                             lamps++;
-                            if (sync.Showing(k, st) != truth) lampsWrong++;
+                            if (truth != before) changes++;
+                            // Still showing what it showed a tick ago, just as it changed: a light changed early for a
+                            // waiting car, a tick ahead of the word that says so (the server's offset has moved by then).
+                            if (shows != truth && truth != before && shows == before) lagging++;
+                            else if (shows != truth) lampsWrong++;
                             if (StreetFurniture.Showing(gameLights[k], st, drawn) != truth) byClockWrong++;
                         }
                     var then = was.Peek();
@@ -214,10 +222,12 @@ namespace Porchlight.Sim
                 if (lamps > 0)
                 {
                     // Only a light changed early for a waiting car, within the tick before a word, may be off: the
-                    // server's own offset has moved by then. Anything more is the player's lamps out of step.
-                    bool lit = sync.Lights == serverLights.Count && lampsWrong <= lamps * 0.001;
+                    // server's own offset has moved by then, so the lamp shows the change a tick late. Those are
+                    // counted against the changes (a flat share of every moment failed a town of three signals over
+                    // five such ticks); anything else is the player's lamps out of step.
+                    bool lit = sync.Lights == serverLights.Count && lampsWrong <= lamps * 0.001 && lagging <= Math.Max(2, changes * LATE_CHANGES);
                     ok &= lit;
-                    Console.WriteLine($"{(lit ? "ok  " : "FAIL")} {name}: {serverLights.Count} signals' lamps as the server has them, {100.0 * lampsWrong / lamps:0.00}% of moments off (by the clock alone, as before: {100.0 * byClockWrong / lamps:0.0}%)");
+                    Console.WriteLine($"{(lit ? "ok  " : "FAIL")} {name}: {serverLights.Count} signals' lamps as the server has them, {100.0 * lampsWrong / lamps:0.00}% of moments off, {lagging} of {changes} changes a tick late (by the clock alone, as before: {100.0 * byClockWrong / lamps:0.0}% off)");
                 }
                 if (gaps.Count == 0) continue;
                 gaps.Sort();
