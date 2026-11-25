@@ -122,7 +122,7 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
   const closeSpot = useCallback(() => setSpot(null), []);
   const [hidden, setHidden] = useState<Set<string>>(savedHidden);
   const [, setSelected] = useState<string | null>(null);
-  const [, setFollowing] = useState<string | null>(null);
+  const [following, setFollowing] = useState<string | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [lives, setLives] = useState<Map<string, TownLife>>(new Map());
   /** Whether the towns' life has been asked for at least once (so "none running" means it, not "not asked yet"). */
@@ -284,6 +284,8 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
     },
     [renderer],
   );
+
+  const players = useCallback(() => world.players().filter((p) => p.seen), [world]);
 
   const congestion = useCallback((key: string | null, streets: CongestedStreet[] | null) => renderer?.setCongestion(key, streets), [renderer]);
   const street = useCallback(
@@ -461,6 +463,9 @@ function Live({ who, map, onSignedOut }: { who: Me; map: CountyMap; onSignedOut:
         onFollowFocus={followFocus}
         onCongestion={congestion}
         onStreet={street}
+        players={players}
+        following={following}
+        onFollow={follow}
       />
     </div>
   );

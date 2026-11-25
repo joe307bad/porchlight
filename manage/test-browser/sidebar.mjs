@@ -1,6 +1,6 @@
 // Manage's sidebar, end to end in a real (headless) Chromium: the real page,
 // against a stand-in server (the routes it asks for, answered here). The towns
-// with their people and nothing else; into a town: collapsible sections as the
+// with their people, then who's playing (nobody: no feed here), and nothing else; into a town: collapsible sections as the
 // game's sidebar has them (its congestion by street name, then each sort of
 // thing out in it), one open at a time, the open one scrolling between the
 // headings so none leaves the window; a van clicked (followed, a crumb on), its
@@ -80,11 +80,13 @@ try {
   const panel = page.locator('.panel-body');
   const crumbs = () => page.locator('.crumbs li').allTextContents().then((t) => t.join(' › '));
 
-  // The county: the towns, each with its people, and nothing else.
+  // The county: the towns, each with its people, then who's playing, and nothing else.
   await page.waitForFunction(() => document.querySelector('[aria-label="Towns"]')?.textContent?.includes('1,234'));
   const rows = await page.locator('[aria-label="Towns"] li').allTextContents();
   check(rows.join(' | ') === 'Lanternport1,234 | Porchlight5,678', `the towns, each with its people (${rows.join(' | ')})`);
-  check((await panel.locator('h2').count()) === 0 && (await crumbs()) === 'County', 'and nothing else: no layers, kinds or players');
+  const h2s = await panel.locator('h2').allTextContents();
+  check(h2s.join(' | ') === 'Players' && (await panel.textContent()).includes("Nobody's playing right now."), `then the players: nobody, with no feed (${h2s.join(' | ')})`);
+  check((await crumbs()) === 'County', 'and nothing else: no layers or kinds');
 
   // Into Lanternport: a heading a section, as the game's sidebar has them, its congestion open.
   const heads = () => page.locator('.sb-section-head').allTextContents().then((t) => t.map((x) => x.replace('›', '').trim()).join(' | '));

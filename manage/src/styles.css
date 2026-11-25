@@ -1102,3 +1102,8 @@ p {
 .calendar-name {
   font-weight: 600;
 }
+
+/* A player's dot in the county's list of players: their colour on the map. */
+.swatch.player-dot {
+  border-radius: 50%;
+}
