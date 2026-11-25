@@ -460,7 +460,8 @@ static class LifeCheck
         var life = t.life;
         int people = 0, carsSeen = 0, waiting = 0;
         var modes = new Dictionary<Mode, string> { [Mode.Walk] = "By foot", [Mode.Drive] = "By car", [Mode.Bus] = "By bus" };
-        for (int minute = 0; minute < 20; minute++)
+        // Twenty minutes of the rush; a small town's, up to an hour, until there's enough out to judge.
+        for (int minute = 0; minute < 20 || ((people < 50 || carsSeen < 10) && minute < 60); minute++)
         {
             for (int f = 0; f < 600; f++) t.Update(0.1, null);
             foreach (var p in life.people)

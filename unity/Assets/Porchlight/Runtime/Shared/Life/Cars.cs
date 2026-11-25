@@ -699,7 +699,9 @@ namespace Porchlight.Life
             }
             explain?.Add(new Why("Is a crossing turn under way?", crossers == null ? "No" : $"Yes: car{(crossers.Count > 1 ? "s" : "")} {string.Join(", ", crossers)}", crossers == null,
                 "Turns whose paths cross can't both be under way."));
-            bool room = Room(m.to, c);
+            bool fits = Room(m.to, c);
+            double beyond = fits ? ClearBeyond(j, m) : 0;
+            bool room = fits && beyond >= c.length;
             if (!room)
             {
                 int filler = queues[m.to].lastIn;
@@ -709,8 +711,9 @@ namespace Porchlight.Life
             if (explain != null)
             {
                 var q = queues[m.to];
-                explain.Add(new Why("Is there room for it beyond?", room ? "Yes" : $"No: car {q.lastIn} filled it", room,
-                    $"Lane {m.to} holds {net.lanes[m.to].Span:0.0} tiles; {q.committed:0.0} are kept for the cars on it or let into it, and it needs {c.length + FOLLOWING:0.0}. Don't block the box."));
+                explain.Add(new Why("Is there room for it beyond?", room ? "Yes" : !fits ? $"No: car {q.lastIn} filled it" : $"No: only {beyond:0.0} tiles clear past the junction, and it's {c.length:0.0} long", room,
+                    $"Lane {m.to} holds {net.lanes[m.to].Span:0.0} tiles; {q.committed:0.0} are kept for the cars on it or let into it, and it needs {c.length + FOLLOWING:0.0}. "
+                    + "And a clear way through: room for the whole of it past the junction, behind where the last car there stops and those already turning in. Don't block the box."));
             }
             if (by == null) return Verdict.Go;
             foreach (int b in by) knot |= WaitsOn(b, c.id);
@@ -723,6 +726,23 @@ namespace Porchlight.Life
                 return Verdict.Blocked;
             }
             return Verdict.Go;
+        }
+
+        /// <summary>
+        /// How much of lane `m.to` is clear for a car turning into it now (tiles): up to where the last car on it stops
+        /// (RoomOn), less a car's length and gap for each already on a turn into it. Less than a car's length, it would
+        /// stand in the junction when it got round: it waits at the line instead.
+        /// </summary>
+        double ClearBeyond(Junction j, Movement m)
+        {
+            double clear = RoomOn(m.to);
+            if (double.IsPositiveInfinity(clear) || !underway.TryGetValue(j.node, out var going)) return clear;
+            foreach (var (id, _) in going)
+            {
+                var o = cars[id];
+                if (o.seg >= Lanes && net.movements[o.seg - Lanes].to == m.to) clear -= o.length + FOLLOWING;
+            }
+            return clear;
         }
 
         /// <summary>The highest rank of a junction's roads.</summary>

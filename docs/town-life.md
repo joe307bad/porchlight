@@ -417,6 +417,19 @@ have **committed**: their length plus the following gap. A car may only
 start a turn if the lane out has room for it. This is "don't block the
 box": nobody stops on a junction because the lane beyond is full.
 
+Room in the tally isn't yet room on the road, though: the cars in the lane
+may not have closed up, and others may be turning into it ahead. So a car
+also needs a **clear way through** (`ClearBeyond`): space for its whole
+length past the junction, behind where the last car in the lane stops, less
+a car and a gap for each already on a turn into it. Short of that, it waits
+at its line, not in the box. While the lane's last car is still moving
+there's no stop to measure from, and nothing is counted: a queue rolling
+off on a green follows its leader through bumper to bumper, nobody braking
+at a green to wait for room. Before this, a car let in on the tally alone
+could reach the far side at speed and stop dead in the junction (four times
+in an Ember Crossing morning on Market Avenue, a straight main road with a
+side street every 8 to 12 tiles).
+
 ### Junctions
 
 A car at the front asks to go (`Ask`). The junction's rules are one
@@ -432,7 +445,7 @@ order:
 - **someone's standing on the turn** (a player, below);
 - a walker is on a crossing it would cut;
 - a turn under way conflicts with its own;
-- there's no room on the lane out.
+- there's no room on the lane out, or no clear way through to it.
 
 A refused car notes **who it's waiting on** (`blockedBy`). It's woken when
 any of them clears the junction. Waiting cars are woken in the order they
