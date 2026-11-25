@@ -430,6 +430,12 @@ could reach the far side at speed and stop dead in the junction (four times
 in an Ember Crossing morning on Market Avenue, a straight main road with a
 side street every 8 to 12 tiles).
 
+Following through, the car behind is held back by its leader's back until
+that's a full gap (`FOLLOWING`) past the line, not just over it
+(`OnClear`). Let go with only its back over, the follower could roll right
+up to the line, and on the turn be put back by the gap it hadn't kept: a car
+drawn jumping a tile backwards (once in Porchlight's rush).
+
 ### Junctions
 
 A car at the front asks to go (`Ask`). The junction's rules are one

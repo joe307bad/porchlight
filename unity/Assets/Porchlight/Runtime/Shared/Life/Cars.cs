@@ -479,8 +479,10 @@ namespace Porchlight.Life
         void OnClear(Car c)
         {
             if (c.laggy < 0) return;
-            // Its back's out of the segment it left (the gap behind it is the next car's to keep).
-            if (c.seg < 0 || Front(c) >= c.length - 1e-6)
+            // Its back's out of the segment it left, and the gap behind it too: let go with its back just over the
+            // line, the car behind could roll up to the line on it, then be put back by that gap on the turn (drawn,
+            // a jump backwards).
+            if (c.seg < 0 || Front(c) >= c.length + FOLLOWING - 1e-6)
             {
                 bool slower = c.seg >= 0 && SegSpeed(c.laggy) < SegSpeed(c.seg);
                 ClearLaggy(c);
@@ -490,7 +492,7 @@ namespace Porchlight.Life
             }
             // Looked at again when it should be clear, and often: the car behind rolls up on its back meanwhile, and
             // would sit at the line, stopped dead, if its clearing were noticed late.
-            double left = c.length - Front(c);
+            double left = c.length + FOLLOWING - Front(c);
             Schedule(K_CLEAR, c.id, Now + Math.Max(CLEAR_AGAIN_MS, (long)Math.Ceiling(left / Math.Max(0.05, Math.Min(SegSpeed(c.seg), SegSpeed(c.laggy))) * 1000)));
         }
 

@@ -763,7 +763,10 @@ static class LifeCheck
         bool stops = life.net.junctions.Values.Any(j => j.control == Control.Stop);
         if (stops && s.noGap == 0) return "nobody at a stop sign, or turning left across traffic, waited for a gap";
         if (life.people.Count > 10000 && s.rerouted == 0) return "in a town this big, no held-up driver took another way";
-        if (life.people.Count > 10000 && s.letIn == 0) return "in a town this big, no driver let anyone pull out";
+        // Letting a car out is rare (two tries at a gap first): none in the rush can be chance (Porchlight's has had
+        // none to five), so a big town with none goes on to the late morning, when it has had dozens.
+        if (life.people.Count > 10000 && s.letIn == 0) life.RunUntil(TrafficDay.Morning + 165 * TownClock.MINUTE);
+        if (life.people.Count > 10000 && s.letIn == 0) return "in a town this big, no driver let anyone pull out all morning";
         return null;
     }
 
