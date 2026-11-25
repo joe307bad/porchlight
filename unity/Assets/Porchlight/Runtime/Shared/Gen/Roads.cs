@@ -118,7 +118,7 @@ namespace Porchlight.Gen
                     Height = h,
                     // Onto a road from off it: at one of its junctions, or well clear of them (JUNCTIONS_APART), so
                     // where it meets the road is one junction, not a knot of two a tile or three apart.
-                    Step = (a, to) => step(to) + (onRoad[to] != 0 && onRoad[a] == 0 && NearJunction(to) ? JOIN_PENALTY : 0),
+                    Step = (a, to) => step(to) + (onRoad[to] != 0 && onRoad[a] == 0 ? NearJunction(to) : 0),
                     TurnCost = TURN_COST,
                     Goal = c => c == goal,
                     Estimate = c => AStar.Manhattan(c, goal, w) * cheapest,
@@ -144,12 +144,22 @@ namespace Porchlight.Gen
                 }
                 EnsureNode(from);
             }
-            bool NearJunction(int cell)
+            // What joining a road at `cell` costs over the road itself: nothing at a junction or well clear of them.
+            double NearJunction(int cell)
             {
-                if (nodeAt.ContainsKey(cell)) return false;
+                if (nodeAt.ContainsKey(cell)) return 0;
+                int x = cell % w, y = cell / w;
+                double worst = 0;
                 foreach (int n in nodeCells)
-                    if (AStar.Manhattan(n, cell, w) < RoadGraphOps.JUNCTIONS_APART) return true;
-                return false;
+                {
+                    double d = AStar.Manhattan(n, cell, w);
+                    if (d < RoadGraphOps.JUNCTIONS_APART) worst = Math.Max(worst, JOIN_PENALTY);
+                    // Off its row and column, the road between them bends, and a bent link is a knot under twice
+                    // that (RoadGraphOps.Knotted) that clean-up can't always undo: a road down a zoo's side onto
+                    // the corner of one round it. Dearer than going on to join the road further along.
+                    else if (d < 2 * RoadGraphOps.JUNCTIONS_APART && n % w != x && n / w != y) worst = Math.Max(worst, BENT_JOIN_PENALTY);
+                }
+                return worst;
             }
             double Step(int to) => onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY : 0);
             // Each gate's road keeps to the lines a surveyor would lay it on: the gate's own row or column out of town,
@@ -315,6 +325,8 @@ namespace Porchlight.Gen
 
         /// <summary>The cost of joining a road a tile or three from one of its junctions (a long way round's cheaper).</summary>
         const double JOIN_PENALTY = 30;
+        /// <summary>The cost of joining a road where the way from there to a junction a few tiles off must bend (a knot clean-up can't always undo).</summary>
+        const double BENT_JOIN_PENALTY = 200;
 
         /// <summary>The longest stub (tiles) left poking past a junction at the town centre.</summary>
         const double STUB = 3;
