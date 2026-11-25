@@ -64,6 +64,17 @@ What happens now (`Gen/Roads.cs`, `Gen/RoadGraph.cs`):
 1. **Routing.** A main road joining another within 4 tiles of one of its
    junctions pays a penalty of 30 (`JOIN_PENALTY`; a turn costs 10). So it
    meets the road at the junction itself, or well clear of it.
+   **Survey lines.** A gate's road is pulled onto the lines a surveyor
+   would lay it on: the gate's own row or column out of town, and the
+   centre's row or column for its last 24 tiles in (`APPROACH`; 0.3 of the
+   radius in a small town). A tile off them costs 3 for every tile off, up
+   to 4 (`LINE_PULL`), more than any slope a road may climb. A gate row only
+   6 tiles or fewer from the centre's (`LINES_APART`) isn't a line of its
+   own, so the road steps over at the gate. Without this, cheap ground a few
+   rows over was worth two turns, and the roads came in on rows a tile or
+   three apart. Clean-up then pulled them into one junction with a 3-tile
+   S-bend in its mouth and long roads swung a tile or two out of true (Blue
+   town's centre: Market Street slanting from 127.5 to 130.2 over 40 tiles).
 2. **Clean-up** (`RoadGraphOps.CollapseShortLinks`), repeated until nothing
    changes:
    - **Doubles.** Of two roads between the same two junctions, the shorter
