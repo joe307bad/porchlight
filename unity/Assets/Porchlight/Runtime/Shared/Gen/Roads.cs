@@ -1,10 +1,8 @@
 // Stage 4: main roads. A* from each gate (and the airport, and the zoo's gate) to the center over the cost field,
 // along the tile grid with a penalty per turn, so roads run straight. Cells
 // already on a road are cheap and cells beside one are penalised, so later
-// roads merge into earlier ones. A gate's road is pulled onto its gate's row or
-// column and the centre's, so the main roads meet at the centre as one straight
-// crossroads rather than a tile or three apart. Each stretch of new road becomes
-// a graph edge; joins split the existing edge.
+// roads merge into earlier ones. Each stretch of new road becomes a graph edge;
+// joins split the existing edge.
 
 using System;
 using System.Collections.Generic;
@@ -152,31 +150,9 @@ namespace Porchlight.Gen
                 return false;
             }
             double Step(int to) => onRoad[to] != 0 ? REUSE_COST : cost[to] + (beside[to] != 0 ? BESIDE_PENALTY : 0);
-            // Each gate's road keeps to the lines a surveyor would lay it on: the gate's own row or column out of town,
-            // and the centre's, so it comes in straight, turns once if it has to, and meets the others at the centre on
-            // its row or column, not a tile or three off it (a jog, then a slant where the knot's pulled together).
-            // Off those lines a tile costs more the further off it is, more than any slope a road may climb: so it
-            // leaves them only for what it can't cross (too steep, the airport, the zoo) or a long way over water.
-            int cx = centerCell % w, cy = centerCell / w;
-            double approach = Math.Min(APPROACH, model.townRadius * APPROACH_SHARE);
             foreach (int gate in gates)
             {
-                int gx = gate % w, gy = gate / w;
-                Route(gate, to =>
-                {
-                    if (onRoad[to] != 0) return REUSE_COST;
-                    int x = to % w, y = to / w;
-                    int off = Math.Min(Math.Abs(x - cx), Math.Abs(y - cy));
-                    // The gate's own lines only out of town: its last `approach` tiles in, it's on the centre's.
-                    // And only a line well clear of the centre's: a tile or three over, it'd be a jog later, so the
-                    // road steps over at the gate instead.
-                    if (Math.Abs(x - cx) + Math.Abs(y - cy) > approach)
-                    {
-                        if (Math.Abs(gx - cx) > LINES_APART) off = Math.Min(off, Math.Abs(x - gx));
-                        if (Math.Abs(gy - cy) > LINES_APART) off = Math.Min(off, Math.Abs(y - gy));
-                    }
-                    return Step(to) + LINE_PULL * Math.Min(off, LINE_PULL_REACH);
-                });
+                Route(gate, Step);
                 yield return "/gate";
             }
             // A big town's ring road, round the middle at RingRadius (TownPlan): the main roads' A*, from one
@@ -303,15 +279,6 @@ namespace Porchlight.Gen
             }
             return o.Count >= 3 ? o : new List<int>();
         }
-
-        /// <summary>A gate's road: the cost a tile of straying off its lines (times tiles off, up to LINE_PULL_REACH): a row over for long is dearer than two turns.</summary>
-        const double LINE_PULL = 3.0;
-        const int LINE_PULL_REACH = 4;
-        /// <summary>Within this many tiles (Manhattan) of the centre, a gate's road keeps to the centre's row or column; a small town's, this share of its radius.</summary>
-        const int APPROACH = 24;
-        const double APPROACH_SHARE = 0.3;
-        /// <summary>A gate's row or column this near the centre's isn't a line of its own (tiles).</summary>
-        const int LINES_APART = 6;
 
         /// <summary>The cost of joining a road a tile or three from one of its junctions (a long way round's cheaper).</summary>
         const double JOIN_PENALTY = 30;
