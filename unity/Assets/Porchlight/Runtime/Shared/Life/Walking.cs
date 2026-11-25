@@ -6,9 +6,16 @@
 // Crossing at a junction is a request, as a car's turn is: not while a car is
 // under way over that road there, not against the lights (walkers go while the
 // road they cross is shown red, and only if they'll be over before it changes), and
+// not in front of a car coming up at speed to go on round without stopping, and
 // not while a car wanting that road has already waited longer than the crossing
 // takes and a little more (so walkers can't keep cars waiting for ever). A car
 // likewise waits while someone's crossing in front of it.
+//
+// Nobody stands on anyone else. Those waiting at a kerb take a spot each in a crowd
+// on the sidewalk there (Walkways.CrowdSpot), the frontmost free, and keep it till
+// they go; they walk to it from the corner, face the crossing, and step out from it.
+// On the move each keeps to a lane of their own a little to one side of the
+// sidewalk's middle (by their id), easing in and out of it at a piece's ends.
 
 using System;
 using System.Collections.Generic;
@@ -29,6 +36,12 @@ namespace Porchlight.Life
         readonly Dictionary<int, List<int>> waitingToCross = new Dictionary<int, List<int>>();
         /// <summary>How many are walking each sidewalk.</summary>
         readonly Dictionary<int, int> onSidewalk = new Dictionary<int, int>();
+        /// <summary>At each sidewalk end a crossing sets off from, who stands in each crowd spot (-1: nobody).</summary>
+        readonly KerbCrowds crowds = new KerbCrowds();
+        /// <summary>Walkers' own lanes are up to this far either side of the way's middle (tiles), in steps of a seventh.</summary>
+        const double LANE_SPREAD = 0.135;
+        /// <summary>Walkers ease into their lane over this much of a piece at each end (tiles).</summary>
+        const double LANE_EASE = 0.25;
 
         void StartWalk(Person p, Vec2 from, Vec2 to)
         {
@@ -56,10 +69,17 @@ namespace Porchlight.Life
                 {
                     if (!waitingToCross.TryGetValue(piece.node, out var w)) waitingToCross[piece.node] = w = new List<int>();
                     if (!w.Contains(p.id)) w.Add(p.id);
+                    JoinCrowd(p, piece);
                     Schedule(K_WALK, p.id, retry > 0 ? retry : Now + ASK_AGAIN_MS);
                     return;
                 }
                 if (waitingToCross.TryGetValue(piece.node, out var waiting)) waiting.Remove(p.id);
+                if (p.crowdSpot >= 0)
+                {
+                    p.crowdFrom = WaitPoint(p, piece);
+                    p.fromCrowd = true;
+                    LeaveCrowd(p, piece);
+                }
                 if (!crossingNow.TryGetValue(piece.node, out var now)) crossingNow[piece.node] = now = new List<(int, int)>();
                 now.Add((p.id, piece.road));
                 p.crossing = piece.node;
@@ -109,6 +129,7 @@ namespace Porchlight.Life
         {
             var piece = p.walk[p.piece];
             if (piece.path >= 0 && onSidewalk.TryGetValue(piece.path, out int n)) onSidewalk[piece.path] = Math.Max(0, n - 1);
+            p.fromCrowd = false;
             if (p.crossing >= 0)
             {
                 int node = p.crossing;
@@ -126,9 +147,15 @@ namespace Porchlight.Life
             {
                 var piece = p.walk[p.piece];
                 if (p.w0 >= 0) EndPiece(p);
-                else if (piece.node >= 0 && waitingToCross.TryGetValue(piece.node, out var w)) w.Remove(p.id);
+                else
+                {
+                    if (piece.node >= 0 && waitingToCross.TryGetValue(piece.node, out var w)) w.Remove(p.id);
+                    LeaveCrowd(p, piece);
+                }
             }
             p.walk = null;
+            p.crowdSpot = -1;
+            p.fromCrowd = false;
             p.crossWait = -1;
             p.crossing = -1;
         }
@@ -151,6 +178,20 @@ namespace Porchlight.Life
             if (underway.TryGetValue(j.node, out var going))
                 foreach (var (car, local) in going)
                     if (Touches(net.movements[j.movements[local]], piece.road)) return -1;
+            // Not in front of a car coming up to the junction at speed, meaning to go on round without stopping (it
+            // couldn't stop short in time, and would stop dead at the line): after it's gone. Twice the crossing's time,
+            // for a crowded kerb's half pace.
+            foreach (int mi in j.movements)
+            {
+                var m = net.movements[mi];
+                if (!Touches(m, piece.road) || m.from < 0 || m.from >= Lanes) continue;
+                var q = queues[m.from];
+                if (q.cars.Count == 0) continue;
+                var c = cars[q.cars[0]];
+                if (c.seg != m.from || c.vb <= 1e-9 || c.t1 <= Now || c.t1 > Now + 2 * over + WALKER_YIELD_MS) continue;
+                if (c.s1 < SegLength(c.seg) - 1e-6 || c.step + 1 >= c.route.Count || c.route[c.step + 1] != Lanes + mi) continue;
+                return c.t1 + 1;
+            }
             if (waitingAt.TryGetValue(j.node, out var waiting))
             {
                 foreach (int id in waiting)
@@ -181,17 +222,111 @@ namespace Porchlight.Life
             for (int k = 0; k < list.Count; k++) Schedule(K_WALK, list[k], Now + 1 + k);
         }
 
+        /// <summary>Into the crowd at the kerb a crossing sets off from: the frontmost spot free.</summary>
+        void JoinCrowd(Person p, WalkPiece piece)
+        {
+            if (p.crowdSpot >= 0 || piece.from < 0) return;
+            p.crowdSpot = crowds.Join(piece.from, p.id);
+        }
+
+        void LeaveCrowd(Person p, WalkPiece piece)
+        {
+            if (p.crowdSpot < 0) return;
+            crowds.Leave(piece.from, p.crowdSpot, p.id);
+            p.crowdSpot = -1;
+        }
+
+        /// <summary>Who stands in each spot of the crowd at a sidewalk end (-1: nobody), or null: for the checks.</summary>
+        public IReadOnlyList<int> CrowdAt(int end) => crowds.At(end);
+
+        /// <summary>Where someone waiting at a kerb stands: walking at their pace from the corner to their spot in the crowd.</summary>
+        Vec2 WaitPoint(Person p, WalkPiece piece)
+        {
+            var corner = piece.points[0];
+            var spot = walkways.CrowdSpot(piece.from, p.crowdSpot);
+            double far = Geo.Dist(corner, spot);
+            double walked = p.crossWait < 0 ? far : (Now - p.crossWait) / 1000.0 * p.pace;
+            return far <= walked ? spot : Geo.Lerp(corner, spot, walked / far);
+        }
+
+        /// <summary>How far to the left of the way's middle someone walks (tiles): one of seven lanes, by their id.</summary>
+        static double LaneOf(int id)
+        {
+            uint h = unchecked((uint)id * 2654435761u);
+            return ((int)((h >> 16) % 7) - 3) * (LANE_SPREAD / 3);
+        }
+
         /// <summary>Where someone out is drawn, and the way they face.</summary>
         public (Vec2 at, Vec2 along) PersonPoint(Person p)
         {
+            if (p.browseSince >= 0 && p.trip == null && market != null) return MarketPoint(p);
             if (p.walk != null && p.piece < p.walk.Count)
             {
                 var piece = p.walk[p.piece];
-                if (p.w0 < 0) return Walkways.PointOn(piece, 0);
-                double d = (Now - p.w0) / 1000.0 * p.wSpeed;
-                return Walkways.PointOn(piece, d);
+                if (p.w0 < 0)
+                {
+                    var start = Walkways.PointOn(piece, 0);
+                    if (piece.node >= 0 && p.crowdSpot >= 0) return (WaitPoint(p, piece), start.along);
+                    return start;
+                }
+                double d = Math.Max(0, Math.Min(piece.length, (Now - p.w0) / 1000.0 * p.wSpeed));
+                var (at, along) = Walkways.PointOn(piece, d);
+                // Their own lane: square to the way (over a short chord, so it turns smoothly at a bend), eased in and out at the ends.
+                var a = Walkways.PointOn(piece, d - 0.1).at;
+                var b = Walkways.PointOn(piece, d + 0.1).at;
+                double dx = b.x - a.x, dy = b.y - a.y, l = Numbers.Hypot(dx, dy);
+                if (l > 1e-9)
+                {
+                    along = new Vec2(dx / l, dy / l);
+                    double ease = Math.Min(1, Math.Min(d, piece.length - d) / LANE_EASE);
+                    double lane = LaneOf(p.id) * ease;
+                    at = new Vec2(at.x - along.y * lane, at.y + along.x * lane);
+                }
+                // Stepping out of the crowd: from their spot, closing in on their lane over the first steps.
+                if (p.fromCrowd && piece.node >= 0)
+                {
+                    double offX = p.crowdFrom.x - piece.points[0].x, offY = p.crowdFrom.y - piece.points[0].y;
+                    double over = Math.Max(0.3, Numbers.Hypot(offX, offY));
+                    double left = Math.Max(0, 1 - d / over);
+                    at = new Vec2(at.x + offX * left, at.y + offY * left);
+                }
+                return (at, along);
             }
             return (p.standing, new Vec2(0, 1));
         }
+    }
+
+    /// <summary>
+    /// Who stands where in the crowd at each kerb: by sidewalk end, a spot each (Walkways.CrowdSpot), the frontmost
+    /// free to whoever comes, kept till they go.
+    /// </summary>
+    public sealed class KerbCrowds
+    {
+        readonly Dictionary<int, List<int>> crowds = new Dictionary<int, List<int>>();
+
+        /// <summary>`who` joins the crowd at sidewalk end `end`: the spot they take.</summary>
+        public int Join(int end, int who)
+        {
+            if (!crowds.TryGetValue(end, out var spots)) crowds[end] = spots = new List<int>();
+            int k = spots.IndexOf(-1);
+            if (k < 0)
+            {
+                k = spots.Count;
+                spots.Add(who);
+            }
+            else spots[k] = who;
+            return k;
+        }
+
+        /// <summary>`who` leaves spot `k` at sidewalk end `end`, if it's theirs.</summary>
+        public void Leave(int end, int k, int who)
+        {
+            if (end < 0 || !crowds.TryGetValue(end, out var spots) || k < 0 || k >= spots.Count || spots[k] != who) return;
+            spots[k] = -1;
+            while (spots.Count > 0 && spots[spots.Count - 1] < 0) spots.RemoveAt(spots.Count - 1);
+        }
+
+        /// <summary>Who stands in each spot at sidewalk end `end` (-1: nobody), or null if nobody's waited there.</summary>
+        public IReadOnlyList<int> At(int end) => crowds.TryGetValue(end, out var spots) ? spots : null;
     }
 }

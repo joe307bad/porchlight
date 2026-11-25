@@ -2444,7 +2444,7 @@ namespace Porchlight.App
                     var st = ParseUrlState(k);
                     return (st.seed, st.@params);
                 })
-                { Net = net, Frame = netFrame, OnSpace = DroveInto, Heading = TripNextTown };
+                { Net = net, Frame = netFrame, OnSpace = DroveInto, Heading = TripNextTown, Log = m => Debug.Log("county: " + m) };
                 county.EnterRoom();
                 ShowWhere();
                 // Joining someone out at the junction: out to them now.

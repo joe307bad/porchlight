@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ENTITY_KINDS, POPULATION_COLUMNS, congestionWidth, describeInside, figures, heldText, holdBars, indoorRadius, indoors, ofKind, type TownLife } from '../src/life.ts';
+import { ENTITY_KINDS, POPULATION_COLUMNS, congestionWidth, describeInside, figures, heldText, holdBars, indoorRadius, indoors, marketText, ofKind, type TownLife } from '../src/life.ts';
 import { HIDDEN, RECORD, readRecord } from '../src/protocol.ts';
 import { buildingIndexAt } from '../src/zoning.ts';
 
@@ -118,12 +118,12 @@ test('given what each record is in two towns, then a kind lists each of its own 
   assert.deepEqual(ofKind(new Map([['c', life]]), vans), []);
 });
 
-test('the kinds Manage shows are the fourteen the simulation sends: nine of vehicle, five on foot', () => {
+test('the kinds Manage shows are the fifteen the simulation sends: nine of vehicle, six on foot', () => {
   assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').length, 9);
-  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').length, 5);
-  assert.equal(new Set(ENTITY_KINDS.map((k) => k.id)).size, 14);
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').length, 6);
+  assert.equal(new Set(ENTITY_KINDS.map((k) => k.id)).size, 15);
   assert.equal(ENTITY_KINDS.filter((k) => k.of === 'car').map((k) => k.letter).join(''), 'rctvbgesp');
-  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').map((k) => k.letter).join(''), 'wshcx');
+  assert.equal(ENTITY_KINDS.filter((k) => k.of === 'person').map((k) => k.letter).join(''), 'wshcmx');
   assert.equal(POPULATION_COLUMNS.length, 9, "the town table's columns: Analytics.POPULATION_COLUMNS");
 });
 
@@ -137,4 +137,28 @@ test('the congestion slider: hold-ups in a few characters, each hour a bar again
   assert.equal(congestionWidth(120, 120), 6);
   assert.equal(congestionWidth(0, 120), 1);
   assert.equal(congestionWidth(60, 120), 3.5);
+});
+
+const week = (market: boolean[]): TownLife['calendar'] =>
+  market.map((m, i) => ({ day: 20000 + i, name: `Day ${i}`, weekend: m, holiday: null, school: !m, market: m, events: m ? ['Market day, 9 AM to 12 PM'] : [] }));
+
+test('given market day with the stalls up, then the market line says how many are there till when', () => {
+  const t = marketText({ ...life, calendar: week([true, false]), market: { stalls: 6, up: 4, open: true, hours: '9 AM to 12 PM', people: 120, at: [1, 1] } });
+  assert.equal(t, 'Open till 12 PM: 4 of 6 stalls, 120 there');
+});
+
+test('given market day before it opens, then it says today, and the next', () => {
+  const t = marketText({ ...life, calendar: week([true, false, false, false, false, false, false, true]), market: { stalls: 6, up: 4, open: false, hours: '9 AM to 12 PM', people: 0, at: [1, 1] } });
+  assert.equal(t, 'Today 9 AM to 12 PM; next on Day 7');
+});
+
+test('given a weekday, then the market line says when it is next on; and a town with no market has none', () => {
+  assert.equal(marketText({ ...life, calendar: week([false, false, true]), market: { stalls: 6, up: 0, open: false, hours: null, people: 0, at: [1, 1] } }), 'Next on Day 2');
+  assert.equal(marketText({ ...life, market: null }), null);
+});
+
+test('given someone at the market, then they are their own kind on the map', () => {
+  const kind = ENTITY_KINDS.find((k) => k.id === 'person:m')!;
+  assert.equal(kind.letter, 'm');
+  assert.deepEqual(ofKind(new Map([['t', { ...life, kinds: { cars: '', people: 'wm-m' } }]]), kind), [['t', 1], ['t', 3]]);
 });

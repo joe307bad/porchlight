@@ -129,6 +129,9 @@ jobs:
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- traffic-day server/towns 2
       - name: Game — the town's life, rule by rule (players in the road, signals, parking, buses, the wire)
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- life server/towns
+      # The town's calendar (docs/town-calendar.md): holidays, school terms, rosters, the school run, market day.
+      - name: Game — weekends and holidays, 180 school days, children taken to school, the Saturday market
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- calendar server/towns
       # The county clock (US Eastern, daylight saving and all, on a 12-hour clock) and the junctions' signals
       # and stop signs: one on the drivers' kerb at every lane in, the lights amber then red in step with the cars.
       - name: Game — Eastern time on a 12-hour clock; a signal or stop sign at every lane in, lit as the cars go

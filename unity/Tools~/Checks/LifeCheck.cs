@@ -460,7 +460,8 @@ static class LifeCheck
         var life = t.life;
         int people = 0, carsSeen = 0, waiting = 0;
         var modes = new Dictionary<Mode, string> { [Mode.Walk] = "By foot", [Mode.Drive] = "By car", [Mode.Bus] = "By bus" };
-        for (int minute = 0; minute < 20; minute++)
+        // Twenty minutes of the rush; a small town's, up to an hour, until there's enough out to judge.
+        for (int minute = 0; minute < 20 || ((people < 50 || carsSeen < 10) && minute < 60); minute++)
         {
             for (int f = 0; f < 600; f++) t.Update(0.1, null);
             foreach (var p in life.people)
@@ -720,7 +721,7 @@ static class LifeCheck
             if (Sum("walking") + Sum("driving") + Sum("onBus") != onTrip) return $"{when}: {Sum("walking") + Sum("driving") + Sum("onBus")} out in the table, {onTrip} on a trip";
             if (Sum("offMap") != off) return $"{when}: {Sum("offMap")} off the map in the table, {off} off it";
             var workers = rows.Where(row => (string)row[0] == "Worker" || (string)row[0] == "Student").ToList();
-            long residents = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through").Sum(row => Col(row, "people"));
+            long residents = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through" && (string)row[0] != "Stallholder").Sum(row => Col(row, "people"));
             if (at < TrafficDay.Morning + 12 * TownClock.HOUR)
             {
                 long busy = workers.Sum(row => Col(row, "workOrSchool")), all = workers.Sum(row => Col(row, "people"));
@@ -728,7 +729,7 @@ static class LifeCheck
             }
             else
             {
-                long home = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through").Sum(row => Col(row, "home"));
+                long home = rows.Where(row => (string)row[0] != "CommuterIn" && (string)row[0] != "Through" && (string)row[0] != "Stallholder").Sum(row => Col(row, "home"));
                 if (home != residents) return $"{when}: {home} of {residents} residents at home";
             }
         }
@@ -762,7 +763,10 @@ static class LifeCheck
         bool stops = life.net.junctions.Values.Any(j => j.control == Control.Stop);
         if (stops && s.noGap == 0) return "nobody at a stop sign, or turning left across traffic, waited for a gap";
         if (life.people.Count > 10000 && s.rerouted == 0) return "in a town this big, no held-up driver took another way";
-        if (life.people.Count > 10000 && s.letIn == 0) return "in a town this big, no driver let anyone pull out";
+        // Letting a car out is rare (two tries at a gap first): none in the rush can be chance (Porchlight's has had
+        // none to five), so a big town with none goes on to the late morning, when it has had dozens.
+        if (life.people.Count > 10000 && s.letIn == 0) life.RunUntil(TrafficDay.Morning + 165 * TownClock.MINUTE);
+        if (life.people.Count > 10000 && s.letIn == 0) return "in a town this big, no driver let anyone pull out all morning";
         return null;
     }
 

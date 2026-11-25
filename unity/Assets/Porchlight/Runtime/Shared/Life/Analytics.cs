@@ -28,7 +28,7 @@ namespace Porchlight.Life
         public readonly Dictionary<int, Wait> carWaits = new Dictionary<int, Wait>(), walkerWaits = new Dictionary<int, Wait>();
         public readonly List<Problem> problems = new List<Problem>();
         public long problemCount;
-        public long retimed, habits, keptWay, binStops, binSkipped, callsAnswered, pulledOver, sirenWaits, sirenOnRed, gridlockBroken, gaveUp, rerouted, lightsChanged, letIn, reserved, waitedTooLong, noGap, hunts, noSpot, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings;
+        public long retimed, habits, keptWay, binStops, binSkipped, callsAnswered, pulledOver, sirenWaits, sirenOnRed, gridlockBroken, gaveUp, rerouted, lightsChanged, letIn, reserved, waitedTooLong, noGap, hunts, noSpot, undrawnCars, undrawnPeople, taken, boarded, crowded, mainCrossings, passengers, escorted;
         /// <summary>The longest any trip took (ms), and which.</summary>
         public long longestTrip;
 
@@ -283,7 +283,7 @@ namespace Porchlight.Life
                 else if (p.where == Where.OnTrip)
                 {
                     var leg = p.trip != null && p.trip.leg >= 0 && p.trip.leg < p.trip.legs.Count ? p.trip.legs[p.trip.leg].kind : LegKind.Walk;
-                    c = leg == LegKind.Drive ? 5 : leg == LegKind.Wait || leg == LegKind.Ride ? 6 : 4;
+                    c = leg == LegKind.Drive || leg == LegKind.Passenger ? 5 : leg == LegKind.Wait || leg == LegKind.Ride ? 6 : 4;
                 }
                 else if (p.at.Same(p.home)) c = 1;
                 else if (p.at.Same(p.work)) c = 2;

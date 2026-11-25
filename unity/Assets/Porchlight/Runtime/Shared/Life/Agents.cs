@@ -132,7 +132,14 @@ namespace Porchlight.Life
 
     public enum Mode { Walk, Drive, Bus }
 
-    public enum Purpose { Home, Work, School, Shop, Lunch, Visit, Leave, Through }
+    public enum Purpose { Home, Work, School, Shop, Lunch, Visit, Leave, Through, Market, DropOff, PickUp }
+
+    /// <summary>
+    /// Which days a worker works (Calendar.cs, docs/town-calendar.md): Monday to Friday; the shops' week (five days of
+    /// the seven, a weekday and most Sundays off); shifts (five on, two off, a week of earlies then a week of lates);
+    /// or the school's days (its staff).
+    /// </summary>
+    public enum Roster { Office, Shop, Shifts, School }
 
     public enum PersonKind
     {
@@ -146,6 +153,8 @@ namespace Porchlight.Life
         CommuterIn,
         /// <summary>Drives through, gate to gate.</summary>
         Through,
+        /// <summary>Lives out of town, keeps a stall at the market: in on market day to set up, home after.</summary>
+        Stallholder,
     }
 
     /// <summary>Somewhere a trip starts or ends: a building, or (border) a gate.</summary>
@@ -166,11 +175,14 @@ namespace Porchlight.Life
         public long depart;
         public Place to;
         public Purpose purpose;
+        /// <summary>Who they go with (a parent taking a child to school), plus one: 0, alone.</summary>
+        public int with;
     }
 
     public enum Where { Inside, OnTrip, OffMap }
 
-    public enum LegKind { Walk, Drive, Wait, Ride }
+    /// <summary>A leg: on foot, driving, waiting for the bus, on the bus, or a passenger in someone else's car.</summary>
+    public enum LegKind { Walk, Drive, Wait, Ride, Passenger }
 
     public sealed class Leg
     {
@@ -213,6 +225,10 @@ namespace Porchlight.Life
         public int leg = -1;
         public long started;
         public ModeWhy why;
+        /// <summary>Who's riding along (children being taken to school), or null.</summary>
+        public List<int> riders;
+        /// <summary>A passenger's trip: whose car they're in.</summary>
+        public int driver = -1;
         /// <summary>When it ended (-1: under way), whether it was made, and if not why.</summary>
         public long ended = -1;
         public bool made;
@@ -245,6 +261,18 @@ namespace Porchlight.Life
         public bool delayed;
         /// <summary>Walking pace (tiles a second).</summary>
         public double pace;
+        /// <summary>Which days they work (a worker), and their own place in it (which days off, which week of shifts).</summary>
+        public Roster roster;
+        public int rosterOffset;
+        /// <summary>Waiting at home (or school) for who's taking them (-1: nobody), to go where, and why.</summary>
+        public int waitingFor = -1;
+        public Place rideTo;
+        public Purpose ridePurpose;
+        /// <summary>Who's waiting for them to set off, to go along (children), or null.</summary>
+        public List<int> waiters;
+        /// <summary>At the market since when (browsing, or at their stall), or -1; a stallholder's stall.</summary>
+        public long browseSince = -1;
+        public int stall = -1;
 
         // On foot ------------------------------------------------------------------------------
         public List<WalkPiece> walk;
@@ -256,6 +284,11 @@ namespace Porchlight.Life
         public long crossWait = -1;
         /// <summary>Crossing at a junction (its node), or -1.</summary>
         public int crossing = -1;
+        /// <summary>Their spot in the crowd waiting at the kerb (Walkways.CrowdSpot), or -1.</summary>
+        public int crowdSpot = -1;
+        /// <summary>Crossing from a spot in the crowd: where they stood (they close in on the crossing's line over the first steps).</summary>
+        public bool fromCrowd;
+        public Vec2 crowdFrom;
         /// <summary>Standing at a bus stop (its point), waiting.</summary>
         public Vec2 standing;
         /// <summary>The wire slot they're drawn in, or -1.</summary>

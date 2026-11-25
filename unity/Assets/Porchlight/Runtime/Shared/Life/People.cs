@@ -4,9 +4,15 @@
 // instead (a fifth more people than either, so some commute in, some out, and
 // some only pass through). Each person's day is a chain of trips, each
 // from where the last ended: to work and home, to school, to the shops, to lunch,
-// to see someone. A trip's legs are on foot, by car (walk to it, drive, park, walk
-// from it) or by bus (walk to the stop, wait, ride, walk on). A trip that can't be
-// made puts the person where they were going, so a bad day never wedges the town.
+// to see someone, to the market. Which day it is (Calendar.cs) decides much of it:
+// workers work the days their roster has them (Monday to Friday, the shops' week,
+// shifts, or the school's days), children go to school on school days (the
+// youngest taken there by a parent, in the car or on foot), and weekends and days
+// off are for the week's shop, the market on Saturday morning and seeing people.
+// A trip's legs are on foot, by car (walk to it, drive, park, walk from it), by bus
+// (walk to the stop, wait, ride, walk on) or, a child taken to school, in a
+// parent's car. A trip that can't be made puts the person where they were going,
+// so a bad day never wedges the town. docs/town-calendar.md has the rules.
 
 using System;
 using System.Collections.Generic;
@@ -39,8 +45,31 @@ namespace Porchlight.Life
         const double WORKER_CARS = 0.9, AT_HOME_CARS = 0.7;
         /// <summary>A share of people make one more trip, at no particular time.</summary>
         const double BACKGROUND = 0.1;
+        /// <summary>Children younger than this are taken to school (and fetched) when someone at home can.</summary>
+        public const int ESCORT_AGE = 11;
+        /// <summary>The share of households with a young child at school who take them (NHTS: most under-11s are).</summary>
+        const double ESCORTED = 0.75;
+        /// <summary>The share of those taking their children in the morning who fetch them in the afternoon (someone at home).</summary>
+        const double FETCHED = 0.8;
+        /// <summary>How long a child waits for whoever's taking them before setting off alone.</summary>
+        const long RIDE_WAIT = 30 * TownClock.MINUTE;
+        /// <summary>The share of grown-ups having a day off who go to the market on market day, and of children.</summary>
+        public const double MARKET_GOERS = 0.15, MARKET_CHILDREN = 0.1;
+        /// <summary>Workers beyond the gates: the share on each roster (the rest Monday to Friday).</summary>
+        const double OUT_SHOPS = 0.2, OUT_SHIFTS = 0.15;
+        /// <summary>Workers in industry on shifts (the rest Monday to Friday).</summary>
+        const double INDUSTRY_SHIFTS = 0.4;
+        /// <summary>The market's place: trips go to it as to a building.</summary>
+        public const int MARKET = -100;
+        /// <summary>Shoppers at the market drawn browsing at once, at most (a quarter of the town's people slots at most).</summary>
+        const int MARKET_SHOWN = 16;
 
         readonly List<int> shops = new List<int>(), schools = new List<int>(), homesList = new List<int>();
+        /// <summary>The market in the plaza (null: the town has none), and who's at it now.</summary>
+        public MarketPlace market;
+        readonly HashSet<int> atMarket = new HashSet<int>();
+        /// <summary>What each building is, for the workers' rosters.</summary>
+        readonly Dictionary<int, (Zone zone, BuildingKind kind)> what = new Dictionary<int, (Zone, BuildingKind)>();
         /// <summary>Each shop's size for the Huff model: the people who work there (a supermarket's many, a corner store's few).</summary>
         readonly Dictionary<int, double> shopSize = new Dictionary<int, double>();
 
@@ -58,6 +87,7 @@ namespace Porchlight.Life
             foreach (var b in zoning?.buildings ?? new List<ZonedBuilding>())
             {
                 if (!net.access.ContainsKey(b.buildingId)) continue;
+                what[b.buildingId] = (b.zone, b.kind);
                 if (b.homes > 0) homesList.Add(b.buildingId);
                 if (b.zone == Zone.Retail || b.zone == Zone.MixedUse)
                 {
@@ -178,6 +208,161 @@ namespace Porchlight.Life
                 var to = gates > 1 ? Place.Gate((from.id + 1 + rng.Int(0, gates - 2)) % gates) : from;
                 AddPerson(rng, PersonKind.Through, from, to, true);
             }
+            foreach (var p in people) if (p.kind == PersonKind.Worker || p.kind == PersonKind.CommuterIn) Rostered(p);
+            // The stallholders: one a pitch, from beyond the gates (their own random numbers, so the town's people are as before).
+            if (market != null && gates > 0)
+            {
+                var srng = new Rng($"{seed}::stallholders");
+                for (int k = 0; k < market.stalls.Count; k++)
+                {
+                    var p = AddPerson(srng, PersonKind.Stallholder, Place.Gate(srng.Int(0, gates - 1)), Place.Building(MARKET), true);
+                    p.stall = k;
+                }
+            }
+        }
+
+        /// <summary>Which days worker `p` works, by where (their own draw, so the town's other numbers are as before).</summary>
+        void Rostered(Person p)
+        {
+            var rng = new Rng($"{seed}::roster::{p.id}");
+            p.rosterOffset = rng.Int(0, 6999);
+            if (p.work.border)
+            {
+                double r = rng.Next();
+                p.roster = r < OUT_SHOPS ? Roster.Shop : r < OUT_SHOPS + OUT_SHIFTS ? Roster.Shifts : Roster.Office;
+                return;
+            }
+            if (!what.TryGetValue(p.work.id, out var w))
+            {
+                p.roster = Roster.Office;
+                return;
+            }
+            if (w.kind == BuildingKind.School) p.roster = Roster.School;
+            else if (w.kind == BuildingKind.FireStation) p.roster = Roster.Shifts;
+            else if (w.zone == Zone.Retail || w.zone == Zone.MixedUse) p.roster = Roster.Shop;
+            else if (w.zone == Zone.Industrial) p.roster = rng.Chance(INDUSTRY_SHIFTS) ? Roster.Shifts : Roster.Office;
+            else p.roster = Roster.Office;
+        }
+
+        /// <summary>
+        /// Whether worker `p` works on day `td`: Monday to Friday (not holidays); the school's days; the shops' days
+        /// less two of their own (a weekday, and Sunday for three in five, else another weekday); or five days of seven
+        /// on shifts, holidays or not.
+        /// </summary>
+        public bool Works(Person p, TownDay td)
+        {
+            switch (p.roster)
+            {
+                case Roster.School: return td.schoolDay;
+                case Roster.Shop:
+                {
+                    if (!td.shopsOpen) return false;
+                    int off = 1 + p.rosterOffset % 5;
+                    bool sundays = p.rosterOffset / 5 % 5 < 3;
+                    int off2 = sundays ? 0 : 1 + (off + 1) % 5;
+                    return td.weekday != off && td.weekday != off2;
+                }
+                case Roster.Shifts: return ((td.day + p.rosterOffset) % 7 + 7) % 7 < 5;
+                default: return td.officesOpen;
+            }
+        }
+
+        /// <summary>Whether a shift worker's on earlies (else lates) on day `day`: a week of each in turn.</summary>
+        static bool Earlies(Person p, long day) => (((day + p.rosterOffset) / 7 + p.rosterOffset / 7) % 2 + 2) % 2 == 0;
+
+        /// <summary>The town's market: where it is, and a way in for those going to it (as a building's door).</summary>
+        void MakeMarket()
+        {
+            market = MarketPlace.Of(model);
+            if (market == null) return;
+            int road = net.NearestRoad(market.door, out double s);
+            if (road < 0)
+            {
+                market = null;
+                return;
+            }
+            net.access[MARKET] = new Access { building = MARKET, door = market.door, road = road, s = s };
+        }
+
+        // --- The calendar --------------------------------------------------------------------------
+
+        readonly Dictionary<long, TownDay> days = new Dictionary<long, TownDay>();
+
+        /// <summary>Day `day` in this town's calendar.</summary>
+        public TownDay Day(long day)
+        {
+            if (days.TryGetValue(day, out var td)) return td;
+            if (days.Count > 16) days.Clear();
+            return days[day] = TownCalendar.Of(seed, day, market != null);
+        }
+
+        /// <summary>Today, by the town's clock.</summary>
+        public TownDay Today => Day(TownClock.DayOf(Now));
+
+        /// <summary>How many of the market's stalls are up on day `td` (none if it isn't market day).</summary>
+        public int StallsUp(TownDay td) => market == null || !td.market ? 0 : market.Up(td.stalls);
+
+        /// <summary>A household's school run on a day: who takes which children, and when.</summary>
+        sealed class SchoolRun
+        {
+            public int escort = -1;
+            public readonly List<int> kids = new List<int>();
+            public Place school;
+            /// <summary>They're fetched in the afternoon too.</summary>
+            public bool fetch;
+            /// <summary>Setting off (ms since midnight): to school, to fetch them, and home with them.</summary>
+            public long drop, pick, home;
+        }
+
+        readonly Dictionary<int, (long day, SchoolRun run)> runs = new Dictionary<int, (long, SchoolRun)>();
+
+        /// <summary>
+        /// Household `h`'s school run on day `td`, or null: its children under ESCORT_AGE at school are taken by
+        /// someone at home in the day (and most fetched too), or else a worker who's working that day and drives,
+        /// on their way in. The same for each of them (it's drawn from the household and the day).
+        /// </summary>
+        SchoolRun RunOf(int h, TownDay td)
+        {
+            if (h < 0 || h >= households.Count || !td.schoolDay) return null;
+            if (runs.TryGetValue(h, out var had) && had.day == td.day) return had.run;
+            SchoolRun run = null;
+            var members = households[h].members;
+            var kids = members.FindAll(m => people[m].kind == PersonKind.Student && people[m].age < ESCORT_AGE && !people[m].work.border);
+            var rng = new Rng($"{seed}::schoolrun::{td.day}::{h}");
+            if (kids.Count > 0 && rng.Chance(ESCORTED))
+            {
+                // Someone at home in the day first; else a worker working today who drives, on their way in.
+                int escort = -1;
+                bool home = false;
+                foreach (int m in members)
+                    if (people[m].role != Role.Child && people[m].kind == PersonKind.AtHome)
+                    {
+                        escort = m;
+                        home = true;
+                        break;
+                    }
+                if (escort < 0)
+                    foreach (int m in members)
+                    {
+                        var q = people[m];
+                        if (q.role == Role.Child || q.kind != PersonKind.Worker || !q.hasCar || q.car < 0) continue;
+                        if ((q.roster != Roster.Office && q.roster != Roster.School) || !Works(q, td)) continue;
+                        escort = m;
+                        break;
+                    }
+                if (escort >= 0)
+                {
+                    run = new SchoolRun { escort = escort, school = people[kids[0]].work, fetch = home && rng.Chance(FETCHED) };
+                    foreach (int k in kids) if (people[k].work.Same(run.school)) run.kids.Add(k);
+                    run.drop = td.bell - 20 * TownClock.MINUTE - (long)(rng.Next() * 25 * TownClock.MINUTE);
+                    // Fetched from the last bell to the end of after-school club, an hour on.
+                    long late = (long)(rng.Next() * 60 * TownClock.MINUTE);
+                    run.pick = td.endBell - 15 * TownClock.MINUTE + late;
+                    run.home = td.endBell + 10 * TownClock.MINUTE + late;
+                }
+            }
+            runs[h] = (td.day, run);
+            return run;
         }
 
         static double Clamp(double p) => Math.Max(P_LOW, Math.Min(P_HIGH, p));
@@ -345,32 +530,71 @@ namespace Porchlight.Life
             p.next = 0;
             p.day = day;
             var rng = new Rng($"{seed}::day::{day}::{p.id}");
-            long H = TownClock.HOUR;
+            var td = Day(day);
+            long H = TownClock.HOUR, M = TownClock.MINUTE;
             long t = 0;
             var at = p.home;
-            void Go(double hours, Place to, Purpose why)
+            void GoAt(long when, Place to, Purpose why, int with = -1)
             {
-                long when = Math.Max((long)(hours * H), t + 5 * TownClock.MINUTE);
-                if (when >= TownClock.DAY - 5 * TownClock.MINUTE || to.Same(at)) return;
-                p.plan.Add(new Planned { depart = when, to = to, purpose = why });
+                when = Math.Max(when, t + 5 * M);
+                if (when >= TownClock.DAY - 5 * M || to.Same(at)) return;
+                p.plan.Add(new Planned { depart = when, to = to, purpose = why, with = with + 1 });
                 t = when;
                 at = to;
             }
+            void Go(double hours, Place to, Purpose why) => GoAt((long)(hours * H), to, why);
             double Hours() => t / (double)H;
+            var run = p.household >= 0 ? RunOf(p.household, td) : null;
+            bool escorting = run != null && run.escort == p.id;
             switch (p.kind)
             {
                 case PersonKind.Worker:
                 case PersonKind.CommuterIn:
                 {
-                    Go(rng.Range(6.5, 9.5), p.work, Purpose.Work);
-                    double start = Hours();
-                    if (!p.work.border && shops.Count > 0 && rng.Chance(0.3))
+                    if (!Works(p, td))
+                    {
+                        // A day off: a commuter's is spent beyond the gates.
+                        if (p.kind == PersonKind.Worker) DayOff(rng, p, td, GoAt, Go, Hours, child: false);
+                        break;
+                    }
+                    double start, length;
+                    bool lunch = true;
+                    switch (p.roster)
+                    {
+                        case Roster.School:
+                            start = td.bell / (double)H - rng.Range(0.75, 1.25);
+                            length = TownCalendar.SCHOOL_HOURS + rng.Range(1, 2);
+                            break;
+                        case Roster.Shop:
+                            start = td.shopsOpenAt / (double)H - rng.Range(0.25, 0.75);
+                            length = Math.Min(9, (td.shopsCloseAt - td.shopsOpenAt) / (double)H + rng.Range(0.25, 0.75));
+                            break;
+                        case Roster.Shifts:
+                            bool early = Earlies(p, day);
+                            start = early ? rng.Range(5.25, 5.75) : rng.Range(13.25, 13.75);
+                            length = rng.Range(8.1, 8.4);
+                            lunch = early;
+                            break;
+                        default:
+                            start = rng.Range(6.5, 9.5);
+                            length = rng.Range(8, 9.5);
+                            break;
+                    }
+                    if (escorting)
+                    {
+                        // The school run on their way in.
+                        GoAt(run.drop, run.school, Purpose.DropOff);
+                        start = Math.Max(start, Hours() + 0.2);
+                    }
+                    Go(start, p.work, Purpose.Work);
+                    start = Hours();
+                    if (lunch && !p.work.border && shops.Count > 0 && rng.Chance(0.3))
                     {
                         Go(start + rng.Range(3.5, 4.5), Place.Building(Nearest(shops, p.work.id, rng)), Purpose.Lunch);
                         Go(Hours() + rng.Range(0.5, 1), p.work, Purpose.Work);
                     }
-                    double off = start + rng.Range(8, 9.5);
-                    if (!p.home.border && shops.Count > 0 && rng.Chance(0.35))
+                    double off = start + length;
+                    if (!p.home.border && shops.Count > 0 && td.shopsOpen && off < td.shopsCloseAt / (double)H && rng.Chance(0.35))
                     {
                         Go(off, Place.Building(Shop(p.home.id, rng)), Purpose.Shop);
                         off = Hours() + rng.Range(0.3, 0.8);
@@ -381,23 +605,59 @@ namespace Porchlight.Life
                 }
                 case PersonKind.Through:
                 {
-                    // In at one gate, out at another, and back later.
-                    Go(rng.Chance(0.5) ? rng.Range(6.5, 9.5) : rng.Range(10, 15), p.work, Purpose.Through);
+                    // In at one gate, out at another, and back later; at the weekend fewer, and none before the morning's out.
+                    if (td.officesOpen) Go(rng.Chance(0.5) ? rng.Range(6.5, 9.5) : rng.Range(10, 15), p.work, Purpose.Through);
+                    else if (rng.Chance(td.weekday == 0 ? 0.45 : 0.6)) Go(rng.Range(9.5, 15), p.work, Purpose.Through);
+                    else break;
                     Go(Math.Max(Hours() + 0.5, rng.Range(15.5, 19.5)), p.home, Purpose.Through);
+                    break;
+                }
+                case PersonKind.Stallholder:
+                {
+                    // In to set up before the market opens, home after it's packed away.
+                    if (!td.market || p.stall < 0 || p.stall >= StallsUp(td)) break;
+                    GoAt(td.marketOpen - (long)(rng.Range(0.75, 1.25) * H), p.work, Purpose.Work);
+                    GoAt(td.marketClose + (long)(rng.Range(0.2, 0.5) * H), p.home, Purpose.Home);
                     break;
                 }
                 case PersonKind.Student:
                 {
-                    Go(rng.Range(7.5, 8.5), p.work, Purpose.School);
-                    Go(rng.Range(15, 16), p.home, Purpose.Home);
-                    if (rng.Chance(0.5)) Visit(rng, p, rng.Range(16.5, 18), Go, Hours);
+                    if (!td.schoolDay)
+                    {
+                        DayOff(rng, p, td, GoAt, Go, Hours, child: true);
+                        break;
+                    }
+                    bool taken = run != null && run.kids.Contains(p.id);
+                    if (taken) GoAt(run.drop, p.work, Purpose.School, run.escort);
+                    else GoAt(td.bell - (long)(rng.Range(0.15, 0.9) * H), p.work, Purpose.School);
+                    if (taken && run.fetch) GoAt(run.home, p.home, Purpose.Home, run.escort);
+                    else GoAt(td.endBell + (long)(rng.Range(0, 1.1) * H), p.home, Purpose.Home);
+                    if (rng.Chance(0.5)) Visit(rng, p, Math.Max(Hours() + 0.75, rng.Range(16.5, 18)), Go, Hours);
                     break;
                 }
                 default:
                 {
-                    if (shops.Count > 0) Go(rng.Range(9, 11.5), Place.Building(Shop(p.home.id, rng)), Purpose.Shop);
+                    // At home in the day: on a weekday, the school run, a shop mid-morning and someone to see; else a day off.
+                    if (!td.officesOpen)
+                    {
+                        DayOff(rng, p, td, GoAt, Go, Hours, child: false);
+                        break;
+                    }
+                    if (escorting)
+                    {
+                        GoAt(run.drop, run.school, Purpose.DropOff);
+                        Go(Hours() + 0.2, p.home, Purpose.Home);
+                    }
+                    if (shops.Count > 0 && td.shopsOpen) Go(Math.Max(Hours() + 0.25, rng.Range(9.5, 11.5)), Place.Building(Shop(p.home.id, rng)), Purpose.Shop);
                     Go(Hours() + rng.Range(0.5, 1.5), p.home, Purpose.Home);
-                    if (rng.Chance(0.5)) Visit(rng, p, rng.Range(13, 16.5), Go, Hours);
+                    bool fetching = escorting && run.fetch;
+                    if (!fetching && rng.Chance(0.5)) Visit(rng, p, rng.Range(13, 16.5), Go, Hours);
+                    if (fetching)
+                    {
+                        GoAt(run.pick, run.school, Purpose.PickUp);
+                        GoAt(run.home, p.home, Purpose.Home);
+                        if (rng.Chance(0.3)) Visit(rng, p, Math.Max(Hours() + 0.5, rng.Range(16, 18)), Go, Hours);
+                    }
                     if (rng.Chance(BACKGROUND)) Visit(rng, p, rng.Range(Math.Max(Hours() + 0.5, 17), 21), Go, Hours);
                     break;
                 }
@@ -408,6 +668,35 @@ namespace Porchlight.Life
                 long when = Math.Min(TownClock.DAY - 2 * TownClock.MINUTE, t + 30 * TownClock.MINUTE);
                 p.plan.Add(new Planned { depart = when, to = p.home, purpose = Purpose.Home });
             }
+        }
+
+        /// <summary>
+        /// A day off (the weekend, a holiday, a worker's rest day, no school): the market on market day (a few), the
+        /// week's shop late in the morning (if the shops are open), someone to see in the afternoon, and on a Saturday
+        /// or a holiday, now and then, the evening out.
+        /// </summary>
+        void DayOff(Rng rng, Person p, TownDay td, Action<long, Place, Purpose, int> goAt, Action<double, Place, Purpose> go, Func<double> now, bool child)
+        {
+            if (p.home.border) return;
+            long H = TownClock.HOUR;
+            bool went = false;
+            if (td.market && market != null && rng.Chance(child ? MARKET_CHILDREN : MARKET_GOERS))
+            {
+                long span = Math.Max(0, td.marketClose - td.marketOpen - 3 * H / 4);
+                goAt(td.marketOpen + (long)(rng.Next() * span), Place.Building(MARKET), Purpose.Market, -1);
+                go(now() + rng.Range(0.4, 1), p.home, Purpose.Home);
+                went = true;
+            }
+            if (shops.Count > 0 && td.shopsOpen && rng.Chance(child ? 0.2 : went ? 0.35 : 0.55))
+            {
+                double open = td.shopsOpenAt / (double)H + 0.25, close = td.shopsCloseAt / (double)H - 1;
+                double from = Math.Max(open, td.weekday == 0 ? 11.5 : 10), to = Math.Max(from, Math.Min(close, 14));
+                go(Math.Max(now() + 0.5, rng.Range(from, to)), Place.Building(Shop(p.home.id, rng)), Purpose.Shop);
+                go(now() + rng.Range(0.4, 1.2), p.home, Purpose.Home);
+            }
+            if (rng.Chance(0.5)) Visit(rng, p, Math.Max(now() + 0.5, rng.Range(14, 17.5)), go, now);
+            bool evening = td.weekday == 6 || (td.holiday != null && td.weekday != 0);
+            if (rng.Chance(evening && !child ? 0.25 : BACKGROUND)) Visit(rng, p, Math.Max(now() + 0.5, rng.Range(18.5, 21)), go, now);
         }
 
         /// <summary>Out to see someone (or a shop), and home again.</summary>
@@ -426,9 +715,13 @@ namespace Porchlight.Life
         {
             long day = TownClock.DayOf(moment);
             long tod = TownClock.TimeOfDay(moment);
+            atMarket.Clear();
             foreach (var p in people)
             {
                 Count(p, -1);
+                p.waitingFor = -1;
+                p.waiters = null;
+                p.browseSince = -1;
                 PlanDay(p, day);
                 while (p.next < p.plan.Count && p.plan[p.next].depart < tod)
                 {
@@ -440,6 +733,7 @@ namespace Porchlight.Life
                 }
                 p.where = p.at.border ? Where.OffMap : Where.Inside;
                 Count(p, 1);
+                if (market != null && !p.at.border && p.at.id == MARKET) AtMarket(p);
                 ScheduleNext(p);
             }
         }
@@ -481,11 +775,13 @@ namespace Porchlight.Life
                 stats.delayedTrips++;
                 return;
             }
+            // Still waiting for whoever was taking them: they've given up on them.
+            if (p.waitingFor >= 0) StopWaiting(p);
             var planned = p.plan[p.next];
             p.next++;
             ScheduleNext(p);
             if (planned.to.Same(p.at)) return;
-            StartTrip(p, planned.to, planned.purpose);
+            StartTrip(p, planned.to, planned.purpose, planned.with - 1);
         }
 
         /// <summary>Would they take their car from `from` to `to`?</summary>
@@ -496,9 +792,17 @@ namespace Porchlight.Life
             return !c.offMap && c.parkedBy == from.id;
         }
 
-        void StartTrip(Person p, Place to, Purpose why)
+        void StartTrip(Person p, Place to, Purpose why, int with = -1)
         {
+            if (with >= 0 && with < people.Count && GoWith(p, people[with], to, why)) return;
             var from = p.at;
+            // From the market: from where they're stood among the stalls.
+            var origin = Door(from);
+            if (p.browseSince >= 0)
+            {
+                if (p.slot >= 0) origin = PersonPoint(p).at;
+                LeaveMarket(p);
+            }
             var trip = new Trip { id = (int)stats.started, from = from, to = to, purpose = why, started = Now };
             var c = p.car >= 0 ? cars[p.car] : null;
             trip.why.gate = from.border || to.border;
@@ -516,27 +820,162 @@ namespace Porchlight.Life
             if (c != null && WouldDrive(p, c, from, to))
             {
                 trip.mode = Mode.Drive;
-                if (!from.border) trip.legs.Add(new Leg { kind = LegKind.Walk, from = Door(from) });
+                if (!from.border) trip.legs.Add(new Leg { kind = LegKind.Walk, from = origin });
                 trip.legs.Add(new Leg { kind = LegKind.Drive, dest = to });
                 if (!to.border) trip.legs.Add(new Leg { kind = LegKind.Walk, to = Door(to) });
             }
-            else if (BusBetter(p, Door(from), Door(to), out int board, out int alight, ref trip.why))
+            else if (BusBetter(p, origin, Door(to), out int board, out int alight, ref trip.why))
             {
                 trip.mode = Mode.Bus;
-                trip.legs.Add(new Leg { kind = LegKind.Walk, from = Door(from), to = busStops[board].at });
+                trip.legs.Add(new Leg { kind = LegKind.Walk, from = origin, to = busStops[board].at });
                 trip.legs.Add(new Leg { kind = LegKind.Wait, route = 0, board = board, alight = alight });
                 trip.legs.Add(new Leg { kind = LegKind.Walk, from = busStops[alight].at, to = Door(to) });
             }
             else
             {
                 trip.mode = Mode.Walk;
-                trip.legs.Add(new Leg { kind = LegKind.Walk, from = Door(from), to = Door(to) });
+                trip.legs.Add(new Leg { kind = LegKind.Walk, from = origin, to = Door(to) });
             }
             p.trip = trip;
             Count(p, -1);
             p.where = Where.OnTrip;
             stats.Started(trip, Now);
+            // Whoever was waiting for them to set off: in the car with them, or off on their own (on foot alongside).
+            if (p.waiters != null)
+            {
+                var waiting = p.waiters;
+                p.waiters = null;
+                foreach (int w in waiting)
+                {
+                    var c2 = people[w];
+                    if (c2.waitingFor != p.id) continue;
+                    Cancel(K_RIDE, w);
+                    c2.waitingFor = -1;
+                    if (c2.trip != null || !c2.at.Same(from) || c2.rideTo.Same(c2.at)) continue;
+                    if (!to.Same(c2.rideTo)) StartTrip(c2, c2.rideTo, c2.ridePurpose);
+                    else if (trip.mode == Mode.Drive) Board(c2, p, c2.rideTo, c2.ridePurpose);
+                    else Alongside(c2, p, c2.rideTo, c2.ridePurpose);
+                }
+            }
             NextLeg(p);
+        }
+
+        /// <summary>
+        /// Going with `e` (a child with the parent taking them): in their car if they're already off there in it, or
+        /// waiting for them to set off if they're about to (a while: RIDE_WAIT). False: off on their own.
+        /// </summary>
+        bool GoWith(Person p, Person e, Place to, Purpose why)
+        {
+            if (e.trip != null && e.trip.ended < 0)
+            {
+                // Already off: in the car if they've not driven off yet, alongside if they set off on foot this minute, else on their own.
+                if (!e.trip.to.Same(to) || !e.trip.from.Same(p.at)) return false;
+                if (e.trip.mode == Mode.Drive)
+                {
+                    int drive = e.trip.legs.FindIndex(l => l.kind == LegKind.Drive);
+                    if (drive < 0 || e.trip.leg > drive) return false;
+                    Board(p, e, to, why);
+                    return true;
+                }
+                if (Now - e.trip.started > TownClock.MINUTE) return false;
+                Alongside(p, e, to, why);
+                return true;
+            }
+            if (!e.at.Same(p.at) || e.next >= e.plan.Count || !e.plan[e.next].to.Same(to)) return false;
+            p.waitingFor = e.id;
+            p.rideTo = to;
+            p.ridePurpose = why;
+            if (e.waiters == null) e.waiters = new List<int>();
+            if (!e.waiters.Contains(p.id)) e.waiters.Add(p.id);
+            Schedule(K_RIDE, p.id, Now + RIDE_WAIT);
+            return true;
+        }
+
+        /// <summary>On foot (or the bus) with `e`, at their pace.</summary>
+        void Alongside(Person p, Person e, Place to, Purpose why)
+        {
+            double pace = p.pace;
+            p.pace = e.pace;
+            StartTrip(p, to, why);
+            p.pace = pace;
+            stats.escorted++;
+        }
+
+        /// <summary>No longer waiting for whoever was taking them.</summary>
+        void StopWaiting(Person p)
+        {
+            if (p.waitingFor < 0) return;
+            people[p.waitingFor].waiters?.Remove(p.id);
+            p.waitingFor = -1;
+            Cancel(K_RIDE, p.id);
+        }
+
+        /// <summary>Waited long enough for whoever was taking them: off on their own.</summary>
+        void OnRideWait(Person p)
+        {
+            if (p.waitingFor < 0) return;
+            StopWaiting(p);
+            if (p.trip == null && !p.rideTo.Same(p.at)) StartTrip(p, p.rideTo, p.ridePurpose);
+        }
+
+        /// <summary>In `driver`'s car to `to` as a passenger: there when they get there (unseen on the way, as in a car).</summary>
+        void Board(Person p, Person driver, Place to, Purpose why)
+        {
+            var trip = new Trip { id = (int)stats.started, from = p.at, to = to, purpose = why, started = Now, mode = Mode.Drive, driver = driver.id };
+            trip.why.hasCar = true;
+            trip.why.dist = Geo.Dist(Door(p.at), Door(to));
+            trip.legs.Add(new Leg { kind = LegKind.Passenger, dest = to });
+            trip.leg = 0;
+            if (driver.trip.riders == null) driver.trip.riders = new List<int>();
+            driver.trip.riders.Add(p.id);
+            if (p.browseSince >= 0)
+            {
+                LeaveMarket(p);
+                FreePersonSlot(p);
+            }
+            p.trip = trip;
+            Count(p, -1);
+            p.where = Where.OnTrip;
+            stats.Started(trip, Now);
+            stats.passengers++;
+            stats.escorted++;
+        }
+
+        // --- The market ----------------------------------------------------------------------------
+
+        /// <summary>At the market: browsing (drawn among the stalls while there's a slot to spare) or at their stall.</summary>
+        void AtMarket(Person p)
+        {
+            p.browseSince = Now;
+            atMarket.Add(p.id);
+            int shown = 0;
+            foreach (int q in atMarket) if (people[q].slot >= 0) shown++;
+            int most = Math.Min(MARKET_SHOWN, personSlots.Length / 4);
+            if (p.slot < 0 && (p.kind == PersonKind.Stallholder || shown < most) && freePersonSlots.Count > personSlots.Length / 4)
+            {
+                p.slot = freePersonSlots.Pop();
+                personSlots[p.slot].who = p.id;
+            }
+        }
+
+        void LeaveMarket(Person p)
+        {
+            p.browseSince = -1;
+            atMarket.Remove(p.id);
+        }
+
+        /// <summary>How many are at the market now (shoppers and stallholders).</summary>
+        public int AtMarketNow => atMarket.Count;
+
+        /// <summary>Where someone at the market is drawn: at their stall, or browsing the stalls.</summary>
+        (Vec2 at, Vec2 along) MarketPoint(Person p)
+        {
+            if (p.kind == PersonKind.Stallholder && p.stall >= 0 && p.stall < market.stalls.Count)
+            {
+                var s = market.stalls[p.stall];
+                return (s.keeper, new Vec2(s.front.x - s.keeper.x, s.front.y - s.keeper.y));
+            }
+            return market.Browse(p.id, p.browseSince, Now, StallsUp(Today));
         }
 
         void NextLeg(Person p)
@@ -592,6 +1031,10 @@ namespace Porchlight.Life
             {
                 p.at = trip.to;
                 if (made) stats.Finished(trip, Now);
+                // Those riding along get out with them.
+                if (trip.riders != null)
+                    foreach (int r in trip.riders)
+                        if (people[r].trip != null && people[r].trip.driver == p.id) EndTrip(people[r], made);
                 trip.ended = Now;
                 trip.made = made;
                 // Kept only to say how it went: its legs (and their points) aren't.
@@ -603,6 +1046,7 @@ namespace Porchlight.Life
             }
             p.where = p.at.border ? Where.OffMap : Where.Inside;
             Count(p, 1);
+            if (market != null && !p.at.border && p.at.id == MARKET) AtMarket(p);
             if (p.delayed)
             {
                 p.delayed = false;

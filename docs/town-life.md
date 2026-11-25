@@ -396,6 +396,12 @@ a car-length into the new segment. Until then it goes no faster than the
 segment it's leaving. That way it swings out of a slow turn, rather than
 snapping to the next lane's speed.
 
+The car behind rolls up on that back meanwhile, with no interval of its
+own. So whether the back is clear is looked at again every 100 ms
+(`CLEAR_AGAIN_MS`) until it is. Looked at every 250 ms, the car behind could
+reach the line first and stand there a moment, stopped dead from speed:
+`life`'s smooth-driving rule caught it once a Friday rush.
+
 ### The end of a turn
 
 A car reaching the end of its turn moves onto the lane beyond only when
@@ -410,6 +416,25 @@ Each lane keeps a tally of the room the cars on it (or turning into it)
 have **committed**: their length plus the following gap. A car may only
 start a turn if the lane out has room for it. This is "don't block the
 box": nobody stops on a junction because the lane beyond is full.
+
+Room in the tally isn't yet room on the road, though: the cars in the lane
+may not have closed up, and others may be turning into it ahead. So a car
+also needs a **clear way through** (`ClearBeyond`): space for its whole
+length past the junction, behind where the last car in the lane stops, less
+a car and a gap for each already on a turn into it. Short of that, it waits
+at its line, not in the box. While the lane's last car is still moving
+there's no stop to measure from, and nothing is counted: a queue rolling
+off on a green follows its leader through bumper to bumper, nobody braking
+at a green to wait for room. Before this, a car let in on the tally alone
+could reach the far side at speed and stop dead in the junction (four times
+in an Ember Crossing morning on Market Avenue, a straight main road with a
+side street every 8 to 12 tiles).
+
+Following through, the car behind is held back by its leader's back until
+that's a full gap (`FOLLOWING`) past the line, not just over it
+(`OnClear`). Let go with only its back over, the follower could roll right
+up to the line, and on the turn be put back by the gap it hadn't kept: a car
+drawn jumping a tile backwards (once in Porchlight's rush).
 
 ### Junctions
 
@@ -426,7 +451,7 @@ order:
 - **someone's standing on the turn** (a player, below);
 - a walker is on a crossing it would cut;
 - a turn under way conflicts with its own;
-- there's no room on the lane out.
+- there's no room on the lane out, or no clear way through to it.
 
 A refused car notes **who it's waiting on** (`blockedBy`). It's woken when
 any of them clears the junction. Waiting cars are woken in the order they
@@ -799,18 +824,32 @@ Each person's plan is a chain of stops with departure times. It's seeded by
 `{seed}::day::{day}::{id}`, so the same day comes out the same everywhere
 and a new day comes out different.
 
-- **Workers:**
-  - leave between 06:30 and 09:30;
-  - 30% go out for lunch;
-  - head home 8–9½ hours after starting, 35% by way of the shops;
+Which day it is comes first: the town's calendar
+([town-calendar.md](town-calendar.md)) says whether it's a weekday, a
+weekend, a holiday, a school day or market day. Each worker has a roster
+(Monday to Friday, the shops' week, shifts, or the school's days) that says
+whether they work it.
+
+- **Workers, on a working day:**
+  - office hours: leave between 06:30 and 09:30, home 8–9½ hours later;
+  - the shops: in before opening, home after closing;
+  - shifts: earlies 6 to 2 or lates 2 to 10, a week of each;
+  - 30% go out for lunch, 35% go home by way of the shops (while they're open);
   - 10% visit someone in the evening.
-- **Students:** leave 07:30–08:30, are home 15:00–16:00, and half visit a
-  friend or the shops after.
-- **At home:** shops in the morning; half go out in the afternoon, and some
-  in the evening.
-- **Commuters** come and go by the same windows as workers.
+- **Students, on a school day:** at school 10–55 minutes before the bell (the
+  under-11s mostly taken by a grown-up), home after the last bell, and half
+  visit a friend or the shops after.
+- **At home, on a weekday:** the school run if there are young children, the
+  shops in the morning, half go out in the afternoon, some in the evening.
+- **A day off** (the weekend, a holiday, a rest day, no school): the market on
+  market day for a few, the week's shop late in the morning, someone to see in
+  the afternoon, and on Saturday the evening out.
+- **Commuters** come in on their working days; their days off are spent
+  beyond the gates.
+- **Stallholders** drive in from the gates to set up before the market opens,
+  and leave after it shuts.
 - **Through drivers** pass in the morning or midday, and back out in the
-  afternoon.
+  afternoon. At the weekend fewer pass, from mid-morning.
 
 A visit goes to a nearby home 60% of the time, otherwise to a shop.
 "Nearby" is the nearest of 6 picked at random (`nearErrands`; 3 without):
@@ -870,7 +909,51 @@ Each step of a walk is a **piece**: a stretch of sidewalk, or a crossing.
 - **Crossing at a junction** needs leave, as a turn does. A walker waits for
   cars whose turns cross it. A car whose turn a walker is on waits for the
   walker. A walker yields to a car that has waited longer than the crossing
-  takes plus 3 s, so cars aren't held for ever on a busy corner.
+  takes plus 3 s, so cars aren't held for ever on a busy corner. A walker
+  also doesn't step out in front of a car coming up at speed to go round
+  without stopping (due within twice the crossing's time, for a crowded
+  kerb's half pace): it couldn't stop short, and would stop dead at the line.
+
+### A crowd at the kerb
+
+People waiting to cross don't all stand on the one point at the corner.
+Each takes a **spot** in a crowd on the sidewalk there (`Walkways.CrowdSpot`,
+`KerbCrowds`):
+
+- **The block:** three abreast across the sidewalk, 0.14 tiles (0.56 m)
+  apart, kerb side first; then two in the gaps a step behind (0.13 tiles,
+  0.52 m); then three again, and so on back along the sidewalk from the
+  corner. Nobody is nearer anyone else than 0.5 m. Full, that's about 2.9
+  people a m², a dense but orderly queue (Fruin's level E).
+- **Front first:** a newcomer takes the frontmost spot free, and keeps it
+  till they go. Someone leaving from the middle leaves a gap for the next to
+  come; nobody shuffles up.
+- **On the sidewalk:** where it bends sharply at the corner, or its curve
+  brings it near a carriageway, a place that would stand within 0.5 m of one
+  already given, or within 0.05 tiles of a road's edge, is passed over. A
+  corner's spots are worked out the first time someone waits there, and kept.
+  Past the sidewalk's far end (more than about eleven a tile of it), they
+  stand over those in front.
+- **Moving:** they walk to their spot from the corner at their pace, stand
+  facing the crossing, and step out from it, closing in on the crossing's
+  line over the first steps.
+
+On the move, each walker keeps to a **lane** of their own, one of seven
+across the middle 0.27 tiles of the way (by their id), easing in and out of
+it over the first and last 0.25 tiles of a piece, so a busy sidewalk isn't a
+single file of people standing in each other.
+
+A/B Street waits its walkers at the end of the sidewalk, all on one point,
+and draws a bunch that overlap as one blob with a count (`DrawPedCrowd`)
+[T25](city-research.md#references). We have fewer people and a closer
+camera, so we give each a place.
+
+`crowd` in `Tools~/Checks` checks it: the book hands out the frontmost spot
+free; at every kerb a crossing sets off from in the starter towns, twenty
+waiting stand at least 0.5 m apart, on the sidewalk, off every carriageway,
+the first by the corner; and at the morning rush everyone waiting is in
+their spot, apart, in the same spot from one look to the next, and facing
+the way over.
 
 The townsfolk who just stroll, with nowhere to be (`Pedestrian`), are still
 there. There are fewer of them now (at most 24, one per 48 tiles of
@@ -1510,12 +1593,16 @@ weekday:
 
   | | Limit | Now | Guessed ahead and eased back (before) |
   |---|---|---|---|
-  | Turning frames where the turn rate jumps (over 20 rad/s²) | 1% | 0–0.1% | 10–26% |
-  | Frames where speed surges (over 4 tiles/s²) | 3% | 0.3–1.3% | 2–5% |
-  | Frames at speed where the back axle slides (over 10°, and sideways at 0.2 tiles/s or more) | 2% | 0.2–0.9% | up to 40% |
-  | Turn-rate step from one frame to the next, 99.9th percentile | 0.6 rad/s | 0.15–0.31 | 1.7–3.1 |
+  | Turning frames where the turn rate jumps (over 20 rad/s²) | 1% | 0–0.14% | 10–26% |
+  | Frames where speed surges (over 4 tiles/s²) | 3% | 0.7–1.7% | 2–5% |
+  | Frames at speed where the back axle slides (over 10°, and sideways at 0.2 tiles/s or more) | 2% | 0% | up to 40% |
+  | Turn-rate step from one frame to the next, 99.9th percentile | 0.6 rad/s | 0.22–0.34 | 1.7–3.1 |
 
-  Boats aren't counted. Sliding is counted from 1.2 tiles/s, measured at
+  Boats aren't counted, nor are cars parking or pulling out: the game places
+  them between the lane and the spot (`Traffic`), and the follower's easing of
+  that step into a car-park bay read as a car swinging in at 40 mph (Juniper
+  Falls' flicks at 1.3% on a Friday, and all of the sliding that was left).
+  Sliding is counted from 1.2 tiles/s, measured at
   each vehicle's own back axle (half its wheelbase behind its middle, as
   it's drawn). A lorry swinging round on its back wheels at a dead end
   barely moves them, so it isn't sliding. Lanternport's bin lorry was, from

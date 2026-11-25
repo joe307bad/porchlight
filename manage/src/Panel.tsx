@@ -16,10 +16,10 @@ import { briefOn, congestionOf } from './api.ts';
 import type { CountyMap, Me } from './api.ts';
 import type { FeedStatus } from './feed.ts';
 import { ALL_WAY, LAMPS, PERSON, SPEEDS, STOP_SIGN, type Layers } from './render.ts';
-import { REACH } from './world.ts';
+import { REACH, doing, type PlayerView } from './world.ts';
 import { ZONES } from './zoning.ts';
-import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, streetName, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife } from './life.ts';
-import { CONGESTION, PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
+import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, streetName, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife, marketText } from './life.ts';
+import { CALENDAR, CONGESTION, PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
 
 const REFRESH_MS = 250;
 /** What a service vehicle's called in its focus heading (sim's ServiceKind). */
@@ -60,6 +60,11 @@ interface Props {
   onCongestion: (key: string | null, streets: CongestedStreet[] | null) => void;
   /** Take the map to one of a town's streets. */
   onStreet: (key: string, points: number[]) => void;
+  /** The players connected now (the feed's), and the one the map follows (their session), if any. */
+  players: () => PlayerView[];
+  following: string | null;
+  /** Follow a player on the map (null: stop). */
+  onFollow: (sid: string | null) => void;
 }
 
 /** How often a town's congestion is asked for again while it's open (ms). */
@@ -144,7 +149,12 @@ export function Panel(p: Props) {
             </ol>
           </nav>
           {p.focusNote && top.at !== 'entity' && <p className="sub line">{p.focusNote}</p>}
-          {top.at === 'county' && <Towns towns={p.map.towns} lives={p.lives} picked={p.memory.town} onTown={p.onTown} />}
+          {top.at === 'county' && (
+            <>
+              <Towns towns={p.map.towns} lives={p.lives} picked={p.memory.town} onTown={p.onTown} />
+              <Players players={p.players()} following={p.following} onFollow={p.onFollow} />
+            </>
+          )}
           {top.at === 'town' && (
             <TownView
               key={top.town}
@@ -185,6 +195,35 @@ function Towns({ towns, lives, picked, onTown }: { towns: CountyMap['towns']; li
   );
 }
 
+/** The players connected now, a line each with their town; click one to follow them on the map (again to stop). */
+function Players({ players, following, onFollow }: { players: PlayerView[]; following: string | null; onFollow: (sid: string | null) => void }) {
+  const sorted = [...players].sort((a, b) => a.name.localeCompare(b.name) || a.sid.localeCompare(b.sid));
+  return (
+    <>
+      <h2 className="line">Players{players.length > 0 ? ` · ${players.length}` : ''}</h2>
+      {sorted.length === 0 ? (
+        <p className="sub line">Nobody's playing right now.</p>
+      ) : (
+        <ul className="list" aria-label="Players">
+          {sorted.map((pl) => {
+            const on = following === pl.sid;
+            const line = `${pl.name} · ${doing(pl)} in ${pl.town}`;
+            return (
+              <li key={pl.sid} className={on ? 'sel' : ''}>
+                <button className="row line" onClick={() => onFollow(on ? null : pl.sid)} aria-pressed={on} title={on ? `Following ${pl.name} (click to stop)` : `Follow ${line}`}>
+                  <i className="swatch player-dot" style={{ background: pl.color }} />
+                  <span className="name">{pl.name}</span>
+                  <span className="figs">{doing(pl)} · {pl.town}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+}
+
 /**
  * A town: collapsible sections, as the game's own sidebar has them (Sidebar.cs): its congestion, then one for each
  * sort of thing out in it now, with how many. Opening one closes the others; the open one scrolls on its own between
@@ -221,6 +260,11 @@ function TownView({
   if (!life) return <p className="sub line">Not running</p>;
   return (
     <div className="sections">
+      {life.calendar && life.calendar.length > 0 && (
+        <Section title="Calendar" open={m.open === CALENDAR} onToggle={() => toggle(CALENDAR)}>
+          <CalendarView life={life} />
+        </Section>
+      )}
       <Section title="Congestion" open={m.open === CONGESTION} onToggle={() => toggle(CONGESTION)}>
         <CongestionView townKey={townKey} ago={m.ago} onAgo={(ago) => change({ ago })} onCongestion={onCongestion} onStreet={onStreet} />
       </Section>
@@ -259,6 +303,29 @@ function TownView({
 }
 
 /** One collapsible section: its heading (a count on it, if any) and, open, what's in it. */
+/** Today and the week ahead: what's on each day, and the market. */
+function CalendarView({ life }: { life: TownLife }) {
+  const days = life.calendar ?? [];
+  const market = marketText(life);
+  return (
+    <div className="calendar">
+      {market && (
+        <p className="sub line">
+          <strong>Market</strong> {market}
+        </p>
+      )}
+      <ol className="list calendar-days">
+        {days.map((d, i) => (
+          <li key={d.day} className={`${d.weekend ? 'weekend' : ''} ${d.holiday ? 'holiday' : ''}`}>
+            <span className="calendar-name">{i === 0 ? `Today, ${d.name}` : d.name}</span>
+            <span className="sub">{d.events.length > 0 ? d.events.join(' · ') : d.weekend ? 'The weekend' : 'An ordinary day'}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 function Section({ title, figs, open, onToggle, children }: { title: string; figs?: number; open: boolean; onToggle: () => void; children: React.ReactNode }) {
   return (
     <section className={`sb-section ${open ? 'open' : ''}`}>

@@ -398,6 +398,14 @@ namespace Porchlight.Life
             {
                 c.state = CarState.Queued;
                 var q = queues[c.seg];
+                // Stood short of where it meant to be: the car behind (planned while this one was going on) plans
+                // again, to stop behind it rather than run up on its back.
+                int i = q.cars.IndexOf(c.id);
+                if (i >= 0 && i + 1 < q.cars.Count)
+                {
+                    var f = cars[q.cars[i + 1]];
+                    if (f.state == CarState.Crossing && double.IsNaN(f.stopAt)) Refresh(f);
+                }
                 // Held by a player: it waits for them (looking again now and then), and does nothing else.
                 if (q.blockFirst == c.id) Schedule(K_CAR, c.id, Now + 2000);
                 return;
@@ -462,11 +470,19 @@ namespace Porchlight.Life
             }
         }
 
+        /// <summary>
+        /// How soon a car whose back isn't out of the segment it left yet is looked at again (ms): well inside the
+        /// time the car behind takes to close the gap behind it at a turn's speed (FOLLOWING at about 1.2 tiles/s, 200 ms).
+        /// </summary>
+        const long CLEAR_AGAIN_MS = 100;
+
         void OnClear(Car c)
         {
             if (c.laggy < 0) return;
-            // Its back's out of the segment it left (the gap behind it is the next car's to keep).
-            if (c.seg < 0 || Front(c) >= c.length - 1e-6)
+            // Its back's out of the segment it left, and the gap behind it too: let go with its back just over the
+            // line, the car behind could roll up to the line on it, then be put back by that gap on the turn (drawn,
+            // a jump backwards).
+            if (c.seg < 0 || Front(c) >= c.length + FOLLOWING - 1e-6)
             {
                 bool slower = c.seg >= 0 && SegSpeed(c.laggy) < SegSpeed(c.seg);
                 ClearLaggy(c);
@@ -474,8 +490,10 @@ namespace Porchlight.Life
                 if (slower && c.state == CarState.Crossing && Front(c) < c.s1 - 1e-6) SetInterval(c, Front(c), c.s1);
                 return;
             }
-            double left = c.length - Front(c);
-            Schedule(K_CLEAR, c.id, Now + Math.Max(250, (long)Math.Ceiling(left / Math.Max(0.05, Math.Min(SegSpeed(c.seg), SegSpeed(c.laggy))) * 1000)));
+            // Looked at again when it should be clear, and often: the car behind rolls up on its back meanwhile, and
+            // would sit at the line, stopped dead, if its clearing were noticed late.
+            double left = c.length + FOLLOWING - Front(c);
+            Schedule(K_CLEAR, c.id, Now + Math.Max(CLEAR_AGAIN_MS, (long)Math.Ceiling(left / Math.Max(0.05, Math.Min(SegSpeed(c.seg), SegSpeed(c.laggy))) * 1000)));
         }
 
         /// <summary>A car's back is clear of the segment it left.</summary>
@@ -683,7 +701,9 @@ namespace Porchlight.Life
             }
             explain?.Add(new Why("Is a crossing turn under way?", crossers == null ? "No" : $"Yes: car{(crossers.Count > 1 ? "s" : "")} {string.Join(", ", crossers)}", crossers == null,
                 "Turns whose paths cross can't both be under way."));
-            bool room = Room(m.to, c);
+            bool fits = Room(m.to, c);
+            double beyond = fits ? ClearBeyond(j, m) : 0;
+            bool room = fits && beyond >= c.length;
             if (!room)
             {
                 int filler = queues[m.to].lastIn;
@@ -693,8 +713,9 @@ namespace Porchlight.Life
             if (explain != null)
             {
                 var q = queues[m.to];
-                explain.Add(new Why("Is there room for it beyond?", room ? "Yes" : $"No: car {q.lastIn} filled it", room,
-                    $"Lane {m.to} holds {net.lanes[m.to].Span:0.0} tiles; {q.committed:0.0} are kept for the cars on it or let into it, and it needs {c.length + FOLLOWING:0.0}. Don't block the box."));
+                explain.Add(new Why("Is there room for it beyond?", room ? "Yes" : !fits ? $"No: car {q.lastIn} filled it" : $"No: only {beyond:0.0} tiles clear past the junction, and it's {c.length:0.0} long", room,
+                    $"Lane {m.to} holds {net.lanes[m.to].Span:0.0} tiles; {q.committed:0.0} are kept for the cars on it or let into it, and it needs {c.length + FOLLOWING:0.0}. "
+                    + "And a clear way through: room for the whole of it past the junction, behind where the last car there stops and those already turning in. Don't block the box."));
             }
             if (by == null) return Verdict.Go;
             foreach (int b in by) knot |= WaitsOn(b, c.id);
@@ -707,6 +728,23 @@ namespace Porchlight.Life
                 return Verdict.Blocked;
             }
             return Verdict.Go;
+        }
+
+        /// <summary>
+        /// How much of lane `m.to` is clear for a car turning into it now (tiles): up to where the last car on it stops
+        /// (RoomOn), less a car's length and gap for each already on a turn into it. Less than a car's length, it would
+        /// stand in the junction when it got round: it waits at the line instead.
+        /// </summary>
+        double ClearBeyond(Junction j, Movement m)
+        {
+            double clear = RoomOn(m.to);
+            if (double.IsPositiveInfinity(clear) || !underway.TryGetValue(j.node, out var going)) return clear;
+            foreach (var (id, _) in going)
+            {
+                var o = cars[id];
+                if (o.seg >= Lanes && net.movements[o.seg - Lanes].to == m.to) clear -= o.length + FOLLOWING;
+            }
+            return clear;
         }
 
         /// <summary>The highest rank of a junction's roads.</summary>

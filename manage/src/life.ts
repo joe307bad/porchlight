@@ -18,6 +18,50 @@ export interface TownLife {
   summary: LifeSummary;
   /** What each of the tick's car and person records is: a letter each (ENTITY_KINDS), '-' for an empty one. */
   kinds?: { cars: string; people: string };
+  /** Today and the week ahead (Life/Calendar.cs). */
+  calendar?: CalendarDay[];
+  /** The market in the plaza, or null if the town has none. */
+  market?: MarketNow | null;
+}
+
+/** A day in the town's calendar (sim/src/SimTown.cs Calendar). */
+export interface CalendarDay {
+  /** Days since 1 Jan 1970 (county time). */
+  day: number;
+  /** "Saturday 28 November". */
+  name: string;
+  weekend: boolean;
+  holiday: string | null;
+  school: boolean;
+  market: boolean;
+  /** What's on: the holiday, market day, school hours, the bins. */
+  events: string[];
+}
+
+/** The market now (sim/src/SimTown.cs Market). */
+export interface MarketNow {
+  /** Its pitches, and how many are taken today. */
+  stalls: number;
+  up: number;
+  open: boolean;
+  /** Today's hours ("9 AM to 12 PM"), or null if it isn't market day. */
+  hours: string | null;
+  /** Shoppers and stallholders there now. */
+  people: number;
+  at: [number, number];
+}
+
+/** A line on the market: open with how many there, or when it's next on (from the calendar). */
+export function marketText(life: TownLife): string | null {
+  const m = life.market;
+  if (!m) return null;
+  if (m.open) return `Open till ${m.hours?.split(' to ')[1] ?? '?'}: ${m.up} of ${m.stalls} stalls, ${m.people.toLocaleString()} there`;
+  if (m.people > 0) return `Packing up: ${m.people.toLocaleString()} still there`;
+  const days = life.calendar ?? [];
+  // Today's still to come, or over: and the next one.
+  const next = days.slice(1).find((d) => d.market);
+  if (m.hours && days[0]?.market) return `Today ${m.hours}${next ? `; next on ${next.name}` : ''}`;
+  return next ? `Next on ${next.name}` : 'Not this week';
 }
 
 /** The kinds of thing on the map: what each car and person record is (sim/src/SimTown.cs Kinds). */
@@ -35,6 +79,7 @@ export const ENTITY_KINDS: { id: string; of: 'car' | 'person'; letter: string; l
   { id: 'person:s', of: 'person', letter: 's', label: 'Students' },
   { id: 'person:h', of: 'person', letter: 'h', label: 'Out on errands' },
   { id: 'person:c', of: 'person', letter: 'c', label: 'Commuters on foot' },
+  { id: 'person:m', of: 'person', letter: 'm', label: 'At the market' },
   { id: 'person:x', of: 'person', letter: 'x', label: 'Wanderers' },
 ];
 

@@ -153,13 +153,14 @@ namespace Porchlight.Life
             }
             else
             {
-                o["doing"] = p.where == Where.OffMap ? "Out of town" : "Indoors";
-                tree.Add(Why.Info("Where are they?", p.where == Where.OffMap ? $"Out of town, past {PlaceText(p.at, building)}" : $"Indoors: {PlaceText(p.at, building)}",
+                o["doing"] = p.where == Where.OffMap ? "Out of town" : !p.at.border && p.at.id == MARKET ? (p.kind == PersonKind.Stallholder ? "At their stall" : "At the market") : "Indoors";
+                tree.Add(Why.Info("Where are they?", p.where == Where.OffMap ? $"Out of town, past {PlaceText(p.at, building)}" : p.at.id == MARKET && !p.at.border ? (p.kind == PersonKind.Stallholder ? "At their stall at the market" : "At the market, browsing the stalls") : $"Indoors: {PlaceText(p.at, building)}",
                     p.at.Same(p.home) ? "Home." : p.at.Same(p.work) ? (p.kind == PersonKind.Student ? "At school." : "At work.") : null));
+                if (p.waitingFor >= 0) tree.Add(new Why("Waiting for someone?", $"Yes: for {NameOf(p.waitingFor)} to take them", false, $"They wait up to {RIDE_WAIT / TownClock.MINUTE} minutes, then go on their own."));
                 if (p.next < p.plan.Count && p.plan[p.next].depart >= 0)
                 {
                     var n = p.plan[p.next];
-                    tree.Add(Why.Info("When do they go out next?", $"{TownClock.Format(DayStart(p.day) + n.depart)}, {Lower(PurposeText(n.purpose))}: {PlaceText(n.to, building)}", DayRule(p.kind)));
+                    tree.Add(Why.Info("When do they go out next?", $"{TownClock.Format(DayStart(p.day) + n.depart)}, {Lower(PurposeText(n.purpose))}: {PlaceText(n.to, building)}", DayRule(p)));
                 }
             }
             // Their next planned trip (the rest of the day is in `day`). A trip due before the one they're on is done
@@ -294,7 +295,7 @@ namespace Porchlight.Life
             return new Dictionary<string, object>
             {
                 ["who"] = KindText(p.kind),
-                ["rule"] = DayRule(p.kind),
+                ["rule"] = DayRule(p),
                 ["entries"] = entries,
                 ["decides"] = decides,
             };
@@ -319,7 +320,7 @@ namespace Porchlight.Life
         {
             if (id < 0 || id >= people.Count) return null;
             var p = people[id];
-            return p.trip != null ? PurposeText(p.trip.purpose) : p.where == Where.OffMap ? "Out of town" : "Indoors";
+            return p.trip != null ? PurposeText(p.trip.purpose) : p.where == Where.OffMap ? "Out of town" : !p.at.border && p.at.id == MARKET ? (p.kind == PersonKind.Stallholder ? "At their stall" : "At the market") : "Indoors";
         }
 
         /// <summary>A line for the map's hover: who, what they're doing, and where in their day.</summary>
@@ -331,7 +332,7 @@ namespace Porchlight.Life
             int done = 0, left = 0;
             if (p.recent != null) foreach (var t in p.recent) if (TownClock.DayOf(t.started) == today) done++;
             for (int k = p.next; k < p.plan.Count; k++) if (p.plan[k].depart >= 0 && TownClock.DayOf(DayStart(p.day) + p.plan[k].depart) == today) left++;
-            string doing = p.trip != null ? $"{PurposeText(p.trip.purpose)}, by {ModeText(p.trip.mode)}" : p.where == Where.OffMap ? "Out of town" : "Indoors";
+            string doing = p.trip != null ? $"{PurposeText(p.trip.purpose)}, by {ModeText(p.trip.mode)}" : p.where == Where.OffMap ? "Out of town" : !p.at.border && p.at.id == MARKET ? (p.kind == PersonKind.Stallholder ? "At their stall" : "At the market") : "Indoors";
             string where = p.trip != null ? $"trip {done + 1} of {done + 1 + left} today" : $"{done} trip{(done == 1 ? "" : "s")} today, {left} to go";
             return $"{NameOf(p.id)} · {doing} · {where}";
         }
@@ -354,7 +355,7 @@ namespace Porchlight.Life
 
         Why WhyOut(Person p, Trip trip, Func<int, int> building)
         {
-            var w = Why.Info("Why are they out?", $"{PurposeText(trip.purpose)}: {PlaceText(trip.to, building)}", DayRule(p.kind));
+            var w = Why.Info("Why are they out?", $"{PurposeText(trip.purpose)}: {PlaceText(trip.to, building)}", DayRule(p));
             w.Add(Why.Info("When did they set off?", TownClock.Format(trip.started), "When their day's plan had them go (drawn up at midnight from who they are)."));
             if (p.delayed) w.Add(new Why("Is their next trip waiting on this one?", "Yes: it came due while they were still out; they set off again as soon as they're there", false));
             return w;
@@ -421,6 +422,9 @@ namespace Porchlight.Life
                     break;
                 case LegKind.Ride:
                     w.Add(Why.Info("Which bus?", busCar >= 0 ? $"Car {busCar}, getting off at stop {leg.alight + 1}" : "Getting on"));
+                    break;
+                case LegKind.Passenger:
+                    w.Add(Why.Info("Who's driving?", $"{NameOf(trip.driver)}, taking them", "Children under " + ESCORT_AGE + " are taken to school by someone in their household when someone can; they're out when the car's parked."));
                     break;
                 case LegKind.Drive:
                     if (c != null)
@@ -643,6 +647,7 @@ namespace Porchlight.Life
                     return $"Walk to {PlaceText(trip.to, building)}";
                 }
                 case LegKind.Drive: return $"Drive to {PlaceText(leg.dest, building)}";
+                case LegKind.Passenger: return $"In {NameOf(trip.driver)}'s car to {PlaceText(leg.dest, building)}";
                 case LegKind.Wait:
                     return k == trip.leg && riding.ContainsKey(p.id) ? $"Ride the bus to stop {leg.alight + 1}" : $"Wait for the bus at stop {leg.board + 1}, ride to stop {leg.alight + 1}";
                 default: return $"Ride the bus to stop {leg.alight + 1}";
@@ -784,21 +789,44 @@ namespace Porchlight.Life
                 case PersonKind.Student: return "Goes to school";
                 case PersonKind.AtHome: return "At home in the day";
                 case PersonKind.CommuterIn: return "Lives out of town, works here";
+                case PersonKind.Stallholder: return "Keeps a stall at the market, from out of town";
                 default: return "Drives through, gate to gate";
             }
         }
 
-        /// <summary>The rule their day's plan was drawn up by (PlanDay), in words.</summary>
-        static string DayRule(PersonKind k)
+        static string RosterText(Roster r)
         {
-            switch (k)
+            switch (r)
+            {
+                case Roster.Shop: return "the shops' week (five days of seven, a weekday off and most Sundays)";
+                case Roster.Shifts: return "shifts (five days on, two off; a week of earlies, 6 to 2, then a week of lates, 2 to 10)";
+                case Roster.School: return "the school's days";
+                default: return "Monday to Friday";
+            }
+        }
+
+        /// <summary>The rule their day's plan was drawn up by (PlanDay), in words: what today is to them.</summary>
+        string DayRule(Person p)
+        {
+            var td = Day(p.day);
+            string today = $"{td.Name}{(td.holiday != null ? $" ({td.holiday})" : "")}";
+            switch (p.kind)
             {
                 case PersonKind.Worker:
                 case PersonKind.CommuterIn:
-                    return "A worker's day: to work between 06:30 and 09:30; three in ten of those working in town go out for lunch; home 8 to 9½ hours after starting (a third of those living in town by a shop); now and then a visit in the evening.";
-                case PersonKind.Student: return "A student's day: to school between 07:30 and 08:30, home between 15:00 and 16:00, and half of them out to see someone after.";
-                case PersonKind.AtHome: return "A day at home: to a shop mid-morning, half of them out to see someone in the afternoon, and now and then in the evening.";
-                default: return "Through traffic: in at one gate (morning, or midday) and out at another, and back later.";
+                    if (!Works(p, td))
+                        return $"{today}: a day off (they work {RosterText(p.roster)}). The market in the morning for a few, the week's shop for half, someone to see in the afternoon.";
+                    return $"{today}: a working day (they work {RosterText(p.roster)}). Three in ten of those working in town go out for lunch; a third of those living in town call at a shop on the way home; now and then a visit in the evening.";
+                case PersonKind.Student:
+                    if (!td.schoolDay) return $"{today}: no school ({td.noSchool}). Someone to see in the afternoon for half; the shops or the market with the family for a few.";
+                    return $"{today}: school from {TownClock.Clock12(td.bell / 1000, false)} to {TownClock.Clock12(td.endBell / 1000, false)}. Under-{ESCORT_AGE}s are taken there in three households in four, when someone can; the rest walk or take the bus.";
+                case PersonKind.AtHome:
+                    if (!td.officesOpen) return $"{today}: the market in the morning for a few, the week's shop late in the morning for half, someone to see in the afternoon.";
+                    return $"{today}: the school run if there are young children, a shop mid-morning, someone to see in the afternoon for half.";
+                case PersonKind.Stallholder:
+                    return td.market ? $"{today}: market day, {TownClock.Clock12(td.marketOpen / 1000, false)} to {TownClock.Clock12(td.marketClose / 1000, false)}. In an hour before to set up, home after packing away." : $"{today}: not market day.";
+                default:
+                    return td.officesOpen ? "Through traffic: in at one gate (morning, or midday) and out at another, and back later." : "Through traffic at the weekend: fewer, from mid-morning.";
             }
         }
 
@@ -813,16 +841,22 @@ namespace Porchlight.Life
                 case Purpose.Lunch: return "Out for lunch";
                 case Purpose.Visit: return "Visiting";
                 case Purpose.Leave: return "Leaving town";
+                case Purpose.Market: return "Going to the market";
+                case Purpose.DropOff: return "Taking the children to school";
+                case Purpose.PickUp: return "Fetching the children from school";
                 default: return "Passing through";
             }
         }
 
         static string ModeText(Mode m) => m == Mode.Drive ? "car" : m == Mode.Bus ? "bus" : "foot";
 
-        static string PlaceText(Place p, Func<int, int> building) => p.border ? $"gate {p.id + 1}" : $"building {(building != null ? building(p.id) : p.id)}";
+        static string PlaceText(Place p, Func<int, int> building) =>
+            p.border ? $"gate {p.id + 1}" : p.id == MARKET ? "the market" : $"building {(building != null ? building(p.id) : p.id)}";
 
         static Dictionary<string, object> PlaceMap(Place p, Func<int, int> building) =>
-            p.border ? new Dictionary<string, object> { ["gate"] = p.id } : new Dictionary<string, object> { ["building"] = building != null ? building(p.id) : p.id };
+            p.border ? new Dictionary<string, object> { ["gate"] = p.id }
+            : p.id == MARKET ? new Dictionary<string, object> { ["market"] = true }
+            : new Dictionary<string, object> { ["building"] = building != null ? building(p.id) : p.id };
 
         static string Minutes(double s) => s < 90 ? $"{s:0} s" : $"{s / 60:0.0} min";
 

@@ -16,12 +16,14 @@
 //   dotnet run --project "unity/Tools~/Checks" -- arrivals [town]   # into each town by each highway, then to its houses (those by the edge and a sample), driven as the game drives a trip
 //   dotnet run --project "unity/Tools~/Checks" -- doors             # houses whose front door is near the edge of their town
 //   dotnet run --project "unity/Tools~/Checks" -- traffic <seed> 'width=256&riverCount=0'   # how smooth its traffic looks following a host, as the host slows down
+//   dotnet run --project "unity/Tools~/Checks" -c Release -- arrival [towns dir] # a town's street life made ahead binds to a fresh traffic, caught up a few ms a frame (ArrivalCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- hitches [limit ms] [show ms] # every space of the county built a share at a time, as the web build does: no share too long, and the same as all at once (Hitches.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- fingerprint [towns] # a hash of each county space (and of `towns` check towns): the same before and after a change, the same towns
 //   dotnet run --project "unity/Tools~/Checks" -- ride              # riding in someone's car over a town line, on the web and on desktop (RideCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- ways              # one way shown at a time: a spot on the map is instead of following someone or a trip (WayCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- steering          # your own steering: a tap a nudge, a held turn full, straight easy to hold (SteeringCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- where             # the line under your name says where you are now (WhereCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- calendar [dir]    # weekends, holidays, 180 school days, the school run, market day (CalendarCheck.cs)
 
 using System;
 using Porchlight.County;
@@ -60,10 +62,12 @@ static class Program
         if (args.Length > 0 && args[0] == "ride") return RideCheck.Run();
         if (args.Length > 0 && args[0] == "servers") return ServersCheck.Run();
         if (args.Length > 0 && args[0] == "clock") return ClockCheck.Run();
+        if (args.Length > 0 && args[0] == "crowd") return CrowdCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "furniture") return FurnitureCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "habits") return HabitsCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : "lanternport", args.Length > 3 ? int.Parse(args[3]) : 3);
         if (args.Length > 0 && args[0] == "population") return PopulationCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "services") return ServicesCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "calendar") return CalendarCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "names") return NamesCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "ways") return WayCheck.Run();
         if (args.Length > 0 && args[0] == "where") return WhereCheck.Run();
@@ -74,8 +78,9 @@ static class Program
         if (args.Length > 2 && args[0] == "life-debug") return LifeDebug.Run(args[1], double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture));
         if (args.Length > 0 && args[0] == "life") return LifeCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : null);
         if (args.Length > 0 && args[0] == "traffic-day") return TrafficDay.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 2);
+        if (args.Length > 0 && args[0] == "arrival") return ArrivalCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
-        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
+        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | crowd [towns dir] | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
         return 2;
     }
 
