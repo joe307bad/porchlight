@@ -611,6 +611,28 @@ namespace Porchlight.Explore
             return o;
         }
 
+        /// <summary>
+        /// A line offset to the inside of a tight bend crosses itself (a little loop where two main roads run side by
+        /// side): cut out at the crossing, so the sidewalk turns the corner there.
+        /// </summary>
+        static List<Vec2> Unloop(List<Vec2> points)
+        {
+            for (int i = 0; i + 1 < points.Count; i++)
+                // The last crossing with this segment: the whole loop goes, however many turns it took.
+                for (int j = points.Count - 2; j >= i + 2; j--)
+                {
+                    var hit = Geo.SegmentIntersection(points[i], points[i + 1], points[j], points[j + 1]);
+                    if (hit == null) continue;
+                    var o = new List<Vec2>(points.Count);
+                    for (int k = 0; k <= i; k++) o.Add(points[k]);
+                    o.Add(hit.Value.point);
+                    for (int k = j + 1; k < points.Count; k++) o.Add(points[k]);
+                    points = o;
+                    break;
+                }
+            return points;
+        }
+
         static IEnumerable<string> SidewalkNetworkOf(List<RoadStroke> roads, List<Bulb> bulbs, double bulbRadius, Action<SidewalkNetwork> done)
         {
             var net = new SidewalkNetwork();
@@ -631,7 +653,7 @@ namespace Porchlight.Explore
                 if (r.kind == RoadKind.Path) continue;
                 widest = Math.Max(widest, r.width);
                 double d = r.width / 2 + PARKING + SIDEWALK / 2;
-                foreach (int side in new[] { 1, -1 }) lines.Add((OffsetPolyline(r.points, d * side), side, road));
+                foreach (int side in new[] { 1, -1 }) lines.Add((Unloop(OffsetPolyline(r.points, d * side)), side, road));
             }
             // Each sidewalk stops at the corner, where it meets the sidewalk of a
             // street joining at that junction, rather than running on into the road.
