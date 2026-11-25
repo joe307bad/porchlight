@@ -895,6 +895,47 @@ Each step of a walk is a **piece**: a stretch of sidewalk, or a crossing.
   without stopping (due within twice the crossing's time, for a crowded
   kerb's half pace): it couldn't stop short, and would stop dead at the line.
 
+### A crowd at the kerb
+
+People waiting to cross don't all stand on the one point at the corner.
+Each takes a **spot** in a crowd on the sidewalk there (`Walkways.CrowdSpot`,
+`KerbCrowds`):
+
+- **The block:** three abreast across the sidewalk, 0.14 tiles (0.56 m)
+  apart, kerb side first; then two in the gaps a step behind (0.13 tiles,
+  0.52 m); then three again, and so on back along the sidewalk from the
+  corner. Nobody is nearer anyone else than 0.5 m. Full, that's about 2.9
+  people a m², a dense but orderly queue (Fruin's level E).
+- **Front first:** a newcomer takes the frontmost spot free, and keeps it
+  till they go. Someone leaving from the middle leaves a gap for the next to
+  come; nobody shuffles up.
+- **On the sidewalk:** where it bends sharply at the corner, or its curve
+  brings it near a carriageway, a place that would stand within 0.5 m of one
+  already given, or within 0.05 tiles of a road's edge, is passed over. A
+  corner's spots are worked out the first time someone waits there, and kept.
+  Past the sidewalk's far end (more than about eleven a tile of it), they
+  stand over those in front.
+- **Moving:** they walk to their spot from the corner at their pace, stand
+  facing the crossing, and step out from it, closing in on the crossing's
+  line over the first steps.
+
+On the move, each walker keeps to a **lane** of their own, one of seven
+across the middle 0.27 tiles of the way (by their id), easing in and out of
+it over the first and last 0.25 tiles of a piece, so a busy sidewalk isn't a
+single file of people standing in each other.
+
+A/B Street waits its walkers at the end of the sidewalk, all on one point,
+and draws a bunch that overlap as one blob with a count (`DrawPedCrowd`)
+[T25](city-research.md#references). We have fewer people and a closer
+camera, so we give each a place.
+
+`crowd` in `Tools~/Checks` checks it: the book hands out the frontmost spot
+free; at every kerb a crossing sets off from in the starter towns, twenty
+waiting stand at least 0.5 m apart, on the sidewalk, off every carriageway,
+the first by the corner; and at the morning rush everyone waiting is in
+their spot, apart, in the same spot from one look to the next, and facing
+the way over.
+
 The townsfolk who just stroll, with nowhere to be (`Pedestrian`), are still
 there. There are fewer of them now (at most 24, one per 48 tiles of
 sidewalk), and they're the ones a player can talk to.

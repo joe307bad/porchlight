@@ -284,6 +284,11 @@ namespace Porchlight.Life
         public long crossWait = -1;
         /// <summary>Crossing at a junction (its node), or -1.</summary>
         public int crossing = -1;
+        /// <summary>Their spot in the crowd waiting at the kerb (Walkways.CrowdSpot), or -1.</summary>
+        public int crowdSpot = -1;
+        /// <summary>Crossing from a spot in the crowd: where they stood (they close in on the crossing's line over the first steps).</summary>
+        public bool fromCrowd;
+        public Vec2 crowdFrom;
         /// <summary>Standing at a bus stop (its point), waiting.</summary>
         public Vec2 standing;
         /// <summary>The wire slot they're drawn in, or -1.</summary>

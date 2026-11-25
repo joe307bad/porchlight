@@ -25,6 +25,8 @@ namespace Porchlight.Life
         public bool overMain;
         /// <summary>The sidewalk it starts on (for crowding), or -1.</summary>
         public int path = -1;
+        /// <summary>A crossing at a junction: the sidewalk end it sets off from (path * 2 + end), where its walkers wait; -1 otherwise.</summary>
+        public int from = -1;
     }
 
     public sealed class Walkways
@@ -42,6 +44,8 @@ namespace Porchlight.Life
         readonly int[] sibling;
         /// <summary>Each path's points bucketed by 8-tile cell, for finding the nearest quickly.</summary>
         readonly Dictionary<long, List<int>> cells = new Dictionary<long, List<int>>();
+        /// <summary>Which side of each sidewalk its road is on: +1 its left (going along it), -1 its right.</summary>
+        readonly sbyte[] kerbSide;
 
         public SidewalkNetwork Net => net;
 
@@ -53,6 +57,7 @@ namespace Porchlight.Life
             edges = new List<(int, double, byte)>[n * 2];
             for (int i = 0; i < edges.Length; i++) edges[i] = new List<(int, double, byte)>();
             sibling = new int[n];
+            kerbSide = new sbyte[n];
             var byRoad = new Dictionary<int, List<int>>();
             for (int p = 0; p < n; p++)
             {
@@ -70,6 +75,7 @@ namespace Porchlight.Life
             }
             for (int p = 0; p < n; p++)
             {
+                kerbSide[p] = KerbSide(net.paths[p]);
                 sibling[p] = -1;
                 foreach (int q in byRoad[net.paths[p].road])
                     if (q != p && net.paths[q].side != net.paths[p].side) sibling[p] = q;
@@ -310,6 +316,7 @@ namespace Porchlight.Life
                     // A crossing at a junction: a piece of its own.
                     Flush();
                     var piece = Piece(new List<Vec2> { EndPoint(e0), EndPoint(e1) }, x.node, x.road, e0 >> 1);
+                    piece.from = e0;
                     pieces.Add(piece);
                     pts = new List<Vec2> { EndPoint(e1) };
                     piecePath = e1 >> 1;
@@ -355,6 +362,116 @@ namespace Porchlight.Life
             double t = seg < 1e-9 ? 0 : (d - piece.at[k - 1]) / seg;
             double dx = b.x - a.x, dy = b.y - a.y, l = Numbers.Hypot(dx, dy);
             return (new Vec2(a.x + dx * t, a.y + dy * t), l < 1e-9 ? new Vec2(0, 1) : new Vec2(dx / l, dy / l));
+        }
+
+        // A crowd at the kerb --------------------------------------------------------------------
+        //
+        // People waiting to cross stand in a staggered block on the sidewalk by the crossing: three abreast
+        // across it, then two in the gaps a step behind, then three, and so on back along it from the corner.
+        // Spot 0 is at the corner on the kerb side; each newcomer takes the frontmost spot free. A tile is 4 m,
+        // so three abreast are 0.56 m apart on a 1.8 m sidewalk and a step back is 0.52 m: about 2.9 people a
+        // square metre when it's full, a dense but orderly queue (Fruin's level E). Where the sidewalk bends
+        // sharply at the corner, or a corner's curve brings it near a carriageway, a place that would stand
+        // within half a metre of one already given, or in the road, is passed over for the next. A corner's
+        // spots are worked out the first time someone waits there, and kept.
+
+        /// <summary>Across the sidewalk between neighbours in a row (tiles).</summary>
+        public const double CROWD_ABREAST = 0.14;
+        /// <summary>From one row to the next back along the sidewalk (tiles).</summary>
+        public const double CROWD_STEP = 0.13;
+        /// <summary>No two in a crowd stand closer than this (tiles): half a metre.</summary>
+        public const double CROWD_APART = 0.125;
+        /// <summary>The front row stands this far back from the sidewalk's end (tiles).</summary>
+        const double CROWD_FRONT = 0.04;
+        /// <summary>A crowd keeps this far from a carriageway's edge (tiles).</summary>
+        const double CROWD_CLEAR = 0.05;
+
+        sealed class Crowd
+        {
+            public readonly List<Vec2> spots = new List<Vec2>();
+            /// <summary>The next place in the block to try, and whether the sidewalk's run out.</summary>
+            public int next;
+            public bool full;
+            /// <summary>The carriageways near enough to matter.</summary>
+            public readonly List<int> near = new List<int>();
+        }
+
+        /// <summary>Each sidewalk end's crowd spots, worked out as they're wanted.</summary>
+        readonly Dictionary<int, Crowd> crowdSpots = new Dictionary<int, Crowd>();
+
+        /// <summary>
+        /// Where the `k`th to wait at sidewalk end `end` (path * 2 + end) stands: on the sidewalk, `CROWD_FRONT` back from
+        /// its end and in rows behind. Past the sidewalk's far end (a crowd of more than about eleven a tile of it) they
+        /// stand over those in front, from the front again.
+        /// </summary>
+        public Vec2 CrowdSpot(int end, int k)
+        {
+            if (!crowdSpots.TryGetValue(end, out var crowd))
+            {
+                crowd = new Crowd();
+                var corner = EndPoint(end);
+                for (int r = 0; r < roads.roads.Count; r++)
+                {
+                    var road = roads.roads[r];
+                    if (road.kind != RoadKind.Path && road.points.Count >= 2 && Geo.DistToPolyline(corner, road.points) < road.width / 2 + 4) crowd.near.Add(r);
+                }
+                crowdSpots[end] = crowd;
+            }
+            while (crowd.spots.Count <= k && !crowd.full)
+            {
+                if (!Place(end, crowd.next++, out var at))
+                {
+                    crowd.full = true;
+                    break;
+                }
+                bool ok = true;
+                foreach (int r in crowd.near)
+                    if (ok && Geo.DistToPolyline(at, roads.roads[r].points) < roads.roads[r].width / 2 + CROWD_CLEAR) ok = false;
+                foreach (var q in crowd.spots)
+                    if (ok && Geo.Dist(q, at) < CROWD_APART) ok = false;
+                if (ok) crowd.spots.Add(at);
+            }
+            if (crowd.spots.Count == 0) return EndPoint(end);
+            return crowd.spots[k % crowd.spots.Count];
+        }
+
+        /// <summary>The `c`th place in the block at sidewalk end `end`; false once it runs past the sidewalk's far end.</summary>
+        bool Place(int end, int c, out Vec2 place)
+        {
+            var path = net.paths[end >> 1];
+            int pair = c / 5, r = c % 5;
+            int row = pair * 2 + (r < 3 ? 0 : 1);
+            // Kerb side first: three abreast at +1, 0, -1; two at +½, -½.
+            double v = r < 3 ? (1 - r) * CROWD_ABREAST : (r == 3 ? 0.5 : -0.5) * CROWD_ABREAST;
+            double u = CROWD_FRONT + row * CROWD_STEP;
+            place = EndPoint(end);
+            if (u > path.Length) return false;
+            double s = (end & 1) == 0 ? u : path.Length - u;
+            var at = SidewalkWalk.PointAlong(path, s);
+            var a = SidewalkWalk.PointAlong(path, Math.Max(0, s - 0.05));
+            var b = SidewalkWalk.PointAlong(path, Math.Min(path.Length, s + 0.05));
+            double dx = b.x - a.x, dy = b.y - a.y, l = Numbers.Hypot(dx, dy);
+            place = at;
+            if (l < 1e-9) return true;
+            // The left of the way the sidewalk runs, turned towards its road.
+            double side = kerbSide[end >> 1] * v / l;
+            place = new Vec2(at.x - dy * side, at.y + dx * side);
+            return true;
+        }
+
+        /// <summary>Which side of a sidewalk its road is on: +1 the left, going along it from its start; -1 the right.</summary>
+        sbyte KerbSide(SidewalkPath path)
+        {
+            if (path.road < 0 || path.road >= roads.roads.Count || path.points.Count < 2) return 1;
+            var mid = SidewalkWalk.PointAlong(path, path.Length / 2);
+            var a = SidewalkWalk.PointAlong(path, Math.Max(0, path.Length / 2 - 0.05));
+            var b = SidewalkWalk.PointAlong(path, Math.Min(path.Length, path.Length / 2 + 0.05));
+            double dx = b.x - a.x, dy = b.y - a.y, l = Numbers.Hypot(dx, dy);
+            if (l < 1e-9) return 1;
+            var road = roads.roads[path.road].points;
+            var left = new Vec2(mid.x - dy / l * 0.1, mid.y + dx / l * 0.1);
+            var right = new Vec2(mid.x + dy / l * 0.1, mid.y - dx / l * 0.1);
+            return Geo.DistToPolyline(left, road) <= Geo.DistToPolyline(right, road) ? (sbyte)1 : (sbyte)-1;
         }
 
         /// <summary>How crowded a sidewalk is with `people` on it: people a square metre (a tile is 4 m).</summary>

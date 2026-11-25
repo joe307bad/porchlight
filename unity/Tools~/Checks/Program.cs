@@ -61,6 +61,7 @@ static class Program
         if (args.Length > 0 && args[0] == "ride") return RideCheck.Run();
         if (args.Length > 0 && args[0] == "servers") return ServersCheck.Run();
         if (args.Length > 0 && args[0] == "clock") return ClockCheck.Run();
+        if (args.Length > 0 && args[0] == "crowd") return CrowdCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "furniture") return FurnitureCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "habits") return HabitsCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : "lanternport", args.Length > 3 ? int.Parse(args[3]) : 3);
         if (args.Length > 0 && args[0] == "population") return PopulationCheck.Run(args.Length > 1 ? args[1] : "server/towns");
@@ -77,7 +78,7 @@ static class Program
         if (args.Length > 0 && args[0] == "life") return LifeCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : null);
         if (args.Length > 0 && args[0] == "traffic-day") return TrafficDay.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 2);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
-        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
+        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | crowd [towns dir] | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
         return 2;
     }
 
