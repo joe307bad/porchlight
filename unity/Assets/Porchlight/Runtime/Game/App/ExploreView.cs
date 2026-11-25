@@ -229,6 +229,15 @@ namespace Porchlight.App
         /// <summary>The junctions' traffic signals (lit by the town's own stages) and stop signs.</summary>
         Signage signage;
         MarketStalls market;
+        /// <summary>
+        /// Where the traffic's cars, signs and stalls came from, made ahead (CountyDrive): handed back, not
+        /// destroyed, when you leave the town. Null if they were made here.
+        /// </summary>
+        StreetLife streets;
+        /// <summary>The traffic was started ahead (StreetLife.started): run here, it's first caught up to the time now...</summary>
+        bool catchUp;
+        /// <summary>...this much of its life (ms) a frame over and above the frame's own: a few ms of work for a big town.</summary>
+        const long CATCH_UP_MS = 2500;
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
         double chaseSwing;
@@ -427,6 +436,7 @@ namespace Porchlight.App
             fleet?.Dispose();
             signage?.Dispose();
             market?.Dispose();
+            streets = null;
             SetNameTag(null);
             naming = null;
             foreach (var a in avatars) a?.Dispose();
@@ -539,9 +549,10 @@ namespace Porchlight.App
         }
 
         /// <summary>The town's traffic and townsfolk (a stretch of highway, the junction or a plot has none).</summary>
-        void Populate()
+        void Populate(StreetLife made = null)
         {
             var model = world.model;
+            catchUp = false;
             if (model.IsRoad)
             {
                 traffic = null;
@@ -550,10 +561,33 @@ namespace Porchlight.App
             }
             // The town's life: its people's days (their cars and walks drawn in the traffic's slots), by the
             // town clock, the same in every player's game and on the server (sim/SimTown.cs, in this order).
-            traffic = new Traffic(model, world.layout, null, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
-            fleet = new Fleet(traffic, library, world.root.transform);
-            signage = new Signage(traffic.life.net, library, world.root.transform);
-            market = new MarketStalls(model, traffic.life.market, library, world.root.transform);
+            // Made ahead (CountyDrive), driving into the town: it was most of a second of the frame you crossed into a big one.
+            if (made != null && made.Made)
+            {
+                bool started = made.traffic != null && made.started;
+                var t = made.traffic ?? StreetLife.NewTraffic(model, world.layout);
+                if (made.traffic == null) Debug.Log($"county: {model.seed}'s traffic wasn't ready ahead; made as you drove in");
+                made.traffic = null;
+                if (made.Bind(t))
+                {
+                    traffic = t;
+                    catchUp = started;
+                    streets = made;
+                    fleet = made.fleet;
+                    signage = made.signage;
+                    market = made.market;
+                }
+                else made.Dispose();
+            }
+            if (traffic == null)
+            {
+                traffic = StreetLife.NewTraffic(model, world.layout);
+                fleet = new Fleet(traffic, library, world.root.transform);
+                signage = new Signage(traffic.life.net, library, world.root.transform);
+                market = new MarketStalls(model, traffic.life.market, library, world.root.transform);
+                // Handed back on leaving the town, like those made ahead: in the county it's kept for coming back.
+                streets = new StreetLife { fleet = fleet, signage = signage, market = market };
+            }
             var rng = new Rng($"{model.seed}::townsfolk");
             var paths = world.sidewalks.paths;
             double walkable = paths.Sum(p => p.Length);
@@ -599,7 +633,7 @@ namespace Porchlight.App
         /// cars, any route). The camera moves with everything (CountyDrive moves the spaces' roots), so
         /// nothing on screen jumps.
         /// </summary>
-        public void SwitchSpace(TownWorld next, double dx, double dy, PreparedWays ways = null)
+        public StreetLife SwitchSpace(TownWorld next, double dx, double dy, PreparedWays ways = null, StreetLife made = null)
         {
             // The scene moves by this (the space ahead comes to the origin).
             var scene = new Vector3((float)-dx, 0, (float)dy);
@@ -607,11 +641,19 @@ namespace Porchlight.App
             weather = null;
             settling = null;
             remotes?.Clear();
-            fleet?.Dispose();
+            // The town's cars, signs and stalls: handed back for coming back (its cars hidden), not destroyed (a big
+            // town's all at once was a long frame going out of it too).
+            var left = streets;
+            streets = null;
+            if (left != null) fleet?.HideAll();
+            else
+            {
+                fleet?.Dispose();
+                signage?.Dispose();
+                market?.Dispose();
+            }
             fleet = null;
-            signage?.Dispose();
             signage = null;
-            market?.Dispose();
             market = null;
             SetNameTag(null);
             naming = null;
@@ -718,7 +760,7 @@ namespace Porchlight.App
                 player.y = to.y;
                 player.Halt();
             }
-            Populate();
+            Populate(made);
             // The weather goes on as it was: the rain in the air, how wet and grey, carried over.
             weather = new Weather(world) { Rain = wantRain, Snow = wantSnow };
             if (falling != null)
@@ -727,6 +769,7 @@ namespace Porchlight.App
                 falling.Dispose();
             }
             else settling = weather.Settle().GetEnumerator();
+            return left;
         }
 
         /// <summary>Raining, snowing, both, or neither (sunny). Kept from town to town.</summary>
@@ -1075,6 +1118,7 @@ namespace Porchlight.App
             // Carry on from where the host had everyone.
             // The town's life from everyone's day at the time now (the cars and walkers start from where their days have them).
             traffic?.Restart(Porchlight.Life.TownClock.Now());
+            catchUp = false;
             foreach (var q in people) q.Rejoin(world.sidewalks);
             sync.Clear();
         }
@@ -2737,7 +2781,15 @@ namespace Porchlight.App
                 foreach (var o in others) obstacles.Add(PositionOf(o.key) ?? new Vec2(o.x, o.y));
                 obstacles.AddRange(Obstacles);
                 obstacles.AddRange(othersParkedAt.Values);
-                traffic?.Update(dt, obstacles);
+                // Started ahead (made before you got here): on from where it was to the time now, a few seconds of
+                // its life a frame (a big town's minutes at once would be a long frame), then by the frame as ever.
+                long behind = catchUp && traffic != null ? Porchlight.Life.TownClock.Now() - traffic.Clock : 0;
+                if (behind > 0) traffic.RunTo(traffic.Clock + Math.Min(behind, CATCH_UP_MS + (long)(dt * 1000)), obstacles, dt);
+                else
+                {
+                    catchUp = false;
+                    traffic?.Update(dt, obstacles);
+                }
             }
             else if (traffic != null)
             {

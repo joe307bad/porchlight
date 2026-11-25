@@ -40,6 +40,8 @@ namespace Porchlight.Rendering
         sealed class Post
         {
             public Junction junction;
+            /// <summary>Its junction's node (Bind finds it again in a fresh RoadNet of the same town).</summary>
+            public int node;
             public int stage;
             /// <summary>Its junction's place among the town's signals (its lights on the wire).</summary>
             public int light;
@@ -56,17 +58,39 @@ namespace Porchlight.Rendering
         float glowAt = -1;
 
         public int Signals => posts.Count;
-        public int StopSigns { get; }
+        public int StopSigns { get; private set; }
 
-        public Signage(RoadNet net, ModelLibrary library, Transform parent)
+        /// <summary>Posts and signs stood a step (MakeSteps), and batched in shares this big: a big town's hundreds at once stalled the frame you drove into it.</summary>
+        const int A_STEP = 16;
+        const int A_BATCH = 64;
+
+        public Signage(RoadNet net, ModelLibrary library, Transform parent) : this(parent)
+        {
+            foreach (var _ in MakeSteps(net, library)) { }
+        }
+
+        Signage(Transform parent)
         {
             root = new GameObject("signage");
             root.transform.SetParent(parent, false);
+        }
+
+        /// <summary>The town's signals and stop signs stood a few a step (made before you get to its town: CountyDrive).</summary>
+        public static Signage Stepwise(RoadNet net, ModelLibrary library, Transform parent, out IEnumerable<string> steps)
+        {
+            var s = new Signage(parent);
+            steps = s.MakeSteps(net, library);
+            return s;
+        }
+
+        IEnumerable<string> MakeSteps(RoadNet net, ModelLibrary library)
+        {
             var signal = library.Get(Catalog.TRAFFIC_SIGNAL);
             var stop = library.Get(Catalog.STOP_SIGN);
             // Each lens its own colour, dark until lit (glowing with SetGlow).
             var lens = new Material[3];
             for (int c = 0; c < 3; c++) lens[c] = Materials.Glowing(LIT[c] * 0.22f);
+            int n = 0;
             foreach (var p in StreetFurniture.Signals(net))
             {
                 // Stretched along the arm, so the head hangs over the lane's middle however wide the road.
@@ -86,19 +110,49 @@ namespace Porchlight.Rendering
                     r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     lamps[k] = r;
                 }
-                posts.Add(new Post { junction = net.junctions[p.node], stage = p.stage, light = p.light, lamps = lamps });
+                posts.Add(new Post { junction = net.junctions[p.node], node = p.node, stage = p.stage, light = p.light, lamps = lamps });
+                if (++n % A_STEP == 0) yield return "signals" + n;
+                if (still.Count >= A_BATCH)
+                {
+                    Batch();
+                    yield return "batching signals";
+                }
             }
             var stops = StreetFurniture.Stops(net);
-            foreach (var s in stops) Stand(stop, s.at, s.inward, s.along, Vector3.one * SCALE);
+            foreach (var s in stops)
+            {
+                Stand(stop, s.at, s.inward, s.along, Vector3.one * SCALE);
+                if (++n % A_STEP == 0) yield return "stops" + n;
+                if (still.Count >= A_BATCH)
+                {
+                    Batch();
+                    yield return "batching stops";
+                }
+            }
             StopSigns = stops.Count;
-            // The posts and signs never move: one batch, less the lamps (each lit on its own).
+            Batch();
+        }
+
+        /// <summary>
+        /// The posts and signs stood since the last batch never move: one batch of them, less the lamps (each lit on
+        /// its own). In shares, not the whole town's at once, so no one step is long.
+        /// </summary>
+        void Batch()
+        {
             var parts = still.SelectMany(g => g.GetComponentsInChildren<MeshFilter>()).Select(f => f.gameObject).ToArray();
+            still.Clear();
             if (parts.Length > 0) StaticBatchingUtility.Combine(parts, root);
             foreach (var g in parts)
             {
                 var m = g.GetComponent<MeshFilter>().sharedMesh;
                 if (m != null && m.name.StartsWith("Combined Mesh", StringComparison.Ordinal) && !combined.Contains(m)) combined.Add(m);
             }
+        }
+
+        /// <summary>Lit from now on by this road network's junctions: a fresh one of the same town (its own traffic's, after the town's been left and come back to).</summary>
+        public void Bind(RoadNet net)
+        {
+            foreach (var p in posts) p.junction = net.junctions[p.node];
         }
 
         /// <summary>

@@ -35,19 +35,43 @@ namespace Porchlight.Rendering
         readonly GameObject root;
         readonly List<GameObject> stalls = new List<GameObject>();
         readonly string seed;
-        readonly MarketPlace market;
+        MarketPlace market;
         int shown = -1;
 
         public int Count => stalls.Count;
 
         /// <summary>The town's market stalls (none if it has no market), hidden until market day.</summary>
-        public MarketStalls(TownModel model, MarketPlace market, ModelLibrary library, Transform parent)
+        public MarketStalls(TownModel model, MarketPlace market, ModelLibrary library, Transform parent) : this(model, parent)
+        {
+            foreach (var _ in MakeSteps(market, library)) { }
+        }
+
+        MarketStalls(TownModel model, Transform parent)
         {
             root = new GameObject("market");
             root.transform.SetParent(parent, false);
             seed = model.seed;
+        }
+
+        /// <summary>The stalls made a few a step (made before you get to its town: CountyDrive).</summary>
+        public static MarketStalls Stepwise(TownModel model, MarketPlace market, ModelLibrary library, Transform parent, out IEnumerable<string> steps)
+        {
+            var m = new MarketStalls(model, parent);
+            steps = m.MakeSteps(market, library);
+            return m;
+        }
+
+        /// <summary>Shown by this market from now on: a fresh one of the same town (its own traffic's, after the town's been left and come back to).</summary>
+        public void Bind(MarketPlace next)
+        {
+            market = next;
+            shown = -1;
+        }
+
+        IEnumerable<string> MakeSteps(MarketPlace market, ModelLibrary library)
+        {
             this.market = market;
-            if (market == null) return;
+            if (market == null) yield break;
             var table = library.Get("furniture/tableCloth");
             var parasols = Array.ConvertAll(Catalog.PARASOLS, n => library.Get(n));
             for (int k = 0; k < market.stalls.Count; k++)
@@ -76,6 +100,7 @@ namespace Porchlight.Rendering
                 }
                 stall.SetActive(false);
                 stalls.Add(stall);
+                if (k % 4 == 3) yield return "stalls" + k;
             }
         }
 

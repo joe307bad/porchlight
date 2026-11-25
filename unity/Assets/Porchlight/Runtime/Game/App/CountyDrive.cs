@@ -29,6 +29,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Porchlight.Core;
 using Porchlight.County;
+using Porchlight.Explore;
 using Porchlight.Gen;
 using Porchlight.Model;
 using Porchlight.Net;
@@ -54,6 +55,12 @@ namespace Porchlight.App
         const double WAIT_BUDGET_MS = 28;
         /// <summary>A space that failed to build is tried again after this long (ms).</summary>
         const double RETRY_MS = 5000;
+        /// <summary>
+        /// A town's traffic made ahead is started then (so whoever runs it here has only to catch it up to the time
+        /// now, a few seconds of its life a frame: ExploreView), and made afresh once it's this old (ms) and you're
+        /// not in the town yet.
+        /// </summary>
+        const double TRAFFIC_FRESH_MS = 5 * 60 * 1000;
         /// <summary>Over the line into another room's ground this long (ms) before this tab moves rooms.</summary>
         const double ROOM_SETTLE_MS = 400;
         /// <summary>The countryside's ground, just under the towns'.</summary>
@@ -87,6 +94,11 @@ namespace Porchlight.App
             public double failedAt;
             /// <summary>Where there are no threads: the town's model and layout, grown (or growing) once and kept.</summary>
             public Grown grownFrom;
+            /// <summary>A town's street life (its traffic, cars, signs and stalls), made before you drive in (StreetLife).</summary>
+            public StreetLife streets;
+            /// <summary>Its next traffic being made on a worker thread, and when it was begun (ms).</summary>
+            public Task<Traffic> traffic;
+            public double trafficAt;
         }
 
         /// <summary>
@@ -314,6 +326,7 @@ namespace Porchlight.App
             if (job == null) PreGrow(BUDGET_MS);
 #endif
             Retire();
+            Freshen();
             if (!waiting && wanted != null) Switch(wanted);
             Rooms(active.ToWorld(view.PlayerPosition ?? local.Value));
         }
@@ -504,6 +517,77 @@ namespace Porchlight.App
         /// <summary>A space's ways, if they're worked out (else the view works them out as you go in).</summary>
         static ExploreView.PreparedWays WaysOf(Built b) =>
             b.ways != null && (b.preparingThread != null ? b.preparingThread.Status == TaskStatus.RanToCompletion : b.preparing == null) ? b.ways : null;
+
+        /// <summary>
+        /// A fresh traffic for a town (StreetLife.NewTraffic: its road network, router and everyone's day, a
+        /// quarter of a second for Porchlight), begun: on a worker thread where there are threads, started there
+        /// too; else it's made when it's taken (TakeTraffic), in one go.
+        /// </summary>
+        void BeginTraffic(Built b)
+        {
+            b.trafficAt = Now;
+#if NO_THREADS
+            b.traffic = null;
+#else
+            var model = b.model;
+            var layout = b.world.layout;
+            b.traffic = Task.Run(() =>
+            {
+                var t = StreetLife.NewTraffic(model, layout);
+                t.StartAt(Porchlight.Life.TownClock.Now());
+                return t;
+            });
+#endif
+        }
+
+        /// <summary>The traffic begun for a town, into its street life once it's made: false if it's still being made.</summary>
+        bool TakeTraffic(Built b)
+        {
+#if NO_THREADS
+            b.streets.traffic = StreetLife.NewTraffic(b.model, b.world.layout);
+            b.streets.started = false;
+            b.trafficAt = Now;
+            return true;
+#else
+            if (b.traffic == null) BeginTraffic(b);
+            if (!b.traffic.IsCompleted) return false;
+            var task = b.traffic;
+            b.traffic = null;
+            if (task.IsFaulted) throw task.Exception;
+            b.streets.traffic = task.Result;
+            b.streets.started = true;
+            return true;
+#endif
+        }
+
+        /// <summary>
+        /// Each town built round you but not the one you're in, its street life kept ready for driving in: a fresh
+        /// traffic once the last was taken (you've been in and come out), and again once it's a while old.
+        /// </summary>
+        void Freshen()
+        {
+#if !NO_THREADS
+            foreach (var b in built.Values)
+            {
+                if (b.space == active || !b.ready || b.streets == null || !b.streets.Made || b.world == null) continue;
+                if (b.traffic != null)
+                {
+                    if (!b.traffic.IsCompleted) continue;
+                    var task = b.traffic;
+                    b.traffic = null;
+                    if (task.IsFaulted)
+                    {
+                        Debug.LogException(task.Exception);
+                        continue;
+                    }
+                    b.streets.traffic = task.Result;
+                    b.streets.started = true;
+                    continue;
+                }
+                if (b.streets.traffic == null || Now - b.trafficAt > TRAFFIC_FRESH_MS) BeginTraffic(b);
+            }
+#endif
+        }
 
         /// <summary>A town grows from its key: on a worker thread where there are threads, else a stage a step.</summary>
         void Grow(Built b)
@@ -700,11 +784,38 @@ namespace Porchlight.App
                     {
                         if (!b.preparingThread.IsCompleted) return;
                         if (b.preparingThread.IsFaulted) throw b.preparingThread.Exception;
+                        b.preparingThread = null;
+                        b.preparing = null;
                     }
                     else if (b.preparing != null)
                     {
                         if (b.preparing.MoveNext()) continue;
                         b.preparing = null;
+                    }
+                    // A town: its street life too (its traffic, then its cars, signs and stalls a few a step), so
+                    // driving in only hands it over.
+                    if (b.space.kind == SpaceKind.Town && b.streets == null)
+                    {
+                        b.part = "traffic";
+                        b.streets = new StreetLife();
+                        if (b.traffic == null) BeginTraffic(b);
+                        continue;
+                    }
+                    if (b.streets != null && !b.streets.Made)
+                    {
+                        if (b.streets.fleet == null && b.streets.traffic == null)
+                        {
+                            if (!TakeTraffic(b)) return;
+                            b.part = "street life";
+                            b.streets.BeginMaking(b.model, view.Library, b.world.root.transform);
+                            continue;
+                        }
+                        if (b.streets.Step())
+                        {
+                            b.part = "street life " + b.streets.Current;
+                            continue;
+                        }
+                        continue;
                     }
                     b.ready = true;
                     job = null;
@@ -748,8 +859,29 @@ namespace Porchlight.App
             // you'd left lies, so a town driven into was mostly "hillside": lots and building floors closed,
             // only the paved streets walkable, and no way into any building on foot.
             double t0 = Now;
+            var left = built.TryGetValue(active.id, out var was) ? was : null;
+#if !NO_THREADS
+            // Its fresh traffic still being made: waited for (sooner than making another).
+            if (next.streets != null && next.streets.Made && next.streets.traffic == null && next.traffic != null)
+            {
+                var task = next.traffic;
+                next.traffic = null;
+                try
+                {
+                    next.streets.traffic = task.Result;
+                    next.streets.started = true;
+                }
+                catch (Exception e) { Debug.LogException(e); }
+            }
+#endif
             active = next.space;
-            view.SwitchSpace(next.world, dx, dy, WaysOf(next));
+            var streets = view.SwitchSpace(next.world, dx, dy, WaysOf(next), next.streets != null && next.streets.Made ? next.streets : null);
+            // The town you've left keeps its street life for coming back (a fresh traffic's made for it: Freshen).
+            if (streets != null)
+            {
+                if (left != null && left.world != null && left.space.kind == SpaceKind.Town) left.streets = streets;
+                else streets.Dispose();
+            }
             double t1 = Now;
             foreach (var b in built.Values)
                 if (b.world != null) Place(b.world.root.transform, b.space.x0, b.space.y0);

@@ -16,6 +16,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- arrivals [town]   # into each town by each highway, then to its houses (those by the edge and a sample), driven as the game drives a trip
 //   dotnet run --project "unity/Tools~/Checks" -- doors             # houses whose front door is near the edge of their town
 //   dotnet run --project "unity/Tools~/Checks" -- traffic <seed> 'width=256&riverCount=0'   # how smooth its traffic looks following a host, as the host slows down
+//   dotnet run --project "unity/Tools~/Checks" -c Release -- arrival [towns dir] # a town's street life made ahead binds to a fresh traffic, caught up a frame's share at a time (ArrivalCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- hitches [limit ms] [show ms] # every space of the county built a share at a time, as the web build does: no share too long, and the same as all at once (Hitches.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- fingerprint [towns] # a hash of each county space (and of `towns` check towns): the same before and after a change, the same towns
 //   dotnet run --project "unity/Tools~/Checks" -- ride              # riding in someone's car over a town line, on the web and on desktop (RideCheck.cs)
@@ -77,6 +78,7 @@ static class Program
         if (args.Length > 2 && args[0] == "life-debug") return LifeDebug.Run(args[1], double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture));
         if (args.Length > 0 && args[0] == "life") return LifeCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : null);
         if (args.Length > 0 && args[0] == "traffic-day") return TrafficDay.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 2);
+        if (args.Length > 0 && args[0] == "arrival") return ArrivalCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
         Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | crowd [towns dir] | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
         return 2;

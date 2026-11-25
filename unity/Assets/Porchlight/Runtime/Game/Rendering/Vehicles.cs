@@ -394,17 +394,61 @@ namespace Porchlight.Rendering
 
     public sealed class Fleet
     {
-        readonly Traffic traffic;
+        Traffic traffic;
         readonly List<CarView> views = new List<CarView>();
         readonly GameObject root;
+        /// <summary>Cars made a step (MakeSteps): a big town's thousand-odd at once stalled the frame you drove into it.</summary>
+        const int A_STEP = 24;
 
-        public Fleet(Traffic traffic, ModelLibrary library, Transform parent)
+        public Fleet(Traffic traffic, ModelLibrary library, Transform parent) : this(parent)
         {
-            this.traffic = traffic;
+            foreach (var _ in MakeSteps(traffic, library)) { }
+            Update(0);
+        }
+
+        Fleet(Transform parent)
+        {
             root = new GameObject("traffic");
             root.transform.SetParent(parent, false);
-            foreach (var c in traffic.cars) views.Add(new CarView(library.Get(Catalog.CARS[c.model]), root.transform));
-            Update(0);
+        }
+
+        /// <summary>A fleet made a few cars a step (made before you get to its town: CountyDrive), drawn once `Bind` gives it its traffic.</summary>
+        public static Fleet Stepwise(Traffic traffic, ModelLibrary library, Transform parent, out IEnumerable<string> steps)
+        {
+            var f = new Fleet(parent);
+            steps = f.MakeSteps(traffic, library);
+            return f;
+        }
+
+        IEnumerable<string> MakeSteps(Traffic traffic, ModelLibrary library)
+        {
+            this.traffic = traffic;
+            for (int i = 0; i < traffic.cars.Count; i++)
+            {
+                var v = new CarView(library.Get(Catalog.CARS[traffic.cars[i].model]), root.transform) { model = traffic.cars[i].model };
+                v.Visible = false;
+                views.Add(v);
+                if (i % A_STEP == A_STEP - 1) yield return "cars" + i;
+            }
+            // Made ahead, it's all hidden (its boats too) till the view draws it.
+        }
+
+        /// <summary>
+        /// Drawing this traffic from now on: a fresh one of the same town (each car slot's model is the same every
+        /// time, from the town's seed). False if it isn't the same (then make a new fleet).
+        /// </summary>
+        public bool Bind(Traffic next)
+        {
+            if (next.cars.Count != views.Count) return false;
+            for (int i = 0; i < views.Count; i++) if (next.cars[i].model != views[i].model) return false;
+            traffic = next;
+            return true;
+        }
+
+        /// <summary>Every car out of sight (the town's been left: its traffic stops being run here).</summary>
+        public void HideAll()
+        {
+            foreach (var v in views) if (v.Visible) v.Visible = false;
         }
 
         /// <summary>Put the cars where the traffic has them: all but those taken, and those `hidden` says not to draw here.</summary>
