@@ -179,6 +179,25 @@ namespace Porchlight.Explore
             foreach (var c in cars) if (c.loop >= 0 && !c.taken) Sail(c, dt, obstacles);
         }
 
+        /// <summary>
+        /// A traffic started ahead (made before you got to its town), on towards `goal` (the time now, ms) for at most
+        /// `budgetMs` of work this frame, a tenth of a second of its life at a time (a frame's worth), then drawn: true once it's there.
+        /// By the work, not by a share of its life: a second and a half of a big town's could be a crowd of trips
+        /// planned at once, 20 ms in one frame.
+        /// </summary>
+        public bool CatchUp(long goal, double budgetMs, IReadOnlyList<Vec2> obstacles, double dt)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            life.SetObstacles(obstacles);
+            while (life.Now < goal && sw.Elapsed.TotalMilliseconds < budgetMs) life.RunUntil(Math.Min(goal, life.Now + CATCH_UP_STEP_MS));
+            Pose(dt);
+            foreach (var c in cars) if (c.loop >= 0 && !c.taken) Sail(c, dt, obstacles);
+            return life.Now >= goal;
+        }
+
+        /// <summary>CatchUp's step of the town's life (ms).</summary>
+        const long CATCH_UP_STEP_MS = 100;
+
         /// <summary>Run the town's life up to `moment` (the server's tick: by the clock, not by steps).</summary>
         public void RunTo(long moment, IReadOnlyList<Vec2> obstacles, double dt)
         {

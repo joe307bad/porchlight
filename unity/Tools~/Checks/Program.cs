@@ -16,7 +16,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- arrivals [town]   # into each town by each highway, then to its houses (those by the edge and a sample), driven as the game drives a trip
 //   dotnet run --project "unity/Tools~/Checks" -- doors             # houses whose front door is near the edge of their town
 //   dotnet run --project "unity/Tools~/Checks" -- traffic <seed> 'width=256&riverCount=0'   # how smooth its traffic looks following a host, as the host slows down
-//   dotnet run --project "unity/Tools~/Checks" -c Release -- arrival [towns dir] # a town's street life made ahead binds to a fresh traffic, caught up a frame's share at a time (ArrivalCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -c Release -- arrival [towns dir] # a town's street life made ahead binds to a fresh traffic, caught up a few ms a frame (ArrivalCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- hitches [limit ms] [show ms] # every space of the county built a share at a time, as the web build does: no share too long, and the same as all at once (Hitches.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- fingerprint [towns] # a hash of each county space (and of `towns` check towns): the same before and after a change, the same towns
 //   dotnet run --project "unity/Tools~/Checks" -- ride              # riding in someone's car over a town line, on the web and on desktop (RideCheck.cs)

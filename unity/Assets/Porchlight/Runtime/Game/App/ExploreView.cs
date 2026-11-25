@@ -236,8 +236,8 @@ namespace Porchlight.App
         StreetLife streets;
         /// <summary>The traffic was started ahead (StreetLife.started): run here, it's first caught up to the time now...</summary>
         bool catchUp;
-        /// <summary>...this much of its life (ms) a frame over and above the frame's own: a few ms of work for a big town.</summary>
-        const long CATCH_UP_MS = 2500;
+        /// <summary>...this much work (ms) a frame (Traffic.CatchUp).</summary>
+        const double CATCH_UP_MS = 4;
         CameraMode mode = CameraMode.Iso;
         double chaseYawNow;
         double chaseSwing;
@@ -2781,15 +2781,13 @@ namespace Porchlight.App
                 foreach (var o in others) obstacles.Add(PositionOf(o.key) ?? new Vec2(o.x, o.y));
                 obstacles.AddRange(Obstacles);
                 obstacles.AddRange(othersParkedAt.Values);
-                // Started ahead (made before you got here): on from where it was to the time now, a few seconds of
-                // its life a frame (a big town's minutes at once would be a long frame), then by the frame as ever.
-                long behind = catchUp && traffic != null ? Porchlight.Life.TownClock.Now() - traffic.Clock : 0;
-                if (behind > 0) traffic.RunTo(traffic.Clock + Math.Min(behind, CATCH_UP_MS + (long)(dt * 1000)), obstacles, dt);
-                else
+                // Started ahead (made before you got here): on from where it was to the time now, a few ms of work
+                // a frame (a big town's minutes at once would be a long frame), then by the frame as ever.
+                if (catchUp && traffic != null)
                 {
-                    catchUp = false;
-                    traffic?.Update(dt, obstacles);
+                    if (traffic.CatchUp(Porchlight.Life.TownClock.Now(), CATCH_UP_MS, obstacles, dt)) catchUp = false;
                 }
+                else traffic?.Update(dt, obstacles);
             }
             else if (traffic != null)
             {
