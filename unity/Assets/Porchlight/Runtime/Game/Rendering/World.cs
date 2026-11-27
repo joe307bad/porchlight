@@ -705,53 +705,21 @@ namespace Porchlight.Rendering
             foreach (var part in Layer(0.026, 0, C.asphalt)) yield return part;
             yield return "roads";
             Next();
-            foreach (var r in streets)
-            {
-                // Stopping short of the junctions, as the centre line does (and at a roundabout's ring).
-                double length = Geo.PolylineLength(r.points);
-                double from = Bulb(r, false) ? bulb + 0.3 : Math.Max(1.3, RingTrim(rings, r.points[0])), to = length - (Bulb(r, true) ? bulb + 0.3 : Math.Max(1.3, RingTrim(rings, r.points[r.points.Count - 1])));
-                if (length < 3 || to - from < 0.4) continue;
-                var middle = Geo.SubPolyline(r.points, from, to);
-                foreach (int side in new[] { 1, -1 }) b.Ribbon(Layout.OffsetPolyline(middle, side * r.width / 2), 0.04, 0.028, C.lane);
-            }
-            yield return "roads";
-            Next();
             foreach (var r in layout.roads.Where(rd => rd.kind == RoadKind.Path))
             {
                 b.Ribbon(r.points, r.width, 0.012, C.path);
                 foreach (var p in new[] { r.points[0], r.points[r.points.Count - 1] }) b.Disc(p, r.width / 2, 0.012, C.path);
             }
-            int dashed = 0;
-            foreach (var r in streets)
+            // The lines painted on the streets (Shared/Explore/Markings.cs, held to its rules by Checks `marks`): edge
+            // lines, centre and lane dashes, pockets and their arrows, kept off every other road's carriageway.
+            var marks = new List<Mark>();
+            foreach (var step in Markings.PlanSteps(model, layout, marks, STREETS_A_PART)) yield return "roads";
+            Next();
+            int painted = 0;
+            foreach (var mk in marks)
             {
-                if (++dashed % STREETS_A_PART == 0) yield return "roads" + dashed / STREETS_A_PART;
-                int ri = layout.roads.IndexOf(r);
-                var ed = design?.Edge(ri);
-                if (ed != null && (ed.divided || ed.OneWay)) continue;
-                double len = Geo.PolylineLength(r.points);
-                double from = Bulb(r, false) ? bulb + 0.2 : Math.Max(1.2, RingTrim(rings, r.points[0])), to = len - (Bulb(r, true) ? bulb + 0.2 : Math.Max(1.2, RingTrim(rings, r.points[r.points.Count - 1])));
-                var samples = Geo.SamplePolyline(r.points, 0.1);
-                double travelled = 0;
-                var run = new List<Vec2>();
-                void Flush()
-                {
-                    if (run.Count > 1) b.Ribbon(run, 0.07, 0.03, C.lane);
-                    run = new List<Vec2>();
-                }
-                for (int k = 1; k < samples.Count; k++)
-                {
-                    double seg = Geo.Dist(samples[k - 1], samples[k]);
-                    double mid = travelled + seg / 2;
-                    travelled += seg;
-                    if (mid < from || mid > to || mid % 0.9 > 0.45)
-                    {
-                        Flush();
-                        continue;
-                    }
-                    if (run.Count == 0) run.Add(samples[k - 1]);
-                    run.Add(samples[k]);
-                }
-                Flush();
+                if (++painted % MARKS_A_PART == 0) yield return "roads";
+                b.Ribbon(mk.points, mk.width, MarkY(mk.kind), C.lane);
             }
             if (design != null)
             {
@@ -763,69 +731,29 @@ namespace Porchlight.Rendering
         }
     
         /// <summary>
-        /// The junction design's markings (docs/street-editor.md §8): a divided road's median, the dashed line between
-        /// two lanes each way, each pocket's edge and its turn arrow, and a roundabout's island.
+        /// The junction design's kerbs (docs/street-editor.md §8): a divided road's median and a roundabout's island, with
+        /// the ring's own markings. The lanes' dashes and the pockets are painted with the rest (Markings).
         /// </summary>
         IEnumerable<string> DesignMarks(MeshBuilder b, RoadDesign design, List<RoadStroke> streets, List<(Vec2 at, double radius)> rings)
         {
-            const double LANE = Gen.DesignStage.LANE, MEDIAN = Gen.DesignStage.MEDIAN;
+            const double MEDIAN = Gen.DesignStage.MEDIAN;
+            var boxes = Markings.Boxes(layout);
             int laid = 0;
             foreach (var r in streets)
             {
                 if (++laid % STREETS_A_PART == 0) yield return "roads";
                 int ri = layout.roads.IndexOf(r);
                 var ed = design.Edge(ri);
-                if (ed == null) continue;
+                if (ed == null || !ed.divided) continue;
                 double length = Geo.PolylineLength(r.points);
                 if (length < 3) continue;
-                double cut0 = Math.Max(1.3, RingTrim(rings, r.points[0])), cut1 = Math.Max(1.3, RingTrim(rings, r.points[r.points.Count - 1]));
+                // Stopping where the lines do: clear of the roads it meets, and of a roundabout's ring.
+                double cut0 = Markings.JunctionTrim(layout, ri, false, Math.Max(1.3, Markings.RingTrim(rings, r.points[0])), boxes);
+                double cut1 = Markings.JunctionTrim(layout, ri, true, Math.Max(1.3, Markings.RingTrim(rings, r.points[r.points.Count - 1])), boxes);
                 if (length - cut0 - cut1 < 0.5) continue;
                 var middle = Geo.SubPolyline(r.points, cut0, length - cut1);
-                if (ed.divided)
-                {
-                    b.Ribbon(middle, MEDIAN, 0.031, C.curb);
-                    b.Ribbon(middle, MEDIAN - 0.14, 0.033, C.grass);
-                }
-                // Between two lanes each way: a dashed line.
-                int most = Math.Max(ed.lanesFwd, ed.lanesBack);
-                if (most >= 2)
-                    foreach (int side in new[] { 1, -1 })
-                        for (int k = 1; k < most; k++)
-                        {
-                            var line = Layout.OffsetPolyline(middle, side * (r.width / 2 - k * LANE));
-                            var samples = Geo.SamplePolyline(line, 0.45);
-                            for (int i = 0; i + 1 < samples.Count; i += 2) b.Ribbon(new List<Vec2> { samples[i], samples[i + 1] }, 0.06, 0.03, C.lane);
-                        }
-                foreach (var pk in ed.pockets)
-                {
-                    // Along its road from the stop line back: its side of the road (the way into its junction), its lane's edge.
-                    double stop = 1.3, back = Math.Min(length - 1.5, stop + pk.length);
-                    if (back - stop < 0.5) continue;
-                    var span = pk.atTo ? Geo.SubPolyline(r.points, length - back, length - stop) : Geo.SubPolyline(r.points, stop, back);
-                    // A lane +1 (from→to) runs on the side OffsetPolyline calls positive (RoadNet.LanePoint's frame).
-                    int side = pk.atTo ? 1 : -1;
-                    double edge = pk.left ? 0.12 : r.width / 2 - 0.05;
-                    double inner = pk.left ? 0.12 + 0.55 : r.width / 2 - 0.6;
-                    b.Ribbon(Layout.OffsetPolyline(span, side * inner), 0.05, 0.031, C.lane);
-                    // Its arrow, a little back from the stop line: a shaft, and its head bent the way it turns.
-                    var along = pk.atTo ? Geo.SubPolyline(r.points, length - stop - 1.2, length - stop - 0.4) : Geo.SubPolyline(r.points, stop + 0.4, stop + 1.2);
-                    double lateral = side * (edge + inner) / 2;
-                    var shaft = Layout.OffsetPolyline(along, lateral);
-                    if (!pk.atTo) shaft.Reverse();
-                    if (shaft.Count < 2) continue;
-                    b.Ribbon(shaft, 0.07, 0.032, C.lane);
-                    var tip = shaft[shaft.Count - 1];
-                    var pre = shaft[shaft.Count - 2];
-                    double dx = tip.x - pre.x, dy = tip.y - pre.y, l = Math.Sqrt(dx * dx + dy * dy);
-                    if (l < 1e-6) continue;
-                    dx /= l;
-                    dy /= l;
-                    // The driver's right is the side +1 lanes are on (RoadNet's mirrored frame): a left bends the other way.
-                    double nx = -dy * side, ny = dx * side;
-                    int turn = pk.left ? -1 : 1;
-                    var head = new Vec2(tip.x + nx * 0.3 * turn * side + dx * 0.05, tip.y + ny * 0.3 * turn * side + dy * 0.05);
-                    b.Ribbon(new List<Vec2> { tip, head }, 0.07, 0.032, C.lane);
-                }
+                b.Ribbon(middle, MEDIAN, 0.031, C.curb);
+                b.Ribbon(middle, MEDIAN - 0.14, 0.033, C.grass);
             }
             foreach (var (at, radius) in rings)
             {
@@ -836,19 +764,20 @@ namespace Porchlight.Rendering
         }
 
         /// <summary>The asphalt round a roundabout's island reaches this far past its design radius (RoadSteps' Layer).</summary>
-        const double RING_OUT = 0.55;
+        const double RING_OUT = Markings.RING_OUT;
 
-        /// <summary>How far from a road's end its markings stop: past a roundabout's ring if the end is in one, else 0.</summary>
-        static double RingTrim(List<(Vec2 at, double radius)> rings, Vec2 end)
+        /// <summary>How many painted lines go into the mesh between steps.</summary>
+        const int MARKS_A_PART = 600;
+
+        /// <summary>How high each kind of line is painted: a pocket's lines and arrows over the dashes over the edge lines.</summary>
+        static double MarkY(MarkKind kind) => kind switch
         {
-            double most = 0;
-            foreach (var (at, radius) in rings)
-            {
-                double d = Geo.Dist(at, end);
-                if (d < radius + RING_OUT) most = Math.Max(most, radius + RING_OUT + 0.15 - d);
-            }
-            return most;
-        }
+            MarkKind.EdgeLine => 0.028,
+            MarkKind.CentreDash => 0.03,
+            MarkKind.LaneDash => 0.03,
+            MarkKind.PocketLine => 0.031,
+            _ => 0.032,
+        };
 
         /// <summary>
         /// A roundabout's own markings, so its lane reads as going round the island: the ring's outer edge, a solid line

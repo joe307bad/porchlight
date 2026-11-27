@@ -1070,6 +1070,19 @@ after the other). It used to share the draft worker, so a regenerate clicked mea
 Days now run in a second worker, and a second click while one is running waits for it instead of
 starting another.
 
+**Street markings keep to their street** (`Shared/Explore/Markings.cs`, drawn by the game's `World.cs`).
+- The edge lines, dashes, pockets and arrows are worked out in shared code, so a check can test them.
+- A street's lines stop before another road's carriageway, however they meet: square on, at a slant, or with a
+  bend just past the junction. In Red town, High Street turns a right angle a tile and a half past Fox Road, and
+  its lines used to run across the junction.
+- They also keep off any roundabout ring or road they pass, including a road that ends beside them without
+  joining.
+- An edge line is drawn only where it's really at the street's edge. On the inside of a bend tighter than half
+  the street, it used to fold into a loop.
+- A dash that would curl round a bend (30° or more) is left out, since it reads as a turn arrow.
+- `Checks marks` tests every line, every 0.05 tiles, over the starter towns, Red town and 20 random towns, and CI
+  runs it.
+
 **Checks.** `Checks regions` picks patches of blocks in each starter town and regenerates each with every
 option alone, all of them and none, three salts each, every stage checked. It fails a patch that comes
 out the same for every salt, that breaks the rules on every salt, or that changes buildings more than 12

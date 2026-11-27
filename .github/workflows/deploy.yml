@@ -116,6 +116,10 @@ jobs:
 
       - name: Game — towns grow (every invariant checked) and repeat
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60
+      # The lines painted on the streets (Markings.cs): none across another road's carriageway, a roundabout's ring
+      # or a cul-de-sac's bulb, edge lines at the edge round tight bends, dashes straight.
+      - name: Game — street markings keep to the streets
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- marks server/towns 20
       # Road hierarchy (FHWA's shares), the ring road, eras, transect zones, neighbourhood units and a second centre.
       - name: Game — towns planned like real ones
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- plan
