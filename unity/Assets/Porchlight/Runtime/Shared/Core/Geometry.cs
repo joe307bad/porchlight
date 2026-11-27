@@ -154,6 +154,19 @@ namespace Porchlight.Core
             return o;
         }
 
+        /// <summary>The point `s` tiles along a polyline (clamped to its ends).</summary>
+        public static Vec2 PolylinePointAt(IReadOnlyList<Vec2> pts, double s)
+        {
+            if (pts.Count == 0) return new Vec2(0, 0);
+            for (int i = 0; i + 1 < pts.Count; i++)
+            {
+                double len = Dist(pts[i], pts[i + 1]);
+                if (s <= len) return len < EPS ? pts[i] : Lerp(pts[i], pts[i + 1], Math.Max(0, s) / len);
+                s -= len;
+            }
+            return pts[pts.Count - 1];
+        }
+
         public static double PolylineLength(IReadOnlyList<Vec2> pts)
         {
             double len = 0;

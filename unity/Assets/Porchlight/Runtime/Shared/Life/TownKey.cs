@@ -26,7 +26,10 @@ namespace Porchlight.Life
                 if (q.TryGetValue(spec.key, out var raw)) partial[spec.key] = Numbers.ParseNumber(raw);
             q.TryGetValue("seed", out var s);
             s = s?.Trim();
-            return (string.IsNullOrEmpty(s) ? null : s, GenParams.Normalize(partial));
+            var p = GenParams.Normalize(partial);
+            p.rev = Skeletons.RevOf(key);
+            if (p.rev > 0) p.skeleton = Skeletons.For(key);
+            return (string.IsNullOrEmpty(s) ? null : s, p);
         }
     }
 }

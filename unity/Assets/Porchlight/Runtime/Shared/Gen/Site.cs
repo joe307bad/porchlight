@@ -85,6 +85,13 @@ namespace Porchlight.Gen
             }
             if (best < 0) best = Grid.Index(w / 2, h / 2, w);
             var center = new Vec2((best % w) + 0.5, best / w + 0.5);
+            // The editor's bullseye: the centre where it was put, if that's dry ground a road can reach.
+            var moved = p.skeleton?.center;
+            if (moved != null)
+            {
+                int mx = (int)Math.Floor(moved.Value.x), my = (int)Math.Floor(moved.Value.y);
+                if (Grid.InBounds(mx, my, w, h) && water[Grid.Index(mx, my, w)] == 0 && Numbers.IsFinite(cost[Grid.Index(mx, my, w)])) center = new Vec2(mx + 0.5, my + 0.5);
+            }
 
             // The gates: one in the middle of each edge (Compass), where the highways
             // come in. The terrain stage keeps a dry, level pad behind each.

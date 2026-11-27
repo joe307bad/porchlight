@@ -76,11 +76,12 @@ namespace Porchlight.Gen
                 if (++seen % LOTS_A_STEP == 0) yield return "/lots";
                 if (plaza.Contains(lot.id) || parks.Contains(lot.blockId) || carParks.Contains(lot.id)) continue;
                 bool isChurch = lot.id == church;
+                var lotRng = Rng.Local(model.seed, "buildings", Signature.OfPolygon(lot.polygon));
                 double d = Math.Min(1, Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / R);
                 var rule = TownPlan.Rules(model.blocks[lot.blockId].transect);
-                if (!isChurch && !rng.Chance(p.buildingDensity * (0.7 + 0.3 * (1 - d)))) continue;
+                if (!isChurch && !lotRng.Chance(p.buildingDensity * (0.7 + 0.3 * (1 - d)))) continue;
                 // Some of the centre's lots are left open: courtyards among the towers.
-                if (!isChurch && p.courtyards > 0 && rule.courtyards && rng.Chance(p.courtyards)) continue;
+                if (!isChurch && p.courtyards > 0 && rule.courtyards && lotRng.Chance(p.courtyards)) continue;
                 var tiles = Parcels.TilesIn(lot.polygon, null, w, h);
                 var counts = Parcels.FrontageCounts(tiles, g, w, h);
                 int max = Math.Max(Math.Max(counts[0], counts[1]), Math.Max(counts[2], counts[3]));
@@ -99,14 +100,14 @@ namespace Porchlight.Gen
                     if (rect != null || yard <= MIN_YARD) break;
                 }
                 if (rect == null) continue;
-                SetBack(rect, facingIndex, lotTiles, ReachFor(yard), g, w, h, rng);
+                SetBack(rect, facingIndex, lotTiles, ReachFor(yard), g, w, h, lotRng);
 
                 var lotMid = Geo.PolygonCentroid(lot.polygon);
                 bool highStreet = false;
                 if (model.blocks[lot.blockId].transect >= Transect.T4 && d < p.downtown + HIGH_STREET_REACH)
                     foreach (var kv in Parcels.AdjacentRoadEdges(tiles, g, w, h)) if (Arterial(kv.Key)) highStreet = true;
                 bool industrial = model.industry != null && model.industry.Contains(C, R, lotMid);
-                var kind = isChurch ? BuildingKind.Church : PickKind(d, p, rule, LandStage.At(model, lotMid), highStreet, industrial, model.industry != null, rng);
+                var kind = isChurch ? BuildingKind.Church : PickKind(d, p, rule, LandStage.At(model, lotMid), highStreet, industrial, model.industry != null, lotRng);
                 // With courtyards about, a lot with no room for a proper tower is one more.
                 if (kind == BuildingKind.Shop && p.courtyards > 0 && rule.courtyards && (rect.x1 - rect.x0 + 1) * (rect.y1 - rect.y0 + 1) < 4) continue;
                 var footprint = new List<Vec2>
@@ -127,7 +128,7 @@ namespace Porchlight.Gen
                     footprint = footprint,
                     tiles = covered,
                     kind = kind,
-                    floors = FloorsFor(kind, rule, rng),
+                    floors = FloorsFor(kind, rule, lotRng),
                     facing = Parcels.FACINGS[facingIndex],
                 };
                 list.Add(building);
