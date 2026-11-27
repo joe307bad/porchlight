@@ -7,7 +7,7 @@
 import type { CountyMap } from './api.ts';
 import { REACH, STOPPED, doing, type Layer, type PlayerView, type World } from './world.ts';
 import { streetLabels, type StreetLabel } from './streets.ts';
-import { ZONES, buildingIndexAt, describe } from './zoning.ts';
+import { PARK, ZONES, buildingIndexAt, describe, parkArea, parkAt } from './zoning.ts';
 import { congestionWidth, focusPoint, indoorRadius, indoors, lampColor, type CongestedStreet, type EntityFocus, type Signals, type TownLife } from './life.ts';
 
 export interface Layers {
@@ -59,6 +59,9 @@ const SPEED_DIM_PX = SPEEDS.map((s) => pixel(s.color, 0.45));
 const SHAPED = 4;
 /** From this close in (pixels a tile), streets are named on the map. */
 const STREET_NAMES = 6;
+/** A park this many pixels across (or more) on screen has a tree drawn in it, and from PARK_WORD its name too. */
+const PARK_TREE = 14;
+const PARK_WORD = 64;
 
 /** A colour (#rrggbb) and opacity as one pixel of an ImageData, as a little-endian Uint32Array holds it. */
 function pixel(hex: string, alpha: number): number {
@@ -97,6 +100,9 @@ interface StreetPaths {
   streets: { kind: number; width: number; path: Path2D }[];
   /** The buildings, a path a zone (ZONES order). */
   zones: Path2D[];
+  /** Every park's outline, rings and holes (filled even-odd), and where each one's tree goes, with how big it is across (tiles). */
+  parks: Path2D;
+  parkMarks: { x: number; y: number; across: number }[];
   highways: Path2D;
   towns: CountyMap['towns'];
   spaces: Path2D;
@@ -113,8 +119,19 @@ function buildPaths(map: CountyMap): StreetPaths {
     x1 = Math.max(x1, x); y1 = Math.max(y1, y);
   };
   const zones = ZONES.map(() => new Path2D());
+  const parks = new Path2D();
+  const parkMarks: StreetPaths['parkMarks'] = [];
   for (const t of map.towns) {
     for (const b of t.buildings ?? []) zones[b[0]]?.rect(t.x0 + b[1], t.y0 + b[2], b[3] - b[1], b[4] - b[2]);
+    for (const p of t.parks ?? []) {
+      for (const r of p.rings) {
+        if (r.length < 6) continue;
+        parks.moveTo(t.x0 + r[0], t.y0 + r[1]);
+        for (let i = 2; i + 1 < r.length; i += 2) parks.lineTo(t.x0 + r[i], t.y0 + r[i + 1]);
+        parks.closePath();
+      }
+      parkMarks.push({ x: t.x0 + p.at[0], y: t.y0 + p.at[1], across: Math.sqrt(parkArea(p)) });
+    }
     grow(t.x0, t.y0);
     grow(t.x0 + t.width, t.y0 + t.height);
     for (const r of t.roads ?? []) {
@@ -140,7 +157,7 @@ function buildPaths(map: CountyMap): StreetPaths {
   for (const s of map.spaces) spaces.rect(s.x0, s.y0, s.width, s.height);
   // Paths under streets, streets under main roads.
   const streets = [...byKey.values()].sort((a, b) => b.kind - a.kind || a.width - b.width);
-  return { streets, zones, highways, towns: map.towns, spaces, labels: streetLabels(map.towns), bounds: { x0, y0, x1, y1 } };
+  return { streets, zones, parks, parkMarks, highways, towns: map.towns, spaces, labels: streetLabels(map.towns), bounds: { x0, y0, x1, y1 } };
 }
 
 export class MapRenderer {
@@ -617,7 +634,12 @@ export class MapRenderer {
         const b = i >= 0 ? t.buildings![i] : null;
         const life = this.life.get(t.key);
         const inside = life && i >= 0 ? (indoors(life).get(i) ?? 0) : null;
-        text = b ? `Building ${i} · ${describe(b)}${inside === null ? '' : ` · ${inside.toLocaleString()} inside`} · ${t.name}` : t.name;
+        const park = !b && this.layers.zoning ? parkAt(t, w.x - t.x0, w.y - t.y0) : null;
+        text = b
+          ? `Building ${i} · ${describe(b)}${inside === null ? '' : ` · ${inside.toLocaleString()} inside`} · ${t.name}`
+          : park
+            ? `${PARK.label} · ${Math.round(parkArea(park) * 16).toLocaleString()} m² · ${t.name}`
+            : t.name;
         this.hoverBuilding = b && life ? { key: t.key, i } : null;
       }
     }
@@ -692,6 +714,14 @@ export class MapRenderer {
     ctx.stroke(this.paths.highways);
     // What the buildings are for, under the streets.
     if (this.layers.zoning) {
+      // The parks, under the buildings: green, edged lighter, so they read as parks and not as empty blocks.
+      ctx.globalAlpha = 0.45;
+      ctx.fillStyle = PARK.color;
+      ctx.fill(this.paths.parks, 'evenodd');
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = PARK.edge;
+      ctx.lineWidth = Math.max(0.12, 1.2 * px);
+      ctx.stroke(this.paths.parks);
       ctx.globalAlpha = 0.5;
       this.paths.zones.forEach((path, z) => {
         ctx.fillStyle = ZONES[z].color;
@@ -727,6 +757,8 @@ export class MapRenderer {
         ctx.stroke(s.path);
       }
     }
+    // A tree in each park big enough on screen to hold one, and the word too where there's room.
+    if (this.layers.zoning) this.drawParkMarks(ctx);
     // The streets' names, close in: along each street's longest stretch, where the name fits, never over another.
     if (this.layers.names && this.layers.roads && scale >= STREET_NAMES) this.drawStreetNames(ctx);
     // The towns' names.
@@ -740,6 +772,37 @@ export class MapRenderer {
         ctx.fillStyle = '#8193a6';
         ctx.fillText(t.name, s.x, s.y - 4);
       }
+    }
+  }
+
+  /** A little tree in the middle of each park at least PARK_TREE pixels across, and "Park" under it from PARK_WORD. */
+  private drawParkMarks(ctx: CanvasRenderingContext2D): void {
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.font = '600 11px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.lineJoin = 'round';
+    for (const m of this.paths.parkMarks) {
+      const across = m.across * this.cam.scale;
+      if (across < PARK_TREE) continue;
+      const s = this.toScreen(m.x, m.y);
+      if (s.x < -20 || s.y < -20 || s.x > this.width + 20 || s.y > this.height + 20) continue;
+      ctx.strokeStyle = PARK.trunk;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(s.x, s.y + 6);
+      ctx.stroke();
+      ctx.fillStyle = PARK.crown;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y - 2, 4.5, 0, 2 * Math.PI);
+      ctx.fill();
+      if (across < PARK_WORD) continue;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(11, 15, 20, 0.8)';
+      ctx.strokeText(PARK.label, s.x, s.y + 8);
+      ctx.fillStyle = PARK.edge;
+      ctx.fillText(PARK.label, s.x, s.y + 8);
     }
   }
 

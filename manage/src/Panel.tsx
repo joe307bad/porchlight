@@ -17,7 +17,7 @@ import type { CountyMap, Me } from './api.ts';
 import type { FeedStatus } from './feed.ts';
 import { ALL_WAY, LAMPS, PERSON, SPEEDS, STOP_SIGN, type Layers } from './render.ts';
 import { REACH, doing, type PlayerView } from './world.ts';
-import { ZONES } from './zoning.ts';
+import { PARK, ZONES } from './zoning.ts';
 import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, streetName, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife, marketText } from './life.ts';
 import { CALENDAR, CONGESTION, PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
 
@@ -93,7 +93,7 @@ const LAYERS: { key: keyof Layers; short: string; label: string; legend?: { colo
       { color: ALL_WAY, label: 'all-way stop', shape: 'stop' },
     ],
   },
-  { key: 'zoning', short: 'Land use', label: 'Land use (a disc on each building, sized by the people inside)', legend: ZONES.map((z) => ({ color: z.color, label: z.label })) },
+  { key: 'zoning', short: 'Land use', label: 'Land use (a disc on each building, sized by the people inside)', legend: [...ZONES.map((z) => ({ color: z.color, label: z.label })), { color: PARK.color, label: PARK.label }] },
   { key: 'players', short: 'Players', label: 'Players', legend: [{ color: '#8ab4ff', label: 'player', shape: 'ring' }] },
   { key: 'roads', short: 'Streets', label: 'Streets' },
   { key: 'names', short: 'Names', label: 'Town and street names' },

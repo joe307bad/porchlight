@@ -57,6 +57,8 @@ namespace Porchlight.UI
         Texture2D baseTexture;
         TownModel model;
         List<Vec2> others = new List<Vec2>();
+        /// <summary>The town's parks (Explore/Parks.cs): coloured on the maps' picture, a tree marking each on the big map.</summary>
+        List<Park> parks = new List<Park>();
         Vec2? player;
         Vec2[] view = new Vec2[0];
         Vec2? goal;
@@ -353,6 +355,7 @@ namespace Porchlight.UI
             float k = rect.width / model.width;
             Vector2 P(Vec2 q) => new Vector2((float)q.x * k, (float)q.y * k);
             var painter = ctx.painter2D;
+            ParkTrees(painter, P, k);
             // The way there, in blue dots.
             if (route != null && route.Count > 1)
             {
@@ -387,6 +390,34 @@ namespace Porchlight.UI
             painter.MoveTo(c + new Vector2(0, 5));
             painter.LineTo(c + new Vector2(0, 16));
             painter.Stroke();
+        }
+
+        /// <summary>
+        /// A little tree in the middle of each park big enough on the map to hold one (`k`: pixels a tile), so a park
+        /// reads as one and not just as more grass.
+        /// </summary>
+        void ParkTrees(Painter2D painter, Func<Vec2, Vector2> P, float k)
+        {
+            const float CROWN = 5, ROOM = 16;
+            foreach (var park in parks)
+            {
+                // Room for it: the park's about ROOM pixels across, or more.
+                if (Math.Sqrt(park.tiles.Count) * k < ROOM) continue;
+                var at = P(park.middle);
+                painter.strokeColor = BlueprintStyle.ParkTrunk;
+                painter.lineWidth = 2;
+                painter.BeginPath();
+                painter.MoveTo(at + new Vector2(0, 1));
+                painter.LineTo(at + new Vector2(0, CROWN + 3));
+                painter.Stroke();
+                painter.BeginPath();
+                painter.Arc(at + new Vector2(0, -1), CROWN, 0, 360);
+                painter.fillColor = BlueprintStyle.ParkTree;
+                painter.Fill();
+                painter.lineWidth = 1.5f;
+                painter.strokeColor = BlueprintStyle.ParkTreeEdge;
+                painter.Stroke();
+            }
         }
 
         static void Dot(Painter2D painter, Vector2 at, float r, Color fill)
@@ -836,6 +867,20 @@ namespace Porchlight.UI
                     Fill(px, w, h, Porchlight.Gen.Menagerie.Rect(m.zoo, pen.box), BlueprintStyle.Pen);
                     if (pen.pool) Fill(px, w, h, Porchlight.Gen.Menagerie.Rect(m.zoo, Porchlight.Gen.Menagerie.Pool(pen)), BlueprintStyle.Pool);
                 }
+            // The parks (Explore/Parks.cs): a deeper green than the grass, edged darker where they meet anything else,
+            // so they read as parks; the big map puts a tree in each.
+            parks = Parks.All(m);
+            foreach (var park in parks)
+            {
+                var own = new HashSet<int>(park.tiles);
+                foreach (int t in park.tiles)
+                {
+                    int x = t % w, y = t / w;
+                    bool edge = x == 0 || y == 0 || x == w - 1 || y == h - 1
+                        || !own.Contains(t - 1) || !own.Contains(t + 1) || !own.Contains(t - w) || !own.Contains(t + w);
+                    px[(h - 1 - y) * w + x] = edge ? BlueprintStyle.TileParkEdge : BlueprintStyle.TilePark;
+                }
+            }
             baseTexture.SetPixels32(px);
             baseTexture.Apply(false);
             minimap.style.backgroundImage = new StyleBackground(baseTexture);

@@ -281,10 +281,30 @@ namespace Porchlight.Explore
         /// </summary>
         public static readonly string[] FEAST = { "props/roast-turkey", "props/bowl-mash", "props/bowl-cranberry", "props/bowl-beans", "props/bowl-stuffing", "props/pumpkin-pie" };
 
+        /// <summary>
+        /// The parks' kit (Explore/Parks.cs), in ParkKit's order: a bench, a picnic table, the playground's slide, swings,
+        /// climbing frame, seesaw and spinner, and a bin. Each model's front (where a bench's sitters look, where a slide
+        /// runs down to) faces +z. Optional: the library builds those whose files are there, and the town draws a
+        /// stand-in (ParkStandIn) or nothing for the rest.
+        /// </summary>
+        public static readonly string[] PARK_KIT =
+        {
+            "props/park-bench", "props/picnic-table", "props/slide", "props/swings", "props/climbing-frame", "props/seesaw", "props/spinner", "props/park-bin",
+        };
+
+        /// <summary>A park piece's model.</summary>
+        public static string ParkModel(ParkKit k) => PARK_KIT[(int)k];
+
+        /// <summary>What's drawn for a park piece while its own model isn't there: the room plans' bench and bin, or nothing.</summary>
+        public static string ParkStandIn(ParkKit k) => k == ParkKit.Bench ? "furniture/bench" : k == ParkKit.Bin ? "furniture/trashcan" : null;
+
+        /// <summary>Models the library builds only if their files are there (the parks' kit, made apart from the code).</summary>
+        public static bool IsOptional(string name) => System.Array.IndexOf(PARK_KIT, name) >= 0;
+
         /// <summary>Every static model the town loads.</summary>
         public static IEnumerable<string> Statics =>
             new[] { HOUSES, SHOPS, TOWERS, INDUSTRIAL, CARS, TREES, FALL_TREES, PINES, PALMS, BUSHES, FLOWERS, CROPS, ROCKS, BOULDERS,
-                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, CHRISTMAS, new[] { TRAFFIC_SIGNAL, STOP_SIGN }, FURNISHINGS }.SelectMany(x => x).Distinct();
+                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, CHRISTMAS, new[] { TRAFFIC_SIGNAL, STOP_SIGN }, PARK_KIT, FURNISHINGS }.SelectMany(x => x).Distinct();
 
         /// <summary>Which model families suit each kind of building ("office" is a style, not a blueprint kind).</summary>
         public static string[] KindModels(HouseStyle style) => style switch

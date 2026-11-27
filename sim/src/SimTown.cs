@@ -35,6 +35,8 @@ namespace Porchlight.Sim
         readonly StreetNames streets;
         /// <summary>What each of its buildings is for (Zoning.cs), for Manage's land-use map.</summary>
         public readonly TownZoning zoning;
+        /// <summary>Its parks, for Manage's map: each one's middle and outline (Parks.Encode).</summary>
+        public readonly List<(double[] at, List<double[]> rings)> parks;
         public readonly Traffic traffic;
         public readonly List<Pedestrian> people = new List<Pedestrian>();
         /// <summary>Townsfolk made with the town (the rest got out of cars someone took).</summary>
@@ -62,6 +64,7 @@ namespace Porchlight.Sim
             height = model.height;
             streets = StreetNaming.Name(model, layout.roads);
             zoning = Zoning.Plan(model, layout);
+            parks = Parks.Encode(model);
             // ExploreView.Populate, in the same order, so each car and person here is the game's.
             traffic = new Traffic(model, layout, zoning, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             var rng = new Rng($"{model.seed}::townsfolk");
