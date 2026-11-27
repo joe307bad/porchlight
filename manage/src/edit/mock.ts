@@ -143,8 +143,13 @@ function streetsFor(center: Pt, mains: Seg[]): Seg[] {
       const b: Pt = horizontal ? [cx + half, cy + off] : [cx + off, cy + half];
       const clip = (p: Pt): Pt => [Math.max(2, Math.min(W - 2, p[0])), Math.max(2, Math.min(H - 2, p[1]))];
       const pts = [clip(a), clip(b)];
-      // Not along a main road.
-      if (mains.some((m) => closestOn(pts[0], m.pts).d < 3 && closestOn(pts[1], m.pts).d < 3)) continue;
+      // Not along a main road, nor close beside one.
+      const beside = (m: Seg) => {
+        let n = 0;
+        for (let k = 0; k <= 10; k++) if (closestOn([pts[0][0] + ((pts[1][0] - pts[0][0]) * k) / 10, pts[0][1] + ((pts[1][1] - pts[0][1]) * k) / 10], m.pts).d < 5) n++;
+        return n >= 4;
+      };
+      if (mains.some(beside)) continue;
       out.push({ pts, kind: 'street', cls: Math.abs(k) === 2 ? 'collector' : 'local' });
     }
   }
@@ -159,7 +164,13 @@ function grow(skel: Skeleton): Town {
   const generated = streetsFor(center, mains).filter((g) => !pinned.some((p) => closestOn(g.pts[0], p.pts).d < 3 && closestOn(g.pts[1], p.pts).d < 3));
   const g = planarize([...mains, ...pinned, ...generated]);
   // Removed: the generator's streets with those ends.
-  const edges = g.edges.filter((e) => e.seg.kind === 'main' || pinned.includes(e.seg) || !s.removed.some(([a, b]) => sameEnds(a, b, e.pts[0], e.pts[e.pts.length - 1])));
+  // Removed ones dropped; and the generator's own stubs (under 3 tiles, or into the lake) never laid.
+  const wetLine = (pts: Pt[]) => pts.some((p, i) => i > 0 && [0.25, 0.5, 0.75, 1].some((t) => wet(Math.floor(pts[i - 1][0] + (p[0] - pts[i - 1][0]) * t), Math.floor(pts[i - 1][1] + (p[1] - pts[i - 1][1]) * t))));
+  const edges = g.edges.filter((e) => {
+    if (e.seg.kind === 'main' || pinned.includes(e.seg)) return true;
+    if (polyLength(e.pts) < 3 || wetLine(e.pts) || wet(Math.floor(e.pts[0][0]), Math.floor(e.pts[0][1]))) return false;
+    return !s.removed.some(([a, b]) => sameEnds(a, b, e.pts[0], e.pts[e.pts.length - 1]));
+  });
   const legs = new Map<number, number>();
   for (const e of edges) {
     legs.set(e.from, (legs.get(e.from) ?? 0) + 1);

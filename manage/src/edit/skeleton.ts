@@ -238,6 +238,8 @@ export function withRoad(skel: Skeleton, town: Town, road: TownRoad, pts: Pt[] |
 
 /** A junction dragged to `to`: every road meeting there bent after it (the rubber band), each laid in the skeleton. */
 export function moveNode(skel: Skeleton, town: Town, node: number, to: Pt, radius = FALLOFF): Skeleton {
+  const at = town.nodes.find((n) => n.id === node)?.at;
+  if (!at || dist(at, to) < 0.01) return skel;
   const bent = dragNode(town, node, to, radius);
   let s = skel;
   for (const [id, pts] of bent) {
@@ -494,7 +496,19 @@ export function rebase(base: Skeleton, draft: Skeleton, current: Skeleton): { sk
   return { skeleton: out, clashes };
 }
 
-/** How many things a skeleton changes, roughly (for the toolbar). */
-export function changeCount(s: Skeleton): number {
-  return (s.center ? 1 : 0) + (s.mains ? 1 : 0) + s.streets.length + s.removed.length + s.roads.length + s.junctions.length;
+/** How many things a skeleton changes from `base` (the revision it began from), roughly (for the panel's head). */
+export function changeCount(s: Skeleton, base: Skeleton = normalize(null)): number {
+  const b = normalize(base);
+  const diff = <T>(x: T[], y: T[]) => {
+    const was = new Set(y.map(key)), now = new Set(x.map(key));
+    return x.filter((v) => !was.has(key(v))).length + y.filter((v) => !now.has(key(v))).length;
+  };
+  return (
+    (key(s.center) !== key(b.center) ? 1 : 0) +
+    (key(s.mains) !== key(b.mains) ? 1 : 0) +
+    diff(s.streets, b.streets) +
+    diff(s.removed, b.removed) +
+    diff(s.roads, b.roads) +
+    diff(s.junctions, b.junctions)
+  );
 }

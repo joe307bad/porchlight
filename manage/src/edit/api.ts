@@ -6,6 +6,17 @@ import { normalize } from './skeleton.ts';
 
 export const isMock = (): boolean => new URLSearchParams(location.search).has('mock');
 
+/** Into the street editor for a town (`#edit=<key>`), or back out of it to the county map. */
+export function openEditor(key: string | null): void {
+  if (key) {
+    location.hash = `edit=${encodeURIComponent(key)}`;
+    return;
+  }
+  // No bare "#" left behind.
+  window.history.pushState(null, '', location.pathname + location.search);
+  window.dispatchEvent(new HashChangeEvent('hashchange'));
+}
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,

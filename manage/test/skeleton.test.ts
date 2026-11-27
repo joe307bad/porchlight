@@ -93,6 +93,7 @@ test('the bullseye sets center and nothing else', () => {
   const s = moveCenter(empty, [70.123, 90.456]);
   assert.deepEqual(s.center, [70.12, 90.46]);
   assert.equal(changeCount(s), 1);
+  assert.equal(changeCount(s, s), 0, 'nothing changed from itself');
   // And the mock grows the town round it: the shops follow.
   const moved = mockGrow(s);
   const shops = moved.buildings.filter((b) => b.kind === 'shop');
