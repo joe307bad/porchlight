@@ -69,24 +69,11 @@
           localStorage.setItem(KEY + 'page', `download=${mean(page.download, downloaded)};start=${mean(page.start, ready - downloaded)}`);
         } catch { /* private mode: no history, the bar just guesses */ }
       };
-      // Where the build's big files come from. On production that's the CDN (CloudFront in front of this
-      // box, infra/terraform: cdn.<domain>), so a crawler that pulls the build over and over is served
-      // from its cache instead of costing this box's egress (#26). If the CDN doesn't answer in a few
-      // seconds, or won't share its files with this page (CORS), the box serves them as before.
-      const CDN = location.hostname === 'porchlight.joebad.com' ? 'https://cdn.porchlight.joebad.com/Build/' : null;
-      const pickBuild = async () => {
-        if (!CDN) return 'Build/';
-        const abort = new AbortController();
-        const timer = setTimeout(() => abort.abort(), 3000);
-        try {
-          const res = await fetch(CDN + '{{{ FRAMEWORK_FILENAME }}}', { method: 'HEAD', mode: 'cors', signal: abort.signal });
-          return res.ok ? CDN : 'Build/';
-        } catch {
-          return 'Build/';
-        } finally {
-          clearTimeout(timer);
-        }
-      };
+      // Where the build comes from. On production that's the CDN (CloudFront, infra/terraform:
+      // cdn.<domain>), and only the CDN: the box serves /Build/* to CloudFront alone, so a crawler
+      // or anyone else pulling the build over and over is served from CloudFront's cache instead of
+      // costing this box's egress (#26). Elsewhere (dev) it's the page's own server.
+      const build = location.hostname === 'porchlight.joebad.com' ? 'https://cdn.porchlight.joebad.com/Build/' : 'Build/';
       // The loader comes from the same place as the rest, so a page never mixes two builds.
       const loadScript = (src) => new Promise((resolve, reject) => {
         const script = document.createElement('script');
@@ -95,7 +82,7 @@
         script.onerror = () => reject(new Error(`couldn't load ${src}`));
         document.body.appendChild(script);
       });
-      pickBuild().then((build) => loadScript(build + '{{{ LOADER_FILENAME }}}').then(() => build)).then((build) => createUnityInstance(canvas, {
+      loadScript(build + '{{{ LOADER_FILENAME }}}').then(() => createUnityInstance(canvas, {
         dataUrl: build + '{{{ DATA_FILENAME }}}',
         frameworkUrl: build + '{{{ FRAMEWORK_FILENAME }}}',
 #if USE_THREADS

@@ -261,6 +261,10 @@ jobs:
           echo "HOST=$(terraform output -raw elastic_ip)" >> "$GITHUB_ENV"
           echo "SECRET_ID=$(terraform output -raw secret_id)" >> "$GITHUB_ENV"
           echo "CDN_ID=$(terraform output -raw cdn_distribution_id)" >> "$GITHUB_ENV"
+          echo "CDN_ORIGIN_SECRET_ID=$(terraform output -raw cdn_origin_secret_id)" >> "$GITHUB_ENV"
+          # Caddy (deploy.sh, below) refuses /Build/* without the CDN's origin
+          # secret: wait till every edge sends it, or a cache miss there gets a 403.
+          aws cloudfront wait distribution-deployed --id "$(terraform output -raw cdn_distribution_id)"
 
       - name: Point DNS at the box
         # Best-effort and never fatal, as in topspin: the zone may not be in this
@@ -324,7 +328,7 @@ jobs:
 
       - name: Run deploy.sh
         run: |
-          $SSH "SECRET_ID='$SECRET_ID' AWS_REGION='$AWS_REGION' DOMAIN='$DOMAIN' /opt/porchlight/infra/docker/deploy.sh"
+          $SSH "SECRET_ID='$SECRET_ID' CDN_ORIGIN_SECRET_ID='$CDN_ORIGIN_SECRET_ID' AWS_REGION='$AWS_REGION' DOMAIN='$DOMAIN' /opt/porchlight/infra/docker/deploy.sh"
 
       # The CDN (cdn.$DOMAIN) keeps the build a day without asking the box, and
       # the build's file names don't change between builds: drop its copies so

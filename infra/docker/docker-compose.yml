@@ -30,6 +30,8 @@ services:
       - "443:443/udp"
     environment:
       DOMAIN: ${DOMAIN}
+      # Only CloudFront sends it: Caddy serves /Build/* to nobody else.
+      CDN_ORIGIN_SECRET: ${CDN_ORIGIN_SECRET}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - /opt/porchlight/site:/srv/site:ro

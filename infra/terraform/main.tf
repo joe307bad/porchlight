@@ -17,6 +17,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 
   # Partial: bucket, key and region are passed to `terraform init` by the
@@ -236,6 +240,11 @@ resource "aws_iam_role_policy" "ec2" {
       Effect   = "Allow"
       Action   = ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue"]
       Resource = aws_secretsmanager_secret.main.arn
+      }, {
+      # The CDN's origin secret (below): deploy.sh hands it to Caddy.
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = aws_secretsmanager_secret.cdn_origin.arn
     }]
   })
 }
@@ -258,9 +267,9 @@ resource "aws_ebs_volume" "data" {
   availability_zone = "${var.aws_region}a"
   # Grown in place (deploy.sh grows the filesystem to match). EBS allows one
   # change per volume every six hours.
-  size = 10
-  type              = "gp3"
-  encrypted         = true
+  size      = 10
+  type      = "gp3"
+  encrypted = true
 
   tags = {
     Name     = "porchlight-data"
@@ -415,12 +424,13 @@ resource "aws_eip_association" "main" {
 # =============================================================================
 # In November 2026 a crawler rendered made-up paths, each pulling the ~24 MB
 # WebGL build, ~750 GB a day of EC2 egress at $0.09/GB (#26). The page now
-# loads the build from here (unity/Assets/WebGLTemplates/Porchlight/index.html,
-# falling back to the box if this doesn't answer). CloudFront keeps it at the
+# loads the build from here, and only from here
+# (unity/Assets/WebGLTemplates/Porchlight/index.html). CloudFront keeps it at the
 # edge for a day and each deploy invalidates it, so the box sends a build about
 # once per edge per deploy, and CloudFront's first 1 TB a month is free. Only /Build/* is served; anything
 # else on cdn.<domain> is a 404 at the edge, so crawlers can't reach the box
-# through it.
+# through it. And the box serves the build only to CloudFront (the origin
+# secret below), so it can't be pulled from the box directly either.
 
 variable "dns_zone" {
   description = "The Route53 zone the CDN's records go in (it predates this stack; only these records are managed here)"
@@ -497,6 +507,26 @@ resource "aws_cloudfront_cache_policy" "build" {
   }
 }
 
+# Only CloudFront may fetch the build from the box: it sends this secret in a
+# header on every request to the box, and Caddy refuses /Build/* without it,
+# so nobody can skip the CDN and download the build at EC2 prices. Kept in its
+# own secret, which deploy.sh reads and hands to Caddy (CDN_ORIGIN_SECRET).
+resource "random_password" "cdn_origin" {
+  length  = 48
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "cdn_origin" {
+  name                    = "porchlight/cdn-origin"
+  recovery_window_in_days = 0
+  tags                    = { Name = "porchlight-cdn-origin" }
+}
+
+resource "aws_secretsmanager_secret_version" "cdn_origin" {
+  secret_id     = aws_secretsmanager_secret.cdn_origin.id
+  secret_string = random_password.cdn_origin.result
+}
+
 # Everything that isn't the build: a 404 at the edge, never the box.
 resource "aws_cloudfront_function" "not_found" {
   name    = "porchlight-cdn-not-found"
@@ -520,6 +550,11 @@ resource "aws_cloudfront_distribution" "cdn" {
   origin {
     origin_id   = "box"
     domain_name = var.domain
+
+    custom_header {
+      name  = "X-Porchlight-Origin"
+      value = random_password.cdn_origin.result
+    }
 
     custom_origin_config {
       http_port              = 80
@@ -680,4 +715,9 @@ output "alerts_topic_arn" {
 output "cdn_distribution_id" {
   description = "The deploy invalidates /Build/* here"
   value       = aws_cloudfront_distribution.cdn.id
+}
+
+output "cdn_origin_secret_id" {
+  description = "deploy.sh reads the CDN's origin secret from here"
+  value       = aws_secretsmanager_secret.cdn_origin.id
 }

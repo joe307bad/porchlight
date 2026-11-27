@@ -32,9 +32,17 @@ if [ "$generated" = 1 ]; then
     --secret-string "$SECRET" >/dev/null
 fi
 
+# The secret CloudFront sends the box (Terraform's, in its own secret): Caddy
+# serves /Build/* only to requests that carry it. Without it Caddy would refuse
+# the CDN too, so stop here rather than break the game.
+CDN_ORIGIN_SECRET=$(aws secretsmanager get-secret-value --secret-id "${CDN_ORIGIN_SECRET_ID:-porchlight/cdn-origin}" \
+  --region "$AWS_REGION" --query SecretString --output text)
+[ -n "$CDN_ORIGIN_SECRET" ] || { echo "no CDN origin secret" >&2; exit 1; }
+
 umask 077
 cat > .env <<EOF
 DOMAIN=$DOMAIN
+CDN_ORIGIN_SECRET=$CDN_ORIGIN_SECRET
 POSTGRES_PASSWORD=$(get POSTGRES_PASSWORD)
 GAME_DB_PASSWORD=$(get GAME_DB_PASSWORD)
 KEYCLOAK_ADMIN_PASSWORD=$(get KEYCLOAK_ADMIN_PASSWORD)

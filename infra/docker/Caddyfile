@@ -27,10 +27,22 @@ Disallow: /
 "
 	}
 
-	# The build is also served by the CDN (cdn.{$DOMAIN}, CloudFront, which
-	# fetches it from here), so the page loads it from another origin: let any
-	# page read it (it's public), and answer the preflight Unity's loader causes
-	# when it revalidates its cached copy (If-None-Match isn't a simple header).
+	# The build is served by the CDN (cdn.{$DOMAIN}, CloudFront), and only the
+	# CDN may fetch it from here: CloudFront sends a secret header (Terraform's
+	# origin secret; deploy.sh puts it in CDN_ORIGIN_SECRET), and anyone else
+	# asking for /Build/* is refused, so nobody can pull the build at EC2
+	# prices by skipping the CDN (#26).
+	@buildDirect {
+		path /Build/*
+		not header X-Porchlight-Origin {$CDN_ORIGIN_SECRET}
+	}
+	handle @buildDirect {
+		respond "The game's files are at https://cdn.{$DOMAIN}/Build/" 403
+	}
+
+	# The page loads the build from the CDN, another origin: let any page read
+	# it (it's public), and answer the preflight Unity's loader causes when it
+	# revalidates its cached copy (If-None-Match isn't a simple header).
 	@build path /Build/*
 	header @build Access-Control-Allow-Origin *
 	header @build Access-Control-Expose-Headers "ETag, Last-Modified, Content-Length, Content-Encoding"
