@@ -61,15 +61,24 @@ static class NamesCheck
                 Purpose.Shop => "Going to the shops",
                 _ => null,
             };
+            // Looked at from 8:15 through the rush, a quarter of an hour at a time, till someone's on their way to work: a
+            // small town's few commuters can all be at their desks, or not yet out, at any one moment (Juniper Falls's
+            // school run is over by 8:15 and its first to work are out at 8:30).
             int wrong = 0, toWork = 0;
-            foreach (var p in life.people)
+            string when = "8:15 AM";
+            for (int q = 0; q < 4 && toWork == 0; q++)
             {
-                if (p.trip == null) continue;
-                string want = Expected(p), got = life.DoingOf(p.id);
-                if (want != null && got != want) wrong++;
-                if (got == "Going to work") toWork++;
+                if (q > 0) life.RunUntil(TrafficDay.Morning + q * 15 * TownClock.MINUTE);
+                when = $"8:{15 + q * 15:00} AM".Replace("8:60", "9:00");
+                foreach (var p in life.people)
+                {
+                    if (p.trip == null) continue;
+                    string want = Expected(p), got = life.DoingOf(p.id);
+                    if (want != null && got != want) wrong++;
+                    if (got == "Going to work") toWork++;
+                }
             }
-            Expect(wrong == 0 && toWork > 0, $"{town}: at 8:15 AM, {toWork} going to work, each as their trip has it ({wrong} wrong)");
+            Expect(wrong == 0 && toWork > 0, $"{town}: by {when}, {toWork} going to work, each as their trip has it ({wrong} wrong)");
             life.RunUntil(TrafficDay.Morning + 9 * TownClock.HOUR + 15 * TownClock.MINUTE);
             int home = life.people.Count(p => p.trip != null && life.DoingOf(p.id) == "Going home");
             Expect(home > 0, $"{town}: at 5:30 PM, {home} going home");

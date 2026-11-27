@@ -658,16 +658,11 @@ namespace Porchlight.Rendering
             foreach (var f in layout.fences)
             {
                 if (++fenced % FENCES_A_PART == 0) yield return -1;
-                const double inset = 0.05;
-                var at = f.side switch
-                {
-                    Facing.N => new Vec2(f.x + 0.5, f.y + inset),
-                    Facing.S => new Vec2(f.x + 0.5, f.y + 1 - inset),
-                    Facing.W => new Vec2(f.x + inset, f.y + 0.5),
-                    _ => new Vec2(f.x + 1 - inset, f.y + 0.5),
-                };
+                // Its line, cut short where it would have run out over a sidewalk (Kerbs.ClearOf), the model stretched to it.
+                var (a, b) = Layout.FenceLine(f);
+                double length = Geo.Dist(a, b);
                 double rot = f.side == Facing.N || f.side == Facing.S ? 0 : Math.PI / 2;
-                Props.Place(fence, props, at.x, at.y, rot, fsx, 1.3, 1.3);
+                Props.Place(fence, props, (a.x + b.x) / 2, (a.y + b.y) / 2, rot, fsx * length, 1.3, 1.3);
             }
         }
 
@@ -913,7 +908,9 @@ namespace Porchlight.Rendering
                 var p = library.Get(Catalog.CARS[m]);
                 double s = CarView.ScaleOf(p);
                 parked.Add(new ParkedPose { x = car.x, y = car.y, heading = heading, model = m });
-                parkedCars.Add(Props.Place(p, props, car.x, car.y, DetMath.Atan2(Math.Cos(heading), Math.Sin(heading)), s, s, s, Catalog.KindOf(m) == VehicleKind.Boat ? CarView.LiftOf(VehicleKind.Boat) : 0));
+                // On the ground where it's parked: down on the road in a parking lane, up on a driveway or in a car park.
+                double lift = Catalog.KindOf(m) == VehicleKind.Boat ? CarView.LiftOf(VehicleKind.Boat) : Ground(car.x, car.y);
+                parkedCars.Add(Props.Place(p, props, car.x, car.y, DetMath.Atan2(Math.Cos(heading), Math.Sin(heading)), s, s, s, lift));
             }
         }
 

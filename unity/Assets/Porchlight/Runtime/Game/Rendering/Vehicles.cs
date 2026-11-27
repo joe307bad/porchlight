@@ -30,6 +30,8 @@ namespace Porchlight.Rendering
         public int model;
         readonly double scale;
         readonly double lift;
+        /// <summary>A boat, which floats on the water whatever the ground (no kerbs for it).</summary>
+        readonly bool afloat;
         readonly List<Renderer> heads = new List<Renderer>();
         readonly List<Renderer> tails = new List<Renderer>();
         readonly List<Renderer> ports = new List<Renderer>();
@@ -44,6 +46,7 @@ namespace Porchlight.Rendering
             var kind = Catalog.KindOf(model.name);
             scale = ScaleOf(model);
             lift = LiftOf(kind);
+            afloat = kind == VehicleKind.Boat;
             root = Props.Place(model, parent, 0, 0, 0, scale, scale, scale, lift);
             if (kind == VehicleKind.Boat) return;
             if (kind == VehicleKind.Plane && model.name == Catalog.SLEIGH)
@@ -104,7 +107,9 @@ namespace Porchlight.Rendering
         /// <summary>Put the car at map (x, y) facing heading `rot` (Coords.Yaw); a plane `altitude` up, nose `pitch` up and banked `bank` (radians, + to the right).</summary>
         public void Place(double x, double y, double rot, double altitude = 0, double pitch = 0, double bank = 0)
         {
-            root.transform.localPosition = Coords.Map(x, y, lift + altitude);
+            // On the ground under it: down a kerb on the road, up on a driveway, easing over the kerb between.
+            double ground = afloat || altitude > 0 ? 0 : TownWorld.GroundUnder(root.transform.parent, x, y);
+            root.transform.localPosition = Coords.Map(x, y, lift + altitude + ground);
             // The sleigh turns and climbs about Santa with its team out ahead: it tips and leans only a little, or the
             // reindeer would swing up and down and out to the side of him.
             if (sleigh != null)

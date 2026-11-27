@@ -67,6 +67,8 @@ static class Program
         if (args.Length > 0 && args[0] == "clock") return ClockCheck.Run();
         if (args.Length > 0 && args[0] == "crowd") return CrowdCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "parks") return ParksCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "kerbs") return KerbCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "fences") return FenceCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 24);
         if (args.Length > 0 && args[0] == "furniture") return FurnitureCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "habits") return HabitsCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : "lanternport", args.Length > 3 ? int.Parse(args[3]) : 3);
         if (args.Length > 0 && args[0] == "population") return PopulationCheck.Run(args.Length > 1 ? args[1] : "server/towns");
@@ -87,7 +89,7 @@ static class Program
         if (args.Length > 0 && args[0] == "arrival") return ArrivalCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "marks") return MarksCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 20);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
-        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | crowd [towns dir] | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
+        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | kerbs [towns dir] | fences [towns dir] [generated count] | crowd [towns dir] | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
         return 2;
     }
 

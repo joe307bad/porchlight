@@ -1083,6 +1083,31 @@ starting another.
 - `Checks marks` tests every line, every 0.05 tiles, over the starter towns, Red town and 20 random towns, and CI
   runs it.
 
+**Kerbs, sidewalks and fences** (`Shared/Explore/Kerbs.cs`).
+- The carriageways (asphalt, parking lanes, bulbs) sit a kerb (`Kerbs.HEIGHT`, 0.05 tiles, about 15–18 cm)
+  below the sidewalks and land. Lowering the roads, rather than raising everything else, leaves buildings,
+  yards, trees and signs where they were. The paint, medians and roundabout islands are drawn at `ROAD_Y +`
+  their old height.
+- `Kerbs.Edge` is how far a point is from the nearest kerb, taken from the same street shapes the road surface
+  is drawn from. `Kerbs.Ground` turns it into a height that eases over the kerb, and cars, taxiing planes,
+  people and parked cars stand on it, found through `TownWorld.GroundUnder`.
+- The ground near a street is cut along the kerb and the sidewalk's outer edge (`Kerbs.Cut`): a tile is cut
+  whole where `Edge` runs straight across it, else in quarters. A quarter where `Edge` bends (a ridge between two
+  streets, a tight corner) is cut in four again before it's cut round its middle.
+- The sidewalks have a joint every 0.42 tiles and a crack in about 6% of slabs (`Kerbs.Paving`).
+- Fences are cut back to stay `Kerbs.FENCE_CLEAR` from every kerb, or dropped where less than 0.2 tiles would be
+  left (`Layout`). This is layout, not generation, so towns don't change.
+- `Checks fences` measures fences against the streets' own lines, over the starter towns and 24 random ones.
+  `Checks kerbs` tests that the cut covers every tile once with each piece in its band, that what stands off
+  the road is up on the sidewalk and a lane-parked car down on the road, that the ground has no jumps, and that
+  every joint and crack is on a sidewalk. CI runs both.
+
+**The junction design a share at a time.** The web build has no threads, so the design stage is stepwise like
+lots and buildings. It yields after the demand, every 100 origins and each round of the traffic assignment,
+the lanes, each relief route and every 40 junctions. Porchlight's longest share went from about 200 ms to 33 ms.
+The assignment also walks Dijkstra's settle order backwards instead of sorting every junction by cost for each
+origin; the towns come out the same.
+
 **Checks.** `Checks regions` picks patches of blocks in each starter town and regenerates each with every
 option alone, all of them and none, three salts each, every stage checked. It fails a patch that comes
 out the same for every salt, that breaks the rules on every salt, or that changes buildings more than 12

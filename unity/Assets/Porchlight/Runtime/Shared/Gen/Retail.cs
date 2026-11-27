@@ -196,8 +196,9 @@ namespace Porchlight.Gen
             }
 
             // --- Corner stores ---
-            // (Planned households run under what zoning makes, which turns the outer towers into flats: the next store from 60% of the way to it.)
-            int stores = s.households >= CORNER_TOWN ? Math.Max(1, (int)Math.Floor(s.households / (double)CORNER_HOUSEHOLDS + 0.4)) : 0;
+            // (Planned households run under what zoning makes, which turns the outer towers into flats, by a third in a
+            // big town: the next store from halfway to it.)
+            int stores = s.households >= CORNER_TOWN ? Math.Max(1, (int)Math.Floor(s.households / (double)CORNER_HOUSEHOLDS + 0.5)) : 0;
             var entrances = new List<Vec2>();
             foreach (int n in LandStage.Corners(m)) entrances.Add(m.roads.nodes[n].at);
             var atEntrance = new bool[list.Count];

@@ -78,6 +78,34 @@ namespace Porchlight.Rendering
         public void Rect(double x0, double y0, double x1, double y1, double h, int color, int glow = 0) =>
             Quad(v(x0, h, y0), v(x1, h, y0), v(x1, h, y1), v(x0, h, y1), color, null, glow);
 
+        /// <summary>A flat convex polygon (map points in order round its edge, either way round) at height h, facing up.</summary>
+        public void Flat(IReadOnlyList<Vec2> pts, double h, int color)
+        {
+            if (pts.Count < 3) return;
+            // Wound as Rect's corners are (the shoelace sum positive in map terms), whichever way round they come.
+            double area = 0;
+            for (int k = 0; k < pts.Count; k++)
+            {
+                var p = pts[k];
+                var q = pts[(k + 1) % pts.Count];
+                area += p.x * q.y - q.x * p.y;
+            }
+            int start = pos.Count;
+            var t = palette.UV(color);
+            for (int k = 0; k < pts.Count; k++)
+            {
+                var p = pts[area >= 0 ? k : pts.Count - 1 - k];
+                pos.Add(v(p.x, h, p.y).World);
+                uv.Add(t);
+            }
+            for (int k = 1; k + 1 < pts.Count; k++)
+            {
+                idx.Add(start);
+                idx.Add(start + k);
+                idx.Add(start + k + 1);
+            }
+        }
+
         /// <summary>A flat strip `width` wide along a polyline, at height h.</summary>
         public void Ribbon(IReadOnlyList<Vec2> pts, double width, double h, int color)
         {

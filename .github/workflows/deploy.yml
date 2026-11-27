@@ -120,6 +120,12 @@ jobs:
       # or a cul-de-sac's bulb, edge lines at the edge round tight bends, dashes straight.
       - name: Game — street markings keep to the streets
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- marks server/towns 20
+      # The streets' kerbs (Explore/Kerbs.cs): the ground cut along them covers every tile once, what stands off the
+      # road is up on the sidewalk and a parked car down on the road, no jumps; and no yard's fence on a sidewalk.
+      - name: Game — the roads a kerb below the sidewalks, and every fence clear of them
+        run: |
+          dotnet run --project "unity/Tools~/Checks" -c Release -- kerbs server/towns
+          dotnet run --project "unity/Tools~/Checks" -c Release -- fences server/towns 24
       # Road hierarchy (FHWA's shares), the ring road, eras, transect zones, neighbourhood units and a second centre.
       - name: Game — towns planned like real ones
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- plan

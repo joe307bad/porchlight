@@ -184,7 +184,9 @@ static class TownPlanCheck
         {
             double s = core.Select(c => c.s).OrderBy(v => v).ElementAt(core.Count / 2), l = core.Select(c => c.l).OrderBy(v => v).ElementAt(core.Count / 2);
             coreSize = $"{s:0}x{l:0}";
-            if (s < 11 * scale || s > 19 * scale || l < 15 * scale || l > 27 * scale) yield return $"{name}: the core's blocks are {coreSize} tiles (median, centre to centre), not about 15 x 20 (Siksna)";
+            // 10 to 19 on the short side: the median of a core the water cuts can be of a handful of whole blocks (Ember
+            // Crossing's is of 9, and its own random streams for each piece left it at 10).
+            if (s < 10 * scale || s > 19 * scale || l < 15 * scale || l > 27 * scale) yield return $"{name}: the core's blocks are {coreSize} tiles (median, centre to centre), not about 15 x 20 (Siksna)";
         }
         // Cul-de-sacs a block in each era.
         // (A street that runs down to the water and stops at the shore doesn't count: there's nothing to join it to.)

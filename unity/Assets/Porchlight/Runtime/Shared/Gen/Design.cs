@@ -20,7 +20,7 @@ using Porchlight.Model;
 
 namespace Porchlight.Gen
 {
-    public sealed class DesignStage : IStage
+    public sealed class DesignStage : IStepwiseStage
     {
         public string Name => "design";
 
@@ -48,6 +48,8 @@ namespace Porchlight.Gen
         /// <summary>The most buildings a roundabout may take out of its corners without an editor asking for it.</summary>
         const int ROUNDABOUT_TAKES = 2;
         const int MOST_RELIEF = 3;
+        /// <summary>How many origins' trips are loaded in a share of the assignment.</summary>
+        const int ORIGINS_A_PART = 100;
         /// <summary>
         /// The warrants, at a game town's scale (tune). Real practice (NCHRP 457, the ITE cross-product rule) is a left
         /// pocket at a signal from 100 an hour turning, or 50,000 turning × oncoming; a town of a few thousand rarely
@@ -57,13 +59,16 @@ namespace Porchlight.Gen
         const double STRAIGHT = 0.5;
         static readonly double SHARP = 60 * Math.PI / 180, SLIP_BEND = 75 * Math.PI / 180;
 
-        public TownModel Run(TownModel model, Rng rng)
+        public TownModel Run(TownModel model, Rng rng) => Stepwise.Drain<TownModel>(done => Steps(model, rng, done));
+
+        /// <summary>The design a share at a time (the web build has no threads): demand, each round of the assignment, lanes, relief, the junctions.</summary>
+        public IEnumerable<string> Steps(TownModel model, Rng rng, Action<TownModel> done)
         {
             var next = model.With();
             // The roads are changed (relief routes reclassed): a copy, so the model before this stage keeps its own.
             next.roads = CloneRoads(model.roads);
             var buildings = new List<Building>(model.buildings);
-            next.design = Design(next, buildings);
+            foreach (var part in Design(next, buildings, x => next.design = x)) yield return part;
             if (buildings.Count != model.buildings.Count)
             {
                 // Houses taken for a wider road or a ring: the rest renumbered (a building's id is its place in the
@@ -97,7 +102,7 @@ namespace Porchlight.Gen
                 }
             }
             next.buildings = buildings;
-            return next;
+            done(next);
         }
 
         public List<string> Check(TownModel model)
@@ -186,7 +191,10 @@ namespace Porchlight.Gen
 
         // --- The design ---------------------------------------------------------------------------------------
 
-        static RoadDesign Design(TownModel model, List<Building> buildings)
+        /// <summary>How many junctions are designed in a share.</summary>
+        const int JUNCTIONS_A_PART = 40;
+
+        static IEnumerable<string> Design(TownModel model, List<Building> buildings, Action<RoadDesign> done)
         {
             var roads = model.roads;
             var p = model.@params;
@@ -194,7 +202,11 @@ namespace Porchlight.Gen
             var d = new RoadDesign();
             foreach (var e in roads.edges) d.edges.Add(new EdgeDesign { edge = e.id, width = BaseWidth(e.kind, p) });
             foreach (var n in roads.nodes) d.nodes.Add(new NodeDesign { node = n.id });
-            if (roads.edges.Count == 0) return d;
+            if (roads.edges.Count == 0)
+            {
+                done(d);
+                yield break;
+            }
 
             // Editors' overrides on roads: class first (it changes ranks), one-way, locks.
             foreach (var e in roads.edges)
@@ -235,10 +247,12 @@ namespace Porchlight.Gen
 
             var net = BuildNet(model, d);
             var demand = Demand(model, net, homes, jobs, gate);
-            Assign(net, demand);
+            yield return " demand";
+            foreach (var part in AssignSteps(net, demand)) yield return part;
 
             // Through lanes and medians, link by link.
             SetLanes(model, d, net, buildings, sk);
+            yield return " lanes";
 
             // Relief routes for arterials still over capacity.
             int relieved = 0;
@@ -250,11 +264,12 @@ namespace Porchlight.Gen
                 if (relieved >= MOST_RELIEF) break;
                 if (VC(d.edges[id]) <= 1.0 || d.edges[id].locked) continue;
                 if (TryRelief(model, d, id, demand)) relieved++;
+                yield return " relief";
             }
             if (relieved > 0)
             {
                 net = BuildNet(model, d);
-                Assign(net, demand);
+                foreach (var part in AssignSteps(net, demand)) yield return part;
                 SetFlows(d, net);
             }
 
@@ -280,16 +295,19 @@ namespace Porchlight.Gen
                     int n = near[k].node, notes = d.notes.Count;
                     DesignJunction(model, d, net, n, buildings, taken, sk, forceRoundabout: true);
                     designed.Add(n);
+                    yield return " roundabout";
                     made = d.nodes[n].form == JunctionForm.Roundabout;
                     // Only the last try says why it couldn't.
                     if (!made) d.notes.RemoveRange(notes, d.notes.Count - notes);
                 }
                 if (!made) d.notes.Add(new DesignNote { at = Regions.Middle(model, r), text = "No room for a roundabout in the regenerated area" });
             }
+            int junctions = 0;
             for (int n = 0; n < roads.nodes.Count; n++)
             {
                 if (degree[n] < 3 || gate[n] || designed.Contains(n)) continue;
                 DesignJunction(model, d, net, n, buildings, taken, sk);
+                if (++junctions % JUNCTIONS_A_PART == 0) yield return " junctions";
             }
             if (taken.Count > 0) buildings.RemoveAll(b => taken.Contains(b.id));
 
@@ -299,7 +317,7 @@ namespace Porchlight.Gen
                 if (ed.vc > 1.0 && e.kind != RoadKind.Path)
                     d.notes.Add(new DesignNote { at = Geo.PolylinePointAt(e.points, Geo.PolylineLength(e.points) / 2), text = $"Over capacity at the peak ({ed.vc:0.00} of what it carries)" });
             }
-            return d;
+            done(d);
         }
 
         static double VC(EdgeDesign e) => e.vc;
@@ -428,8 +446,12 @@ namespace Porchlight.Gen
             return trips;
         }
 
-        static void Dijkstra(Net net, int from, double[] arcCost, double[] cost, int[] pred)
+        static void Dijkstra(Net net, int from, double[] arcCost, double[] cost, int[] pred) => Dijkstra(net, from, arcCost, cost, pred, null);
+
+        /// <summary>Least-cost paths from `from`; `settled`, if given, gets the junctions reached in the order they were settled (cheapest first).</summary>
+        static void Dijkstra(Net net, int from, double[] arcCost, double[] cost, int[] pred, List<int> settled)
         {
+            settled?.Clear();
             int n = net.nodes;
             for (int i = 0; i < n; i++)
             {
@@ -437,31 +459,69 @@ namespace Porchlight.Gen
                 pred[i] = -1;
             }
             cost[from] = 0;
-            var heap = new SortedSet<(double c, int node)>();
-            heap.Add((0, from));
+            // A binary heap, least (cost, node) first: a junction whose cost falls is pushed again and its old entry
+            // skipped when it comes up, so the junctions are settled in the very order a sorted set would give.
+            var heap = new List<(double c, int node)> { (0, from) };
             while (heap.Count > 0)
             {
-                var top = heap.Min;
-                heap.Remove(top);
+                var top = Pop(heap);
                 int u = top.node;
                 if (top.c > cost[u]) continue;
+                settled?.Add(u);
                 foreach (int a in net.outs[u])
                 {
                     int v = net.head[a];
                     double c = top.c + arcCost[a];
                     if (c < cost[v] - 1e-12)
                     {
-                        if (!double.IsInfinity(cost[v])) heap.Remove((cost[v], v));
                         cost[v] = c;
                         pred[v] = a;
-                        heap.Add((c, v));
+                        Push(heap, (c, v));
                     }
                 }
             }
         }
 
+        static bool Less((double c, int node) a, (double c, int node) b) => a.c < b.c || (a.c == b.c && a.node < b.node);
+
+        static void Push(List<(double c, int node)> heap, (double c, int node) item)
+        {
+            heap.Add(item);
+            for (int i = heap.Count - 1; i > 0;)
+            {
+                int up = (i - 1) / 2;
+                if (!Less(heap[i], heap[up])) break;
+                (heap[i], heap[up]) = (heap[up], heap[i]);
+                i = up;
+            }
+        }
+
+        static (double c, int node) Pop(List<(double c, int node)> heap)
+        {
+            var top = heap[0];
+            int last = heap.Count - 1;
+            heap[0] = heap[last];
+            heap.RemoveAt(last);
+            for (int i = 0; ;)
+            {
+                int l = 2 * i + 1, r = l + 1, least = i;
+                if (l < heap.Count && Less(heap[l], heap[least])) least = l;
+                if (r < heap.Count && Less(heap[r], heap[least])) least = r;
+                if (least == i) break;
+                (heap[i], heap[least]) = (heap[least], heap[i]);
+                i = least;
+            }
+            return top;
+        }
+
         /// <summary>Four rounds of all-or-nothing loading on BPR costs, averaged (MSA): flows on every arc and every turn.</summary>
         static void Assign(Net net, Trips trips)
+        {
+            foreach (var _ in AssignSteps(net, trips)) { }
+        }
+
+        /// <summary>The assignment (Assign) a share at a time: a round, or part of one in a big town.</summary>
+        static IEnumerable<string> AssignSteps(Net net, Trips trips)
         {
             int n = net.nodes, arcs = net.tail.Length;
             var x = new double[arcs];
@@ -469,7 +529,7 @@ namespace Porchlight.Gen
             var cost = new double[n];
             var pred = new int[n];
             var acc = new double[n];
-            var order = new int[n];
+            var settled = new List<int>(n);
             for (int round = 1; round <= MSA_ROUNDS; round++)
             {
                 var arcCost = new double[arcs];
@@ -484,13 +544,14 @@ namespace Porchlight.Gen
                 for (int k = 0; k < trips.origins.Count; k++)
                 {
                     int o = trips.origins[k];
-                    Dijkstra(net, o, arcCost, cost, pred);
+                    if (k > 0 && k % ORIGINS_A_PART == 0) yield return " assign";
+                    Dijkstra(net, o, arcCost, cost, pred, settled);
                     Array.Clear(acc, 0, n);
                     foreach (var (node, t) in trips.to[k]) acc[node] += t;
-                    for (int i = 0; i < n; i++) order[i] = i;
-                    Array.Sort(order, (a, b) => cost[b].CompareTo(cost[a]));
-                    foreach (int v in order)
+                    // Dearest first, so each junction's trips are all in before they're passed back along its path.
+                    for (int s = settled.Count - 1; s >= 0; s--)
                     {
+                        int v = settled[s];
                         if (double.IsInfinity(cost[v]) || v == o || acc[v] <= 0) continue;
                         int a = pred[v];
                         if (a < 0) continue;
@@ -517,6 +578,7 @@ namespace Porchlight.Gen
                     if (v > 1e-6) next[key] = v;
                 }
                 moves = next;
+                yield return " assign";
             }
             Array.Copy(x, net.flow, arcs);
             net.moves.Clear();
