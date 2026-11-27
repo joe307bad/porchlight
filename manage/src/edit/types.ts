@@ -149,9 +149,8 @@ export interface Problem {
 }
 
 export interface Changes {
-  housesLost: number;
-  housesNew: number;
-  lostHouses: Pt[];
+  /** The people living in the town, before and after. */
+  population: [number, number];
   shops: [number, number];
   roadsAdded: number;
   roadsRemoved: number;

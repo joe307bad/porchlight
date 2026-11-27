@@ -75,8 +75,10 @@ and **settled**:
 
 The answer's `skeleton` is what it settled on. Its `regions` is `[{ index, ok, text }]`, saying whether
 each region has what it wanted (`text`, for example "No room for a roundabout there"). The cache holds
-each key's model through the zoo while the skeleton's `center` is unchanged (a moved bullseye grows it
-again from the site), and a `day` is kept by key and skeleton (a day is over a minute's work in Porchlight).
+each key's model through the main roads (`roads`), whatever the bullseye: a cached model has its
+`downtown` set again from the skeleton's `center`. A skeleton with its own `mains` is cached by those too.
+A `day` is kept by key and skeleton (a day is over a minute's work in Porchlight). The server sends `day`
+to a second worker of its own, so a day never holds up a `plan`.
 
 **`town`**
 
@@ -99,20 +101,21 @@ again from the site), and a `day` is kept by key and skeleton (a day is over a m
   "blocks": [ { "id": 0, "poly": [[x,y], …], "transect": 4, "era": "core|garden|postwar", "park": false } ],
   "buildings": [ { "id": 0, "kind": "house|shop|workshop|church|hall|school|supermarket|petrol|fire|clinic", "poly": [[x,y], …], "floors": 2 } ],
   "notes": [ { "at": [x,y], "text": "Elm Street is still over capacity (1.2)" } ],
-  "stats": { "houses": 1789, "shops": 120, "buildings": 2171, "roads": 502, "junctions": 307,
+  "stats": { "houses": 1789, "people": 4473, "shops": 120, "buildings": 2171, "roads": 502, "junctions": 307,
              "roundabouts": 2, "pockets": 14, "signals": 7, "ms": { "roads": 40, "streets": 120 } }
 }
 ```
 
 **`problems`**: `[{ level: "error" | "warning", text, at: [x,y] | null }]`. Errors stop Commit. An error
 is a stage's own check that settling couldn't put right (`at: null`), which is rare: settling leaves out
-whatever broke it. Warnings: a region without what it wanted (as in `regions`), and houses lost. The
+whatever broke it. Warnings: a region without what it wanted (as in `regions`), and a fall in the town's
+population ("Population down by 40 (1,210 → 1,170)", `at: null`). The
 junction gap and angle checks, the design's notes and the over-capacity and pinned-point warnings are gone
 (street-editor.md §13). With no design yet (`model.design` null), roads have `design: null`, junctions
 `form: "plain"` and the skeleton's own control for them (else `"auto"`), and the roundabout, pocket and
 signal counts are 0.
 
-**`changes`** (when `base` is given): `{ housesLost, housesNew, lostHouses: [[x,y]], shops: [before, after],
+**`changes`** (when `base` is given): `{ population: [before, after], shops: [before, after],
 roadsAdded, roadsRemoved, roundabouts: [before, after], signals: [before, after] }`.
 
 **`day`**: `{ trips, meanCarMin, p90CarMin, meanWalkMin, failed, gaveUp,

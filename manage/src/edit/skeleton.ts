@@ -291,3 +291,17 @@ export function latestRegionNote(a: PlanAnswer, planned: Skeleton): { ok: boolea
   const r = a.regions?.find((x) => x.index === last);
   return r?.text ? { ok: r.ok, text: r.text } : null;
 }
+
+/** A warning when the draft houses fewer people than the town does now (no list of houses lost: just the net loss). */
+export function populationNote(a: PlanAnswer): { ok: boolean; text: string } | null {
+  const p = a.changes?.population;
+  if (!p || p[1] >= p[0]) return null;
+  return { ok: false, text: `Population down by ${(p[0] - p[1]).toLocaleString()} (${p[0].toLocaleString()} → ${p[1].toLocaleString()})` };
+}
+
+/** The one line under the boxes: what the newest area couldn't have, else a fall in population, else the area's note. */
+export function noteOf(a: PlanAnswer, planned: Skeleton): { ok: boolean; text: string } | null {
+  const region = latestRegionNote(a, planned);
+  if (region && !region.ok) return region;
+  return populationNote(a) ?? region;
+}

@@ -28,7 +28,7 @@ let planProblems: { level: string; text: string; at: number[] | null }[] = [];
 const fakeDraft: DraftClient = {
   async request(req): Promise<DraftAnswer> {
     asked.push(req);
-    if (req.op === 'plan') return { ok: true, ms: 5, town: { roads: [] }, problems: planProblems, changes: req.base ? { housesLost: 1 } : null };
+    if (req.op === 'plan') return { ok: true, ms: 5, town: { roads: [] }, problems: planProblems, changes: req.base ? { population: [100, 98] } : null };
     if (req.op === 'houses') return { ok: true, houses: NEW_HOUSES };
     if (req.op === 'day') return { ok: true, ms: 9, day: { trips: req.skeleton ? 2 : 1 } };
     return { ok: false, error: 'no such op' };

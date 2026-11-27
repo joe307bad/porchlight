@@ -83,9 +83,9 @@ namespace Porchlight.Gen
             // (the junction design widens them to the highway's two lanes each way, DesignStage).
             var reserve = DesignStage.GateRoads(model);
             double reach = DesignStage.GateReach(p);
-            foreach (var block in model.blocks)
+            // Each block's lots, a pure function of the block: shared out over threads where there are some.
+            List<List<int>> PiecesOf(Block block)
             {
-                yield return "/block";
                 var tiles = new List<int>();
                 foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h))
                 {
@@ -103,19 +103,51 @@ namespace Porchlight.Gen
                 double maxSize = Math.Max(1.5 * p.lotMinSize, p.lotMaxSize * TownPlan.Rules(block.transect).lotScale);
                 var blockRng = Rng.Local(model.seed, Regions.Stream(model, "lots", Geo.PolygonCentroid(block.polygon)), Signature.OfPolygon(block.polygon));
                 foreach (var comp in Parcels.Components(tiles, w)) Split(comp, w, maxSize, blockRng, pieces);
-                int looked = 0;
-                foreach (var piece in pieces)
-                {
-                    // A big block's lots a share at a time too (a town's farmland was one block of 100 ms).
-                    if (++looked % PIECES_A_STEP == 0) yield return "/block";
-                    if (piece.Count < p.lotMinSize) continue;
-                    var counts = Parcels.FrontageCounts(piece, g, w, h);
-                    if (counts[0] == 0 && counts[1] == 0 && counts[2] == 0 && counts[3] == 0) continue;
-                    var rings = Parcels.Outline(piece, w);
-                    if (rings.Count != 1) continue;
-                    list.Add(new Lot { id = list.Count, blockId = block.id, polygon = rings[0], frontageEdgeId = FrontageEdge(piece, g, w, h) });
-                }
+                return pieces;
             }
+            Lot LotOf(Block block, List<int> piece)
+            {
+                if (piece.Count < p.lotMinSize) return null;
+                var counts = Parcels.FrontageCounts(piece, g, w, h);
+                if (counts[0] == 0 && counts[1] == 0 && counts[2] == 0 && counts[3] == 0) return null;
+                var rings = Parcels.Outline(piece, w);
+                if (rings.Count != 1) return null;
+                return new Lot { blockId = block.id, polygon = rings[0], frontageEdgeId = FrontageEdge(piece, g, w, h) };
+            }
+            Regions.Count(model);
+            if (model.blocks.Count > 0) Regions.At(model, Geo.PolygonCentroid(model.blocks[0].polygon));
+            var made = new List<Lot>[model.blocks.Count];
+            if (Work.ForEach != null)
+            {
+                Work.ForEach(made.Length, i =>
+                {
+                    var mine = new List<Lot>();
+                    foreach (var piece in PiecesOf(model.blocks[i])) mine.Add(LotOf(model.blocks[i], piece));
+                    made[i] = mine;
+                });
+                yield return "/block";
+            }
+            else
+                for (int i = 0; i < made.Length; i++)
+                {
+                    yield return "/block";
+                    var mine = new List<Lot>();
+                    int looked = 0;
+                    foreach (var piece in PiecesOf(model.blocks[i]))
+                    {
+                        // A big block's lots a share at a time too (a town's farmland was one block of 100 ms).
+                        if (++looked % PIECES_A_STEP == 0) yield return "/block";
+                        mine.Add(LotOf(model.blocks[i], piece));
+                    }
+                    made[i] = mine;
+                }
+            foreach (var lots in made)
+                foreach (var lot in lots)
+                {
+                    if (lot == null) continue;
+                    lot.id = list.Count;
+                    list.Add(lot);
+                }
 
             var landmarks = new List<Landmark>();
             if (list.Count > 0)

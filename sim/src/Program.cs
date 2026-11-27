@@ -68,6 +68,8 @@ namespace Porchlight.Sim
 
         static int Main(string[] args)
         {
+            // Towns are grown here with every core (Gen.Work): the same towns, sooner.
+            Porchlight.Gen.Work.ForEach = (n, body) => System.Threading.Tasks.Parallel.For(0, n, body);
             if (args.Length >= 2 && args[0] == "--follow") return Follow.Run(args[1]);
             // --draft: the street editor's draft worker (Draft.cs), JSON lines on stdin and stdout.
             if (args.Length >= 1 && args[0] == "--draft") return Draft.Run(Console.In, Console.Out);

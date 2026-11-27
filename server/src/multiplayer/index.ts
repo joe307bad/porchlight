@@ -79,7 +79,9 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   setSim(simLink);
   const traffic = new TrafficFeed(deps, undefined, undefined, simLink);
   const draft = opts.draft !== undefined ? opts.draft : opts.sim ? new DraftWorker(opts.sim) : null;
-  const edit = createEditRoutes(deps, { draft, editors: editorsFrom(opts.editors ?? process.env.EDITORS), rebuildSeconds: opts.rebuildSeconds });
+  // Days get a worker of their own: a day of Porchlight is over a minute's work, and plans mustn't wait behind it.
+  const days = opts.draft !== undefined ? opts.draft : opts.sim ? new DraftWorker(opts.sim, 'days') : null;
+  const edit = createEditRoutes(deps, { draft, days, editors: editorsFrom(opts.editors ?? process.env.EDITORS), rebuildSeconds: opts.rebuildSeconds });
 
   const httpServer = createServer();
   const server = new Server({
@@ -109,6 +111,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
     traffic.close();
     simLink?.close();
     draft?.close();
+    if (days !== draft) days?.close();
     setSim(null);
     return opts.persistence.close();
   });

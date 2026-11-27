@@ -39,8 +39,10 @@ test('the draft worker plans a town, what changed when the downtown moves, and a
     assert.deepEqual(moved.town.center, t.center);
     assert.deepEqual(plain.town.downtown, t.center);
     assert.notDeepEqual(moved.town.downtown, t.center);
-    assert.equal(typeof moved.changes.housesLost, 'number');
-    assert.equal(moved.changes.lostHouses.length, moved.changes.housesLost);
+    // What changed is told as the town's people, before and after: not a list of houses.
+    assert.equal(moved.changes.population.length, 2);
+    assert.equal(moved.changes.population[0], t.stats.people);
+    assert.ok(!('lostHouses' in moved.changes));
     assert.equal(moved.changes.shops[0], t.stats.shops);
 
     // A few blocks near the middle regenerated, wanting a park: the worker settles on a skeleton (the parks the

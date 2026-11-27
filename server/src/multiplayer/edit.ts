@@ -44,6 +44,8 @@ export function editorsFrom(raw: string | undefined): '*' | Set<string> {
 export interface EditOptions {
   /** The draft worker; none: the routes that need it answer 503. */
   draft: DraftClient | null;
+  /** The worker that runs days (a minute or more each), so plans never wait behind one; the draft worker if none. */
+  days?: DraftClient | null;
   editors: '*' | Set<string>;
   rebuildSeconds?: number;
 }
@@ -170,10 +172,11 @@ export function createEditRoutes(deps: GameDeps, opts: EditOptions) {
         const b = await body<{ town?: unknown; skeleton?: unknown }>();
         const town = await editable(b.town);
         const now = await current(town);
-        const w = worker();
+        const w = opts.days ?? worker();
+        // A second press while the first still waits replaces it.
         const [draft, live] = await Promise.all([
-          w.request({ op: 'day', key: town.key, skeleton: skeletonOf(b.skeleton) }),
-          w.request({ op: 'day', key: town.key, skeleton: now.skeleton }),
+          w.request({ op: 'day', key: town.key, skeleton: skeletonOf(b.skeleton) }, `day-draft:${account.id}:${town.key}`),
+          w.request({ op: 'day', key: town.key, skeleton: now.skeleton }, `day-live:${account.id}:${town.key}`),
         ]);
         const failed = [draft, live].find((a) => !a.ok);
         if (failed) return send(502, { error: failed.error ?? 'The day could not be run.' });

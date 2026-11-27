@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as api from './api.ts';
 import { DEFAULT_EDIT_LAYERS, EditRenderer, type EditLayers } from './canvas.ts';
-import { addBlocks, addRegion, canCommit, changeCount, latestRegionNote, moveDowntown, NO_WANT, normalize, rebase, reselect, sameSkeleton, toggleBlock } from './skeleton.ts';
+import { addBlocks, addRegion, canCommit, changeCount, moveDowntown, NO_WANT, normalize, noteOf, rebase, reselect, sameSkeleton, toggleBlock } from './skeleton.ts';
 import type { Changes, CommitAnswer, Commands, Day, Pt, Skeleton, Town, Want } from './types.ts';
 
 const UNDO_CAP = 100;
@@ -107,7 +107,7 @@ export function EditScreen({ townKey, onBack }: { townKey: string; onBack: () =>
           // The blocks have been planned again: pick the new ones in the same place.
           setSelection((sel) => reselect(t.blocks, sel));
           setChanges(a.changes ?? null);
-          setNote(latestRegionNote(a, planned));
+          setNote(noteOf(a, planned));
           setPlanMs(a.ms ?? null);
         })
         .catch((e: Error) => {
@@ -198,7 +198,6 @@ export function EditScreen({ townKey, onBack }: { townKey: string; onBack: () =>
     if (!renderer) return;
     renderer.pending = pending;
     renderer.downtown = skel.center ?? null;
-    renderer.lost = changes?.lostHouses ?? [];
     renderer.redraw();
   }, [renderer, pending, skel.center, changes]);
   useEffect(() => {
@@ -526,8 +525,9 @@ export function EditScreen({ townKey, onBack }: { townKey: string; onBack: () =>
 function ChangesView({ c }: { c: Changes }) {
   const pair = (label: string, [a, b]: [number, number]) => (a !== b ? <li key={label}>{`${label}: ${a} → ${b}`}</li> : null);
   const items = [
-    c.housesLost ? <li key="lost" className="bad">{c.housesLost} houses lost (marked ✕)</li> : null,
-    c.housesNew ? <li key="new">{c.housesNew} new houses</li> : null,
+    c.population && c.population[0] !== c.population[1] ? (
+      <li key="people" className={c.population[1] < c.population[0] ? 'bad' : undefined}>{`Population: ${c.population[0].toLocaleString()} → ${c.population[1].toLocaleString()}`}</li>
+    ) : null,
     c.roadsAdded ? <li key="ra">{c.roadsAdded} roads added</li> : null,
     c.roadsRemoved ? <li key="rr">{c.roadsRemoved} roads taken out</li> : null,
     pair('Shops', c.shops),

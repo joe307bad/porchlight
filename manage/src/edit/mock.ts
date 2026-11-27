@@ -418,15 +418,11 @@ function problemsOf(town: Town): Problem[] {
 }
 
 function changesOf(base: Town, draft: Town): Changes {
-  const houses = (t: Town) => new Set(t.buildings.filter((b) => b.kind === 'house').map((b) => `${b.poly[0][0]},${b.poly[0][1]}`));
-  const [hb, hd] = [houses(base), houses(draft)];
-  const lost = [...hb].filter((h) => !hd.has(h));
+  const people = (t: Town) => Math.round(t.buildings.filter((b) => b.kind === 'house').length * 2.5);
   const roadKey = (r: TownRoad) => r.pts.map((p) => p.map(Math.round).join(',')).join(';');
   const rb = new Set(base.roads.map(roadKey)), rd = new Set(draft.roads.map(roadKey));
   return {
-    housesLost: lost.length,
-    housesNew: [...hd].filter((h) => !hb.has(h)).length,
-    lostHouses: lost.map((h) => h.split(',').map(Number) as Pt),
+    population: [people(base), people(draft)],
     shops: [base.stats.shops as number, draft.stats.shops as number],
     roadsAdded: [...rd].filter((r) => !rb.has(r)).length,
     roadsRemoved: [...rb].filter((r) => !rd.has(r)).length,
@@ -494,7 +490,8 @@ export const mock = {
   },
   async commit(skeleton: Skeleton, message: string): Promise<CommitAnswer | { problems: Problem[] }> {
     await wait(400);
-    const lost = changesOf(grow(state.current).town, grow(skeleton).town).housesLost;
+    const [was, now] = changesOf(grow(state.current).town, grow(skeleton).town).population;
+    const lost = Math.max(0, Math.round((was - now) / 2.5));
     state.rev++;
     state.current = normalize(skeleton);
     state.draft = null;

@@ -15,6 +15,8 @@ import {
   inPoly,
   isSelected,
   latestRegionNote,
+  noteOf,
+  populationNote,
   middle,
   moveDowntown,
   NO_WANT,
@@ -174,4 +176,13 @@ test('rebase lays the draft over a newer revision and lists what both changed', 
   const r3 = rebase(base, j('signal'), j('stop'));
   assert.equal(r3.clashes.length, 1);
   assert.deepEqual(r3.skeleton.junctions, [{ at: [10, 10], control: 'signal' }]);
+});
+
+test('a fall in population is one warning line; a region that lacks what it asked for comes first', () => {
+  const s = { v: 1, regions: [{ blocks: [], salt: 1, want: { roundabout: true, park: false, school: false, shops: false, houses: false } }] } as any;
+  const down = { ok: true, changes: { population: [1200, 1150], shops: [1, 1], roadsAdded: 0, roadsRemoved: 0, roundabouts: [0, 0], signals: [0, 0] } } as any;
+  assert.deepEqual(populationNote(down), { ok: false, text: 'Population down by 50 (1,200 → 1,150)' });
+  assert.equal(populationNote({ ...down, changes: { ...down.changes, population: [1200, 1300] } }), null);
+  assert.equal(noteOf(down, s)?.text, 'Population down by 50 (1,200 → 1,150)');
+  assert.equal(noteOf({ ...down, regions: [{ index: 0, ok: false, text: 'No room for a roundabout there' }] }, s)?.text, 'No room for a roundabout there');
 });

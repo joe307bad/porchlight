@@ -50,7 +50,6 @@ export class EditRenderer {
   /** A re-plan's on its way: what's drawn fades. */
   pending = false;
   /** The houses the draft loses. */
-  lost: Pt[] = [];
   /** The bullseye as the skeleton has it (shown before the answer catches up); else the answer's downtown. */
   downtown: Pt | null = null;
 
@@ -468,19 +467,6 @@ export class EditRenderer {
       g.lineWidth = 2;
       g.beginPath();
       g.arc(p.x, p.y, 8, 0, Math.PI * 2);
-      g.stroke();
-    }
-    // Houses the draft loses.
-    g.strokeStyle = '#ff6b6b';
-    g.lineWidth = 2;
-    for (const h of this.lost) {
-      const p = this.toScreen([h[0] + 1, h[1] + 1]);
-      const r = Math.max(3, s * 0.8);
-      g.beginPath();
-      g.moveTo(p.x - r, p.y - r);
-      g.lineTo(p.x + r, p.y + r);
-      g.moveTo(p.x + r, p.y - r);
-      g.lineTo(p.x - r, p.y + r);
       g.stroke();
     }
   }

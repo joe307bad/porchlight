@@ -675,7 +675,7 @@ of failing a test. **Errors** stop Commit; **warnings** don't.
 | A street within 4 tiles alongside another road | warning (it'll be dropped) | `StreetsStage.MIN_APART` |
 | A link over 1.0 v/c in the design flow | warning | part A |
 | Arterial traffic routed through a neighbourhood's local streets | warning | the LTN rat-run test |
-| Houses lost, residents to rehouse | warning, with the count | §7.4 |
+| The town's population falls | warning, with the net loss (§13) | §7.4 |
 | A pinned point dropped (it broke after a generator change) | warning | §4.3 |
 
 ### 6.6 Run a day
@@ -1036,6 +1036,28 @@ outside the areas.
 - The ring has a solid edge line, broken where each road comes in, and a dashed give-way line across
   each entry.
 - A ring wide enough for two lanes has dashes between them all the way round.
+
+**What changed is the town's people, not its houses.** Planning an area again moves, adds and takes away
+houses, so a list of the houses lost (and crosses on the map) said little. The plan answers the town's
+population before and after (households × `LandStage.PEOPLE_A_HOME`), and Manage shows one warning line
+when it falls ("Population down by 40 (1,210 → 1,170)"). A note that the newest area couldn't have what
+was asked for comes first. Anyone whose house goes still moves to the nearest free one on commit (§7.4).
+
+**Speed.** A regenerate takes about a second in Porchlight, the first one included:
+- The draft worker keeps each town through its main roads, by key. The bullseye moves only the downtown,
+  which is set again on the kept town, so moving it doesn't grow the main roads again.
+- The lots and buildings stages place each block's lots and each lot's building on every core in the
+  simulation and the draft worker (`Gen/Work.cs`). Each is a pure function of its block or lot and is put
+  together in order afterwards, so the town is the same to the byte. The game (WebGL, no threads) places
+  them one at a time, as before.
+- The buildings check looks only at the roads near each building (it was a third of a second).
+- The parks the town kept green are taken from the edit screen's first plan, so the first regenerate
+  doesn't grow the town twice.
+
+**Run a day has a worker of its own.** A day of Porchlight is over a minute's work (draft and live, one
+after the other). It used to share the draft worker, so a regenerate clicked meanwhile waited for both.
+Days now run in a second worker, and a second click while one is running waits for it instead of
+starting another.
 
 **Checks.** `Checks regions` picks patches of blocks in each starter town and regenerates each with every
 option alone, all of them and none, three salts each, every stage checked. It fails a patch that comes

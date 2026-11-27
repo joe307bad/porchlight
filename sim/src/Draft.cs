@@ -29,23 +29,23 @@ namespace Porchlight.Sim
 {
     public static class Draft
     {
-        /// <summary>The last stage a cached model has run.</summary>
-        const string CACHED_THROUGH = "zoo";
-        /// <summary>The stage the bullseye first matters to: a moved centre runs from here.</summary>
+        /// <summary>The last stage a cached model has run: the main roads (the bullseye moves the downtown, which the streets on use).</summary>
+        const string CACHED_THROUGH = "roads";
+        /// <summary>The first stage after the terrain: a town with an editor's own main roads runs from here.</summary>
         const string CENTRE_STAGE = "site";
         const int CACHE_SIZE = 6;
 
         sealed class Cached
         {
-            public string key, centre;
+            public string key;
             public TownModel model;
             public Dictionary<string, long> ms;
             public long used;
         }
 
         static readonly List<Cached> cache = new List<Cached>();
-        /// <summary>Terrain and rivers alone (before the site), by key: what a moved bullseye starts from.</summary>
-        static readonly Dictionary<string, (TownModel model, Dictionary<string, long> ms)> terrain = new Dictionary<string, (TownModel, Dictionary<string, long>)>();
+        /// <summary>Terrain and rivers alone (before the site), by key, and the site's water and road cost from them (for the downtown).</summary>
+        static readonly Dictionary<string, (TownModel model, Dictionary<string, long> ms, byte[] water, float[] cost)> terrain = new Dictionary<string, (TownModel, Dictionary<string, long>, byte[], float[])>();
         /// <summary>Each base's summary (key + skeleton), so a re-plan against the same base doesn't grow it again.</summary>
         static readonly Dictionary<string, Summary> bases = new Dictionary<string, Summary>();
         static long tick;
@@ -107,11 +107,20 @@ namespace Porchlight.Sim
 
         // ---- growing a town ----
 
-        static string CentreSig(Skeleton s) => s?.center is Vec2 c ? $"{c.x.ToString("R", CultureInfo.InvariantCulture)},{c.y.ToString("R", CultureInfo.InvariantCulture)}" : "";
+        /// <summary>
+        /// What the stages before the streets depend on besides the key: an editor's own main roads, if any (the
+        /// bullseye moves only the downtown, set afresh on a cached model).
+        /// </summary>
+        static string RoadsSig(string baseKey, Skeleton s)
+        {
+            if (s?.mains == null) return baseKey;
+            var only = new Skeleton { mains = s.mains };
+            return baseKey + "\n" + only.ToJson();
+        }
 
         /// <summary>
-        /// The town from its key and this skeleton, every stage checked: from the cached terrain unless `full`.
-        /// Stage violations are kept (not thrown) so Manage can show them; `ms` is each stage's time.
+        /// The town from its key and this skeleton, every stage checked: from the cached main roads (or terrain) unless
+        /// `full`. Stage violations are kept (not thrown) so Manage can show them; `ms` is each stage's time.
         /// </summary>
         public static TownModel Grow(string key, Skeleton skeleton, bool full, out Dictionary<string, long> ms, out List<(string stage, string text)> violations)
         {
@@ -123,16 +132,18 @@ namespace Porchlight.Sim
             ms = new Dictionary<string, long>();
             violations = new List<(string, string)>();
             string baseKey = Skeletons.WithRev(key, 0);
-            string centre = CentreSig(skeleton);
+            string sig = RoadsSig(baseKey, skeleton);
             TownModel model = null;
             int from = 0;
             if (!full)
             {
-                var hit = cache.FirstOrDefault(c => c.key == baseKey && c.centre == centre);
-                if (hit != null)
+                var hit = cache.FirstOrDefault(c => c.key == sig);
+                if (hit != null && terrain.TryGetValue(baseKey, out var site))
                 {
                     hit.used = ++tick;
                     model = hit.model.With();
+                    // The downtown is the one thing the site decides that an editor moves.
+                    model.downtown = SiteStage.Downtown(skeleton?.center, model.center, model.townRadius, site.water, site.cost, model.width, model.height);
                     foreach (var kv in hit.ms) ms[kv.Key] = 0;
                     from = Array.FindIndex(Generator.Stages, s => s.Name == CACHED_THROUGH) + 1;
                 }
@@ -154,19 +165,22 @@ namespace Porchlight.Sim
                 ms[stage.Name] = sw.ElapsedMilliseconds;
                 foreach (var v in stage.Check(model)) violations.Add((stage.Name, v));
                 if (i + 1 < Generator.Stages.Length && Generator.Stages[i + 1].Name == CENTRE_STAGE && !terrain.ContainsKey(baseKey))
-                    terrain[baseKey] = (model.With(), Copy(ms));
-                if (stage.Name == CACHED_THROUGH && (full || cache.All(c => !(c.key == baseKey && c.centre == centre))))
-                    Keep(baseKey, centre, model.With(), Copy(ms));
+                {
+                    var rt = Raster.RoadTerrain(model);
+                    terrain[baseKey] = (model.With(), Copy(ms), rt.water, rt.cost);
+                }
+                if (stage.Name == CACHED_THROUGH && (full || cache.All(c => c.key != sig)))
+                    Keep(sig, model.With(), Copy(ms));
             }
             return model;
         }
 
         static Dictionary<string, long> Copy(Dictionary<string, long> d) => new Dictionary<string, long>(d);
 
-        static void Keep(string key, string centre, TownModel model, Dictionary<string, long> ms)
+        static void Keep(string key, TownModel model, Dictionary<string, long> ms)
         {
-            cache.RemoveAll(c => c.key == key && c.centre == centre);
-            cache.Add(new Cached { key = key, centre = centre, model = model, ms = ms, used = ++tick });
+            cache.RemoveAll(c => c.key == key);
+            cache.Add(new Cached { key = key, model = model, ms = ms, used = ++tick });
             while (cache.Count > CACHE_SIZE) cache.Remove(cache.OrderBy(c => c.used).First());
         }
 
@@ -175,6 +189,8 @@ namespace Porchlight.Sim
         sealed class Summary
         {
             public HashSet<(int, int)> houses;
+            /// <summary>The people living in the town: its households (Retail) at LandStage.PEOPLE_A_HOME each.</summary>
+            public int people;
             public int shops, roundabouts, signals;
             public List<(Vec2 a, Vec2 b)> roads;
         }
@@ -192,8 +208,17 @@ namespace Porchlight.Sim
             var skeleton = SkeletonOf(req);
             bool full = req.TryGetProperty("full", out var f) && f.ValueKind == JsonValueKind.True;
             var (model, ms, violations, regions) = Settle(key, ref skeleton, full);
+            long grown = sw.ElapsedMilliseconds;
             var layout = Layout.Build(model);
+            long laid = sw.ElapsedMilliseconds;
             var summary = Summarise(model, layout);
+            long summed = sw.ElapsedMilliseconds;
+            // Kept as a base too: the edit screen's first plan is the town as it is, what every later plan is against.
+            if (!full)
+            {
+                if (bases.Count > 16) bases.Clear();
+                bases[key + "\n" + (skeleton?.ToJson() ?? "")] = summary;
+            }
             var problems = new List<Problem>();
             // What Settle couldn't put right (it tries hard): the town can't be committed like this.
             foreach (var (stage, text) in violations) problems.Add(new Problem { level = "error", text = $"{stage}: {text}", at = null });
@@ -219,14 +244,13 @@ namespace Porchlight.Sim
             object changes = null;
             if (before != null)
             {
-                var lost = before.houses.Where(h => !summary.houses.Contains(h)).OrderBy(h => h.Item2).ThenBy(h => h.Item1).ToList();
-                int added = summary.houses.Count(h => !before.houses.Contains(h));
-                if (lost.Count > 0) problems.Add(new Problem { level = "warning", text = $"{lost.Count} house(s) lost: those living there move to the nearest free house", at = new Vec2(lost[0].Item1 + 0.5, lost[0].Item2 + 0.5) });
+                // Only the town's people, all told: houses come and go as an area is planned again, and anyone whose house
+                // goes moves to the nearest free one when it's committed.
+                if (summary.people < before.people)
+                    problems.Add(new Problem { level = "warning", text = $"Population down by {before.people - summary.people:N0} ({before.people:N0} → {summary.people:N0})", at = null });
                 changes = new Dictionary<string, object>
                 {
-                    ["housesLost"] = lost.Count,
-                    ["housesNew"] = added,
-                    ["lostHouses"] = lost.Select(h => new[] { h.Item1, h.Item2 }).ToList(),
+                    ["population"] = new[] { before.people, summary.people },
                     ["shops"] = new[] { before.shops, summary.shops },
                     ["roadsAdded"] = summary.roads.Count(r => !before.roads.Any(o => Skeleton.SameEnds(r.a, r.b, o.a, o.b))),
                     ["roadsRemoved"] = before.roads.Count(r => !summary.roads.Any(o => Skeleton.SameEnds(r.a, r.b, o.a, o.b))),
@@ -234,7 +258,9 @@ namespace Porchlight.Sim
                     ["signals"] = new[] { before.signals, summary.signals },
                 };
             }
+            long compared = sw.ElapsedMilliseconds;
             var town = Town(model, layout, skeleton, summary, ms);
+            long told = sw.ElapsedMilliseconds;
             var answer = new Dictionary<string, object>
             {
                 ["id"] = IdOf(id),
@@ -246,7 +272,7 @@ namespace Porchlight.Sim
                 ["problems"] = problems.Select(p => new Dictionary<string, object> { ["level"] = p.level, ["text"] = p.text, ["at"] = p.at is Vec2 a ? Pt(a) : null }).ToList(),
                 ["changes"] = changes,
             };
-            Log($"plan {key}{(skeleton != null ? " (edited)" : "")}{(full ? " full" : "")}: {sw.ElapsedMilliseconds} ms, {problems.Count(p => p.level == "error")} error(s), {problems.Count(p => p.level == "warning")} warning(s)");
+            Log($"plan {key}{(skeleton != null ? " (edited)" : "")}{(full ? " full" : "")}: {sw.ElapsedMilliseconds} ms (grow {grown}, layout {laid - grown}, summary {summed - laid}, base {compared - summed}, answer {told - compared}), {problems.Count(p => p.level == "error")} error(s), {problems.Count(p => p.level == "warning")} warning(s)");
             return answer;
         }
 
@@ -275,14 +301,21 @@ namespace Porchlight.Sim
         {
             if (!full && skeleton != null && skeleton.regions.Count > 0 && skeleton.parks == null)
             {
-                // The first area regenerated: the parks the town kept green kept so (Skeleton.parks), from the town as it was.
+                // The first area regenerated: the parks the town kept green kept so (Skeleton.parks), from the town as it
+                // was (kept from its plan when the edit screen opened, else grown again).
                 var before = Skeleton.FromJson(skeleton.ToJson());
                 before.regions.Clear();
-                var was = Grow(key, before.IsEmpty ? null : before, false, out _, out _);
+                if (before.IsEmpty) before = null;
+                if (!parksOf.TryGetValue(ParksSig(key, before), out var kept)) kept = LandStage.MoreParkMiddles(Grow(key, before, false, out _, out _));
                 skeleton = Skeleton.FromJson(skeleton.ToJson());
-                skeleton.parks = LandStage.MoreParkMiddles(was);
+                skeleton.parks = kept;
             }
             var model = Grow(key, skeleton, full, out var ms, out var violations);
+            if (skeleton == null || skeleton.regions.Count == 0)
+            {
+                if (parksOf.Count > 32) parksOf.Clear();
+                parksOf[ParksSig(key, skeleton)] = LandStage.MoreParkMiddles(model);
+            }
             var outcomes = Outcomes(model);
             if (full || skeleton == null) return (model, ms, violations, outcomes);
             int last = skeleton.regions.Count - 1;
@@ -323,6 +356,11 @@ namespace Porchlight.Sim
             }
             return (model, ms, violations, outcomes);
         }
+
+        /// <summary>The parks each town without regenerated areas kept green (LandStage.MoreParkMiddles), by ParksSig: what its first region keeps.</summary>
+        static readonly Dictionary<string, List<Vec2>> parksOf = new Dictionary<string, List<Vec2>>();
+
+        static string ParksSig(string key, Skeleton s) => Skeletons.WithRev(key, 0) + "\n" + (s?.ToJson() ?? "");
 
         /// <summary>Whether each regenerated area has what was wanted there.</summary>
         static List<RegionOutcome> Outcomes(TownModel m)
@@ -371,6 +409,7 @@ namespace Porchlight.Sim
             var s = new Summary
             {
                 houses = new HashSet<(int, int)>(HousesOf(model, layout).Select(h => { var a = Homes.Anchor(h); return (a.x, a.y); })),
+                people = (int)Math.Round((model.services?.households ?? 0) * LandStage.PEOPLE_A_HOME),
                 shops = model.buildings.Count(b => b.kind == BuildingKind.Shop),
                 roads = model.roads.edges.Select(e => (model.roads.nodes[e.from].at, model.roads.nodes[e.to].at)).ToList(),
             };
@@ -576,6 +615,7 @@ namespace Porchlight.Sim
                 ["stats"] = new Dictionary<string, object>
                 {
                     ["houses"] = summary.houses.Count,
+                    ["people"] = summary.people,
                     ["shops"] = summary.shops,
                     ["buildings"] = model.buildings.Count,
                     ["roads"] = g.edges.Count,

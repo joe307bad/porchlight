@@ -37,6 +37,8 @@ static class Program
 {
     static int Main(string[] args)
     {
+        // THREADS=1: grow towns with every core (Gen.Work), as the simulation does; else one thread, as the game.
+        if (Environment.GetEnvironmentVariable("THREADS") == "1") Porchlight.Gen.Work.ForEach = (n, body) => System.Threading.Tasks.Parallel.For(0, n, body);
         if (args.Length > 1 && args[0] == "net") return NetCheck.Run(args[1]);
         if (args.Length > 1 && args[0] == "mission") return MissionCheck.Run(args[1]);
         if (args.Length > 0 && args[0] == "chase") return ChaseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);

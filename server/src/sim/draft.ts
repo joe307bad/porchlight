@@ -43,7 +43,11 @@ export class DraftWorker implements DraftClient {
 
   private readonly cmd: SimCommand;
 
-  constructor(cmd: SimCommand) {
+  /** What its log lines say it is ("draft", or "days" for the one that runs days). */
+  private readonly name: string;
+
+  constructor(cmd: SimCommand, name = 'draft') {
+    this.name = name;
     this.cmd = { command: cmd.command, args: [...cmd.args, '--draft'] };
   }
 
@@ -56,7 +60,7 @@ export class DraftWorker implements DraftClient {
     proc.stdout.setEncoding('utf8');
     proc.stdout.on('data', (chunk: string) => this.read(chunk));
     proc.stderr.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split('\n')) if (line.trim()) this.log(`[draft] ${line.trim()}`);
+      for (const line of chunk.toString().split('\n')) if (line.trim()) this.log(`[${this.name}] ${line.trim()}`);
     });
     proc.stdin.on('error', () => {}); // it went: 'exit' says so
     proc.on('error', (err) => this.log(`draft: couldn't start ${this.cmd.command}: ${err.message}`));
