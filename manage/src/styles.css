@@ -1107,3 +1107,311 @@ p {
 .swatch.player-dot {
   border-radius: 50%;
 }
+
+/* The street editor (edit/EditScreen.tsx): the town full screen, its tools over the map, the draft's panel beside. */
+.edit {
+  display: flex;
+  height: 100%;
+}
+
+.edit-map {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.edit-tools {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.edit-tools > * {
+  pointer-events: auto;
+}
+
+.btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn kbd {
+  font: inherit;
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.edit-select,
+.edit-form select,
+.edit-message textarea {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.edit-layers {
+  position: absolute;
+  top: 52px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(16, 22, 29, 0.95);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.edit-banner {
+  position: absolute;
+  left: 50%;
+  bottom: 44px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(16, 22, 29, 0.96);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.edit-banner.warn {
+  border-color: var(--accent);
+  margin: 0;
+}
+
+.edit-warnings {
+  position: absolute;
+  left: 12px;
+  bottom: 40px;
+  padding: 6px 10px;
+  background: rgba(60, 12, 12, 0.92);
+  color: #ffb3b3;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.edit-status {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  right: 120px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.edit .bad {
+  color: var(--bad);
+}
+
+.edit .good {
+  color: var(--good);
+}
+
+.edit-panel-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 8px;
+}
+
+.edit-panel .panel-head {
+  justify-content: space-between;
+}
+
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.edit-form label:not(.check) {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.edit-form .check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.edit-seg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.edit-seg > span {
+  margin-right: auto;
+}
+
+.edit-seg.wrap {
+  flex-wrap: wrap;
+}
+
+.edit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.edit-problem.error .name {
+  color: var(--bad);
+}
+
+.edit-problem.warning .name {
+  color: var(--accent);
+}
+
+.edit-changes {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.edit-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 12px;
+  margin: 4px 0 8px;
+  font-size: 12px;
+}
+
+.edit-stats div {
+  display: flex;
+  justify-content: space-between;
+}
+
+.edit-stats dt {
+  color: var(--muted);
+}
+
+.edit-stats dd {
+  margin: 0;
+}
+
+.edit-day {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 4px 0 8px;
+}
+
+.edit-day th,
+.edit-day td {
+  text-align: right;
+  padding: 2px 4px;
+  font-weight: normal;
+}
+
+.edit-day th:first-child {
+  text-align: left;
+  color: var(--muted);
+}
+
+.edit-commit {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px 0 4px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+
+.edit-entry {
+  margin: 10px 0 4px;
+}
+
+.edit-modal-back {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 10;
+}
+
+.edit-modal {
+  max-width: 460px;
+}
+
+.edit-message {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0 4px;
+  font-size: 12px;
+}
+
+.edit-message textarea {
+  resize: vertical;
+}
+
+/* Narrow screens: the map on top, the panel under it; "Hide panel" folds it away. */
+@media (max-width: 720px) {
+  .edit {
+    flex-direction: column;
+  }
+
+  .edit-panel {
+    width: 100%;
+    max-height: 50%;
+    border-left: none;
+    border-top: 1px solid var(--line);
+  }
+
+  .edit.panel-closed .edit-panel {
+    display: none;
+  }
+
+  .edit-tools .btn kbd {
+    display: none;
+  }
+
+  .edit-status {
+    right: 100px;
+  }
+}
+
+@media (min-width: 721px) {
+  .edit-panel-toggle {
+    display: none;
+  }
+}
