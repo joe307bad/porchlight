@@ -88,12 +88,25 @@ Without Docker there's no Keycloak or game server: the game finds no sign-in ser
 
 **Persistent data** lives on a separate 10 GB EBS volume mounted at `/data`: the Postgres server and Caddy's certificates. To keep one Postgres on the small box, that server holds two databases: `keycloak`, and `porchlight` for the game. Each has its own role. `deploy.sh` creates the game's database and role, and resets that role's password (`GAME_DB_PASSWORD`) from Secrets Manager on every deploy. The volume has `prevent_destroy`, and AWS takes a daily snapshot and keeps 7.
 
+**Bandwidth and crawlers.** In November 2026 a crawler (Reflectionbot) ran up about 3.6 TB of EC2 egress, roughly $310, in ten days (#26). Every made-up path answered with the game's page, and each page it rendered pulled the ~24 MB build. What's in place now:
+- **Only real files are served.** Unknown paths are a 404, not the game (`docker/Caddyfile`).
+- **The build comes from a CDN.** `cdn.porchlight.joebad.com` is CloudFront in front of the box, serving `/Build/*` only (`terraform/main.tf`). CloudFront keeps the build at the edge for a day, and each deploy invalidates `/Build/*` (deploy.yml), so the box sends each build file about once per edge per deploy. Browsers revalidate with the edge (a 304), not with the box. The page loads the whole build, loader included, from the CDN, and falls back to the box if the CDN doesn't answer within 3 s (`unity/Assets/WebGLTemplates/Porchlight/index.html`). CloudFront's first 1 TB a month is free, then $0.085/GB.
+- **Known bad crawlers are dropped** by user agent in the Caddyfile, and `/robots.txt` keeps the rest out of `/Build/`, `/mp/`, `/auth/` and `/manage/`.
+- **Alarms** email the `porchlight-alerts` topic within the hour if the box sends over 5 GB in an hour (`porchlight-egress`) or the CDN sends over 10 GB (`porchlight-cdn-egress`). An AWS Budget (`data-transfer-out`, $10 a month, made by hand) catches it on the bill too, a day later.
+- The CloudWatch dashboard `porchlight-egress` graphs the box's egress.
+
 ### One-time setup
 
 1. **AWS credentials** for the deploy. The IAM user needs rights over:
    - EC2/VPC, IAM roles and instance profiles, Secrets Manager, DLM;
    - S3, for the state bucket `porchlight-terraform-state-<account>`, which the workflow creates;
-   - Route53 on the `joebad.com` zone, optionally.
+   - Route53 on the `joebad.com` zone (the CDN's records, and optionally the two A records);
+   - CloudFront and ACM (the build's CDN), and CloudWatch alarms and SNS topics named `porchlight-*`.
+
+   The local, untracked `scripts/provision.local.sh` (`*.local.sh` is gitignored) creates the user with exactly these.
+1. **Alert email.** Subscribe yourself to the alarms' topic (Terraform's `alerts_topic_arn` output), and click the link AWS emails:
+   `aws sns subscribe --topic-arn <alerts_topic_arn> --protocol email --notification-endpoint <you>`
+   It's done by hand so the address stays out of this public repo.
 2. **A Google OAuth client** (web application) in the Google Cloud console:
    - Authorized redirect URI: `https://auth.porchlight.joebad.com/realms/porchlight/broker/google/endpoint`
    - Authorized JavaScript origin: `https://auth.porchlight.joebad.com`

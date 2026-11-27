@@ -4,6 +4,47 @@
 {$DOMAIN} {
 	encode zstd gzip
 
+	# Crawlers. Reflectionbot rendered made-up paths (each one used to answer
+	# with the game's page), and every render pulled the ~24 MB WebGL build:
+	# ~750 GB a day of egress from ~95 IPs (#26). Drop its connections
+	# outright. Everyone else is asked to keep out of the build and the game.
+	# (A handle of its own, first: a bare `abort` sorts after the handles below
+	# and would never run.)
+	@badbots header_regexp User-Agent (?i)reflectionbot
+	handle @badbots {
+		abort
+	}
+	handle /robots.txt {
+		header Content-Type text/plain
+		respond "User-agent: *
+Disallow: /Build/
+Disallow: /mp/
+Disallow: /auth/
+Disallow: /manage/
+
+User-agent: Reflectionbot
+Disallow: /
+"
+	}
+
+	# The build is also served by the CDN (cdn.{$DOMAIN}, CloudFront, which
+	# fetches it from here), so the page loads it from another origin: let any
+	# page read it (it's public), and answer the preflight Unity's loader causes
+	# when it revalidates its cached copy (If-None-Match isn't a simple header).
+	@build path /Build/*
+	header @build Access-Control-Allow-Origin *
+	header @build Access-Control-Expose-Headers "ETag, Last-Modified, Content-Length, Content-Encoding"
+	@buildPreflight {
+		method OPTIONS
+		path /Build/*
+	}
+	handle @buildPreflight {
+		header Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+		header Access-Control-Allow-Headers *
+		header Access-Control-Max-Age 86400
+		respond 204
+	}
+
 	# The auth service: same origin as the app, so its cookies are first-party.
 	handle /auth/* {
 		reverse_proxy auth:3017
@@ -41,6 +82,11 @@
 	# so the browser unzips them (and compiles the wasm as it streams). Their
 	# names don't change between builds, so everything is revalidated (ETags)
 	# rather than cached for good; the game also keeps them in IndexedDB.
+	#
+	# Only real files: / is the game (index.html), and anything that isn't a
+	# file is a 404. It used to fall back to the game's page, so every made-up
+	# path was a "page" a crawler could render, each pulling the whole build
+	# (#26).
 	handle {
 		root * /srv/site
 		@unityweb path /Build/*.unityweb
@@ -52,7 +98,6 @@
 		@data path /Build/*.data.unityweb
 		header @data Content-Type application/octet-stream
 		header Cache-Control "no-cache"
-		try_files {path} /index.html
 		file_server
 	}
 

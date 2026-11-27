@@ -411,6 +411,229 @@ resource "aws_eip_association" "main" {
 }
 
 # =============================================================================
+# The game build's CDN: cdn.<domain>, CloudFront in front of this box
+# =============================================================================
+# In November 2026 a crawler rendered made-up paths, each pulling the ~24 MB
+# WebGL build, ~750 GB a day of EC2 egress at $0.09/GB (#26). The page now
+# loads the build from here (unity/Assets/WebGLTemplates/Porchlight/index.html,
+# falling back to the box if this doesn't answer). CloudFront keeps it at the
+# edge for a day and each deploy invalidates it, so the box sends a build about
+# once per edge per deploy, and CloudFront's first 1 TB a month is free. Only /Build/* is served; anything
+# else on cdn.<domain> is a 404 at the edge, so crawlers can't reach the box
+# through it.
+
+variable "dns_zone" {
+  description = "The Route53 zone the CDN's records go in (it predates this stack; only these records are managed here)"
+  default     = "joebad.com"
+}
+
+locals {
+  cdn_domain = "cdn.${var.domain}"
+}
+
+data "aws_route53_zone" "main" {
+  name = var.dns_zone
+}
+
+# CloudFront takes certificates from us-east-1 only, which is this stack's region.
+resource "aws_acm_certificate" "cdn" {
+  domain_name       = local.cdn_domain
+  validation_method = "DNS"
+  tags              = { Name = "porchlight-cdn" }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_route53_record" "cdn_validation" {
+  for_each = {
+    for o in aws_acm_certificate.cdn.domain_validation_options : o.domain_name => {
+      name   = o.resource_record_name
+      type   = o.resource_record_type
+      record = o.resource_record_value
+    }
+  }
+
+  zone_id         = data.aws_route53_zone.main.zone_id
+  name            = each.value.name
+  type            = each.value.type
+  records         = [each.value.record]
+  ttl             = 300
+  allow_overwrite = true
+}
+
+resource "aws_acm_certificate_validation" "cdn" {
+  certificate_arn         = aws_acm_certificate.cdn.arn
+  validation_record_fqdns = [for r in aws_route53_record.cdn_validation : r.fqdn]
+}
+
+# Kept a day at the edge whatever the box says (Caddy sends no-cache, which
+# with a minimum TTL of 0 CloudFront takes as "don't cache", and every request
+# went to the box). Each deploy invalidates /Build/* (deploy.yml), since the
+# build's file names don't change. Browsers still get the box's no-cache, so
+# they revalidate with the edge (a 304) instead of with the box. Nothing from
+# the viewer is in the key or sent on: the box gets its own Host, so Caddy
+# knows the site.
+resource "aws_cloudfront_cache_policy" "build" {
+  name        = "porchlight-build"
+  min_ttl     = 86400
+  default_ttl = 86400
+  max_ttl     = 31536000
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    enable_accept_encoding_gzip   = false
+    enable_accept_encoding_brotli = false
+
+    cookies_config {
+      cookie_behavior = "none"
+    }
+    headers_config {
+      header_behavior = "none"
+    }
+    query_strings_config {
+      query_string_behavior = "none"
+    }
+  }
+}
+
+# Everything that isn't the build: a 404 at the edge, never the box.
+resource "aws_cloudfront_function" "not_found" {
+  name    = "porchlight-cdn-not-found"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = <<-JS
+    function handler(event) {
+      return { statusCode: 404, statusDescription: 'Not Found' };
+    }
+  JS
+}
+
+resource "aws_cloudfront_distribution" "cdn" {
+  enabled         = true
+  comment         = "Porchlight: the game's WebGL build (${local.cdn_domain})"
+  aliases         = [local.cdn_domain]
+  price_class     = "PriceClass_100"
+  http_version    = "http2and3"
+  is_ipv6_enabled = true
+
+  origin {
+    origin_id   = "box"
+    domain_name = var.domain
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id       = "box"
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = aws_cloudfront_cache_policy.build.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.not_found.arn
+    }
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/Build/*"
+    target_origin_id       = "box"
+    viewer_protocol_policy = "redirect-to-https"
+    # OPTIONS: the CORS preflight Unity's loader causes (Caddy answers it).
+    allowed_methods = ["GET", "HEAD", "OPTIONS"]
+    cached_methods  = ["GET", "HEAD", "OPTIONS"]
+    cache_policy_id = aws_cloudfront_cache_policy.build.id
+    # The .unityweb files are already gzipped (and say so); this compresses the loader.
+    compress = true
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    acm_certificate_arn      = aws_acm_certificate_validation.cdn.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
+
+  tags = { Name = "porchlight-cdn" }
+}
+
+resource "aws_route53_record" "cdn" {
+  for_each = toset(["A", "AAAA"])
+
+  zone_id = data.aws_route53_zone.main.zone_id
+  name    = local.cdn_domain
+  type    = each.key
+
+  alias {
+    name                   = aws_cloudfront_distribution.cdn.domain_name
+    zone_id                = aws_cloudfront_distribution.cdn.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+# =============================================================================
+# Alarms: egress that looks like that crawler again, within the hour
+# =============================================================================
+# The billing alert (an AWS Budget on DataTransfer-Out-Bytes, made by hand)
+# runs a day behind; these go off within the hour. The topic's email
+# subscriber is added by hand, not here, so the address stays out of this
+# public repo:
+#   aws sns subscribe --topic-arn <alerts_topic_arn> --protocol email --notification-endpoint <address>
+# (and click the confirmation link AWS emails).
+
+resource "aws_sns_topic" "alerts" {
+  name = "porchlight-alerts"
+}
+
+# Three or four players use about 1 GB an hour (the traffic feed is most of
+# it); the crawler was ~31 GB an hour.
+resource "aws_cloudwatch_metric_alarm" "egress" {
+  alarm_name          = "porchlight-egress"
+  alarm_description   = "The box sent over 5 GB in an hour (normal play is ~1 GB). Check Caddy's logs for a crawler: #26."
+  namespace           = "AWS/EC2"
+  metric_name         = "NetworkOut"
+  dimensions          = { InstanceId = aws_instance.main.id }
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 5000000000
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
+# CloudFront's free tier is 1 TB a month (~1.4 GB an hour); past that it's
+# $0.085/GB. 10 GB in an hour is several thousand fresh loads of the game.
+resource "aws_cloudwatch_metric_alarm" "cdn_egress" {
+  alarm_name          = "porchlight-cdn-egress"
+  alarm_description   = "The CDN sent over 10 GB in an hour. Check its logs or the CloudFront console for who: #26."
+  namespace           = "AWS/CloudFront"
+  metric_name         = "BytesDownloaded"
+  dimensions          = { DistributionId = aws_cloudfront_distribution.cdn.id, Region = "Global" }
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 10000000000
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
+# =============================================================================
 # Outputs
 # =============================================================================
 # DNS is not managed here, as in topspin: the zone predates this stack and
@@ -443,4 +666,18 @@ output "dns_instructions" {
 output "google_redirect_uri" {
   description = "Add to the Google OAuth client's authorized redirect URIs"
   value       = "https://auth.${var.domain}/realms/porchlight/broker/google/endpoint"
+}
+
+output "cdn_domain" {
+  value = local.cdn_domain
+}
+
+output "alerts_topic_arn" {
+  description = "Subscribe an email to it by hand (see the Alarms section)"
+  value       = aws_sns_topic.alerts.arn
+}
+
+output "cdn_distribution_id" {
+  description = "The deploy invalidates /Build/* here"
+  value       = aws_cloudfront_distribution.cdn.id
 }

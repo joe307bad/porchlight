@@ -260,6 +260,7 @@ jobs:
             -var="domain=$DOMAIN"
           echo "HOST=$(terraform output -raw elastic_ip)" >> "$GITHUB_ENV"
           echo "SECRET_ID=$(terraform output -raw secret_id)" >> "$GITHUB_ENV"
+          echo "CDN_ID=$(terraform output -raw cdn_distribution_id)" >> "$GITHUB_ENV"
 
       - name: Point DNS at the box
         # Best-effort and never fatal, as in topspin: the zone may not be in this
@@ -324,6 +325,18 @@ jobs:
       - name: Run deploy.sh
         run: |
           $SSH "SECRET_ID='$SECRET_ID' AWS_REGION='$AWS_REGION' DOMAIN='$DOMAIN' /opt/porchlight/infra/docker/deploy.sh"
+
+      # The CDN (cdn.$DOMAIN) keeps the build a day without asking the box, and
+      # the build's file names don't change between builds: drop its copies so
+      # the next load fetches this build. The page takes all of the build,
+      # loader included, from the CDN, so until this finishes (about a minute)
+      # it gets the old build whole rather than a mix. The first 1,000 paths a
+      # month are free, and this is one.
+      - name: Refresh the CDN's copy of the build
+        run: |
+          id=$(aws cloudfront create-invalidation --distribution-id "$CDN_ID" --paths '/Build/*' --query Invalidation.Id --output text)
+          aws cloudfront wait invalidation-completed --distribution-id "$CDN_ID" --id "$id"
+          echo "CDN refreshed ($id)"
 
       - name: Smoke test
         continue-on-error: true

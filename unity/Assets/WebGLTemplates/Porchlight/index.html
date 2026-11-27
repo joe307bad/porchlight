@@ -32,7 +32,6 @@
   <body>
     <canvas id="unity-canvas" tabindex="-1"></canvas>
     <div id="loading"><div><div class="text"></div><div class="bar"><div class="fill"></div></div></div></div>
-    <script src="Build/{{{ LOADER_FILENAME }}}"></script>
     <script>
       const canvas = document.querySelector('#unity-canvas');
       const loading = document.querySelector('#loading');
@@ -70,20 +69,46 @@
           localStorage.setItem(KEY + 'page', `download=${mean(page.download, downloaded)};start=${mean(page.start, ready - downloaded)}`);
         } catch { /* private mode: no history, the bar just guesses */ }
       };
-      createUnityInstance(canvas, {
-        dataUrl: 'Build/{{{ DATA_FILENAME }}}',
-        frameworkUrl: 'Build/{{{ FRAMEWORK_FILENAME }}}',
+      // Where the build's big files come from. On production that's the CDN (CloudFront in front of this
+      // box, infra/terraform: cdn.<domain>), so a crawler that pulls the build over and over is served
+      // from its cache instead of costing this box's egress (#26). If the CDN doesn't answer in a few
+      // seconds, or won't share its files with this page (CORS), the box serves them as before.
+      const CDN = location.hostname === 'porchlight.joebad.com' ? 'https://cdn.porchlight.joebad.com/Build/' : null;
+      const pickBuild = async () => {
+        if (!CDN) return 'Build/';
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), 3000);
+        try {
+          const res = await fetch(CDN + '{{{ FRAMEWORK_FILENAME }}}', { method: 'HEAD', mode: 'cors', signal: abort.signal });
+          return res.ok ? CDN : 'Build/';
+        } catch {
+          return 'Build/';
+        } finally {
+          clearTimeout(timer);
+        }
+      };
+      // The loader comes from the same place as the rest, so a page never mixes two builds.
+      const loadScript = (src) => new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error(`couldn't load ${src}`));
+        document.body.appendChild(script);
+      });
+      pickBuild().then((build) => loadScript(build + '{{{ LOADER_FILENAME }}}').then(() => build)).then((build) => createUnityInstance(canvas, {
+        dataUrl: build + '{{{ DATA_FILENAME }}}',
+        frameworkUrl: build + '{{{ FRAMEWORK_FILENAME }}}',
 #if USE_THREADS
-        workerUrl: 'Build/{{{ WORKER_FILENAME }}}',
+        workerUrl: build + '{{{ WORKER_FILENAME }}}',
 #endif
 #if USE_WASM
-        codeUrl: 'Build/{{{ CODE_FILENAME }}}',
+        codeUrl: build + '{{{ CODE_FILENAME }}}',
 #endif
 #if MEMORY_FILENAME
-        memoryUrl: 'Build/{{{ MEMORY_FILENAME }}}',
+        memoryUrl: build + '{{{ MEMORY_FILENAME }}}',
 #endif
 #if SYMBOLS_FILENAME
-        symbolsUrl: 'Build/{{{ SYMBOLS_FILENAME }}}',
+        symbolsUrl: build + '{{{ SYMBOLS_FILENAME }}}',
 #endif
         streamingAssetsUrl: 'StreamingAssets',
         companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
@@ -98,7 +123,7 @@
           downloaded = performance.now();
           requestAnimationFrame(starting);
         }
-      }).then(() => {
+      })).then(() => {
         ready = performance.now();
         if (!downloaded) downloaded = ready;
         show(share);
