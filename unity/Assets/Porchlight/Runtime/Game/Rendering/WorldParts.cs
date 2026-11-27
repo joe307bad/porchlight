@@ -896,7 +896,7 @@ namespace Porchlight.Rendering
         IEnumerable<int> AddLamps(Rng rng)
         {
             var placed = new List<Vec2>();
-            var post = Materials.Lit(C.lampPost);
+            var lampModel = library.Get(Catalog.STREET_LIGHT);
             var bulbMaterial = Materials.Glowing(Coords.Hex(0xfff6e0));
             var poolMaterial = Materials.LightPool();
             var lampsRoot = new GameObject("lamps").transform;
@@ -928,17 +928,17 @@ namespace Porchlight.Rendering
                     if (OnAnyRoad(basePt, LAMP_CLEAR)) continue;
                     placed.Add(on);
                     double rot = DetMath.Atan2(-normal.x, -normal.y);
-                    // A post, an arm reaching out over the street (+z), and the lamp's head.
+                    // The street light (signals.py): a post, an arm reaching out over the street (+z), and the lantern.
+                    // Its foot is its origin, and it's in metres: LAMP_SCALE makes it LAMP_HEIGHT tall, reaching LAMP_REACH.
                     var lamp = new GameObject("lamp").transform;
                     lamp.SetParent(props, false);
                     lamp.localPosition = Coords.Map(basePt.x, basePt.y);
                     lamp.localRotation = Coords.Yaw(rot);
-                    float H = (float)LAMP_HEIGHT, R = (float)LAMP_REACH;
-                    Shape(PrimitiveType.Cylinder, lamp, new Vector3(0, H / 2, 0), new Vector3(0.052f, H / 2, 0.052f), post);
-                    Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.01f, R / 2), new Vector3(0.03f, 0.03f, R), post);
-                    Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.02f, R), new Vector3(0.09f, 0.04f, 0.12f), post);
-                    // The bulb moves with nothing but glows per lamp, so it stays out of the static batch.
-                    var bulb = Shape(PrimitiveType.Sphere, lampsRoot, Coords.Map(basePt.x - normal.x * LAMP_REACH, basePt.y - normal.y * LAMP_REACH, LAMP_HEIGHT - 0.05), Vector3.one * 0.1f, bulbMaterial, false, "bulb");
+                    lamp.localScale = Vector3.one * LAMP_SCALE;
+                    UnityEngine.Object.Instantiate(lampModel.prefab, lamp, false);
+                    // The bulb is the lantern's glass, filling its cage. It moves with nothing but glows per lamp, so it
+                    // stays out of the static batch.
+                    var bulb = Shape(PrimitiveType.Sphere, lampsRoot, Coords.Map(basePt.x - normal.x * LAMP_REACH, basePt.y - normal.y * LAMP_REACH, LAMP_HEIGHT - 0.05), new Vector3(0.06f, 0.07f, 0.06f), bulbMaterial, false, "bulb");
                     double lx = basePt.x - normal.x * LAMP_REACH, ly = basePt.y - normal.y * LAMP_REACH;
                     var pool = Shape(PrimitiveType.Quad, lampsRoot, Coords.Map(lx, ly, 0.045), new Vector3(2.4f, 2.4f, 1), poolMaterial, false, "light pool");
                     pool.transform.localRotation = Quaternion.Euler(90, 0, 0);
