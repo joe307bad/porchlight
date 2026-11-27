@@ -231,6 +231,8 @@ namespace Porchlight.Life
                 CarPath(c, path);
                 dest = EndOf(c);
             }
+            // Parked (drawn in its bay) or off the map: no route, but its queue still starts with what it's doing now.
+            else queue.Add(Item(Now, CarDoing(c, building), true));
             o["doing"] = CarDoing(c, building);
             // Whose it is: their day is what sends it out and brings it home.
             if (c.owner >= 0) o["day"] = Day(people[c.owner], building);
