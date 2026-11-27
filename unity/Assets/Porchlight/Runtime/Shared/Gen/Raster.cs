@@ -66,6 +66,14 @@ namespace Porchlight.Gen
         public static double RoadHalfWidth(RoadKind kind, GenParams p) =>
             Math.Max(0.75, RoadDrawWidth(kind, p) / 2 + (kind == RoadKind.Path ? 0 : PARKING_WIDTH) + 0.5);
 
+        /// <summary>RoadHalfWidth for one road, at its designed width (DesignStage) if it has one.</summary>
+        public static double EdgeHalfWidth(TownModel model, RoadEdge e)
+        {
+            var d = model.design?.Edge(e.id);
+            if (d == null || e.kind == RoadKind.Path) return RoadHalfWidth(e.kind, model.@params);
+            return Math.Max(0.75, d.width / 2 + PARKING_WIDTH + 0.5);
+        }
+
         /// <summary>How much further than the street's own edge a cul-de-sac's bulb reaches (tiles).</summary>
         public const double BULB_EXTRA = 1;
 
@@ -209,7 +217,7 @@ namespace Porchlight.Gen
             foreach (var edge in edges)
             {
                 byte code = KindCode(edge.kind);
-                double hw = RoadHalfWidth(edge.kind, p);
+                double hw = model.design != null && edges == model.roads.edges ? EdgeHalfWidth(model, edge) : RoadHalfWidth(edge.kind, p);
                 var pts = edge.points;
                 for (int s = 0; s + 1 < pts.Count; s++)
                 {
@@ -253,6 +261,48 @@ namespace Porchlight.Gen
                         kind[i] = ROAD_STREET;
                         edgeId[i] = bulb.edge;
                         best[i] = 0;
+                    }
+                }
+            }
+            // Roundabouts: the ring's disc is the road's (DesignStage), and slip roads are streets.
+            if (model.design != null && edges == model.roads.edges)
+            {
+                foreach (var nd in model.design.nodes)
+                {
+                    if (nd.form == JunctionForm.Roundabout && nd.node < model.roads.nodes.Count)
+                    {
+                        var c = model.roads.nodes[nd.node].at;
+                        double r = nd.radius + 0.9;
+                        int edgeOf = -1;
+                        foreach (var e in model.roads.edges) if (e.from == nd.node || e.to == nd.node) { edgeOf = e.id; if (e.kind == RoadKind.Main) break; }
+                        for (int y = (int)Math.Max(0, Math.Floor(c.y - r)); y <= (int)Math.Min(h - 1, Math.Ceiling(c.y + r)); y++)
+                            for (int x = (int)Math.Max(0, Math.Floor(c.x - r)); x <= (int)Math.Min(w - 1, Math.Ceiling(c.x + r)); x++)
+                            {
+                                if (!(Numbers.Hypot(x + 0.5 - c.x, y + 0.5 - c.y) < r)) continue;
+                                int i = Grid.Index(x, y, w);
+                                if (kind[i] == ROAD_MAIN) continue;
+                                kind[i] = ROAD_MAIN;
+                                edgeId[i] = edgeOf;
+                                best[i] = 0;
+                            }
+                    }
+                    foreach (var slip in nd.slips)
+                    {
+                        for (int s = 0; s + 1 < slip.points.Count; s++)
+                        {
+                            var a = slip.points[s];
+                            var b = slip.points[s + 1];
+                            for (int y = (int)Math.Max(0, Math.Floor(Math.Min(a.y, b.y) - 1)); y <= (int)Math.Min(h - 1, Math.Ceiling(Math.Max(a.y, b.y) + 1)); y++)
+                                for (int x = (int)Math.Max(0, Math.Floor(Math.Min(a.x, b.x) - 1)); x <= (int)Math.Min(w - 1, Math.Ceiling(Math.Max(a.x, b.x) + 1)); x++)
+                                {
+                                    if (Geo.DistToSegment(new Vec2(x + 0.5, y + 0.5), a, b) >= 0.9) continue;
+                                    int i = Grid.Index(x, y, w);
+                                    if (kind[i] != ROAD_NONE) continue;
+                                    kind[i] = ROAD_STREET;
+                                    edgeId[i] = slip.fromEdge;
+                                    best[i] = 0;
+                                }
+                        }
                     }
                 }
             }

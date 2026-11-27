@@ -75,6 +75,7 @@ static class Program
         if (args.Length > 0 && args[0] == "steering") return SteeringCheck.Run();
         if (args.Length > 0 && args[0] == "sleigh") return SleighCheck.Run();
         if (args.Length > 0 && args[0] == "streets") return StreetsReport.Run(args.Length > 1 ? args[1] : null);
+        if (args.Length > 0 && args[0] == "design") return DesignCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 2 && args[0] == "life-debug") return LifeDebug.Run(args[1], double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture));
         if (args.Length > 0 && args[0] == "life") return LifeCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : null);
         if (args.Length > 0 && args[0] == "traffic-day") return TrafficDay.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 2);
@@ -466,7 +467,7 @@ static class Program
             int x = (int)Math.Floor(b.at.x), y = (int)Math.Floor(b.at.y);
             for (int dy = -1; dy <= 1; dy++)
                 for (int dx = -1; dx <= 1; dx++)
-                    if (model.tiles.overlay[(y + dy) * w + x + dx] != Overlay.ROAD_STREET) return $"cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0}) isn't all street";
+                    if (model.tiles.overlay[(y + dy) * w + x + dx] != Overlay.ROAD_STREET) return $"cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0}) isn't all street (tile {x + dx},{y + dy} is {model.tiles.overlay[(y + dy) * w + x + dx]}, edge {b.edge} {model.roads.edges[b.edge].kind})";
             int ring = net.paths.FindIndex(q => q.road == b.edge && q.points.Count > 8 && Porchlight.Core.Geo.Dist(q.points[q.points.Count / 2], b.at) < Raster.BulbRadius(model.@params) + 1);
             if (ring < 0) return $"no sidewalk round the cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0})";
             foreach (int end in new[] { ring * 2, ring * 2 + 1 })

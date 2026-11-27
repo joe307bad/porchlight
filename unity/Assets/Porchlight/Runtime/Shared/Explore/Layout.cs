@@ -194,7 +194,7 @@ namespace Porchlight.Explore
                     from = e.from,
                     to = e.to,
                     points = Geo.Chaikin(PadCorners(e.points, CORNER_RADIUS), SMOOTHING_PASSES),
-                    width = RoadWidth(e.kind, model),
+                    width = Gen.DesignStage.Width(model, e),
                 });
             yield return "/roads";
             var bridges = FindBridges(model, roads);

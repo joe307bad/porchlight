@@ -80,11 +80,26 @@ namespace Porchlight.Gen
             var list = new List<Lot>();
             var parks = new HashSet<int>();
             foreach (var hood in model.neighbourhoods) if (hood.parkBlockId >= 0) parks.Add(hood.parkBlockId);
+            // The right of way along the roads in from the gates: lots keep back from them by the width they'll grow to
+            // (the junction design widens them to the highway's two lanes each way, DesignStage).
+            var reserve = DesignStage.GateRoads(model);
+            double reach = DesignStage.GateReach(p);
             foreach (var block in model.blocks)
             {
                 yield return "/block";
                 var tiles = new List<int>();
-                foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h)) if (g.free[t] != 0) tiles.Add(t);
+                foreach (int t in Parcels.TilesIn(block.polygon, block.holes, w, h))
+                {
+                    if (g.free[t] == 0) continue;
+                    if (reserve.Count > 0)
+                    {
+                        var c = new Vec2(t % w + 0.5, t / w + 0.5);
+                        bool kept = false;
+                        foreach (var pts in reserve) if (Geo.DistToPolyline(c, pts) < reach) { kept = true; break; }
+                        if (kept) continue;
+                    }
+                    tiles.Add(t);
+                }
                 var pieces = new List<List<int>>();
                 double maxSize = Math.Max(1.5 * p.lotMinSize, p.lotMaxSize * TownPlan.Rules(block.transect).lotScale);
                 var blockRng = Rng.Local(model.seed, "lots", Signature.OfPolygon(block.polygon));

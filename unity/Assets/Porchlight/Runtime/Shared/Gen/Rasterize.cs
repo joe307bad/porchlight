@@ -99,7 +99,7 @@ namespace Porchlight.Gen
                     var edge = model.roads.edges[road.edgeId[i]];
                     var c = new Vec2(x + 0.5, y + 0.5);
                     double at = Geo.ArcPosition(c, edge.points);
-                    bool near = Geo.ClosestOnPolyline(c, edge.points).d < Raster.RoadHalfWidth(edge.kind, p);
+                    bool near = Geo.ClosestOnPolyline(c, edge.points).d < Raster.EdgeHalfWidth(model, edge);
                     if (!near) continue;
                     foreach (var s in spans)
                     {

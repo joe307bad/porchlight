@@ -170,6 +170,12 @@ namespace Porchlight.Gen
                     if (e.id == edge) continue;
                     double room = bulbRadius + (e.kind == RoadKind.Path ? Raster.RoadDrawWidth(e.kind, p) / 2 : Raster.RoadDrawWidth(e.kind, p) / 2 + Raster.PARKING_WIDTH);
                     if (!(Geo.DistToPolyline(at, e.points) >= room)) return false;
+                    // The bulb's own tiles (the tile it's in and those round it) clear of what the other road rasters to.
+                    double claim = Raster.RoadHalfWidth(e.kind, p);
+                    int cx = (int)Math.Floor(at.x), cy = (int)Math.Floor(at.y);
+                    for (int dy = -1; dy <= 1; dy++)
+                        for (int dx = -1; dx <= 1; dx++)
+                            if (Geo.DistToPolyline(new Vec2(cx + dx + 0.5, cy + dy + 0.5), e.points) < claim) return false;
                 }
                 return true;
             }
@@ -258,6 +264,7 @@ namespace Porchlight.Gen
             // Cutting dead ends back can leave two streets between the same junctions again: the shorter kept.
             if (RoadGraphOps.DropDoubles(g)) RoadGraphOps.MergePassThrough(g, keep);
             var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
+            bool droppedClose = false;
             // A street laid alongside a main road nearer than MIN_APART (beside a bend in it, say): it goes,
             // the stretch of it between two junctions, and the blocks either side are one. The main roads are where
             // they had to be; the street was only where the plan put it.
@@ -278,6 +285,35 @@ namespace Porchlight.Gen
                 }
                 RoadGraphOps.MergePassThrough(again, keepAgain);
                 roads = KeepConnected(RoadGraphOps.Compact(again), model.center);
+                droppedClose = true;
+            }
+            // Dropping a street can leave a new dead end, perhaps with no room for its bulb (beside the main road it ran
+            // along): cut back as before.
+            if (droppedClose)
+            {
+                g = RoadGraphOps.BuilderFrom(roads);
+                var keepAgain = new HashSet<int>();
+                foreach (var n in g.nodes)
+                {
+                    if (Geo.Dist(C, n.at) < 0.01) keepAgain.Add(n.id);
+                    foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) keepAgain.Add(n.id);
+                }
+                bool any = false;
+                for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
+                {
+                    var cut = new List<int>();
+                    foreach (var b in Raster.Bulbs(RoadGraphOps.LiveEdges(g)))
+                    {
+                        var e = g.edges[b.edge];
+                        if (e.kind == RoadKind.Main || keepAgain.Contains(b.atEnd ? e.to : e.from) || IsPinned(e)) continue;
+                        if (!BulbFits(b.at, b.edge) || Geo.PolylineLength(e.points) < Math.Max(CUL_DE_SAC_LENGTH, floor)) cut.Add(b.edge);
+                    }
+                    if (cut.Count == 0) break;
+                    foreach (int e in cut) g.dead.Add(e);
+                    RoadGraphOps.MergePassThrough(g, keepAgain);
+                    any = true;
+                }
+                if (any) roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
             }
             if (skeleton != null && skeleton.removed.Count > 0) roads = DropRemoved(roads, skeleton, model);
             Classify(roads, model, plan.collectors);
