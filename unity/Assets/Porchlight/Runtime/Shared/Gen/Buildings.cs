@@ -47,6 +47,7 @@ namespace Porchlight.Gen
             int w = model.width, h = model.height;
             var p = model.@params;
             var C = model.center;
+            var D = model.downtown;
             double R = model.townRadius;
             var g = Parcels.Ground(model);
             var plaza = new HashSet<int>();
@@ -56,7 +57,7 @@ namespace Porchlight.Gen
             double churchArea = 0;
             foreach (var lot in model.lots)
             {
-                if (plaza.Contains(lot.id) || Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) > R * CHURCH_REACH) continue;
+                if (plaza.Contains(lot.id) || Geo.Dist(Geo.PolygonCentroid(lot.polygon), D) > R * CHURCH_REACH) continue;
                 double a = Math.Abs(Geo.PolygonArea(lot.polygon));
                 if (a > churchArea)
                 {
@@ -76,8 +77,8 @@ namespace Porchlight.Gen
                 if (++seen % LOTS_A_STEP == 0) yield return "/lots";
                 if (plaza.Contains(lot.id) || parks.Contains(lot.blockId) || carParks.Contains(lot.id)) continue;
                 bool isChurch = lot.id == church;
-                var lotRng = Rng.Local(model.seed, "buildings", Signature.OfPolygon(lot.polygon));
-                double d = Math.Min(1, Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / R);
+                var lotRng = Rng.Local(model.seed, Regions.Stream(model, "buildings", Geo.PolygonCentroid(lot.polygon)), Signature.OfPolygon(lot.polygon));
+                double d = Math.Min(1, Geo.Dist(Geo.PolygonCentroid(lot.polygon), D) / R);
                 var rule = TownPlan.Rules(model.blocks[lot.blockId].transect);
                 if (!isChurch && !lotRng.Chance(p.buildingDensity * (0.7 + 0.3 * (1 - d)))) continue;
                 // Some of the centre's lots are left open: courtyards among the towers.
@@ -108,6 +109,7 @@ namespace Porchlight.Gen
                     foreach (var kv in Parcels.AdjacentRoadEdges(tiles, g, w, h)) if (Arterial(kv.Key)) highStreet = true;
                 bool industrial = model.industry != null && model.industry.Contains(C, R, lotMid);
                 var kind = isChurch ? BuildingKind.Church : PickKind(d, p, rule, LandStage.At(model, lotMid), highStreet, industrial, model.industry != null, lotRng);
+                if (!isChurch) kind = Wanted(model, lot, kind);
                 // With courtyards about, a lot with no room for a proper tower is one more.
                 if (kind == BuildingKind.Shop && p.courtyards > 0 && rule.courtyards && (rect.x1 - rect.x0 + 1) * (rect.y1 - rect.y0 + 1) < 4) continue;
                 var footprint = new List<Vec2>
@@ -232,7 +234,41 @@ namespace Porchlight.Gen
                 hood.schoolBuildingId = list[school].id;
             }
 
+            // A school wherever an editor wanted one (Skeleton.regions) and the area hasn't one: its building nearest
+            // its middle with room enough.
+            for (int r = 0; r < Regions.Count(model); r++)
+            {
+                if (!Regions.Get(model, r).want.school) continue;
+                var middle = Regions.Middle(model, r);
+                int school = -1;
+                bool has = false;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (Regions.At(model, mid[i]) != r) continue;
+                    if (list[i].kind == BuildingKind.School) has = true;
+                    else if (!Civic(list[i]) && list[i].tiles.Count >= SCHOOL_MIN_TILES && (school < 0 || Geo.Dist(mid[i], middle) < Geo.Dist(mid[school], middle))) school = i;
+                }
+                if (has || school < 0) continue;
+                list[school].kind = BuildingKind.School;
+                list[school].floors = 2;
+            }
+
             return hoods;
+        }
+
+        /// <summary>
+        /// A building's kind as an editor wanted its area (Skeleton.regions, and PlanStage.Wanted for its block's zone):
+        /// a shop on a block given to shops, a house on one given to houses.
+        /// </summary>
+        static BuildingKind Wanted(TownModel model, Lot lot, BuildingKind kind)
+        {
+            int r = Regions.At(model, Geo.PolygonCentroid(model.blocks[lot.blockId].polygon));
+            if (r < 0) return kind;
+            var want = Regions.Get(model, r).want;
+            if (!want.shops && !want.houses) return kind;
+            bool shops = want.shops && (!want.houses || model.blocks[lot.blockId].transect >= Transect.T5);
+            if (shops) return kind == BuildingKind.House || kind == BuildingKind.Workshop ? BuildingKind.Shop : kind;
+            return kind == BuildingKind.Shop || kind == BuildingKind.Workshop ? BuildingKind.House : kind;
         }
 
         public List<string> Check(TownModel model)

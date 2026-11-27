@@ -258,11 +258,37 @@ namespace Porchlight.Gen
                 SetFlows(d, net);
             }
 
-            // Junctions.
+            // Junctions: first a roundabout in each area an editor regenerated wanting one, then the rest.
             var taken = new HashSet<int>();
+            var designed = new HashSet<int>();
+            for (int r = 0; r < Regions.Count(model); r++)
+            {
+                if (!Regions.Get(model, r).want.roundabout) continue;
+                // Its junctions (and those on the roads round its edge), busiest first.
+                var near = new List<(int node, double flow)>();
+                for (int n = 0; n < roads.nodes.Count; n++)
+                {
+                    if (degree[n] < 3 || gate[n] || designed.Contains(n) || !NearRegion(model, r, roads.nodes[n].at)) continue;
+                    double flow = 0;
+                    foreach (var e in roads.edges) if (e.from == n || e.to == n) flow += d.edges[e.id].flowFwd + d.edges[e.id].flowBack;
+                    near.Add((n, flow));
+                }
+                near.Sort((a, b) => b.flow != a.flow ? b.flow.CompareTo(a.flow) : a.node.CompareTo(b.node));
+                bool made = near.Exists(c => d.nodes[c.node].form == JunctionForm.Roundabout);
+                for (int k = 0; k < near.Count && k < REGION_ROUNDABOUT_TRIES && !made; k++)
+                {
+                    int n = near[k].node, notes = d.notes.Count;
+                    DesignJunction(model, d, net, n, buildings, taken, sk, forceRoundabout: true);
+                    designed.Add(n);
+                    made = d.nodes[n].form == JunctionForm.Roundabout;
+                    // Only the last try says why it couldn't.
+                    if (!made) d.notes.RemoveRange(notes, d.notes.Count - notes);
+                }
+                if (!made) d.notes.Add(new DesignNote { at = Regions.Middle(model, r), text = "No room for a roundabout in the regenerated area" });
+            }
             for (int n = 0; n < roads.nodes.Count; n++)
             {
-                if (degree[n] < 3 || gate[n]) continue;
+                if (degree[n] < 3 || gate[n] || designed.Contains(n)) continue;
                 DesignJunction(model, d, net, n, buildings, taken, sk);
             }
             if (taken.Count > 0) buildings.RemoveAll(b => taken.Contains(b.id));
@@ -717,7 +743,20 @@ namespace Porchlight.Gen
 
         enum Turn { Straight, Right, Left }
 
-        static void DesignJunction(TownModel model, RoadDesign d, Net net, int node, List<Building> buildings, HashSet<int> taken, Skeleton sk)
+        /// <summary>The junctions an editor's area tries for the roundabout it wanted (busiest first).</summary>
+        const int REGION_ROUNDABOUT_TRIES = 6;
+        /// <summary>A junction this near an editor's area (tiles) is one of its: those on the roads round its edge too.</summary>
+        const int REGION_REACH = 3;
+
+        static bool NearRegion(TownModel model, int r, Vec2 at)
+        {
+            for (int dy = -REGION_REACH; dy <= REGION_REACH; dy++)
+                for (int dx = -REGION_REACH; dx <= REGION_REACH; dx++)
+                    if (Regions.At(model, new Vec2(at.x + dx, at.y + dy)) == r) return true;
+            return false;
+        }
+
+        static void DesignJunction(TownModel model, RoadDesign d, Net net, int node, List<Building> buildings, HashSet<int> taken, Skeleton sk, bool forceRoundabout = false)
         {
             var roads = model.roads;
             var nd = d.nodes[node];
@@ -772,7 +811,7 @@ namespace Porchlight.Gen
                 sharpest = Math.Min(sharpest, gap);
             }
             var o = sk?.JunctionAt(at);
-            string asked = o?.control ?? "auto";
+            string asked = forceRoundabout ? "roundabout" : o?.control ?? "auto";
             // Where a roundabout serves better than signs or a signal (FHWA's guide): five legs or more, legs meeting
             // sharply, a busy all-way stop, a four-way crossing of collectors (or better) that would otherwise be a stop,
             // and, out of the old core, a signalled crossing quiet enough for one lane round a ring.

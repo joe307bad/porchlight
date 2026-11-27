@@ -85,13 +85,9 @@ namespace Porchlight.Gen
             }
             if (best < 0) best = Grid.Index(w / 2, h / 2, w);
             var center = new Vec2((best % w) + 0.5, best / w + 0.5);
-            // The editor's bullseye: the centre where it was put, if that's dry ground a road can reach.
-            var moved = p.skeleton?.center;
-            if (moved != null)
-            {
-                int mx = (int)Math.Floor(moved.Value.x), my = (int)Math.Floor(moved.Value.y);
-                if (Grid.InBounds(mx, my, w, h) && water[Grid.Index(mx, my, w)] == 0 && Numbers.IsFinite(cost[Grid.Index(mx, my, w)])) center = new Vec2(mx + 0.5, my + 0.5);
-            }
+            // The editor's bullseye moves the downtown, not the town: the circle, the main roads and the gates stay,
+            // and the core, the tall buildings and the shops gather round where it was put (Downtown).
+            var downtown = Downtown(p.skeleton?.center, center, townRadius, water, cost, w, h);
 
             // The gates: one in the middle of each edge (Compass), where the highways
             // come in. The terrain stage keeps a dry, level pad behind each.
@@ -100,10 +96,43 @@ namespace Porchlight.Gen
 
             var next = model.With();
             next.center = center;
+            next.downtown = downtown;
             next.townRadius = townRadius;
             next.gates = gates;
             next.fields = new DebugFields { flow = model.fields.flow, roadCost = cost };
             return next;
+        }
+
+        /// <summary>How far from the centre (a share of the town's radius) the downtown may be moved: well inside the circle, so the suburbs still ring it.</summary>
+        public const double DOWNTOWN_REACH = 0.7;
+
+        /// <summary>
+        /// The editor's bullseye as the downtown: pulled in to DOWNTOWN_REACH of the centre, then the nearest dry tile a
+        /// road can reach (looking out to 8 tiles); the centre itself with no bullseye, or none of that dry.
+        /// </summary>
+        public static Vec2 Downtown(Vec2? wanted, Vec2 center, double radius, byte[] water, float[] cost, int w, int h)
+        {
+            if (wanted == null || !Numbers.IsFinite(wanted.Value.x) || !Numbers.IsFinite(wanted.Value.y)) return center;
+            var at = wanted.Value;
+            double d = Geo.Dist(at, center), reach = DOWNTOWN_REACH * Math.Max(1, radius);
+            if (d > reach) at = new Vec2(center.x + (at.x - center.x) / d * reach, center.y + (at.y - center.y) / d * reach);
+            int ax = (int)Math.Floor(at.x), ay = (int)Math.Floor(at.y);
+            for (int r = 0; r <= 8; r++)
+            {
+                int best = -1;
+                double bestD = double.PositiveInfinity;
+                for (int y = ay - r; y <= ay + r; y++)
+                    for (int x = ax - r; x <= ax + r; x++)
+                    {
+                        if (Math.Max(Math.Abs(x - ax), Math.Abs(y - ay)) != r || !Grid.InBounds(x, y, w, h)) continue;
+                        int i = Grid.Index(x, y, w);
+                        if (water[i] != 0 || !Numbers.IsFinite(cost[i])) continue;
+                        double dd = Numbers.Hypot(x + 0.5 - at.x, y + 0.5 - at.y);
+                        if (dd < bestD) { bestD = dd; best = i; }
+                    }
+                if (best >= 0) return new Vec2(best % w + 0.5, best / w + 0.5);
+            }
+            return center;
         }
 
         public List<string> Check(TownModel model)

@@ -78,8 +78,7 @@ namespace Porchlight.Gen
             var g = Parcels.Ground(model);
             yield return "/ground";
             var list = new List<Lot>();
-            var parks = new HashSet<int>();
-            foreach (var hood in model.neighbourhoods) if (hood.parkBlockId >= 0) parks.Add(hood.parkBlockId);
+            var parks = model.ParkBlockSet();
             // The right of way along the roads in from the gates: lots keep back from them by the width they'll grow to
             // (the junction design widens them to the highway's two lanes each way, DesignStage).
             var reserve = DesignStage.GateRoads(model);
@@ -102,7 +101,7 @@ namespace Porchlight.Gen
                 }
                 var pieces = new List<List<int>>();
                 double maxSize = Math.Max(1.5 * p.lotMinSize, p.lotMaxSize * TownPlan.Rules(block.transect).lotScale);
-                var blockRng = Rng.Local(model.seed, "lots", Signature.OfPolygon(block.polygon));
+                var blockRng = Rng.Local(model.seed, Regions.Stream(model, "lots", Geo.PolygonCentroid(block.polygon)), Signature.OfPolygon(block.polygon));
                 foreach (var comp in Parcels.Components(tiles, w)) Split(comp, w, maxSize, blockRng, pieces);
                 int looked = 0;
                 foreach (var piece in pieces)
@@ -124,7 +123,7 @@ namespace Porchlight.Gen
                 Vec2 Centroid(Lot l) => Geo.PolygonCentroid(l.polygon);
                 var byDistance = list.FindAll(l => !parks.Contains(l.blockId));
                 if (byDistance.Count == 0) byDistance = new List<Lot>(list);
-                Numbers.StableSort(byDistance, (a, b) => Dist2(Centroid(a), model.center) - Dist2(Centroid(b), model.center));
+                Numbers.StableSort(byDistance, (a, b) => Dist2(Centroid(a), model.downtown) - Dist2(Centroid(b), model.downtown));
                 var first = byDistance[0];
                 var plaza = new List<Lot> { first };
                 for (int k = 1; k < byDistance.Count; k++)

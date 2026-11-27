@@ -41,7 +41,8 @@ A/B Street's ideas are borrowed, not its code: see [Credits](#credits).
 10. [The order to build it in](#10-the-order-to-build-it-in)
 11. [Open questions](#11-open-questions)
 12. [What's built](#12-whats-built)
-13. [Credits](#credits) and [References](#references)
+13. [Picking blocks and regenerating them](#13-picking-blocks-and-regenerating-them) (replaces dragging roads)
+14. [Credits](#credits) and [References](#references)
 
 ---
 
@@ -501,6 +502,11 @@ fail a town that breaks a rule.
 
 ## 6. Part B: the street editor
 
+> **Changed after the first build:** dragging roads by their handles, the road and junction side panel, and
+> the Problems list are gone. The editor now picks blocks and regenerates them, and the bullseye moves the
+> downtown rather than the town. See [§13](#13-picking-blocks-and-regenerating-them). The rest of this part
+> is the original plan.
+
 ### 6.1 Who may edit
 
 - **Your own towns:** you, the town's owner (`towns.createdBy`).
@@ -947,6 +953,94 @@ Lanternport's smoothness is 0.26% of moments over 3 tiles/s² (limit
 0.2%, from 8 of 3,122). In that last one a car arrives at a stop junction
 at speed and stops dead. Two of the three also failed before the lanes
 went in, with only the design stage changing the towns.
+
+---
+
+## 13. Picking blocks and regenerating them
+
+Dragging junctions and bends asked the editor to do the street planner's job, and every drag could break
+one of its rules (junctions too close, roads meeting too sharply). The editor now says *where* and *what*,
+and the generator plans the streets.
+
+**The screen.**
+- Click blocks on the map to pick them, and click again to put one back. Shift-drag, or a drag in Box
+  mode, picks every block whose middle is inside the box.
+- **Regenerate** re-plans the picked area. The boxes below it ask for what the area should have:
+  **Roundabout**, **Park**, **School**, **Shops** and **Houses**. With none ticked, the area is just
+  planned again differently.
+- Pressing Regenerate again re-rolls the same area: after each plan, the blocks inside the area are
+  picked again.
+- **Undo** sits beside Regenerate. Each Regenerate press and each bullseye move is one step.
+- **Commit** is live only while the draft differs from the town as it is, and not while a plan is in flight.
+- No Problems list: the worker puts problems right itself (below). One line under the boxes says when an
+  area couldn't have what was asked ("No room for a roundabout there").
+
+**The skeleton** (`Skeleton.regions`, docs/street-editor-api.md). Each press adds a region:
+- the picked blocks' outlines as they were,
+- a salt (any number; another number gives another plan),
+- what was wanted.
+
+Regions apply in order, a later one over an earlier. The first region also records where the town's
+extra parks are (`parks`), so they stay put.
+
+**The area** (`Gen/Regions.cs`).
+- The picked outlines are filled in and then closed: grown by two tiles and shrunk back. That takes in the
+  streets between the picked blocks but not the streets round the edge.
+- A road the area clears must lie at least half inside it, with both ends within 3½ tiles of it. A road
+  that runs on out of the area, such as the airport's, stays.
+- Main roads are never cleared. The main roads, the town's circle and everything outside the area stay
+  as they were.
+
+**What each stage does with an area.**
+- **Streets:** clears the area's streets and runs the street planner again over its land, with a random
+  stream named by the salt. In an area, the blocks are turned either way as often as not, and the streets
+  stray further from their places, so each salt looks different.
+- **Lots, buildings and cul-de-sacs:** draw from the area's stream instead of their own.
+- **Park:** the area's block nearest its middle, of a park's size, is kept green, unless one of its blocks
+  is a park already.
+- **Shops:** the area's blocks become T5, and its houses and workshops become shops.
+- **Houses:** blocks are built up no more than T4, and shops and workshops become houses.
+- **Shops and houses together:** each block is one or the other, by the area's stream.
+- **School:** the building nearest the area's middle with room for one, unless the area has a school
+  already. It is in addition to the neighbourhood's own school.
+- **Roundabout:** the design stage tries the area's junctions first, busiest first (with those on the
+  roads round its edge), insisting as an editor's junction override does. It tries up to six.
+
+**Parks elsewhere stay put.** The town's extra parks (`LandStage.MoreParks`: blocks kept green until
+the town has its park land a head) are chosen over the whole town, furthest from any park first. New
+houses or a new park in an area would move them. So the first region records where they are
+(`Skeleton.parks`, from the town without regions), and from then on exactly those blocks are kept green
+outside the areas.
+
+**Problems put right.** The draft worker's `plan` settles an edit before it answers:
+- If a stage's rules break, or the newest area lacks what was asked for, the newest area is planned again
+  with another salt, up to five tries. The first try that keeps the rules and has everything wins. If none
+  has everything, the first that keeps the rules is used, with a one-line note.
+- If nothing keeps the rules, the area is left out ("Couldn't regenerate that area …").
+- A moved downtown that breaks a rule is pulled halfway back to the centre, up to three times.
+- The answer carries the skeleton it settled on, and Manage adopts it. A commit grows that skeleton as
+  it is.
+- The junction gap and angle checks of §6.5 are gone, along with the pinned-point warnings: the
+  generator's own rules (each stage's `Check`) are what count.
+
+**The bullseye is the downtown** (`TownModel.downtown`, `SiteStage.Downtown`).
+- Moving it no longer moves the town. The circle, the gates and the main roads stay where they are.
+- The core era, the transect zones, the land value's centrality, the high street, the plaza and the
+  church, the shops' spread, block sizes and the buildings' heights all gather round the downtown instead.
+- It is held within 0.7 of the town's radius from the centre, on dry ground a road can reach (the nearest
+  within 8 tiles).
+- With no bullseye, the downtown is the centre, so a town nobody edited grows exactly as before.
+
+**The roundabout's markings** (the game's `World.RingMarks`).
+- The approach roads' centre dashes and edge lines stop at the ring.
+- The ring has a solid edge line, broken where each road comes in, and a dashed give-way line across
+  each entry.
+- A ring wide enough for two lanes has dashes between them all the way round.
+
+**Checks.** `Checks regions` picks patches of blocks in each starter town and regenerates each with every
+option alone, all of them and none, three salts each, every stage checked. It fails a patch that comes
+out the same for every salt, that breaks the rules on every salt, or that changes buildings more than 12
+tiles outside it.
 
 ---
 

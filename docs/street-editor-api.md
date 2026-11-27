@@ -17,11 +17,27 @@ What an editor decided, as `Model/Skeleton.cs` reads and writes it:
   "streets": [ { "pts": [[x,y], …], "kind": "street", "cls": "local" } ],  // pinned streets
   "removed": [ [[x,y],[x,y]] ],              // generated roads deleted, by their two ends
   "roads": [ { "a": [x,y], "b": [x,y], "cls": "collector", "lanes": 2, "divided": true, "oneWay": false, "locked": true } ],
-  "junctions": [ { "at": [x,y], "control": "auto|free|stop|allway|signal|roundabout" } ]
+  "junctions": [ { "at": [x,y], "control": "auto|free|stop|allway|signal|roundabout" } ],
+  "regions": [ { "blocks": [ [[x,y], …], … ], "salt": 123456,             // areas regenerated, in order
+                 "want": { "roundabout": false, "park": false, "school": false, "shops": false, "houses": false } } ],
+  "parks": [[x,y]]                           // the town's extra parks' middles, kept green (set by the worker with the first region)
 }
 ```
 
-Rules the edit screen keeps when it turns a drag into a skeleton:
+`center` is the **downtown**: moving it gathers the core, the zones, the shops and the tall buildings
+round it, but the town's circle, gates and main roads stay. `mains`, `streets`, `removed`, `roads` and
+`junctions` are read for older drafts and revisions, but the edit screen no longer makes them, and it may
+leave out any of the lists.
+
+What the edit screen does (street-editor.md §13):
+
+- **Regenerate:** adds a region of the picked blocks' outlines (`town.blocks[i].poly`), a new random
+  salt and the boxes ticked. Undo takes it off again.
+- **The bullseye:** `center`, held within 0.7 × `townRadius` of `town.center`.
+- **After every plan:** the answer's `skeleton` replaces the draft's (it is what the worker settled on),
+  and the blocks whose middles are inside the area just regenerated are picked again.
+
+The rules the edit screen used for drags (no longer made):
 
 - **A main road changed** (a junction or bend of one dragged, one drawn or deleted): `mains` becomes every
   main road in the town as it's drawn now, with the change made. From then on main-road edits change
@@ -44,12 +60,21 @@ answer a line on stdout, each with the request's `id`. Logs on stderr. It keeps 
 
 | Op | Request | Answer |
 | --- | --- | --- |
-| `plan` | `{ id, op: "plan", key, skeleton, base?: { key, skeleton }, full?: bool }` | `{ id, ok: true, ms, town, problems, changes }` |
+| `plan` | `{ id, op: "plan", key, skeleton, base?: { key, skeleton }, full?: bool }` | `{ id, ok: true, ms, town, skeleton, regions, problems, changes }` |
 | `day` | `{ id, op: "day", key, skeleton }` | `{ id, ok: true, ms, day }` |
 | `houses` | `{ id, op: "houses", key, skeleton }` | `{ id, ok: true, houses: [[x, y], …] }` |
 
 Any op can answer `{ id, ok: false, error }`. `full: true` grows the town from scratch with every
-stage's checks (what Commit runs); otherwise from the cached terrain, checks on too. The cache holds
+stage's checks (what Commit runs), the skeleton as given; otherwise from the cached terrain, checks on too,
+and **settled**:
+- If a stage's rule breaks, or the newest region lacks what it wanted, that region is tried with other
+  salts, up to 5 tries.
+- If nothing keeps the rules, the region is left out.
+- A downtown that breaks a rule is pulled towards the centre.
+- The first region sets `parks`.
+
+The answer's `skeleton` is what it settled on. Its `regions` is `[{ index, ok, text }]`, saying whether
+each region has what it wanted (`text`, for example "No room for a roundabout there"). The cache holds
 each key's model through the zoo while the skeleton's `center` is unchanged (a moved bullseye grows it
 again from the site), and a `day` is kept by key and skeleton (a day is over a minute's work in Porchlight).
 
@@ -57,7 +82,7 @@ again from the site), and a `day` is kept by key and skeleton (a day is over a m
 
 ```jsonc
 {
-  "width": 256, "height": 256, "center": [x,y], "secondCentre": [x,y] | null, "townRadius": 128,
+  "width": 256, "height": 256, "center": [x,y], "downtown": [x,y], "secondCentre": [x,y] | null, "townRadius": 128,
   "gates": [[x,y]],
   "water": "<base64: one bit a tile, row by row, lowest bit first>",
   "nodes": [ { "id": 0, "at": [x,y], "legs": 3, "gate": false } ],
@@ -79,16 +104,13 @@ again from the site), and a `day` is kept by key and skeleton (a day is over a m
 }
 ```
 
-**`problems`**: `[{ level: "error" | "warning", text, at: [x,y] | null }]`. Errors stop Commit:
-junctions under 4 tiles apart along a main road (3 along a street), two roads meeting under 60°, a
-road in water with no bridge, a gate, the airport or the zoo cut off from the centre, two roads
-between the same junctions, and any stage's own check (`at: null`). One of these the base already had
-(the same text within 1.5 tiles) is a warning instead, "… (as it was before)": the edit didn't make it.
-Warnings: a road over capacity (`design.vc` above 1), the design's notes, houses lost, a pinned point
-dropped (a point of a pinned road with no road of the town within 1.5 tiles). (A street dropped for
-running alongside another isn't reported: the streets stage doesn't say.) With no design yet
-(`model.design` null), roads have `design: null`, junctions `form: "plain"` and the skeleton's own
-control for them (else `"auto"`), and the roundabout, pocket and signal counts are 0.
+**`problems`**: `[{ level: "error" | "warning", text, at: [x,y] | null }]`. Errors stop Commit. An error
+is a stage's own check that settling couldn't put right (`at: null`), which is rare: settling leaves out
+whatever broke it. Warnings: a region without what it wanted (as in `regions`), and houses lost. The
+junction gap and angle checks, the design's notes and the over-capacity and pinned-point warnings are gone
+(street-editor.md §13). With no design yet (`model.design` null), roads have `design: null`, junctions
+`form: "plain"` and the skeleton's own control for them (else `"auto"`), and the roundabout, pocket and
+signal counts are 0.
 
 **`changes`** (when `base` is given): `{ housesLost, housesNew, lostHouses: [[x,y]], shops: [before, after],
 roadsAdded, roadsRemoved, roundabouts: [before, after], signals: [before, after] }`.

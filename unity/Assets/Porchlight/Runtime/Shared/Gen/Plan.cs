@@ -161,7 +161,7 @@ namespace Porchlight.Gen
             // Each big enough neighbourhood's park: the block nearest its middle that's a fair size (not the town's own middle, where the plaza is).
             int plazaBlock = -1;
             for (int k = 0; k < nb; k++)
-                if (plazaBlock < 0 || Geo.Dist(mids[k], model.center) < Geo.Dist(mids[plazaBlock], model.center)) plazaBlock = k;
+                if (plazaBlock < 0 || Geo.Dist(mids[k], model.downtown) < Geo.Dist(mids[plazaBlock], model.downtown)) plazaBlock = k;
             foreach (var hood in hoods)
             {
                 if (!Served(hood)) continue;
@@ -175,7 +175,38 @@ namespace Porchlight.Gen
                 hood.parkBlockId = park;
             }
             next.neighbourhoods = hoods;
+            next.parkBlocks = new List<int>();
+            Wanted(next, blocks, blockTiles, mids, plazaBlock);
             return next;
+        }
+
+        /// <summary>
+        /// What an editor wanted in the areas they regenerated (Skeleton.regions): a park (a block of the area, unless
+        /// one of its blocks is a park already), shops (its blocks built up as a centre's, T5), houses (no more built up
+        /// than T4), or both (each block one or the other, as its area's stream has it).
+        /// </summary>
+        static void Wanted(TownModel next, List<Block> blocks, List<List<int>> blockTiles, List<Vec2> mids, int plazaBlock)
+        {
+            for (int r = 0; r < Gen.Regions.Count(next); r++)
+            {
+                var want = Gen.Regions.Get(next, r).want;
+                var mine = new List<int>();
+                for (int k = 0; k < blocks.Count; k++) if (Gen.Regions.At(next, mids[k]) == r) mine.Add(k);
+                foreach (int k in mine)
+                {
+                    bool shops = want.shops && (!want.houses || Rng.Local(next.seed, Gen.Regions.Stream(next, "plan", mids[k]), Signature.OfPoint(mids[k])).Chance(0.5));
+                    if (shops && blocks[k].transect < Transect.T5) blocks[k].transect = Transect.T5;
+                    else if (want.houses && !shops && blocks[k].transect > Transect.T4) blocks[k].transect = Transect.T4;
+                }
+                if (!want.park) continue;
+                var parks = next.ParkBlockSet();
+                if (mine.Exists(parks.Contains)) continue;
+                var middle = Gen.Regions.Middle(next, r);
+                int park = -1;
+                foreach (int k in mine)
+                    if (k != plazaBlock && blockTiles[k].Count >= PARK_MIN_TILES && (park < 0 || Geo.Dist(mids[k], middle) < Geo.Dist(mids[park], middle))) park = k;
+                if (park >= 0) next.parkBlocks.Add(park);
+            }
         }
 
         /// <summary>The furthest apart two of these blocks' middles are.</summary>

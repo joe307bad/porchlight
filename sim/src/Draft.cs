@@ -177,7 +177,6 @@ namespace Porchlight.Sim
             public HashSet<(int, int)> houses;
             public int shops, roundabouts, signals;
             public List<(Vec2 a, Vec2 b)> roads;
-            public List<Problem> geometry;
         }
 
         sealed class Problem
@@ -192,11 +191,13 @@ namespace Porchlight.Sim
             string key = KeyOf(req);
             var skeleton = SkeletonOf(req);
             bool full = req.TryGetProperty("full", out var f) && f.ValueKind == JsonValueKind.True;
-            var model = Grow(key, skeleton, full, out var ms, out var violations);
+            var (model, ms, violations, regions) = Settle(key, ref skeleton, full);
             var layout = Layout.Build(model);
             var summary = Summarise(model, layout);
             var problems = new List<Problem>();
+            // What Settle couldn't put right (it tries hard): the town can't be committed like this.
             foreach (var (stage, text) in violations) problems.Add(new Problem { level = "error", text = $"{stage}: {text}", at = null });
+            foreach (var r in regions) if (!r.ok) problems.Add(new Problem { level = "warning", text = r.text, at = r.at });
 
             Summary before = null;
             if (req.TryGetProperty("base", out var b) && b.ValueKind == JsonValueKind.Object)
@@ -212,20 +213,8 @@ namespace Porchlight.Sim
                     bases[sig] = before;
                 }
             }
-            // A geometry problem the town had before this edit isn't the edit's: a warning, so the town can still be changed.
-            foreach (var g in summary.geometry)
-            {
-                bool old = before != null && g.at is Vec2 at && before.geometry.Any(o => o.text == g.text && o.at is Vec2 oa && Dist(oa, at) < 1.5);
-                problems.Add(old ? new Problem { level = "warning", text = g.text + " (as it was before)", at = g.at } : g);
-            }
-            if (model.design != null)
-            {
-                foreach (var n in model.design.notes) problems.Add(new Problem { level = "warning", text = n.text, at = n.at });
-                foreach (var e in model.design.edges)
-                    if (e != null && e.vc > 1 && e.edge >= 0 && e.edge < model.roads.edges.Count)
-                        problems.Add(new Problem { level = "warning", text = $"a road over capacity ({e.vc:0.00})", at = Mid(model.roads.edges[e.edge].points) });
-            }
-            if (skeleton != null) problems.AddRange(Dropped(model, skeleton));
+            // The town's shape (junction gaps, angles) and the design's notes aren't the editor's to care about: the
+            // generator plans the streets, and Settle tries again until its rules hold.
 
             object changes = null;
             if (before != null)
@@ -252,11 +241,122 @@ namespace Porchlight.Sim
                 ["ok"] = true,
                 ["ms"] = sw.ElapsedMilliseconds,
                 ["town"] = town,
+                ["skeleton"] = skeleton == null ? new Dictionary<string, object>() : Json.Parse(skeleton.ToJson()),
+                ["regions"] = regions.Select(r => new Dictionary<string, object> { ["index"] = r.index, ["ok"] = r.ok, ["text"] = r.text }).ToList(),
                 ["problems"] = problems.Select(p => new Dictionary<string, object> { ["level"] = p.level, ["text"] = p.text, ["at"] = p.at is Vec2 a ? Pt(a) : null }).ToList(),
                 ["changes"] = changes,
             };
             Log($"plan {key}{(skeleton != null ? " (edited)" : "")}{(full ? " full" : "")}: {sw.ElapsedMilliseconds} ms, {problems.Count(p => p.level == "error")} error(s), {problems.Count(p => p.level == "warning")} warning(s)");
             return answer;
+        }
+
+        // ---- settling an edit: trying again until it works ----
+
+        sealed class RegionOutcome
+        {
+            public int index;
+            public bool ok;
+            public string text;
+            public Vec2? at;
+        }
+
+        /// <summary>Tries for the newest regenerated area: its salt moved on each time a stage's rule breaks or it lacks what was wanted.</summary>
+        const int REGION_TRIES = 5;
+        /// <summary>Tries for a moved downtown that breaks a stage's rule: pulled halfway back to the centre each time.</summary>
+        const int DOWNTOWN_TRIES = 3;
+
+        /// <summary>
+        /// The town, put right where an edit broke it, so an editor never has to: the newest area regenerated again
+        /// with another salt until every stage's rules hold and it has what was wanted (the first that keeps the rules
+        /// if none has it all), else left out; a downtown that breaks them pulled back towards the centre. `skeleton`
+        /// becomes what was planned. A commit (`full`) plans the skeleton as it's given: what it was settled to.
+        /// </summary>
+        static (TownModel model, Dictionary<string, long> ms, List<(string stage, string text)> violations, List<RegionOutcome> regions) Settle(string key, ref Skeleton skeleton, bool full)
+        {
+            if (!full && skeleton != null && skeleton.regions.Count > 0 && skeleton.parks == null)
+            {
+                // The first area regenerated: the parks the town kept green kept so (Skeleton.parks), from the town as it was.
+                var before = Skeleton.FromJson(skeleton.ToJson());
+                before.regions.Clear();
+                var was = Grow(key, before.IsEmpty ? null : before, false, out _, out _);
+                skeleton = Skeleton.FromJson(skeleton.ToJson());
+                skeleton.parks = LandStage.MoreParkMiddles(was);
+            }
+            var model = Grow(key, skeleton, full, out var ms, out var violations);
+            var outcomes = Outcomes(model);
+            if (full || skeleton == null) return (model, ms, violations, outcomes);
+            int last = skeleton.regions.Count - 1;
+            bool Good(List<(string, string)> v, List<RegionOutcome> o) => v.Count == 0 && (last < 0 || o[last].ok);
+            if (last >= 0 && !Good(violations, outcomes))
+            {
+                // Keeps the rules (and, best, has what was wanted): the first such try.
+                (Skeleton sk, TownModel m, Dictionary<string, long> ms, List<(string, string)> v, List<RegionOutcome> o)? lawful = violations.Count == 0 ? (skeleton, model, ms, violations, outcomes) : null;
+                for (int t = 1; t < REGION_TRIES && !Good(violations, outcomes); t++)
+                {
+                    var tried = Skeleton.FromJson(skeleton.ToJson());
+                    tried.regions[last].salt = (int)((tried.regions[last].salt * 1103515245L + 12345L + t) & 0x7fffffff);
+                    var m = Grow(key, tried, false, out var tms, out var tv);
+                    var o = Outcomes(m);
+                    Log($"settle: area {last} again with salt {tried.regions[last].salt}: {tv.Count} broken rule(s), {(o[last].ok ? "has what was wanted" : o[last].text)}");
+                    if (tv.Count == 0 && lawful == null) lawful = (tried, m, tms, tv, o);
+                    if (Good(tv, o)) (skeleton, model, ms, violations, outcomes) = (tried, m, tms, tv, o);
+                }
+                if (!Good(violations, outcomes) && lawful != null) (skeleton, model, ms, violations, outcomes) = lawful.Value;
+                if (violations.Count > 0)
+                {
+                    // Nothing it tried keeps the rules: the area left out.
+                    var without = Skeleton.FromJson(skeleton.ToJson());
+                    without.regions.RemoveAt(last);
+                    skeleton = without.IsEmpty ? null : without;
+                    model = Grow(key, skeleton, false, out ms, out violations);
+                    outcomes = Outcomes(model);
+                    outcomes.Add(new RegionOutcome { index = last, ok = false, text = "Couldn't regenerate that area without breaking the town: try other blocks or fewer options" });
+                }
+            }
+            for (int t = 0; t < DOWNTOWN_TRIES && violations.Count > 0 && skeleton?.center is Vec2 c; t++)
+            {
+                var tried = Skeleton.FromJson(skeleton.ToJson());
+                tried.center = new Vec2((c.x + model.center.x) / 2, (c.y + model.center.y) / 2);
+                var m = Grow(key, tried, false, out var tms, out var tv);
+                Log($"settle: downtown pulled in to ({tried.center.Value.x:0}, {tried.center.Value.y:0}): {tv.Count} broken rule(s)");
+                (skeleton, model, ms, violations, outcomes) = (tried, m, tms, tv, Outcomes(m));
+            }
+            return (model, ms, violations, outcomes);
+        }
+
+        /// <summary>Whether each regenerated area has what was wanted there.</summary>
+        static List<RegionOutcome> Outcomes(TownModel m)
+        {
+            var o = new List<RegionOutcome>();
+            for (int r = 0; r < Regions.Count(m); r++)
+            {
+                var want = Regions.Get(m, r).want;
+                var middle = Regions.Middle(m, r);
+                bool In(Vec2 at) => Regions.At(m, at) == r;
+                var inside = m.buildings.Where(b => b.footprint != null && b.footprint.Count > 0 && In(Geo.PolygonCentroid(b.footprint))).ToList();
+                var missing = new List<string>();
+                if (want.park && !m.ParkBlockSet().Any(k => k < m.blocks.Count && In(Geo.PolygonCentroid(m.blocks[k].polygon)))) missing.Add("a park");
+                if (want.school && !inside.Any(b => b.kind == BuildingKind.School)) missing.Add("a school");
+                if (want.shops && !inside.Any(b => b.kind == BuildingKind.Shop)) missing.Add("shops");
+                if (want.houses && !inside.Any(b => b.kind == BuildingKind.House)) missing.Add("houses");
+                if (want.roundabout && (m.design == null || !m.design.nodes.Any(n => n != null && n.form == JunctionForm.Roundabout && Near(m, r, m.roads.nodes[n.node].at)))) missing.Add("a roundabout");
+                o.Add(new RegionOutcome
+                {
+                    index = r,
+                    ok = missing.Count == 0,
+                    text = missing.Count == 0 ? null : $"No room for {string.Join(" or ", missing)} there",
+                    at = middle,
+                });
+            }
+            return o;
+        }
+
+        static bool Near(TownModel m, int r, Vec2 at)
+        {
+            for (int dy = -3; dy <= 3; dy++)
+                for (int dx = -3; dx <= 3; dx++)
+                    if (Regions.At(m, new Vec2(at.x + dx, at.y + dy)) == r) return true;
+            return false;
         }
 
         /// <summary>The houses people can live in (Homes.All, with this layout) by the tile each goes by.</summary>
@@ -273,7 +373,6 @@ namespace Porchlight.Sim
                 houses = new HashSet<(int, int)>(HousesOf(model, layout).Select(h => { var a = Homes.Anchor(h); return (a.x, a.y); })),
                 shops = model.buildings.Count(b => b.kind == BuildingKind.Shop),
                 roads = model.roads.edges.Select(e => (model.roads.nodes[e.from].at, model.roads.nodes[e.to].at)).ToList(),
-                geometry = Geometry(model),
             };
             if (model.design != null)
             {
@@ -283,117 +382,6 @@ namespace Porchlight.Sim
             return s;
         }
 
-        // ---- problems of the town's shape ----
-
-        const double JUNCTION_GAP_MAIN = 4, JUNCTION_GAP_STREET = 3, LEAST_ANGLE = 60;
-
-        static List<Problem> Geometry(TownModel model)
-        {
-            var o = new List<Problem>();
-            var g = model.roads;
-            var legs = new int[g.nodes.Count];
-            foreach (var e in g.edges)
-            {
-                legs[e.from]++;
-                legs[e.to]++;
-            }
-            // Junctions too close along a road.
-            foreach (var e in g.edges)
-            {
-                if (e.kind == RoadKind.Path || legs[e.from] < 3 || legs[e.to] < 3) continue;
-                double gap = e.kind == RoadKind.Main ? JUNCTION_GAP_MAIN : JUNCTION_GAP_STREET;
-                double len = Length(e.points);
-                if (len < gap) o.Add(new Problem { level = "error", text = $"junctions {len:0.0} tiles apart along a {(e.kind == RoadKind.Main ? "main road" : "street")} (at least {gap})", at = Mid(e.points) });
-            }
-            // Roads meeting at too sharp an angle.
-            var leaving = new List<(double heading, RoadEdge e)>[g.nodes.Count];
-            foreach (var e in g.edges)
-            {
-                if (e.kind == RoadKind.Path || e.points == null || e.points.Count < 2) continue;
-                (leaving[e.from] ??= new List<(double, RoadEdge)>()).Add((Heading(e.points, true), e));
-                (leaving[e.to] ??= new List<(double, RoadEdge)>()).Add((Heading(e.points, false), e));
-            }
-            for (int n = 0; n < g.nodes.Count; n++)
-            {
-                var l = leaving[n];
-                if (l == null || l.Count < 2) continue;
-                l.Sort((a, b) => a.heading.CompareTo(b.heading));
-                for (int i = 0; i < l.Count; i++)
-                {
-                    double a = l[i].heading, b = i + 1 < l.Count ? l[i + 1].heading : l[0].heading + 2 * Math.PI;
-                    double deg = (b - a) * 180 / Math.PI;
-                    if (deg < LEAST_ANGLE)
-                    {
-                        o.Add(new Problem { level = "error", text = $"two roads meet at {deg:0}° (at least {LEAST_ANGLE}°)", at = g.nodes[n].at });
-                        break;
-                    }
-                }
-            }
-            // Two roads between the same two junctions.
-            var pairs = new HashSet<(int, int)>();
-            foreach (var e in g.edges)
-            {
-                if (e.kind == RoadKind.Path) continue;
-                var pair = (Math.Min(e.from, e.to), Math.Max(e.from, e.to));
-                if (!pairs.Add(pair)) o.Add(new Problem { level = "error", text = "two roads between the same junctions", at = Mid(e.points) });
-            }
-            // A road in water with no bridge.
-            var water = Raster.WaterMask(model);
-            var bridged = new HashSet<int>(model.bridges.Select(b => b.roadEdgeId));
-            foreach (var e in g.edges)
-            {
-                if (e.kind == RoadKind.Path || bridged.Contains(e.id) || e.points == null) continue;
-                var wet = Wet(e.points, water, model.width, model.height);
-                if (wet is Vec2 at) o.Add(new Problem { level = "error", text = "a road in water with no bridge", at = at });
-            }
-            // A gate, the airport or the zoo cut off from the centre.
-            if (g.nodes.Count > 0)
-            {
-                var part = Components(g);
-                int heart = Nearest(g, model.center);
-                foreach (var gate in model.gates)
-                {
-                    int n = Nearest(g, gate);
-                    if (n >= 0 && Dist(g.nodes[n].at, gate) < 3 && part[n] != part[heart])
-                        o.Add(new Problem { level = "error", text = "a gate cut off from the centre", at = gate });
-                }
-                void Site(string what, int x0, int y0, int x1, int y1)
-                {
-                    var middle = new Vec2((x0 + x1) / 2.0, (y0 + y1) / 2.0);
-                    int best = -1;
-                    double bd = double.MaxValue;
-                    for (int i = 0; i < g.nodes.Count; i++)
-                    {
-                        if (legs[i] == 0) continue;
-                        var p = g.nodes[i].at;
-                        double dx = Math.Max(Math.Max(x0 - p.x, 0), p.x - x1), dy = Math.Max(Math.Max(y0 - p.y, 0), p.y - y1);
-                        double d = dx * dx + dy * dy;
-                        if (d < bd)
-                        {
-                            bd = d;
-                            best = i;
-                        }
-                    }
-                    if (best < 0 || part[best] != part[heart]) o.Add(new Problem { level = "error", text = $"the {what} cut off from the centre", at = middle });
-                }
-                if (model.airport != null) Site("airport", model.airport.x0, model.airport.y0, model.airport.x1, model.airport.y1);
-                if (model.zoo != null) Site("zoo", model.zoo.x0, model.zoo.y0, model.zoo.x1, model.zoo.y1);
-            }
-            return o;
-        }
-
-        /// <summary>Pinned points the town couldn't keep: a point of a pinned road with no road of the town through it (within 1.5 tiles), each place once.</summary>
-        static IEnumerable<Problem> Dropped(TownModel model, Skeleton s)
-        {
-            var edges = model.roads.edges.Where(e => e.points != null && e.points.Count >= 2).ToList();
-            bool Kept(Vec2 p) => edges.Any(e => Geo.DistToPolyline(p, e.points) <= 1.5);
-            var said = new HashSet<(long, long)>();
-            foreach (var r in (s.mains ?? new List<SkeletonRoad>()).Concat(s.streets))
-                foreach (var p in r.points)
-                    if (!Kept(p) && said.Add(((long)Math.Round(p.x), (long)Math.Round(p.y))))
-                        yield return new Problem { level = "warning", text = "a pinned point dropped", at = p };
-        }
-
         static double Dist(Vec2 a, Vec2 b) => Math.Sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
 
         static double Length(List<Vec2> pts)
@@ -401,92 +389,6 @@ namespace Porchlight.Sim
             double l = 0;
             for (int i = 1; i < pts.Count; i++) l += Dist(pts[i - 1], pts[i]);
             return l;
-        }
-
-        static Vec2 Mid(List<Vec2> pts)
-        {
-            if (pts == null || pts.Count == 0) return new Vec2(0, 0);
-            double half = Length(pts) / 2, l = 0;
-            for (int i = 1; i < pts.Count; i++)
-            {
-                double d = Dist(pts[i - 1], pts[i]);
-                if (l + d >= half && d > 0)
-                {
-                    double t = (half - l) / d;
-                    return new Vec2(pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t);
-                }
-                l += d;
-            }
-            return pts[0];
-        }
-
-        /// <summary>Which way the road leaves its `from` end (or its `to` end), measured over its first tile or two.</summary>
-        static double Heading(List<Vec2> pts, bool atFrom)
-        {
-            var a = atFrom ? pts[0] : pts[^1];
-            Vec2 b = atFrom ? pts[1] : pts[^2];
-            double run = 0;
-            for (int i = 1; i < pts.Count; i++)
-            {
-                var q = atFrom ? pts[i] : pts[pts.Count - 1 - i];
-                b = q;
-                run = Dist(a, q);
-                if (run >= 1.5) break;
-            }
-            return Math.Atan2(b.y - a.y, b.x - a.x);
-        }
-
-        /// <summary>A point of the road inside the town's water (sampled every half tile, ends left out: a road meets the shore), or null.</summary>
-        static Vec2? Wet(List<Vec2> pts, byte[] water, int w, int h)
-        {
-            double total = Length(pts), l = 0;
-            for (int i = 1; i < pts.Count; i++)
-            {
-                var a = pts[i - 1];
-                var b = pts[i];
-                double d = Dist(a, b);
-                for (double s = 0; s < d; s += 0.5)
-                {
-                    double along = l + s;
-                    if (along < 1 || along > total - 1) continue;
-                    double t = d == 0 ? 0 : s / d;
-                    double x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t;
-                    int tx = (int)Math.Floor(x), ty = (int)Math.Floor(y);
-                    if (tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
-                    if (water[ty * w + tx] != 0) return new Vec2(x, y);
-                }
-                l += d;
-            }
-            return null;
-        }
-
-        static int[] Components(RoadGraph g)
-        {
-            var part = Enumerable.Repeat(-1, g.nodes.Count).ToArray();
-            var adj = new List<int>[g.nodes.Count];
-            for (int i = 0; i < adj.Length; i++) adj[i] = new List<int>();
-            foreach (var e in g.edges)
-            {
-                adj[e.from].Add(e.to);
-                adj[e.to].Add(e.from);
-            }
-            int next = 0;
-            var stack = new Stack<int>();
-            for (int i = 0; i < part.Length; i++)
-            {
-                if (part[i] >= 0) continue;
-                part[i] = next;
-                stack.Push(i);
-                while (stack.Count > 0)
-                    foreach (int j in adj[stack.Pop()])
-                        if (part[j] < 0)
-                        {
-                            part[j] = next;
-                            stack.Push(j);
-                        }
-                next++;
-            }
-            return part;
         }
 
         static int Nearest(RoadGraph g, Vec2 p)
@@ -660,6 +562,7 @@ namespace Porchlight.Sim
                 ["width"] = model.width,
                 ["height"] = model.height,
                 ["center"] = Pt(model.center),
+                ["downtown"] = Pt(model.downtown),
                 ["secondCentre"] = model.secondCentre is Vec2 sc ? Pt(sc) : null,
                 ["townRadius"] = R(model.townRadius),
                 ["gates"] = Pts(model.gates),

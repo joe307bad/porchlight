@@ -88,7 +88,7 @@ namespace Porchlight.Gen
                 done(s);
                 yield break;
             }
-            var C = m.center;
+            var C = m.downtown;
             double R = Math.Max(1, m.townRadius);
             var fronts = Fronts(m, list, g);
             yield return "/fronts";
@@ -206,7 +206,7 @@ namespace Porchlight.Gen
                     if (Geo.Dist(mid[i], at) <= CORNER_REACH) { atEntrance[i] = true; break; }
             for (int k = 0; k < stores; k++)
             {
-                int best = BestByHuff(homes, shopsAt, list.Count, i => atEntrance[i] && Main(i) && zone[i] < Transect.T5 && (list[i].kind == BuildingKind.House || list[i].kind == BuildingKind.Shop && !s.highStreet.Contains(list[i].id)),
+                int best = BestByHuff(homes, shopsAt, list.Count, i => atEntrance[i] && Main(i) && zone[i] < Transect.T5 && !Regions.HousesOnly(m, mid[i]) && (list[i].kind == BuildingKind.House || list[i].kind == BuildingKind.Shop && !s.highStreet.Contains(list[i].id)),
                     mid, 1, i => 1 + 0.5 * LandStage.At(m, mid[i]));
                 if (best < 0) break;
                 yield return "/store";
@@ -374,7 +374,7 @@ namespace Porchlight.Gen
             {
                 var ends = new List<int>();
                 foreach (var gate in model.gates) ends.Add(RoadGraphOps.NearestNode(model.roads, gate));
-                ends.Add(RoadGraphOps.NearestNode(model.roads, model.center));
+                ends.Add(RoadGraphOps.NearestNode(model.roads, model.downtown));
                 if (model.secondCentre != null) ends.Add(RoadGraphOps.NearestNode(model.roads, model.secondCentre.Value));
                 var cls = new Dictionary<long, RoadClass>();
                 var arterialLegs = new int[adj.Length];
@@ -406,7 +406,7 @@ namespace Porchlight.Gen
                 {
                     int c = passes[b].CompareTo(passes[a]);
                     if (c != 0) return c;
-                    c = Geo.Dist(model.roads.nodes[a].at, model.center).CompareTo(Geo.Dist(model.roads.nodes[b].at, model.center));
+                    c = Geo.Dist(model.roads.nodes[a].at, model.downtown).CompareTo(Geo.Dist(model.roads.nodes[b].at, model.downtown));
                     return c != 0 ? c : a.CompareTo(b);
                 });
                 return o;

@@ -76,7 +76,7 @@ namespace Porchlight.Gen
                     if (Geo.DistToPolyline(mid, s.points) < 0.35 && Geo.DistToPolyline(e.points[0], s.points) < 0.35 && Geo.DistToPolyline(e.points[e.points.Count - 1], s.points) < 0.35) return true;
                 return false;
             }
-            double Falloff(Vec2 pt) => Math.Max(0, 1 - Geo.Dist(pt, C) / R);
+            double Falloff(Vec2 pt) => Math.Max(0, 1 - Geo.Dist(pt, model.downtown) / R);
             var keep = new HashSet<int>();
             foreach (var n in g.nodes)
             {
@@ -185,7 +185,7 @@ namespace Porchlight.Gen
                 if (!(Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id))) return false;
                 var era = TownPlan.EraAt(model, g.nodes[node].at);
                 double keepShare = era == Era.Core ? 0 : era == Era.PostWar ? Math.Min(1, p.culDeSacs * 1.5) : p.culDeSacs;
-                return Rng.Local(model.seed, "cul-de-sac", Signature.OfPoint(g.nodes[node].at)).Chance(keepShare);
+                return Rng.Local(model.seed, Regions.Stream(model, "cul-de-sac", g.nodes[node].at), Signature.OfPoint(g.nodes[node].at)).Chance(keepShare);
             }
 
             // The land to plat: what blocks are made of (Parcels.Ground), and where a street may be laid.
@@ -206,6 +206,26 @@ namespace Porchlight.Gen
             var plan = new StreetPlan(model, g, rng, land, roadOk, Falloff, BulbFits, FirstHit);
             int floor = plan.floor;
             if (p.roadDensity > 0) foreach (var part in plan.Run()) yield return "/plan" + part;
+            var collectors = new List<(Vec2 a, Vec2 b)>(plan.collectors);
+            // An editor's regenerated areas, in order: the streets inside cleared, and the land planned again with the
+            // area's own stream. What's outside, and the roads round the edge, stay.
+            for (int r = 0; r < Regions.Count(model) && p.roadDensity > 0; r++)
+            {
+                foreach (var e in RoadGraphOps.LiveEdges(g))
+                    if (e.kind != RoadKind.Main && !IsPinned(e) && Regions.Clears(model, r, e.points)) g.dead.Add(e.id);
+                var mask = Regions.Mask(model, r);
+                var inside = new byte[w * h];
+                for (int i = 0; i < inside.Length; i++) inside[i] = land[i] != 0 && mask[i] != 0 ? (byte)1 : (byte)0;
+                var again = new StreetPlan(model, g, rng, inside, roadOk, Falloff, BulbFits, FirstHit)
+                {
+                    stream = Regions.Stream(model, "streets", Regions.Middle(model, r)),
+                    variety = true,
+                };
+                foreach (var part in again.Run()) yield return "/region" + part;
+                // The collectors the area had are gone with its streets; its own first splits are.
+                collectors.RemoveAll(c => Regions.Clears(model, r, new List<Vec2> { c.a, c.b }));
+                collectors.AddRange(again.collectors);
+            }
 
             // A connector keeps a block's depth from any road alongside it too: one it runs nearly parallel to (a road
             // it meets or crosses doesn't count).
@@ -263,7 +283,7 @@ namespace Porchlight.Gen
             }
             // Cutting dead ends back can leave two streets between the same junctions again: the shorter kept.
             if (RoadGraphOps.DropDoubles(g)) RoadGraphOps.MergePassThrough(g, keep);
-            var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
+            var roads = KeepConnected(RoadGraphOps.Compact(g), model.center, Regions.Count(model) > 0);
             bool droppedClose = false;
             // A street laid alongside a main road nearer than MIN_APART (beside a bend in it, say): it goes,
             // the stretch of it between two junctions, and the blocks either side are one. The main roads are where
@@ -284,7 +304,7 @@ namespace Porchlight.Gen
                     foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) keepAgain.Add(n.id);
                 }
                 RoadGraphOps.MergePassThrough(again, keepAgain);
-                roads = KeepConnected(RoadGraphOps.Compact(again), model.center);
+                roads = KeepConnected(RoadGraphOps.Compact(again), model.center, Regions.Count(model) > 0);
                 droppedClose = true;
             }
             // Dropping a street can leave a new dead end, perhaps with no room for its bulb (beside the main road it ran
@@ -313,10 +333,10 @@ namespace Porchlight.Gen
                     RoadGraphOps.MergePassThrough(g, keepAgain);
                     any = true;
                 }
-                if (any) roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
+                if (any) roads = KeepConnected(RoadGraphOps.Compact(g), model.center, Regions.Count(model) > 0);
             }
             if (skeleton != null && skeleton.removed.Count > 0) roads = DropRemoved(roads, skeleton, model);
-            Classify(roads, model, plan.collectors);
+            Classify(roads, model, collectors);
             if (skeleton != null) ApplyClasses(roads, skeleton);
             yield return "/compact";
             var next = model.With();
@@ -370,7 +390,7 @@ namespace Porchlight.Gen
                 foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) keep.Add(n.id);
             }
             RoadGraphOps.MergePassThrough(g, keep);
-            return KeepConnected(RoadGraphOps.Compact(g), model.center);
+            return KeepConnected(RoadGraphOps.Compact(g), model.center, Regions.Count(model) > 0);
         }
 
         /// <summary>The classes an editor set: on its own streets, and on any road by its ends.</summary>
@@ -681,13 +701,29 @@ namespace Porchlight.Gen
             return true;
         }
 
-        static RoadGraph KeepConnected(RoadGraph graph, Vec2 center)
+        /// <summary>
+        /// The roads reached from the node nearest the centre; or, with `biggest` (a town with areas an editor
+        /// regenerated, where the road nearest the centre may be a new street left on its own), the most roads
+        /// reached from any one node.
+        /// </summary>
+        static RoadGraph KeepConnected(RoadGraph graph, Vec2 center, bool biggest)
         {
             if (graph.nodes.Count == 0) return graph;
             int hub = 0;
             for (int i = 0; i < graph.nodes.Count; i++)
                 if (Geo.Dist(graph.nodes[i].at, center) < Geo.Dist(graph.nodes[hub].at, center)) hub = i;
             var reached = RoadGraphOps.ReachableNodes(graph, hub);
+            if (biggest && reached.Count < graph.nodes.Count)
+            {
+                var seen = new HashSet<int>(reached);
+                for (int i = 0; i < graph.nodes.Count; i++)
+                {
+                    if (seen.Contains(i)) continue;
+                    var other = RoadGraphOps.ReachableNodes(graph, i);
+                    seen.UnionWith(other);
+                    if (other.Count > reached.Count) reached = other;
+                }
+            }
             if (reached.Count == graph.nodes.Count) return graph;
             var g = new GraphBuilder();
             foreach (var n in graph.nodes) g.nodes.Add(new RoadNode { id = n.id, at = n.at });

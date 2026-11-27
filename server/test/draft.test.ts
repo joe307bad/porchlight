@@ -1,7 +1,7 @@
 // The street editor's draft worker (sim/src/Draft.cs) run for real through DraftWorker: a plan, a plan
-// against a base with the bullseye moved, houses, a skeleton it can't read, a plan superseded while it
-// waited, and a worker that stops started again; and the simulation (SimPool) growing an edited town from
-// the skeleton sent with it.
+// against a base with the bullseye (the downtown) moved, an area of blocks regenerated, houses, a skeleton
+// it can't read, a plan superseded while it waited, and a worker that stops started again; and the
+// simulation (SimPool) growing an edited town from the skeleton sent with it.
 // Skipped where there's no build of it (as sim.test.ts).
 
 import { test } from 'node:test';
@@ -13,7 +13,7 @@ const worker = findWorker({ ...process.env, SIM: undefined });
 const skip = worker ? false : 'no build of the simulation worker (sim/)';
 const KEY = 'seed=draft-test&width=96&height=96';
 
-test('the draft worker plans a town, and what changed when the bullseye moves', { skip, timeout: 120_000 }, async () => {
+test('the draft worker plans a town, what changed when the downtown moves, and an area regenerated', { skip, timeout: 120_000 }, async () => {
   const w = new DraftWorker(worker!);
   w.log = () => {};
   try {
@@ -35,10 +35,30 @@ test('the draft worker plans a town, and what changed when the bullseye moves', 
 
     const moved = (await w.request({ op: 'plan', key: KEY, skeleton: { v: 1, center: [t.center[0] + 8, t.center[1]] }, base: { key: KEY, skeleton: null } })) as any;
     assert.equal(moved.ok, true, moved.error);
-    assert.equal(moved.town.center[0], t.center[0] + 8);
+    // The bullseye moves the downtown; the town's circle stays where it was.
+    assert.deepEqual(moved.town.center, t.center);
+    assert.deepEqual(plain.town.downtown, t.center);
+    assert.notDeepEqual(moved.town.downtown, t.center);
     assert.equal(typeof moved.changes.housesLost, 'number');
     assert.equal(moved.changes.lostHouses.length, moved.changes.housesLost);
     assert.equal(moved.changes.shops[0], t.stats.shops);
+
+    // A few blocks near the middle regenerated, wanting a park: the worker settles on a skeleton (the parks the
+    // town kept green kept so), and says whether the area got what it wanted.
+    const mid = (poly: number[][]) => [poly.reduce((s, p) => s + p[0], 0) / poly.length, poly.reduce((s, p) => s + p[1], 0) / poly.length];
+    const near = t.blocks
+      .map((b: any) => ({ poly: b.poly, d: Math.hypot(mid(b.poly)[0] - t.center[0], mid(b.poly)[1] - t.center[1]) }))
+      .sort((a: any, b: any) => a.d - b.d)
+      .slice(0, 3)
+      .map((b: any) => b.poly);
+    const want = { roundabout: false, park: true, school: false, shops: false, houses: false };
+    const regen = (await w.request({ op: 'plan', key: KEY, skeleton: { v: 1, regions: [{ blocks: near, salt: 42, want }] } })) as any;
+    assert.equal(regen.ok, true, regen.error);
+    assert.equal(regen.skeleton.regions.length, 1);
+    assert.ok(Array.isArray(regen.skeleton.parks), 'the parks kept green are kept in the skeleton');
+    assert.equal(regen.regions.length, 1);
+    assert.equal(typeof regen.regions[0].ok, 'boolean');
+    assert.ok(!regen.problems.some((p: any) => p.level === 'error'), 'no errors left');
 
     const bad = await w.request({ op: 'plan', key: KEY, skeleton: { junctions: [{ at: [1, 1], control: 'teleport' }] } });
     assert.equal(bad.ok, false);
@@ -58,7 +78,10 @@ test('the simulation grows an edited town (a key with `rev`) with the skeleton s
     const end = Date.now() + 60_000;
     while (!(pool.town(KEY)?.roads && pool.town(edited)?.roads) && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
     assert.ok(pool.town(KEY)?.roads && pool.town(edited)?.roads, 'both towns made');
-    assert.notDeepEqual(pool.town(edited)!.roads, pool.town(KEY)!.roads, 'the bullseye moved the streets');
+    // The bullseye moved the downtown, so what the buildings are for moved with it.
+    const until = Date.now() + 60_000;
+    while (!(pool.town(KEY)?.zoning && pool.town(edited)?.zoning) && Date.now() < until) await new Promise((r) => setTimeout(r, 100));
+    assert.notDeepEqual(pool.town(edited)!.zoning, pool.town(KEY)!.zoning, 'the bullseye moved the downtown');
   } finally {
     pool.close();
   }

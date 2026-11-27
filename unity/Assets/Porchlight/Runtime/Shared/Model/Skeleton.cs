@@ -45,6 +45,24 @@ namespace Porchlight.Model
         public string control = "auto";
     }
 
+    /// <summary>What an editor asked a regenerated area to have (RegionStage): each wanted, else as the generator likes.</summary>
+    public sealed class RegionWant
+    {
+        public bool roundabout, park, school, shops, houses;
+    }
+
+    /// <summary>
+    /// An area an editor picked (blocks selected on the map) and regenerated: its streets planned afresh with their own
+    /// random stream (`salt`), and its lots and buildings too, with what was wanted there. Found by the blocks'
+    /// outlines as they were when picked, so it covers the same land however the town changes round it.
+    /// </summary>
+    public sealed class SkeletonRegion
+    {
+        public List<List<Vec2>> blocks = new List<List<Vec2>>();
+        public int salt;
+        public RegionWant want = new RegionWant();
+    }
+
     public sealed class Skeleton
     {
         /// <summary>The town's centre, if an editor moved it (the bullseye): roads not pinned head here, and the zones, the high street and the shops arrange themselves round it.</summary>
@@ -57,8 +75,18 @@ namespace Porchlight.Model
         public List<(Vec2 a, Vec2 b)> removed = new List<(Vec2, Vec2)>();
         public List<RoadOverride> roads = new List<RoadOverride>();
         public List<JunctionOverride> junctions = new List<JunctionOverride>();
+        /// <summary>Areas regenerated, in order: a later one over an earlier.</summary>
+        public List<SkeletonRegion> regions = new List<SkeletonRegion>();
+        /// <summary>
+        /// The middles of the blocks the town kept green for its park land (LandStage.MoreParks) before its first area
+        /// was regenerated, or null: kept green as they were, so regenerating an area never moves a park elsewhere.
+        /// </summary>
+        public List<Vec2> parks;
 
-        public bool IsEmpty => center == null && mains == null && streets.Count == 0 && removed.Count == 0 && roads.Count == 0 && junctions.Count == 0;
+        public bool IsEmpty => center == null && mains == null && streets.Count == 0 && removed.Count == 0 && roads.Count == 0 && junctions.Count == 0 && regions.Count == 0;
+
+        /// <summary>The areas' tiles, worked out once for a map of this size (Gen.Regions).</summary>
+        [NonSerialized] public object areas;
 
         /// <summary>How near (tiles) a saved end has to be to a road's end to be that road.</summary>
         public const double MATCH = 1.0;
@@ -154,6 +182,33 @@ namespace Porchlight.Model
             var junctionsJ = new List<object>();
             foreach (var j in junctions) junctionsJ.Add(new Dictionary<string, object> { ["at"] = Pt(j.at), ["control"] = j.control });
             o["junctions"] = junctionsJ;
+            if (regions.Count > 0)
+            {
+                var regionsJ = new List<object>();
+                foreach (var r in regions)
+                {
+                    var blocksJ = new List<object>();
+                    foreach (var poly in r.blocks)
+                    {
+                        var pts = new List<object>();
+                        foreach (var p in poly) pts.Add(Pt(p));
+                        blocksJ.Add(pts);
+                    }
+                    regionsJ.Add(new Dictionary<string, object>
+                    {
+                        ["blocks"] = blocksJ,
+                        ["salt"] = (double)r.salt,
+                        ["want"] = new Dictionary<string, object> { ["roundabout"] = r.want.roundabout, ["park"] = r.want.park, ["school"] = r.want.school, ["shops"] = r.want.shops, ["houses"] = r.want.houses },
+                    });
+                }
+                o["regions"] = regionsJ;
+            }
+            if (parks != null)
+            {
+                var parksJ = new List<object>();
+                foreach (var p in parks) parksJ.Add(Pt(p));
+                o["parks"] = parksJ;
+            }
             return Json.Serialize(o);
         }
 
@@ -203,6 +258,36 @@ namespace Porchlight.Model
                 string control = Json.Str(j, "control") ?? "auto";
                 if (Array.IndexOf(Controls, control) < 0) throw new FormatException($"no such control: {control}");
                 s.junctions.Add(new JunctionOverride { at = ReadPt(((Dictionary<string, object>)j)["at"]), control = control });
+            }
+            foreach (var r in Json.Arr(o, "regions") ?? new List<object>())
+            {
+                var region = new SkeletonRegion();
+                foreach (var poly in Json.Arr(r, "blocks") ?? new List<object>())
+                {
+                    if (!(poly is List<object> pl) || pl.Count < 3) throw new FormatException("a region's block is three points or more");
+                    var pts = new List<Vec2>();
+                    foreach (var p in pl) pts.Add(ReadPt(p));
+                    region.blocks.Add(pts);
+                }
+                if (region.blocks.Count == 0) continue;
+                double salt = Json.Num(r, "salt", 0);
+                region.salt = Numbers.IsFinite(salt) ? (int)Math.Max(0, Math.Min(int.MaxValue, salt)) : 0;
+                var want = r is Dictionary<string, object> rd && rd.TryGetValue("want", out var wv) ? wv : null;
+                region.want = new RegionWant
+                {
+                    roundabout = ReadBool(want, "roundabout") == true,
+                    park = ReadBool(want, "park") == true,
+                    school = ReadBool(want, "school") == true,
+                    shops = ReadBool(want, "shops") == true,
+                    houses = ReadBool(want, "houses") == true,
+                };
+                s.regions.Add(region);
+            }
+            var parksJ = Json.Arr(o, "parks");
+            if (parksJ != null)
+            {
+                s.parks = new List<Vec2>();
+                foreach (var p in parksJ) s.parks.Add(ReadPt(p));
             }
             return s;
         }

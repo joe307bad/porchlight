@@ -707,9 +707,9 @@ namespace Porchlight.Rendering
             Next();
             foreach (var r in streets)
             {
-                // Stopping short of the junctions, as the centre line does.
+                // Stopping short of the junctions, as the centre line does (and at a roundabout's ring).
                 double length = Geo.PolylineLength(r.points);
-                double from = Bulb(r, false) ? bulb + 0.3 : 1.3, to = length - (Bulb(r, true) ? bulb + 0.3 : 1.3);
+                double from = Bulb(r, false) ? bulb + 0.3 : Math.Max(1.3, RingTrim(rings, r.points[0])), to = length - (Bulb(r, true) ? bulb + 0.3 : Math.Max(1.3, RingTrim(rings, r.points[r.points.Count - 1])));
                 if (length < 3 || to - from < 0.4) continue;
                 var middle = Geo.SubPolyline(r.points, from, to);
                 foreach (int side in new[] { 1, -1 }) b.Ribbon(Layout.OffsetPolyline(middle, side * r.width / 2), 0.04, 0.028, C.lane);
@@ -729,7 +729,7 @@ namespace Porchlight.Rendering
                 var ed = design?.Edge(ri);
                 if (ed != null && (ed.divided || ed.OneWay)) continue;
                 double len = Geo.PolylineLength(r.points);
-                double from = Bulb(r, false) ? bulb + 0.2 : 1.2, to = len - (Bulb(r, true) ? bulb + 0.2 : 1.2);
+                double from = Bulb(r, false) ? bulb + 0.2 : Math.Max(1.2, RingTrim(rings, r.points[0])), to = len - (Bulb(r, true) ? bulb + 0.2 : Math.Max(1.2, RingTrim(rings, r.points[r.points.Count - 1])));
                 var samples = Geo.SamplePolyline(r.points, 0.1);
                 double travelled = 0;
                 var run = new List<Vec2>();
@@ -778,7 +778,9 @@ namespace Porchlight.Rendering
                 if (ed == null) continue;
                 double length = Geo.PolylineLength(r.points);
                 if (length < 3) continue;
-                var middle = Geo.SubPolyline(r.points, 1.3, Math.Max(1.4, length - 1.3));
+                double cut0 = Math.Max(1.3, RingTrim(rings, r.points[0])), cut1 = Math.Max(1.3, RingTrim(rings, r.points[r.points.Count - 1]));
+                if (length - cut0 - cut1 < 0.5) continue;
+                var middle = Geo.SubPolyline(r.points, cut0, length - cut1);
                 if (ed.divided)
                 {
                     b.Ribbon(middle, MEDIAN, 0.031, C.curb);
@@ -829,6 +831,88 @@ namespace Porchlight.Rendering
             {
                 b.Disc(at, radius - 0.5, 0.031, C.curb, 40);
                 b.Disc(at, radius - 0.62, 0.033, C.grass, 40);
+                RingMarks(b, at, radius, streets);
+            }
+        }
+
+        /// <summary>The asphalt round a roundabout's island reaches this far past its design radius (RoadSteps' Layer).</summary>
+        const double RING_OUT = 0.55;
+
+        /// <summary>How far from a road's end its markings stop: past a roundabout's ring if the end is in one, else 0.</summary>
+        static double RingTrim(List<(Vec2 at, double radius)> rings, Vec2 end)
+        {
+            double most = 0;
+            foreach (var (at, radius) in rings)
+            {
+                double d = Geo.Dist(at, end);
+                if (d < radius + RING_OUT) most = Math.Max(most, radius + RING_OUT + 0.15 - d);
+            }
+            return most;
+        }
+
+        /// <summary>
+        /// A roundabout's own markings, so its lane reads as going round the island: the ring's outer edge, a solid line
+        /// broken where each road comes in, a dashed give-way line across each entry, and on a ring wide enough for two
+        /// lanes, dashes between them all the way round.
+        /// </summary>
+        void RingMarks(MeshBuilder b, Vec2 at, double radius, List<RoadStroke> streets)
+        {
+            double outer = radius + RING_OUT - 0.08;
+            // Where the roads come in: each one's bearing from the middle and half the angle its width takes up.
+            var gaps = new List<(double angle, double half)>();
+            foreach (var r in streets)
+            {
+                double length = Geo.PolylineLength(r.points);
+                foreach (bool atEnd in new[] { false, true })
+                {
+                    var end = atEnd ? r.points[r.points.Count - 1] : r.points[0];
+                    if (Geo.Dist(end, at) > radius + RING_OUT || length < outer + 0.2) continue;
+                    // Its bearing from the middle, where it meets the ring's edge.
+                    var q = Geo.PolylinePointAt(r.points, atEnd ? length - outer : outer);
+                    double half = Math.Asin(Math.Min(0.95, (r.width / 2 + 0.1) / outer));
+                    double angle = Math.Atan2(q.y - at.y, q.x - at.x);
+                    gaps.Add((angle, half));
+                    // Give way: a dashed line across the entry, at the ring's edge.
+                    double dx = Math.Cos(angle), dy = Math.Sin(angle);
+                    var mid = new Vec2(at.x + dx * (outer + 0.05), at.y + dy * (outer + 0.05));
+                    var across = new Vec2(-dy, dx);
+                    double w = r.width / 2 - 0.08;
+                    for (double s = -w; s + 0.18 <= w; s += 0.36)
+                        b.Ribbon(new List<Vec2> { new Vec2(mid.x + across.x * s, mid.y + across.y * s), new Vec2(mid.x + across.x * (s + 0.18), mid.y + across.y * (s + 0.18)) }, 0.07, 0.032, C.lane);
+                }
+            }
+            bool InGap(double a)
+            {
+                foreach (var (angle, half) in gaps)
+                {
+                    double d = Math.Abs(Math.IEEERemainder(a - angle, 2 * Math.PI));
+                    if (d < half) return true;
+                }
+                return false;
+            }
+            const int STEPS = 96;
+            // The outer edge, unbroken between entries.
+            var run = new List<Vec2>();
+            for (int k = 0; k <= STEPS; k++)
+            {
+                double a = 2 * Math.PI * k / STEPS;
+                if (InGap(a))
+                {
+                    if (run.Count > 1) b.Ribbon(run, 0.05, 0.031, C.lane);
+                    run = new List<Vec2>();
+                    continue;
+                }
+                run.Add(new Vec2(at.x + Math.Cos(a) * outer, at.y + Math.Sin(a) * outer));
+            }
+            if (run.Count > 1) b.Ribbon(run, 0.05, 0.031, C.lane);
+            // A ring wide enough for two lanes: dashes between them, all the way round.
+            double inner = radius - 0.5;
+            if (outer - inner < 2 * Gen.DesignStage.LANE) return;
+            double lane = (inner + outer) / 2;
+            for (int k = 0; k < STEPS; k += 2)
+            {
+                double a0 = 2 * Math.PI * k / STEPS, a1 = 2 * Math.PI * (k + 1) / STEPS;
+                b.Ribbon(new List<Vec2> { new Vec2(at.x + Math.Cos(a0) * lane, at.y + Math.Sin(a0) * lane), new Vec2(at.x + Math.Cos(a1) * lane, at.y + Math.Sin(a1) * lane) }, 0.05, 0.031, C.lane);
             }
         }
 }
