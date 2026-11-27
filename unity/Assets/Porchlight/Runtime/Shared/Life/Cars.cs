@@ -561,7 +561,7 @@ namespace Porchlight.Life
             going.Add((c.id, m.local));
             Commit(m.to, c);
             Counted(m);
-            stats.Delay(j.node, Now - c.arrived, car: true);
+            if (!j.fan) stats.Delay(j.node, Now - c.arrived, car: true);
             Advance(c, Lanes + mid);
         }
 

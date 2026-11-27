@@ -939,7 +939,14 @@ skeleton and goes back in.
 dozen houses, because streets re-plan round pinned main roads. `day` in
 the draft worker takes over a minute. Old keys can still be joined after a
 commit. The Ember Crossing plan check fails on block size (10×19 tiles
-against about 15×20) since local generation went in.
+against about 15×20) since local generation went in. `Checks life` has
+three failures that main doesn't: a car in Ember Crossing speeds up by
+0.06 tiles/s with a player 3.6 tiles ahead; Juniper Falls' busiest
+junction gets no car waiting for a player standing in it; and
+Lanternport's smoothness is 0.26% of moments over 3 tiles/s² (limit
+0.2%, from 8 of 3,122). In that last one a car arrives at a stop junction
+at speed and stops dead. Two of the three also failed before the lanes
+went in, with only the design stage changing the towns.
 
 ---
 
