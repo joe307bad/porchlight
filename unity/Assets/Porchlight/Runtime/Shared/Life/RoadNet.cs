@@ -460,6 +460,39 @@ namespace Porchlight.Life
         /// <summary>The middle of a lane `done` tiles along its road from the lane's starting end, and the way along it.</summary>
         public (Vec2 at, Vec2 along) LanePoint(Lane lane, double done) => LanePoint(lane.road, lane.dir, done, lane.offset - KerbOffset(lane.road));
 
+        /// <summary>
+        /// How far along a lane (as LanePoint's `done`) its middle passes nearest `p`, looked for within a few tiles
+        /// of `guess`. Not where `p` falls on the road's own line: a lane sits off that line, along a way smoothed
+        /// across its corners, so on the inside of a bend a point on the lane can be nearest the road's line a tile
+        /// or more from where the lane is, and jump from one side of the corner to the other as it moves.
+        /// </summary>
+        public double AlongLane(Lane lane, Vec2 p, double guess)
+        {
+            double len = lengths[lane.road];
+            double Gap(double d) => Geo.Dist(LanePoint(lane, d).at, p);
+            const double REACH = 3, STEP = 0.2;
+            double best = Math.Max(0, Math.Min(len, guess)), bestGap = Gap(best);
+            for (double d = Math.Max(0, guess - REACH); d <= Math.Min(len, guess + REACH) + 1e-9; d += STEP)
+            {
+                double g = Gap(d);
+                if (g < bestGap - 1e-9)
+                {
+                    best = d;
+                    bestGap = g;
+                }
+            }
+            // Then closer, between the samples either side of the nearest.
+            double lo = Math.Max(0, best - STEP), hi = Math.Min(len, best + STEP);
+            for (int i = 0; i < 24; i++)
+            {
+                double a = lo + (hi - lo) / 3, b = hi - (hi - lo) / 3;
+                if (Gap(a) <= Gap(b)) hi = b;
+                else lo = a;
+            }
+            double mid = (lo + hi) / 2;
+            return Gap(mid) <= bestGap ? mid : best;
+        }
+
         /// <summary>As LanePoint, `outward` tiles further out toward the kerb (0: the lane's middle).</summary>
         public (Vec2 at, Vec2 along) LanePoint(int road, int dir, double done, double outward)
         {

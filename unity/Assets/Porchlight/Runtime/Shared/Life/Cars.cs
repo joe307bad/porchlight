@@ -135,7 +135,7 @@ namespace Porchlight.Life
             else if (i >= 0 && q.laggy >= 0 && q.laggy != c.id)
             {
                 var lag = cars[q.laggy];
-                if (lag.seg >= 0) p = Math.Min(p, q.length + Front(lag) - lag.length - FOLLOWING);
+                if (lag.seg >= 0) p = Math.Min(p, q.length + q.lagVia + Front(lag) - lag.length - FOLLOWING);
             }
             if (q.blockFirst == c.id && !double.IsNaN(q.blockStop)) p = Math.Min(p, q.blockStop);
             if (q.held == c.id) p = Math.Min(p, q.heldAt);
@@ -448,9 +448,35 @@ namespace Porchlight.Life
         {
             if (c.seg < Lanes) Measured(c);
             var q = queues[c.seg];
+            // Off a segment shorter than it (and the gap behind it), its back's still over the one before that: that
+            // one stays held, or the car behind there would roll up into its back and be put back on the turn.
+            double reach = c.length + FOLLOWING - Front(c);
             q.cars.Remove(c.id);
-            if (c.laggy >= 0) ClearLaggy(c);
+            if (c.laggy >= 0 && reach > 1e-6)
+            {
+                // Those its back (and gap) still reach stay held, the nearest first; any it's clear of are let go.
+                var held = new List<int> { c.laggy };
+                double past = SegLength(c.laggy);
+                var older = c.laggyBefore;
+                c.laggyBefore = null;
+                c.laggy = -1;
+                if (older != null)
+                    foreach (int s in older)
+                    {
+                        if (reach > past + 1e-6)
+                        {
+                            held.Add(s);
+                            past += SegLength(s);
+                        }
+                        else Release(c, s);
+                    }
+                c.laggyBefore = held;
+                foreach (int s in held)
+                    if (queues[s].laggy == c.id) queues[s].lagVia += SegLength(c.seg);
+            }
+            else if (c.laggy >= 0) ClearLaggy(c);
             q.laggy = c.id;
+            q.lagVia = 0;
             c.laggy = c.seg;
             c.seg = next;
             c.step++;
@@ -504,11 +530,24 @@ namespace Porchlight.Life
             if (seg < 0) return;
             c.laggy = -1;
             Cancel(K_CLEAR, c.id);
+            var older = c.laggyBefore;
+            c.laggyBefore = null;
+            if (older != null) foreach (int s in older) Release(c, s);
+            Release(c, seg);
+        }
+
+        /// <summary>A segment a car's back was still in is let go: the car behind there on, the junction told.</summary>
+        void Release(Car c, int seg)
+        {
             var q = queues[seg];
             // Where the car behind it is, before it's let go (its interval's run on, held back by this one's back).
             int behind = q.cars.Count > 0 && q.cars[0] != c.id ? q.cars[0] : -1;
             double was = behind >= 0 ? Front(cars[behind]) : double.NaN;
-            if (q.laggy == c.id) q.laggy = -1;
+            if (q.laggy == c.id)
+            {
+                q.laggy = -1;
+                q.lagVia = 0;
+            }
             version++;
             if (seg < Lanes) Uncommit(seg, c);
             else
@@ -1029,6 +1068,7 @@ namespace Porchlight.Life
             Commit(lane, c);
             c.seg = lane;
             c.laggy = -1;
+            c.laggyBefore = null;
             c.s0 = c.s1 = d;
             c.t0 = c.t1 = Now;
             c.va = c.vp = c.vb = 0;
@@ -1469,7 +1509,9 @@ namespace Porchlight.Life
                         foreach (int lane in net.LanesOf(road, dir))
                         {
                             var l = net.lanes[lane];
-                            double along = l.dir > 0 ? s : net.lengths[road] - s;
+                            // Where they are along the lane itself (not where they fall on the road's line: on
+                            // the inside of a bend that can be a tile or more out, and let a car go they're beside).
+                            double along = net.AlongLane(l, p, l.dir > 0 ? s : net.lengths[road] - s);
                             if (lane != mine && Geo.Dist(net.LanePoint(l, along).at, p) > PASSING) continue;
                             double d = along - l.start;
                             // On the lane (or just before it); in the junction box the turns below are what's blocked.

@@ -157,7 +157,8 @@ namespace Porchlight.Sim
             id,
             clock = traffic.Clock,
             time = TownClock.Format(traffic.Clock),
-            // [building (its place in Zoning.Encode's list, as Manage has them), people inside]
+            // [building (its place in Zoning.Encode's list, as Manage has them), people inside]. The market's crowd
+            // isn't in a building: it's market.people. Everyone's in one of these, at the market, off the map or out.
             inside = traffic.life.inside.Where(kv => BuildingIndex().ContainsKey(kv.Key)).Select(kv => new[] { BuildingIndex()[kv.Key], kv.Value }).OrderBy(x => x[0]).ToList(),
             offMap = traffic.life.offMap ?? new int[0],
             gates = traffic.life.net.borders.Select(b => new[] { Math.Round(b.at.x, 1), Math.Round(b.at.y, 1) }).ToList(),

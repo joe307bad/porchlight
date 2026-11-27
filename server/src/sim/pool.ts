@@ -86,6 +86,8 @@ export interface TownLife {
   summary: Record<string, unknown>;
   /** What each of the latest tick's car and person records is: a letter each, '-' for an empty one (SimTown.Kinds). */
   kinds?: { cars: string; people: string };
+  /** The market in the plaza (SimTown.Market), null if the town has none: `people` there now aren't in `inside`. */
+  market?: { people: number } | null;
 }
 
 export interface SimPlayer {

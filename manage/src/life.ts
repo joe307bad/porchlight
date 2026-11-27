@@ -151,6 +151,8 @@ export function indoorRadius(n: number): number {
 export interface LifeFigures {
   people: number;
   indoors: number;
+  /** At the market in the plaza (not one of its buildings): market day's shoppers and stallholders. */
+  atMarket: number;
   offMap: number;
   out: number;
   /** Trips made of those started, and how many couldn't be made. */
@@ -185,6 +187,7 @@ export function figures(life: TownLife): LifeFigures {
   return {
     people: s.people,
     indoors: indoorsN,
+    atMarket: life.market?.people ?? 0,
     offMap,
     out: s.out,
     made: s.trips.finished,
