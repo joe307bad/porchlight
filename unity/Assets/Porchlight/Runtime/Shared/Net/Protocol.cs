@@ -35,6 +35,12 @@ namespace Porchlight.Net
         public const string MSG_UNLOCKS = "unlocks";
         /// <summary>Manage's right-click, for this character: { town, x, y, how ("directions" or "transport"), label }.</summary>
         public const string MSG_GOTO = "goto";
+        /// <summary>{ fps, slow, worstMs, memMb?, host? }: how the game ran over the last minute (server telemetry.ts).</summary>
+        public const string MSG_PERF = "perf";
+        /// <summary>{ t }: the room asks for a pong (every 10 s), to measure the round trip.</summary>
+        public const string MSG_PING = "ping";
+        /// <summary>{ t }: the ping's t, sent straight back.</summary>
+        public const string MSG_PONG = "pong";
 
         public const int CLOSE_SIGNED_IN_ELSEWHERE = 4100;
         public const int CLOSE_KICKED = 4101;

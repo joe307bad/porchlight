@@ -15,6 +15,7 @@ import { and, asc, count, eq, gte, lt, inArray, isNotNull, isNull, ne, notInArra
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
+import type { ClientInfo, SessionEnd } from './telemetry.ts';
 import { accountUnlocks, characterState, characters, homes, missionCompletions, missionRecords, players, sessions, towns } from './tables.ts';
 
 export interface Account {
@@ -223,8 +224,10 @@ export interface Persistence {
   moveToTown(accountId: string, characterId: string, townId: string): Promise<void>;
   /** Move the character into the house at this tile of their town. */
   claimHome(accountId: string, characterId: string, x: number, y: number): Promise<void>;
-  openSession(characterId: string, roomId: string): Promise<string>;
-  closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number): Promise<void>;
+  /** A session starts: which room, and what it's played on (telemetry.ts). */
+  openSession(characterId: string, roomId: string, client?: ClientInfo): Promise<string>;
+  /** It ends (once: a second close is ignored): why, more on why, and how it ran. */
+  closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number, end?: SessionEnd): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -672,16 +675,16 @@ export class PgPersistence implements Persistence {
       });
   }
 
-  async openSession(characterId: string, roomId: string): Promise<string> {
-    const [row] = await this.db.insert(sessions).values({ characterId, roomId }).returning({ id: sessions.id });
+  async openSession(characterId: string, roomId: string, client?: ClientInfo): Promise<string> {
+    const [row] = await this.db.insert(sessions).values({ characterId, roomId, client: client ?? null }).returning({ id: sessions.id });
     return row.id;
   }
 
-  async closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number): Promise<void> {
+  async closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number, end: SessionEnd = {}): Promise<void> {
     await this.db.transaction(async (tx) => {
       const closed = await tx
         .update(sessions)
-        .set({ endedAt: sql`now()`, endReason: reason })
+        .set({ endedAt: sql`now()`, endReason: reason, endDetail: end.detail ?? null, perf: end.perf ?? null, drops: end.drops ?? 0 })
         .where(and(eq(sessions.id, sessionId), isNull(sessions.endedAt)))
         .returning({ id: sessions.id });
       if (!closed.length) return; // already closed: don't count its time twice
@@ -708,7 +711,7 @@ export class MemoryPersistence implements Persistence {
   readonly completions = new Map<string, Progress['completions']>();
   /** Each town and mission's times (`town\nmission`), by account. */
   readonly boards = new Map<string, Map<string, { name: string; seconds: number; at: string }>>();
-  readonly sessions = new Map<string, { characterId: string; reason: EndReason | null }>();
+  readonly sessions = new Map<string, { characterId: string; reason: EndReason | null; client?: ClientInfo; end?: SessionEnd }>();
   /** Set to make every call fail, as if the database were down. */
   down = false;
 
@@ -959,18 +962,19 @@ export class MemoryPersistence implements Persistence {
     c.house = { x, y };
   }
 
-  async openSession(characterId: string): Promise<string> {
+  async openSession(characterId: string, _roomId: string, client?: ClientInfo): Promise<string> {
     this.check();
     const id = crypto.randomUUID();
-    this.sessions.set(id, { characterId, reason: null });
+    this.sessions.set(id, { characterId, reason: null, client });
     return id;
   }
 
-  async closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number): Promise<void> {
+  async closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number, end: SessionEnd = {}): Promise<void> {
     this.check();
     const s = this.sessions.get(sessionId);
     if (!s || s.reason) return;
     s.reason = reason;
+    s.end = end;
     const state = this.states.get(characterId);
     if (state) state.playSeconds += playSeconds;
   }

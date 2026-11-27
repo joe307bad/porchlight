@@ -9,7 +9,7 @@ import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
 import { played } from '../src/multiplayer/played.ts';
 import { MemoryPersistence, STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_GOTO, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type GotoMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_GOTO, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_PERF, MSG_PING, MSG_PONG, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type GotoMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -707,4 +707,43 @@ test('a house in a town that comes with the game is claimed by the one tile it g
   const beside = [[x + 1, y], [x, y + 1], [x + 1, y + 1], [x - 1, y]].find((t) => t[0] >= 0 && !taken.has(t.join()))!;
   assert.equal((await api('settler', 'PUT', `/mp/characters/${me.id}/home`, { x: beside[0], y: beside[1] })).status, 404);
   assert.equal((await api('settler', 'PUT', `/mp/characters/${me.id}/home`, { x, y })).status, 200);
+});
+
+test('a session keeps what it was played on and how it ran, and why it ended', async () => {
+  const id = (await api('telemetry', 'POST', '/mp/characters', { name: 'Tess' })).json.id;
+  const client_ = { platform: 'mac', os: 'Mac OS X 15.1\u0007', build: 'v0.0.72 · a1b2c3d', gpu: 'Apple M2', memMb: 16384, cores: 8, screen: '1512x982', device: 'ab12cd34-ef56', name: 'not kept' };
+  const r = await client('telemetry').joinOrCreate('city', { ...town, character: id, client: client_ });
+  r.onMessage(MSG_SPAWN, () => {});
+  r.onMessage(MSG_PING, (m: { t: number }) => r.send(MSG_PONG, m));
+  await until('the session to open', () => [...persistence.sessions.values()].some((s) => s.characterId === id));
+  const [row] = [...persistence.sessions.values()].filter((s) => s.characterId === id);
+  // Cleaned up: the platform checked, control characters gone, nothing it doesn't know.
+  assert.equal(row.client?.platform, 'mac');
+  assert.equal(row.client?.os, 'Mac OS X 15.1');
+  assert.equal(row.client?.device, 'ab12cd34-ef56');
+  assert.ok(!("name" in (row.client ?? {})));
+
+  r.send(MSG_PERF, { fps: 58.24, slow: 3, worstMs: 140, memMb: 900 });
+  r.send(MSG_PERF, { fps: 'lots' }); // ignored
+  await new Promise((done) => setTimeout(done, 200));
+  await r.leave();
+  await until('the session to close', () => row.reason !== null);
+  assert.equal(row.reason, 'consented');
+  assert.equal(row.end?.drops, 0);
+  assert.equal(row.end?.perf?.reports, 1);
+  assert.equal(row.end?.perf?.fpsAvg, 58.2);
+  assert.equal(row.end?.perf?.worstMs, 140);
+  assert.ok((row.end?.perf?.rttSamples ?? 0) >= 1, 'the spawn ping was answered');
+});
+
+test('an older game that says nothing about itself still plays', async () => {
+  const id = (await api('telemetry', 'POST', '/mp/characters', { name: 'Old' })).json.id;
+  const r = await client('telemetry').joinOrCreate('city', { ...town, character: id });
+  r.onMessage(MSG_SPAWN, () => {});
+  await until('the session to open', () => [...persistence.sessions.values()].some((s) => s.characterId === id));
+  const [row] = [...persistence.sessions.values()].filter((s) => s.characterId === id);
+  assert.equal(row.client?.platform, 'other');
+  await r.leave();
+  await until('the session to close', () => row.reason !== null);
+  assert.equal(row.end?.perf, undefined);
 });

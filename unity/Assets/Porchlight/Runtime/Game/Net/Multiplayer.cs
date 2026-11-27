@@ -114,6 +114,8 @@ namespace Porchlight.App
         /// </summary>
         const float TOO_SLOW_TO_HOST = 0.75f;
         /// <summary>Rejoin delays after losing the room (ms), longest last and then repeated.</summary>
+        /// <summary>How often to tell the room how the game's running (ms).</summary>
+        const double PERF_MS = 60000;
         static readonly double[] RETRY_MS = { 2000, 5000, 10000, 30000 };
 
         readonly ColyseusClient client;
@@ -132,7 +134,9 @@ namespace Porchlight.App
         double worldWantAt = double.NegativeInfinity;
         string lastSent = "";
         double changedAt, sentAt;
-        object timer, worldTimer, retry;
+        object timer, worldTimer, perfTimer, retry;
+        /// <summary>The room has us running its town.</summary>
+        bool hosting;
         string lastCar = "";
         int retries;
         bool stopped;
@@ -265,6 +269,8 @@ namespace Porchlight.App
             timer = null;
             if (worldTimer != null) timers.Cancel(worldTimer);
             worldTimer = null;
+            if (perfTimer != null) timers.Cancel(perfTimer);
+            perfTimer = null;
         }
 
         /// <summary>Out of the room: nobody else, and the town runs here again.</summary>
@@ -292,7 +298,7 @@ namespace Porchlight.App
             var t = town;
             if (t == null) return;
             int gen = generation;
-            var options = new Dictionary<string, object> { ["town"] = t.key, ["width"] = t.width, ["height"] = t.height, ["character"] = character.id, ["tab"] = Account.Tab, ["follows"] = 1 };
+            var options = new Dictionary<string, object> { ["town"] = t.key, ["width"] = t.width, ["height"] = t.height, ["character"] = character.id, ["tab"] = Account.Tab, ["follows"] = 1, ["client"] = Telemetry.Client() };
             // Never a NaN (JSON can't carry one: the server turns the whole join down): start where it saved you.
             if (arriving != null && Array.TrueForAll(arriving, double.IsFinite))
                 options["arrive"] = new Dictionary<string, object> { ["x"] = arriving[0], ["y"] = arriving[1], ["z"] = arriving[2], ["yaw"] = arriving[3] };
@@ -369,6 +375,8 @@ namespace Porchlight.App
                 spawned = true;
                 Send(true);
             });
+            // The room measures the round trip: its ping, straight back.
+            r.OnMessage(Protocol.MSG_PING, m => r.Send(Protocol.MSG_PONG, m));
             r.OnMessage(Protocol.MSG_UNLOCKS, m =>
             {
                 if (!(m is Dictionary<string, object> d) || !d.TryGetValue("unlocks", out var u) || !(u is List<object> list)) return;
@@ -426,7 +434,8 @@ namespace Porchlight.App
                     foreach (var key in map.keys)
                         if (key != r.sessionId && map.items[key] is SchemaObj p) players.Add(Pick(p, key));
                 host.SyncRemotes(players, r.sessionId);
-                host.SetHost(state.Str("host") == r.sessionId);
+                hosting = state.Str("host") == r.sessionId;
+                host.SetHost(hosting);
                 host.SetTownNight(state.Bool("night"));
                 host.SetTaken(state.Str("taken") ?? "");
                 var parked = new List<RemoteParked>();
@@ -470,6 +479,12 @@ namespace Porchlight.App
             };
             timer = timers.Every(Protocol.SEND_MS, () => Send(false));
             worldTimer = timers.Every(Protocol.WORLD_MS, SendWorld);
+            Telemetry.TakePerf(false); // from now
+            perfTimer = timers.Every(PERF_MS, () =>
+            {
+                var perf = Telemetry.TakePerf(hosting);
+                if (perf != null) room?.Send(Protocol.MSG_PERF, perf);
+            });
         }
 
         /// <summary>The host's traffic and townsfolk, for everyone else.</summary>

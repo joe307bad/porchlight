@@ -4,3 +4,6 @@ dist/
 
 # Local, hand-run scripts (credentials, one-time setup)
 *.local.sh
+
+# Written by the deploy: the commit the server runs (server/src/health.ts).
+server/src/REVISION

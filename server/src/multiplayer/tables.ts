@@ -107,6 +107,14 @@ export const sessions = pgTable(
     endedAt: at('ended_at'),
     /** consented | timeout | kicked | shutdown | crash */
     endReason: text('end_reason'),
+    /** More on why it ended: the kick's reason, or the close code ("close 1006"). */
+    endDetail: text('end_detail'),
+    /** What it was played on (telemetry.ts ClientInfo): platform, OS, build, GPU, an anonymous install id. Nothing personal. */
+    client: jsonb('client'),
+    /** How it ran (telemetry.ts PerfSummary): frame rate, slow frames, round trips. */
+    perf: jsonb('perf'),
+    /** Times the connection dropped and came back within the reconnection window. */
+    drops: integer('drops').notNull().default(0),
   },
   (t) => [index('sessions_character_open').on(t.characterId).where(sql`${t.endedAt} IS NULL`)],
 );

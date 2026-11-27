@@ -149,3 +149,27 @@ docker compose logs -f keycloak
 ```
 
 The Keycloak admin console is at `https://auth.porchlight.joebad.com/admin`. The username is `admin`, and the password is `KEYCLOAK_ADMIN_PASSWORD` in the `porchlight/prod` secret.
+
+### Investigating lag, errors and restarts
+
+The game server (`auth`) logs a line for each of these. Sessions and characters are named by the first 8 characters of their ids, never by name.
+
+| Line | When |
+| --- | --- |
+| `process: started <commit> …` | Start, with the commit the deploy wrote to `server/src/REVISION`. |
+| `process: SIGTERM after …` / `process: exit <code> …` | A stop: which signal, uptime, how many were playing. Exit 0 after a signal is a deliberate stop; 1 is a crash, with Colyseus's stack trace above it. |
+| `process: N player(s) … event loop p99 … max …` | Every minute while anyone plays (or the loop stalled over 200 ms). A high max is lag for everyone at once. |
+| `session <id> start: … web/Windows 11, web.87 · a1b2c3d, device 9f8e7d6c, Firefox/153.0` | Each join: platform, OS, build, the game's anonymous install id, and the browser. |
+| `perf <id>: 58 fps, 3 slow frame(s), worst 140 ms, rtt 45 ms (max 120) …` | Once a minute from each game: its frame rate, frames over 50 ms, and the room's measured round trip. |
+| `session <id> end: kicked (too many messages) after 12.0 min, 1 drop(s) …` | Each leave: why (and the kick's reason or close code), drops, and the session's frame rate and round trips. |
+| `sim: …`, `city <room>: … tick avg …` | Server simulation and room tick times, each minute. |
+
+```
+docker compose logs --timestamps --since 2h auth | grep -E 'session|perf|process'
+```
+
+The same is kept on the `sessions` table: `client` (what it was played on), `perf` (the session's summary), `end_reason`, `end_detail` and `drops`. For example, everyone's sessions on Macs in the last day:
+
+```
+docker compose exec postgres psql -U porchlight porchlight -c "select id, started_at, end_reason, end_detail, drops, client->>'os' os, perf->>'fpsAvg' fps, perf->>'rttMax' rtt_max from sessions where client->>'platform' = 'mac' or client->>'ua' like '%Macintosh%' order by started_at desc limit 50"
+```

@@ -1,10 +1,12 @@
 import { createHandler } from './app.ts';
 import { loadConfig } from './config.ts';
+import { watchHealth } from './health.ts';
 import { startGameServer } from './multiplayer/index.ts';
 import { MemoryPersistence, PgPersistence } from './multiplayer/persistence.ts';
 import { findWorker } from './sim/pool.ts';
 
 const config = loadConfig();
+watchHealth();
 const persistence = config.databaseUrl ? new PgPersistence(config.databaseUrl) : new MemoryPersistence();
 if (!config.databaseUrl) console.warn('DATABASE_URL is not set: multiplayer runs, but nothing is saved.');
 persistence.start();

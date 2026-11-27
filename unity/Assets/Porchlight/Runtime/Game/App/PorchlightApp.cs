@@ -2004,6 +2004,7 @@ namespace Porchlight.App
 
         void Update()
         {
+            Telemetry.Frame(Time.unscaledDeltaTime);
             FollowScreenScale();
             platform.Pump();
             timers.Tick();

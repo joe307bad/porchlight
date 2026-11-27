@@ -4,7 +4,9 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { PgPersistence } from '../src/multiplayer/persistence.ts';
-import { towns } from '../src/multiplayer/tables.ts';
+import { eq } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { sessions, towns } from '../src/multiplayer/tables.ts';
 
 const url = process.env.TEST_DATABASE_URL;
 const db = url ? new PgPersistence(url) : null;
@@ -57,9 +59,16 @@ test('characters, saves guarded by version, sessions', { skip }, async () => {
   assert.deepEqual(progress.completions.map((c) => [c.missionId, c.times, c.firstCharacter]), [['chase', 2, 'Kid']]);
   assert.deepEqual(progress.unlocks.map((u) => u.what), ['animals']);
 
-  const s = await p.openSession(kid.id, 'room1');
-  await p.closeSession(s, kid.id, 'consented', 42);
+  const s = await p.openSession(kid.id, 'room1', { platform: 'web', os: 'Windows 11', device: 'abc123' });
+  await p.closeSession(s, kid.id, 'kicked', 42, { detail: 'too many messages', drops: 2, perf: { reports: 1, fpsAvg: 60, fpsMin: 60, slow: 0, worstMs: 20, rttAvg: 40, rttMax: 40, rttSamples: 1, memMaxMb: 500 } });
   await p.closeSession(s, kid.id, 'timeout', 42); // already closed: no double count
+  const orm = (p as unknown as { db: NodePgDatabase }).db;
+  const [row] = await orm.select().from(sessions).where(eq(sessions.id, s));
+  assert.equal(row.endReason, 'kicked');
+  assert.equal(row.endDetail, 'too many messages');
+  assert.equal(row.drops, 2);
+  assert.deepEqual(row.client, { platform: 'web', os: 'Windows 11', device: 'abc123' });
+  assert.equal((row.perf as { rttAvg: number }).rttAvg, 40);
   assert.equal(await p.deleteCharacter(account.id, dad.id), true);
   assert.equal(await p.deleteCharacter('00000000-0000-0000-0000-000000000000', kid.id), false);
 });

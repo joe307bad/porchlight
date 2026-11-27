@@ -24,6 +24,9 @@ export const MSG_CORRECT = 'correct'; // CorrectMessage: snap here
 export const MSG_DOTS = 'dots'; // DotsMessage, once a second: everyone in the room, for the minimap
 export const MSG_UNLOCKS = 'unlocks'; // { unlocks }: another of the account's characters earned something
 export const MSG_GOTO = 'goto'; // GotoMessage: Manage's right-click, for this character: directions to a spot, or taken there
+export const MSG_PERF = 'perf'; // { fps, slow, worstMs, memMb?, host? }: the game's last minute (telemetry.ts)
+export const MSG_PING = 'ping'; // { t }: the room asks for a pong, every 10 s
+export const MSG_PONG = 'pong'; // { t }: the ping's t, sent straight back
 // MSG_WORLD, passed on from the host to everyone else as it comes; or, where the
 // server runs the town (sim/), the whole town to each player arriving, and then:
 export const MSG_WORLD_DELTA = 'world_delta'; // { d }: what changed since the last (sim/src/Delta.cs), 10 a second

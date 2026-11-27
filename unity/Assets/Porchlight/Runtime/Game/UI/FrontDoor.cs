@@ -71,6 +71,8 @@ namespace Porchlight.App
     {
         const string KEY = "porchlight.character";
         const string TAB_KEY = "porchlight.tab";
+        /// <summary>The anonymous install id (Telemetry.Device).</summary>
+        const string DEVICE_KEY = "porchlight.device";
         /// <summary>How often (s) the character screen looks again at who's being played.</summary>
         const float POLL_SECONDS = 4;
         static readonly string[] CHARACTER_NAMES = { "Robin", "Sam", "Alex", "Jo", "Charlie", "Frankie", "Pat", "Toby", "Wren", "Nell", "Ollie", "Maya" };
@@ -104,6 +106,13 @@ namespace Porchlight.App
             {
                 Account.Tab = Guid.NewGuid().ToString("N");
                 platform.Save(TAB_KEY, Account.Tab, session: true);
+            }
+            // Kept for good (this browser, or this install): ties a session to a device in the server's logs, and nothing else.
+            Telemetry.Device = platform.Load(DEVICE_KEY);
+            if (string.IsNullOrEmpty(Telemetry.Device))
+            {
+                Telemetry.Device = Guid.NewGuid().ToString("N");
+                platform.Save(DEVICE_KEY, Telemetry.Device);
             }
         }
 

@@ -43,6 +43,13 @@
       "when": 1794150834063,
       "tag": "0005_county_slots",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795746208814,
+      "tag": "0006_session_telemetry",
+      "breakpoints": true
     }
   ]
 }

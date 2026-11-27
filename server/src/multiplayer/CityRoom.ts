@@ -27,6 +27,7 @@ import { Interest } from './interest.ts';
 import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, clampToBounds, creditAfter, creditAt, inBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
 import { played, RaceWatch, type CourseLine } from './played.ts';
 import { cleanLook, STARTER_TOWNS, type EndReason, type Snapshot } from './persistence.ts';
+import { describeClient, parseClient, parsePerf, SessionPerf, short, type ClientInfo } from './telemetry.ts';
 import { County, mineSlot } from '../county.ts';
 import {
   ANIM_DRIVE,
@@ -44,6 +45,9 @@ import {
   MSG_MISSION_DONE,
   MSG_MOVE,
   MSG_NIGHT,
+  MSG_PERF,
+  MSG_PING,
+  MSG_PONG,
   MSG_SPAWN,
   MSG_TAKE,
   MSG_TELEPORT,
@@ -74,6 +78,8 @@ import type { SimTown } from '../sim/pool.ts';
 const TICK_MS = 50;
 const FLUSH_MS = 30_000;
 const DOTS_MS = 1_000;
+/** How often the room asks each game for a pong, to measure the round trip. */
+const PING_MS = 10_000;
 /** Seconds a dropped client has to come back. */
 const RECONNECT_SECONDS = 20;
 /** How close (tiles) to a car you have to be to get in with its driver. */
@@ -102,6 +108,8 @@ interface JoinAuth {
   characterId: string;
   name: string;
   look: string | null;
+  /** The WebSocket's User-Agent (the browser's; the native game sends none). */
+  userAgent: string | null;
 }
 
 interface JoinOptions {
@@ -118,6 +126,8 @@ interface JoinOptions {
   tab?: unknown;
   /** The game follows the server's town by its deltas (MSG_WORLD_DELTA). Older games don't say so. */
   follows?: unknown;
+  /** What it's played on (telemetry.ts ClientInfo). Older games don't say. */
+  client?: unknown;
 }
 
 /** Everything about a player the clients don't get. */
@@ -160,6 +170,13 @@ interface PlayerRuntime {
   unlocks: string[];
   /** Saved and signed off (left, timed out, kicked, shut down): nothing more to do. */
   finished: boolean;
+  /** What it's played on, and how it's running (telemetry.ts). */
+  clientInfo: ClientInfo;
+  perf: SessionPerf;
+  /** Connections dropped and come back. */
+  drops: number;
+  /** More on why it ended (a kick's reason, a close code), for its row and the log. */
+  endDetail: string | null;
 }
 
 /** Characters being played right now, across every room in this process. */
@@ -277,6 +294,7 @@ export class CityRoom extends Room<{ state: CityState }> {
   private hostHeardAt = 0;
   private shuttingDown = false;
   private flushing = false;
+  private createdAt = Date.now();
   private flushFailures = 0;
   private flushSkip = 0;
   /** When the whole town is due again to everyone (just after the server took it over: a client still hosting ignores the first). */
@@ -416,6 +434,23 @@ export class CityRoom extends Room<{ state: CityState }> {
       car.yaw = quantizeYaw(m.yaw);
       if (!this.state.cars.has(client.sessionId)) this.state.cars.set(client.sessionId, car);
     });
+    // How the game's running (once a minute), and the round trip to it (the room asks: PING_MS).
+    this.onMessage(MSG_PERF, (client, raw: unknown) => {
+      const rt = this.admit(client);
+      const report = rt && parsePerf(raw);
+      if (!rt || !report) return;
+      rt.perf.report(report);
+      console.log(
+        `perf ${short(rt.sessionRow)}: ${report.fps} fps, ${report.slow} slow frame(s), worst ${report.worstMs} ms, ${rt.perf.takeRecentRtt()}${report.memMb !== undefined ? `, ${report.memMb} MB` : ''}${report.host ? ', hosting' : ''}, ${rt.clientInfo.platform}`,
+      );
+    });
+    this.onMessage(MSG_PONG, (client, raw: unknown) => {
+      const rt = this.admit(client);
+      // The game sends back the t it was sent; its MessagePack may make it a 64-bit int (a bigint here).
+      const t = (raw as { t?: unknown } | null)?.t;
+      if (rt && (typeof t === 'number' || typeof t === 'bigint')) rt.perf.rtt(Date.now() - Number(t));
+    });
+
     this.onMessage(MSG_WORLD_WANT, (client) => {
       const rt = this.runtime.get(client.sessionId);
       const now = Date.now();
@@ -441,6 +476,13 @@ export class CityRoom extends Room<{ state: CityState }> {
     this.setSimulationInterval(() => this.tick(), TICK_MS);
     this.clock.setInterval(() => void this.flush(), FLUSH_MS);
     this.clock.setInterval(() => this.sendDots(), DOTS_MS);
+    this.clock.setInterval(() => this.ping(), PING_MS);
+  }
+
+  /** Ask every connected game for a pong (MSG_PONG, with this `t`): the round trip, for the perf log. Older games don't answer. */
+  private ping(): void {
+    const t = Date.now();
+    for (const rt of this.runtime.values()) if (!rt.finished && rt.client) rt.client.send(MSG_PING, { t });
   }
 
   async onAuth(_client: Client, options: JoinOptions, context: AuthContext): Promise<JoinAuth> {
@@ -461,7 +503,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       if (options.town !== this.town) throw new ServerError(400, 'bad town');
       // A town someone made is theirs alone: only Porchlight (and the others that come with the game) is everyone's.
       if (!(await d.persistence.mayEnter(account.id, this.town))) throw new ServerError(403, "That town is someone else's.");
-      return { accountId: account.id, characterId: character.id, name: character.name, look: character.look };
+      return { accountId: account.id, characterId: character.id, name: character.name, look: character.look, userAgent: context.headers.get('user-agent') };
     } catch (err) {
       if (err instanceof ServerError) throw err;
       console.error('city: join refused, database unavailable:', (err as Error).message);
@@ -500,7 +542,11 @@ export class CityRoom extends Room<{ state: CityState }> {
       else if (saved && saved.town === this.town && inBounds(this.bounds, saved.x, 0, saved.z)) {
         at = { x: saved.x, z: saved.z, yaw: saved.rotY };
       }
-      const sessionRow = await d.persistence.openSession(auth.characterId, this.roomId);
+      const clientInfo = parseClient(options.client, auth.userAgent);
+      const sessionRow = await d.persistence.openSession(auth.characterId, this.roomId, clientInfo);
+      console.log(
+        `session ${short(sessionRow)} start: character ${short(auth.characterId)} in ${this.roomId}${arriving ? ' (driving in)' : ''}${prior ? ' (took over its last session)' : ''}, ${describeClient(clientInfo)}`,
+      );
 
       this.state.players.set(client.sessionId, player);
       const view = new StateView();
@@ -535,6 +581,10 @@ export class CityRoom extends Room<{ state: CityState }> {
         lookTimer: null,
         unlocks,
         finished: false,
+        clientInfo,
+        perf: new SessionPerf(),
+        drops: 0,
+        endDetail: null,
       });
       // Driving in from next door: they're where they say (it's this room's ground), and their
       // first move is held to the speed limit from there, like any other.
@@ -543,6 +593,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       // Nobody sees them (and they're on no one's minimap) until their first
       // move says where they are: the client checks the spot against the town.
       client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
+      client.send(MSG_PING, { t: Date.now() }); // a round trip from the start
       // The town as the server has it, to carry on from (then what changes, each tick).
       const town = this.state.host === SERVER_HOST && this.allFollow() ? sim()?.running(this.town) : null;
       if (town) client.send(MSG_WORLD, this.worldOf(town));
@@ -617,6 +668,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     const rt = this.runtime.get(client.sessionId);
     if (!rt || rt.finished || this.shuttingDown) return; // onLeave follows straight away
     rt.client = null;
+    rt.drops++;
     rt.player.away = true;
     if (rt.player.anim !== ANIM_DRIVE) rt.player.anim = ANIM_IDLE;
     // Not awaited: Colyseus calls onLeave if the window runs out.
@@ -639,6 +691,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     const rt = this.runtime.get(client.sessionId);
     if (!rt) return;
     const reason: EndReason = code === CloseCode.CONSENTED ? 'consented' : this.shuttingDown ? 'shutdown' : 'timeout';
+    if (code !== undefined && code !== CloseCode.CONSENTED) rt.endDetail ??= `close ${code}`;
     await this.finish(rt, reason);
     this.forget(rt);
   }
@@ -654,6 +707,7 @@ export class CityRoom extends Room<{ state: CityState }> {
 
   async onDispose(): Promise<void> {
     rooms.delete(this);
+    console.log(`city ${this.roomId}: closed after ${((Date.now() - this.createdAt) / 60_000).toFixed(1)} min${this.shuttingDown ? ' (shutting down)' : ''}`);
     // Its taken cars back into the traffic (unless another copy of the town has them).
     if (this.taken.size > 0) sim()?.takenChanged(this.town);
     // Normally everyone's been saved on their way out; catch anyone who wasn't.
@@ -716,6 +770,7 @@ export class CityRoom extends Room<{ state: CityState }> {
   async evict(sessionId: string): Promise<void> {
     const rt = this.runtime.get(sessionId);
     if (!rt) return;
+    rt.endDetail ??= 'the character joined again (another tab, device or room)';
     await this.finish(rt, 'kicked');
     rt.client?.leave(CLOSE_SIGNED_IN_ELSEWHERE, 'Signed in elsewhere.');
     if (!rt.client) this.forget(rt); // dropped and waiting to come back: gone now (onReconnect refuses them)
@@ -723,7 +778,8 @@ export class CityRoom extends Room<{ state: CityState }> {
 
   private kick(rt: PlayerRuntime, why: string): void {
     if (rt.finished) return;
-    console.warn(`city: kicking ${rt.characterId}: ${why}`);
+    console.warn(`city: kicking session ${short(rt.sessionRow)} (character ${short(rt.characterId)}): ${why}`);
+    rt.endDetail ??= why;
     void this.finish(rt, 'kicked'); // marks them finished at once, so no reconnection window
     rt.client?.leave(CLOSE_KICKED, why);
   }
@@ -964,10 +1020,18 @@ export class CityRoom extends Room<{ state: CityState }> {
     if (rt.lookTimer) clearTimeout(rt.lookTimer);
     if (online.get(rt.characterId)?.sessionId === rt.sessionId) online.delete(rt.characterId);
     await this.save([rt]);
+    const seconds = (Date.now() - rt.joinedAt) / 1000;
+    const perf = rt.perf.summary();
+    console.log(
+      `session ${short(rt.sessionRow)} end: ${reason}${rt.endDetail ? ` (${rt.endDetail})` : ''} after ${(seconds / 60).toFixed(1)} min, ${rt.drops} drop(s)` +
+        (perf.reports ? `, ${perf.fpsAvg} fps avg (min ${perf.fpsMin}), ${perf.slow} slow frame(s), worst ${perf.worstMs} ms` : '') +
+        (perf.rttSamples ? `, rtt ${perf.rttAvg} ms avg (max ${perf.rttMax})` : '') +
+        `, ${rt.clientInfo.platform}`,
+    );
     if (rt.sessionRow) {
       await this.deps.persistence
-        .closeSession(rt.sessionRow, rt.characterId, reason, (Date.now() - rt.joinedAt) / 1000)
-        .catch((err) => console.error(`city: closing session: ${(err as Error).message}`));
+        .closeSession(rt.sessionRow, rt.characterId, reason, seconds, { detail: rt.endDetail ?? undefined, perf: perf.reports || perf.rttSamples ? perf : undefined, drops: rt.drops })
+        .catch((err) => console.error(`city: closing session ${short(rt.sessionRow)}: ${(err as Error).message}`));
     }
   }
 

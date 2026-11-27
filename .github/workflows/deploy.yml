@@ -321,6 +321,8 @@ jobs:
       - name: Copy files
         run: |
           RSYNC="rsync -az --delete -e 'ssh -i $HOME/.ssh/id_porchlight -o StrictHostKeyChecking=accept-new'"
+          # Which commit the server is, for its logs (health.ts).
+          echo "${GITHUB_SHA::7}" > server/src/REVISION
           eval $RSYNC --exclude .env --exclude 'terraform/' infra/ "ec2-user@$HOST:/opt/porchlight/infra/"
           eval $RSYNC --exclude node_modules --exclude '.env*' --exclude test server/ "ec2-user@$HOST:/opt/porchlight/server/"
           # The game last and with delayed deletes, so a page mid-load still finds its old files.
