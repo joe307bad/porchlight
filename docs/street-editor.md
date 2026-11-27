@@ -1054,6 +1054,17 @@ was asked for comes first. Anyone whose house goes still moves to the nearest fr
 - The parks the town kept green are taken from the edit screen's first plan, so the first regenerate
   doesn't grow the town twice.
 
+**No sliver buildings.** Every building is at least 2 tiles each way (`BuildingsStage.MIN_SIDE`), in a
+town as it's first made and in a regenerated area alike, and the buildings stage's check fails one that
+isn't. The lots stage keeps lots wide enough for one:
+- A cut never leaves a strip narrower than 2 tiles.
+- A lot with no 2×2 square of tiles a building may stand on (clear of the sidewalk by its zone's least
+  yard) joins the lot beside it, again until it has room. So the next building is bigger.
+- A sliver with nothing to join is left as grass.
+
+Porchlight had 914 buildings a tile wide (2 in 5 of its buildings). Now it has none; its houses went from
+1,726 to 1,332, bigger ones.
+
 **Run a day has a worker of its own.** A day of Porchlight is over a minute's work (draft and live, one
 after the other). It used to share the draft worker, so a regenerate clicked meanwhile waited for both.
 Days now run in a second worker, and a second click while one is running waits for it instead of

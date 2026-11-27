@@ -26,6 +26,8 @@ namespace Porchlight.Gen
         public const double DRAWN_INSET = 0.04;
         const double SMOOTHING_SLACK = 0.1;
         const double MIN_YARD = 0.5;
+        /// <summary>The narrowest a building is, each way (tiles): nothing thinner is built (LotsStage.MIN_WIDTH keeps lots as wide).</summary>
+        public const int MIN_SIDE = 2;
         const double CHURCH_REACH = 0.45;
         /// <summary>Lots built on between one share of the work and the next (Steps).</summary>
         const int LOTS_A_STEP = 8;
@@ -352,6 +354,11 @@ namespace Porchlight.Gen
             foreach (var b in model.buildings)
             {
                 if (b.tiles.Count == 0) return new List<string> { $"building {b.id} has no tiles" };
+                {
+                    int sx0 = int.MaxValue, sy0 = int.MaxValue, sx1 = int.MinValue, sy1 = int.MinValue;
+                    foreach (var t in b.tiles) { sx0 = Math.Min(sx0, t.x); sy0 = Math.Min(sy0, t.y); sx1 = Math.Max(sx1, t.x); sy1 = Math.Max(sy1, t.y); }
+                    if (sx1 - sx0 + 1 < MIN_SIDE || sy1 - sy0 + 1 < MIN_SIDE) return new List<string> { $"building {b.id} is only {sx1 - sx0 + 1}x{sy1 - sy0 + 1} tiles (under {MIN_SIDE} a side)" };
+                }
                 foreach (var t in b.tiles)
                 {
                     int i = Grid.Index(t.x, t.y, w);
@@ -416,7 +423,11 @@ namespace Porchlight.Gen
         /// the outside of the nearest drawn sidewalk (or footpath), in tiles: below
         /// zero, a building there would stand on it.
         /// </summary>
-        static Dictionary<int, double> KerbGaps(TownModel model, List<int> tiles)
+        /// <summary>The least yard (tiles clear of the sidewalk) a building on a lot of this zone can come down to (Place's loop).</summary>
+        internal static double YardFloor(GenParams p, TransectRule rule) => rule.setback ? Math.Min(p.frontSetback, MIN_YARD) : 0;
+
+        /// <summary>Each tile's clearance (tiles) from the sidewalks: a building may stand on it with a yard no deeper.</summary>
+        internal static Dictionary<int, double> KerbGaps(TownModel model, List<int> tiles)
         {
             int w = model.width;
             var p = model.@params;
@@ -517,7 +528,8 @@ namespace Porchlight.Gen
                         {
                             if (!Filled(ax, ay, bx, by)) break;
                             int area = (bx - ax + 1) * (by - ay + 1);
-                            if (area < 2) continue;
+                            // No sliver of a building: MIN_SIDE tiles each way at least (a lot with no room for one stays grass).
+                            if (bx - ax + 1 < MIN_SIDE || by - ay + 1 < MIN_SIDE) continue;
                             if (area > bestArea && HasFront(ax, ay, bx, by))
                             {
                                 bestArea = area;

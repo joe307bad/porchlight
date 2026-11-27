@@ -2,7 +2,9 @@
 // the pieces are no bigger than lotMaxSize (less, nearer the middle: its
 // transect zone's lot size, TownPlan.Rules). Pieces smaller than lotMinSize, or
 // with no road along any side, are dropped. The lots nearest the center (not in
-// a park) become the plaza, with a well in the middle.
+// a park) become the plaza, with a well in the middle. A sliver (no square of
+// MIN_WIDTH tiles fits in it) goes to the lot beside it, so no lot is too narrow
+// to build on.
 
 using System;
 using System.Collections.Generic;
@@ -14,6 +16,10 @@ namespace Porchlight.Gen
     public sealed class LotsStage : IStepwiseStage
     {
         const double SPLIT_JITTER = 0.15;
+        /// <summary>The narrowest a lot can be (tiles): a cut never leaves a strip narrower, and a piece that's no wider joins the next.</summary>
+        public const int MIN_WIDTH = 2;
+        /// <summary>The most a lot made of slivers joined together can be, against the zone's largest lot.</summary>
+        const double MERGE_MOST = 2.5;
         const int PLAZA_LOTS = 3;
         const double PLAZA_REACH = 8;
 
@@ -47,6 +53,8 @@ namespace Porchlight.Gen
                 return;
             }
             double cut = Math.Max(lo + 1, Math.Min(hi, Numbers.Round(lo + (hi - lo + 1) * (0.5 + rng.Range(-SPLIT_JITTER, SPLIT_JITTER)))));
+            // Wide enough for two lots of MIN_WIDTH: neither side of the cut is narrower.
+            if (hi - lo + 1 >= 2 * MIN_WIDTH) cut = Math.Max(lo + MIN_WIDTH, Math.Min(hi + 1 - MIN_WIDTH, cut));
             var a = new List<int>();
             var b = new List<int>();
             foreach (int t in tiles)
@@ -58,6 +66,71 @@ namespace Porchlight.Gen
             foreach (var part in new[] { a, b })
                 foreach (var comp in Parcels.Components(part, w))
                     Split(comp, w, maxSize, rng, o);
+        }
+
+        /// <summary>Whether a square of MIN_WIDTH tiles a building may stand on (`ok`) fits inside the piece somewhere.</summary>
+        static bool Buildable(List<int> piece, HashSet<int> ok, int w)
+        {
+            var set = new HashSet<int>(piece);
+            foreach (int t in piece)
+            {
+                bool all = true;
+                for (int dy = 0; dy < MIN_WIDTH && all; dy++)
+                    for (int dx = 0; dx < MIN_WIDTH && all; dx++)
+                    {
+                        int u = t + dx + dy * w;
+                        if (t % w + dx >= w || !set.Contains(u) || !ok.Contains(u)) all = false;
+                    }
+                if (all) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Each sliver of a block's pieces (no MIN_WIDTH square of tiles a building may stand on, `ok`) joined to the
+        /// piece beside it it shares most edge with, again until it has room (a strip joined to a strip can still be
+        /// one), so the lot beside gets the bigger building. A join must keep one outline and no more than `most`
+        /// tiles; a sliver nothing takes is left, and gets no building (it's grass).
+        /// </summary>
+        static List<List<int>> MergeSlivers(List<List<int>> pieces, HashSet<int> ok, int w, double most)
+        {
+            if (pieces.Count < 2) return pieces;
+            var owner = new Dictionary<int, int>();
+            for (int i = 0; i < pieces.Count; i++) foreach (int t in pieces[i]) owner[t] = i;
+            var gone = new bool[pieces.Count];
+            for (bool joinedAny = true; joinedAny;)
+            {
+                joinedAny = false;
+                for (int i = 0; i < pieces.Count; i++)
+                {
+                    if (gone[i] || Buildable(pieces[i], ok, w)) continue;
+                    var shared = new Dictionary<int, int>();
+                    foreach (int t in pieces[i])
+                    {
+                        int x = t % w;
+                        foreach (int n in new[] { x > 0 ? t - 1 : -1, x < w - 1 ? t + 1 : -1, t - w, t + w })
+                            if (n >= 0 && owner.TryGetValue(n, out int j) && j != i && !gone[j]) shared[j] = (shared.TryGetValue(j, out int c) ? c : 0) + 1;
+                    }
+                    // Most edge shared, then the lower index: the same choice every time.
+                    var order = new List<int>(shared.Keys);
+                    order.Sort((a, b) => shared[a] != shared[b] ? shared[b] - shared[a] : a - b);
+                    foreach (int j in order)
+                    {
+                        if (pieces[i].Count + pieces[j].Count > most) continue;
+                        var joined = new List<int>(pieces[j]);
+                        joined.AddRange(pieces[i]);
+                        if (Parcels.Outline(joined, w).Count != 1) continue;
+                        pieces[j] = joined;
+                        foreach (int t in pieces[i]) owner[t] = j;
+                        gone[i] = true;
+                        joinedAny = true;
+                        break;
+                    }
+                }
+            }
+            var kept = new List<List<int>>();
+            for (int i = 0; i < pieces.Count; i++) if (!gone[i]) kept.Add(pieces[i]);
+            return kept;
         }
 
         static Vec2 TileCenter(int t, int w) => new Vec2((t % w) + 0.5, t / w + 0.5);
@@ -103,7 +176,12 @@ namespace Porchlight.Gen
                 double maxSize = Math.Max(1.5 * p.lotMinSize, p.lotMaxSize * TownPlan.Rules(block.transect).lotScale);
                 var blockRng = Rng.Local(model.seed, Regions.Stream(model, "lots", Geo.PolygonCentroid(block.polygon)), Signature.OfPolygon(block.polygon));
                 foreach (var comp in Parcels.Components(tiles, w)) Split(comp, w, maxSize, blockRng, pieces);
-                return pieces;
+                // Where a building may stand: clear of the sidewalks by the least yard its zone allows.
+                var gaps = BuildingsStage.KerbGaps(model, tiles);
+                double floor = BuildingsStage.YardFloor(p, TownPlan.Rules(block.transect));
+                var ok = new HashSet<int>();
+                foreach (var kv in gaps) if (kv.Value >= floor) ok.Add(kv.Key);
+                return MergeSlivers(pieces, ok, w, MERGE_MOST * maxSize);
             }
             Lot LotOf(Block block, List<int> piece)
             {
