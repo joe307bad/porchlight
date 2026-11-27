@@ -75,7 +75,7 @@ const RECORDS = '/mp/records';
 const PLAYERS = '/mp/players';
 const GOTO = '/mp/goto';
 
-async function readJson(req: IncomingMessage, limit = 1024): Promise<unknown> {
+export async function readJson(req: IncomingMessage, limit = 1024): Promise<unknown> {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of req) {

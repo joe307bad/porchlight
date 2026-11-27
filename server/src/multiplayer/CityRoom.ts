@@ -26,7 +26,7 @@ import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { Interest } from './interest.ts';
 import { ARRIVE_GRACE_SECONDS, MAX_SPEED, RateLimit, Strikes, clampToBounds, creditAfter, creditAt, inBounds, judgeMove, newTrack, parseMove, type Bounds, type Track } from './movement.ts';
 import { played, RaceWatch, type CourseLine } from './played.ts';
-import { cleanLook, STARTER_TOWNS, type EndReason, type Snapshot } from './persistence.ts';
+import { cleanLook, revOf, starterTowns, type EndReason, type Snapshot } from './persistence.ts';
 import { describeClient, parseClient, parsePerf, SessionPerf, short, type ClientInfo } from './telemetry.ts';
 import { County, mineSlot } from '../county.ts';
 import {
@@ -37,6 +37,7 @@ import {
   IN_USE,
   CLOSE_KICKED,
   CLOSE_SIGNED_IN_ELSEWHERE,
+  CLOSE_TOWN_REBUILT,
   HOST_SILENT_MS,
   MSG_CAR,
   MSG_CORRECT,
@@ -44,6 +45,7 @@ import {
   MSG_LOOK,
   MSG_MISSION_DONE,
   MSG_MOVE,
+  MSG_NOTICE,
   MSG_NIGHT,
   MSG_PERF,
   MSG_PING,
@@ -51,6 +53,7 @@ import {
   MSG_SPAWN,
   MSG_TAKE,
   MSG_TELEPORT,
+  MSG_TOWN_REBUILDING,
   MSG_UNLOCK,
   MSG_UNLOCKS,
   MSG_WORLD,
@@ -293,6 +296,8 @@ export class CityRoom extends Room<{ state: CityState }> {
   private hostSince = 0;
   private hostHeardAt = 0;
   private shuttingDown = false;
+  /** Being rebuilt (rebuild): everyone's on their way to the town's new key. */
+  private rebuilding: Promise<void> | null = null;
   private flushing = false;
   private createdAt = Date.now();
   private flushFailures = 0;
@@ -320,7 +325,7 @@ export class CityRoom extends Room<{ state: CityState }> {
       const found = await this.deps.persistence.countyFor(this.town);
       if (!found) return;
       const county = new County(
-        [...STARTER_TOWNS.map((t) => ({ place: t.place, key: t.key })), ...found.mine.filter((m) => m.slot >= 0 && m.slot < 3).map((m) => ({ place: mineSlot(m.slot), key: m.key }))],
+        [...starterTowns().map((t) => ({ place: t.place, key: t.key })), ...found.mine.filter((m) => m.slot >= 0 && m.slot < 3).map((m) => ({ place: mineSlot(m.slot), key: m.key }))],
         found.account ?? undefined,
       );
       if (!county.rooms().includes(this.town)) return;
@@ -594,6 +599,13 @@ export class CityRoom extends Room<{ state: CityState }> {
       // move says where they are: the client checks the spot against the town.
       client.send(MSG_SPAWN, { at, look: player.appearance || null, unlocks } satisfies SpawnMessage);
       client.send(MSG_PING, { t: Date.now() }); // a round trip from the start
+      // What happened while they were away (their house moved when an editor changed the streets), told once.
+      void d.persistence
+        .takeNotices(auth.characterId)
+        .then((list) => {
+          for (const text of list) client.send(MSG_NOTICE, { text });
+        })
+        .catch((err: Error) => console.error('city: notices:', err.message));
       // The town as the server has it, to carry on from (then what changes, each tick).
       const town = this.state.host === SERVER_HOST && this.allFollow() ? sim()?.running(this.town) : null;
       if (town) client.send(MSG_WORLD, this.worldOf(town));
@@ -694,6 +706,34 @@ export class CityRoom extends Room<{ state: CityState }> {
     if (code !== undefined && code !== CloseCode.CONSENTED) rt.endDetail ??= `close ${code}`;
     await this.finish(rt, reason);
     this.forget(rt);
+  }
+
+  /**
+   * An editor committed new streets (edit.ts): everyone here is told (MSG_TOWN_REBUILDING), and `seconds` later
+   * saved, their places carried over to the new key, and sent off to it (CLOSE_TOWN_REBUILT, the reason `rev=N`).
+   * Nobody new joins meanwhile. Resolves once they're all gone.
+   */
+  rebuild(info: { name: string; by: string; key: string }, seconds: number): Promise<void> {
+    if (this.rebuilding) return this.rebuilding;
+    void this.lock();
+    this.broadcast(MSG_TOWN_REBUILDING, { name: info.name, by: info.by, seconds, key: info.key });
+    this.rebuilding = new Promise<void>((resolve) => {
+      this.clock.setTimeout(() => {
+        const all = [...this.runtime.values()].filter((rt) => !rt.finished);
+        void Promise.all(all.map((rt) => this.finish(rt, 'rebuilt')))
+          .then(() => this.deps.persistence.movePlaces(this.town, info.key))
+          .catch((err: Error) => console.error(`city: rebuilding ${this.town}:`, err.message))
+          .finally(() => {
+            for (const rt of all) {
+              // A close reason holds 123 bytes at most, and a key is longer: its `rev` (the full key came with MSG_TOWN_REBUILDING).
+              rt.client?.leave(CLOSE_TOWN_REBUILT, `rev=${revOf(info.key)}`);
+              if (!rt.client) this.forget(rt); // dropped and waiting to come back: gone now
+            }
+            resolve();
+          });
+      }, seconds * 1000);
+    });
+    return this.rebuilding;
   }
 
   /** On deploy (SIGTERM): save everyone, then let Colyseus close the room. */
