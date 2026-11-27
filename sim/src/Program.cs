@@ -2,7 +2,8 @@
 // this (server/src/sim/pool.ts) and talks to it over stdin and stdout, in frames of
 // a u32 length (little-endian, of what follows it), a u8 type and the rest:
 //
-//   in   1 TOWNS    JSON [{ id, key }]: the towns to run (any not listed stop)
+//   in   1 TOWNS    JSON [{ id, key, skeleton? }]: the towns to run (any not listed stop); an edited
+//                   town's skeleton (docs/street-editor-api.md) beside its key
 //        2 PLAYERS  u16 n, n × (u32 town, u16 count, count × (f32 x, f32 y)): where players are (tiles)
 //        3 TAKEN    JSON { id, taken: ["t3", …] }: the cars someone's in
 //        4 ASK      JSON { ask, town, kind: car|person|building|ground…, i }: about one car, person or building now
@@ -21,6 +22,7 @@
 // (up to a couple of seconds each) and join the ticks once made. Logs go to stderr.
 //
 //   porchlight-sim                          as the server's worker
+//   porchlight-sim --draft                  the street editor's draft worker (Draft.cs): JSON lines
 //   porchlight-sim --bench <towns dir> [n]  each town there n times over, stepped for a
 //                                           minute: what a tick costs (CI's budget check)
 
@@ -67,6 +69,8 @@ namespace Porchlight.Sim
         static int Main(string[] args)
         {
             if (args.Length >= 2 && args[0] == "--follow") return Follow.Run(args[1]);
+            // --draft: the street editor's draft worker (Draft.cs), JSON lines on stdin and stdout.
+            if (args.Length >= 1 && args[0] == "--draft") return Draft.Run(Console.In, Console.Out);
             // --bench <towns dir> [copies] [budget: most ms a town's tick may average]
             if (args.Length >= 2 && args[0] == "--bench")
                 return Bench(args[1], args.Length > 2 ? int.Parse(args[2]) : 1, args.Length > 3 ? double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture) : double.PositiveInfinity);
@@ -148,6 +152,8 @@ namespace Porchlight.Sim
             foreach (var t in list)
             {
                 keep.Add(t.id);
+                // An edited town's skeleton (docs/street-editor-api.md), before the town is grown from its key.
+                if (t.skeleton is JsonElement sk && sk.ValueKind == JsonValueKind.Object) Porchlight.Model.Skeletons.Put(t.key, sk.GetRawText());
                 if (wanted.TryGetValue(t.id, out var had) && had == t.key) continue;
                 wanted[t.id] = t.key;
                 towns.Remove(t.id);
@@ -358,6 +364,8 @@ namespace Porchlight.Sim
         {
             public int id { get; set; }
             public string key { get; set; }
+            /// <summary>The skeleton of the key's revision, for a key with `rev` above 0; else absent.</summary>
+            public JsonElement? skeleton { get; set; }
         }
 
         sealed class TakenSpec
