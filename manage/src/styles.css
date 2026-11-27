@@ -1152,8 +1152,6 @@ p {
   margin-left: 2px;
 }
 
-.edit-select,
-.edit-form select,
 .edit-message textarea {
   font: inherit;
   font-size: 12px;
@@ -1198,17 +1196,6 @@ p {
 .edit-banner.warn {
   border-color: var(--accent);
   margin: 0;
-}
-
-.edit-warnings {
-  position: absolute;
-  left: 12px;
-  bottom: 40px;
-  padding: 6px 10px;
-  background: rgba(60, 12, 12, 0.92);
-  color: #ffb3b3;
-  border-radius: 8px;
-  font-size: 12px;
 }
 
 .edit-status {
@@ -1265,21 +1252,6 @@ p {
   font-size: 12px;
 }
 
-.edit-seg {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-}
-
-.edit-seg > span {
-  margin-right: auto;
-}
-
-.edit-seg.wrap {
-  flex-wrap: wrap;
-}
-
 .edit-row {
   display: flex;
   flex-wrap: wrap;
@@ -1287,12 +1259,26 @@ p {
   margin: 8px 0;
 }
 
-.edit-problem.error .name {
-  color: var(--bad);
+/* What to put in the blocks picked: the checkboxes under Regenerate, two columns on a phone. */
+.edit-wants {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 6px 12px;
 }
 
-.edit-problem.warning .name {
+/* How the latest region came out, in a line ("No room for a roundabout there"). */
+.edit-note {
+  margin: 0;
+}
+
+.edit-note.warn {
   color: var(--accent);
+}
+
+/* Box mode: a drag draws a box, so a crosshair rather than a hand. */
+.edit-map canvas.boxing {
+  cursor: crosshair;
+  touch-action: none;
 }
 
 .edit-changes {

@@ -1,26 +1,12 @@
 // The edit screen's map: one town, drawn from the draft worker's answer (its roads at their width with
 // their lanes, medians, turn pockets, roundabouts, slips and controls; its blocks by zone and its buildings
-// by what they're for), with the town as it is now ghosted underneath. Handles for every junction and bend
-// when close enough in, ghost handles to add a bend, and the bullseye for the town's centre at any zoom.
-// A drag bends the roads round the handle every frame (skeleton.ts's rubber band) and snaps; letting go,
-// or pausing, hands the edit to the screen, which turns it into a skeleton and asks for a re-plan.
-// Pan by dragging empty ground, zoom with the wheel or a pinch, double-click to zoom in.
+// by what they're for), with the town as it is now ghosted underneath, the town's circle faint, and the
+// downtown bullseye. Click a block to pick it (or put it back); shift-drag, or drag in box mode, to pick every
+// block whose middle is inside the box. Drag the bullseye to move downtown: it stays within 0.7 of the town's
+// radius of its centre. Pan by dragging, zoom with the wheel or a pinch, double-click to zoom in.
 
-import { closestOn, decodeWater, dist, dragNode, dragWarnings, pullBend, snapNode, withBend, type Snap } from './skeleton.ts';
-import type { BuildingKind, Pt, Town, TownRoad } from './types.ts';
-
-export type Tool = 'select' | 'draw' | 'delete' | 'split';
-
-export type Selection = { kind: 'road'; id: number } | { kind: 'junction'; node: number } | null;
-
-export type Edit =
-  | { type: 'node'; node: number; to: Pt; merge?: number; join?: number }
-  | { type: 'bend'; road: number; index: number; to: Pt }
-  | { type: 'newBend'; road: number; seg: number; to: Pt }
-  | { type: 'center'; to: Pt }
-  | { type: 'draw'; pts: Pt[] }
-  | { type: 'delete'; road: number }
-  | { type: 'split'; road: number; at: Pt };
+import { blocksInBox, clampDowntown, decodeWater, dist, inPoly } from './skeleton.ts';
+import type { BuildingKind, Pt, Town } from './types.ts';
 
 export interface EditLayers {
   blocks: boolean;
@@ -50,40 +36,30 @@ export const BUILDING_COLORS: Record<BuildingKind, string> = {
 const TRANSECT_COLORS: Record<number, string> = { 3: '#1d2a22', 4: '#232a2a', 5: '#2b2926', 6: '#33282a' };
 const LAND = '#17201a';
 const MIN_SCALE = 1, MAX_SCALE = 80;
-/** Handles show once a junction is this big on screen (px). */
-const HANDLE_PX = 12;
-/** The drag pauses this long (ms) before the screen's asked to re-plan. */
-const PAUSE_MS = 150;
-
 type Grab =
   | { kind: 'pan'; last: { x: number; y: number } }
-  | { kind: 'node'; node: number; at: Pt; snap: Snap | null }
-  | { kind: 'bend'; road: number; index: number; at: Pt }
-  | { kind: 'newBend'; road: number; seg: number; at: Pt }
-  | { kind: 'center'; at: Pt };
+  | { kind: 'box'; from: { x: number; y: number }; to: { x: number; y: number } }
+  | { kind: 'downtown'; at: Pt };
 
 export class EditRenderer {
   town: Town | null = null;
   live: Town | null = null;
   layers: EditLayers = DEFAULT_EDIT_LAYERS;
-  selection: Selection = null;
-  tool: Tool = 'select';
+  /** A drag with one finger (or the mouse) draws a box instead of panning: for touch, where there's no shift. */
+  boxMode = false;
   /** A re-plan's on its way: what's drawn fades. */
   pending = false;
-  /** Where the problems are (drawn as markers), and the houses the draft loses. */
-  marks: { at: Pt; level: 'error' | 'warning' }[] = [];
+  /** The houses the draft loses. */
   lost: Pt[] = [];
-  /** The centre as the skeleton has it (shown before the answer catches up). */
-  center: Pt | null = null;
-  /** Classes the draw tool lays (for its colour). */
-  drawClass: 'arterial' | 'collector' | 'local' = 'local';
+  /** The bullseye as the skeleton has it (shown before the answer catches up); else the answer's downtown. */
+  downtown: Pt | null = null;
 
-  onSelect: (s: Selection) => void = () => {};
-  /** Let go: the edit to make, and the town it was made against (whose ids it names). */
-  onEdit: (e: Edit, town: Town) => void = () => {};
-  /** Paused mid-drag: the edit as it stands, for a re-plan. */
-  onPause: (e: Edit, town: Town) => void = () => {};
-  onWarnings: (w: string[]) => void = () => {};
+  /** A block clicked: its polygon, to pick or put back. */
+  onToggle: (poly: Pt[]) => void = () => {};
+  /** A box drawn: the blocks whose middle is inside it. */
+  onBox: (polys: Pt[][]) => void = () => {};
+  /** The bullseye let go: where downtown goes (already kept within its reach). */
+  onDowntown: (at: Pt) => void = () => {};
 
   private readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -99,17 +75,11 @@ export class EditRenderer {
   private pinch: { d: number; scale: number } | null = null;
   private downAt: { x: number; y: number } | null = null;
   private moved = false;
-  private pauseTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The roads as bent by the drag in hand. */
-  private preview = new Map<number, Pt[]>();
-  private warnings: string[] = [];
-  private draft: Pt[] = [];
-  private cursor: Pt | null = null;
   private waterImage: HTMLCanvasElement | null = null;
   private water: Uint8Array = new Uint8Array(0);
   private fitted = false;
-  /** The town a drag began on: its roads are drawn (bent) and its ids edited until the answer to the drag comes. */
-  private frozen: Town | null = null;
+  /** The picked blocks, by their polygons written out (setSelection). */
+  private picked = new Set<string>();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -151,16 +121,17 @@ export class EditRenderer {
       this.fitted = true;
       this.fit();
     }
-    // A fresh answer after letting go: the drag's bending is in it now.
-    if (!this.grab) {
-      this.preview.clear();
-      this.frozen = null;
-    }
     this.redraw();
   }
 
   redraw(): void {
     this.dirty = true;
+  }
+
+  /** The picked blocks, by their polygons, drawn bright. */
+  setSelection(sel: Pt[][]): void {
+    this.picked = new Set(sel.map((p) => JSON.stringify(p)));
+    this.redraw();
   }
 
   /** The whole town in view. */
@@ -180,19 +151,9 @@ export class EditRenderer {
     this.redraw();
   }
 
-  /** Stop drawing a road (Escape). */
+  /** Stop a box or a bullseye drag in hand (Escape). */
   cancel(): void {
-    this.draft = [];
-    this.grab = null;
-    this.frozen = null;
-    this.preview.clear();
-    this.redraw();
-  }
-
-  /** Finish the road being drawn (Enter, or a double-click). */
-  finishDraw(): void {
-    if (this.draft.length >= 2 && this.town) this.onEdit({ type: 'draw', pts: this.draft }, this.town);
-    this.draft = [];
+    if (this.grab?.kind !== 'pan') this.grab = null;
     this.redraw();
   }
 
@@ -249,14 +210,6 @@ export class EditRenderer {
     return this.toScreen(p);
   }
 
-  private handlesShown(): boolean {
-    return this.cam.scale * 2 >= HANDLE_PX;
-  }
-
-  private roadPts(r: TownRoad): Pt[] {
-    return this.preview.get(r.id) ?? r.pts;
-  }
-
   private draw(): void {
     const g = this.ctx;
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
@@ -287,19 +240,44 @@ export class EditRenderer {
         g.fill();
       }
     g.globalAlpha = 1;
+    this.drawSelection(g, t, s);
     g.globalAlpha = this.pending ? 0.6 : 1;
-    const roads = this.frozen ?? t;
-    this.drawRoads(g, roads);
+    this.drawRoads(g, t);
     g.globalAlpha = 1;
-    this.drawJunctions(g, roads);
+    this.drawJunctions(g, t);
     this.drawGhost(g, s);
-    // Back to screen pixels for the markers and handles.
+    this.drawCircle(g, t, s);
+    // Back to screen pixels for the markers, the bullseye and the box.
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    this.drawMarks(g, roads);
-    this.drawHandles(g, roads);
-    this.drawCentre(g, t);
-    this.drawDraw(g);
-    this.drawWarnings(g);
+    this.drawMarks(g, t);
+    this.drawDowntown(g, t);
+    this.drawBox(g);
+  }
+
+  /** The picked blocks: bright over their zone's colour, outlined. */
+  private drawSelection(g: CanvasRenderingContext2D, t: Town, s: number): void {
+    if (!this.picked.size) return;
+    g.lineJoin = 'round';
+    for (const b of t.blocks) {
+      if (!this.picked.has(JSON.stringify(b.poly))) continue;
+      poly(g, b.poly);
+      g.fillStyle = 'rgba(246,183,60,0.35)';
+      g.fill();
+      g.strokeStyle = '#f6b73c';
+      g.lineWidth = Math.max(0.2, 2 / s);
+      g.stroke();
+    }
+  }
+
+  /** The town's circle, faint: the whole town stays inside it. */
+  private drawCircle(g: CanvasRenderingContext2D, t: Town, s: number): void {
+    g.strokeStyle = 'rgba(190,215,255,0.22)';
+    g.lineWidth = Math.max(0.15, 1.5 / s);
+    g.setLineDash([6 / s, 6 / s]);
+    g.beginPath();
+    g.arc(t.center[0], t.center[1], t.townRadius, 0, Math.PI * 2);
+    g.stroke();
+    g.setLineDash([]);
   }
 
   /** The town as it is now, ghosted over the draft. */
@@ -325,15 +303,13 @@ export class EditRenderer {
     const order = [...t.roads].sort((a, b) => (a.kind === 'main' ? 1 : 0) - (b.kind === 'main' ? 1 : 0));
     // Kerb and asphalt.
     for (const r of order) {
-      const pts = this.roadPts(r);
-      const sel = this.selection?.kind === 'road' && this.selection.id === r.id;
-      g.strokeStyle = sel ? '#f6b73c' : '#0e1216';
-      g.lineWidth = Math.max(r.width, 0.35) + (sel ? 0.9 : 0.5);
-      line(g, pts);
+      g.strokeStyle = '#0e1216';
+      g.lineWidth = Math.max(r.width, 0.35) + 0.5;
+      line(g, r.pts);
       g.stroke();
     }
     for (const r of order) {
-      const pts = this.roadPts(r);
+      const pts = r.pts;
       g.strokeStyle = r.kind === 'main' ? '#4a4f57' : r.kind === 'path' ? '#6a5e4a' : '#3a3f46';
       g.lineWidth = Math.max(r.width, 0.35);
       if (this.layers.heat && r.design) g.strokeStyle = heat(r.design.vc);
@@ -344,7 +320,7 @@ export class EditRenderer {
     for (const r of order) {
       const d = r.design;
       if (!d || r.kind === 'path') continue;
-      const pts = this.roadPts(r);
+      const pts = r.pts;
       const [fwd, back] = d.lanes;
       const lane = d.width / Math.max(1, fwd + back + (d.divided ? 1 : 0));
       g.lineWidth = 0.08;
@@ -507,82 +483,16 @@ export class EditRenderer {
       g.lineTo(p.x - r, p.y + r);
       g.stroke();
     }
-    for (const m of this.marks) {
-      const p = this.toScreen(m.at);
-      g.fillStyle = m.level === 'error' ? '#ff6b6b' : '#f6b73c';
-      g.beginPath();
-      g.arc(p.x, p.y, 8, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = '#111';
-      g.font = 'bold 11px system-ui';
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText('!', p.x, p.y + 0.5);
-      g.textAlign = 'start';
-      g.textBaseline = 'alphabetic';
-    }
   }
 
-  private drawHandles(g: CanvasRenderingContext2D, t: Town): void {
-    const grab = this.grab;
-    if (grab?.kind === 'node' && grab.snap) {
-      g.strokeStyle = 'rgba(138,180,255,0.8)';
-      g.setLineDash([4, 4]);
-      g.lineWidth = 1;
-      for (const [a, b] of grab.snap.guides) {
-        const p = this.toScreen(a), q = this.toScreen(b);
-        g.beginPath();
-        g.moveTo(p.x, p.y);
-        g.lineTo(q.x, q.y);
-        g.stroke();
-      }
-      g.setLineDash([]);
-    }
-    if (!this.handlesShown() || this.tool === 'draw') {
-      if (grab?.kind === 'node') this.handle(g, grab.at, 6, '#f6b73c', this.warnings.length > 0);
-      return;
-    }
-    const view = this.viewBox();
-    for (const r of t.roads) {
-      const pts = this.roadPts(r);
-      if (!pts.some((p) => inBox(p, view))) continue;
-      for (let i = 1; i < pts.length - 1; i++) this.handle(g, pts[i], 3.5, '#d7dde4', false);
-      for (let i = 0; i + 1 < pts.length; i++) {
-        const m: Pt = [(pts[i][0] + pts[i + 1][0]) / 2, (pts[i][1] + pts[i + 1][1]) / 2];
-        if (dist(pts[i], pts[i + 1]) * this.cam.scale < 24) continue;
-        const p = this.toScreen(m);
-        g.strokeStyle = 'rgba(215,221,228,0.55)';
-        g.lineWidth = 1;
-        g.beginPath();
-        g.arc(p.x, p.y, 3, 0, Math.PI * 2);
-        g.stroke();
-      }
-    }
-    for (const n of t.nodes) {
-      if (n.legs === 2 || !inBox(n.at, view)) continue;
-      const at = grab?.kind === 'node' && grab.node === n.id ? grab.at : n.at;
-      const sel = this.selection?.kind === 'junction' && this.selection.node === n.id;
-      this.handle(g, at, 6, n.gate ? '#8ab4ff' : sel ? '#f6b73c' : '#ffffff', grab?.kind === 'node' && grab.node === n.id && this.warnings.length > 0);
-    }
+  /** Where the bullseye is drawn: in hand, as the skeleton has it, or where the plan put downtown. */
+  private downtownAt(t: Town): Pt {
+    if (this.grab?.kind === 'downtown') return this.grab.at;
+    return this.downtown ?? t.downtown ?? t.center;
   }
 
-  private handle(g: CanvasRenderingContext2D, at: Pt, r: number, color: string, bad: boolean): void {
-    const p = this.toScreen(at);
-    g.fillStyle = bad ? '#ff6b6b' : color;
-    g.strokeStyle = '#0b0f14';
-    g.lineWidth = 1.5;
-    g.beginPath();
-    g.arc(p.x, p.y, r, 0, Math.PI * 2);
-    g.fill();
-    g.stroke();
-  }
-
-  private centreAt(t: Town): Pt {
-    return this.grab?.kind === 'center' ? this.grab.at : (this.center ?? t.center);
-  }
-
-  private drawCentre(g: CanvasRenderingContext2D, t: Town): void {
-    const p = this.toScreen(this.centreAt(t));
+  private drawDowntown(g: CanvasRenderingContext2D, t: Town): void {
+    const p = this.toScreen(this.downtownAt(t));
     ['#d33', '#fff', '#d33', '#fff'].forEach((c, i) => {
       g.fillStyle = c;
       g.beginPath();
@@ -594,90 +504,43 @@ export class EditRenderer {
     g.beginPath();
     g.arc(p.x, p.y, 14, 0, Math.PI * 2);
     g.stroke();
-    // How far the centre's pull reaches: the town's radius.
-    g.strokeStyle = 'rgba(221,51,51,0.35)';
-    g.setLineDash([6, 6]);
-    g.beginPath();
-    g.arc(p.x, p.y, t.townRadius * this.cam.scale, 0, Math.PI * 2);
-    g.stroke();
+    g.font = 'bold 11px system-ui';
+    g.textAlign = 'center';
+    g.lineWidth = 3;
+    g.strokeStyle = 'rgba(11,15,20,0.85)';
+    g.strokeText('Downtown', p.x, p.y + 27);
+    g.fillStyle = '#fff';
+    g.fillText('Downtown', p.x, p.y + 27);
+    g.textAlign = 'start';
+  }
+
+  private drawBox(g: CanvasRenderingContext2D): void {
+    if (this.grab?.kind !== 'box') return;
+    const { from, to } = this.grab;
+    const x = Math.min(from.x, to.x), y = Math.min(from.y, to.y), w = Math.abs(to.x - from.x), h = Math.abs(to.y - from.y);
+    g.fillStyle = 'rgba(246,183,60,0.12)';
+    g.fillRect(x, y, w, h);
+    g.strokeStyle = '#f6b73c';
+    g.lineWidth = 1;
+    g.setLineDash([5, 4]);
+    g.strokeRect(x + 0.5, y + 0.5, w, h);
     g.setLineDash([]);
-  }
-
-  private drawDraw(g: CanvasRenderingContext2D): void {
-    if (this.tool !== 'draw' || (this.draft.length === 0 && !this.cursor)) return;
-    const pts = this.cursor ? [...this.draft, this.cursor] : this.draft;
-    g.strokeStyle = this.drawClass === 'arterial' ? '#f6b73c' : this.drawClass === 'collector' ? '#9fd8cb' : '#d7dde4';
-    g.lineWidth = Math.max(2, this.cam.scale * (this.drawClass === 'arterial' ? 2 : 1));
-    g.globalAlpha = 0.7;
-    g.beginPath();
-    pts.forEach((q, i) => {
-      const p = this.toScreen(q);
-      if (i) g.lineTo(p.x, p.y);
-      else g.moveTo(p.x, p.y);
-    });
-    g.stroke();
-    g.globalAlpha = 1;
-    for (const q of this.draft) this.handle(g, q, 4, '#f6b73c', false);
-  }
-
-  private drawWarnings(g: CanvasRenderingContext2D): void {
-    if (!this.warnings.length || this.grab?.kind !== 'node') return;
-    const p = this.toScreen(this.grab.at);
-    g.font = '12px system-ui';
-    const lines = this.warnings;
-    const w = Math.max(...lines.map((l) => g.measureText(l).width)) + 12;
-    const x = Math.min(this.width - w - 4, p.x + 14), y = p.y + 14;
-    g.fillStyle = 'rgba(40,10,10,0.9)';
-    g.fillRect(x, y, w, lines.length * 16 + 8);
-    g.fillStyle = '#ff8b8b';
-    lines.forEach((l, i) => g.fillText(l, x + 6, y + 16 + i * 16));
-  }
-
-  private viewBox(): [number, number, number, number] {
-    const [x0, y0] = this.toWorld(0, 0);
-    const [x1, y1] = this.toWorld(this.width, this.height);
-    return [x0 - 2, y0 - 2, x1 + 2, y1 + 2];
   }
 
   // --- Picking -------------------------------------------------------------------------------------
 
-  private pick(x: number, y: number): Grab | { kind: 'road'; road: number; at: Pt } | null {
+  private nearDowntown(x: number, y: number): boolean {
+    if (!this.town) return false;
+    const s = this.toScreen(this.downtownAt(this.town));
+    return Math.hypot(s.x - x, s.y - y) <= 15;
+  }
+
+  /** The block under a point on screen, if any. */
+  private blockAt(x: number, y: number): Pt[] | null {
     const t = this.town;
     if (!t) return null;
     const w = this.toWorld(x, y);
-    const near = (p: Pt, px: number) => {
-      const s = this.toScreen(p);
-      return Math.hypot(s.x - x, s.y - y) <= px;
-    };
-    if (near(this.centreAt(t), 15)) return { kind: 'center', at: this.centreAt(t) };
-    if (this.handlesShown()) {
-      for (const n of t.nodes) if (n.legs !== 2 && !n.gate && near(n.at, 8)) return { kind: 'node', node: n.id, at: n.at, snap: null };
-      for (const r of t.roads) {
-        for (let i = 1; i < r.pts.length - 1; i++) if (near(r.pts[i], 6)) return { kind: 'bend', road: r.id, index: i, at: r.pts[i] };
-        for (let i = 0; i + 1 < r.pts.length; i++) {
-          if (dist(r.pts[i], r.pts[i + 1]) * this.cam.scale < 24) continue;
-          const m: Pt = [(r.pts[i][0] + r.pts[i + 1][0]) / 2, (r.pts[i][1] + r.pts[i + 1][1]) / 2];
-          if (near(m, 6)) return { kind: 'newBend', road: r.id, seg: i, at: m };
-        }
-      }
-    }
-    let best: { road: number; d: number; at: Pt } | null = null;
-    for (const r of t.roads) {
-      const c = closestOn(w, r.pts);
-      const reach = r.width / 2 + 4 / this.cam.scale;
-      if (c.d <= reach && (!best || c.d < best.d)) best = { road: r.id, d: c.d, at: c.point };
-    }
-    return best ? { kind: 'road', road: best.road, at: best.at } : null;
-  }
-
-  private junctionAt(x: number, y: number): number | null {
-    const t = this.town;
-    if (!t) return null;
-    for (const n of t.nodes) {
-      if (n.legs < 3) continue;
-      const s = this.toScreen(n.at);
-      if (Math.hypot(s.x - x, s.y - y) <= Math.max(8, this.cam.scale * 1.2)) return n.id;
-    }
+    for (const b of t.blocks) if (inPoly(w, b.poly)) return b.poly;
     return null;
   }
 
@@ -705,14 +568,12 @@ export class EditRenderer {
   };
 
   private readonly dbl = (e: MouseEvent) => {
-    if (this.tool === 'draw') return this.finishDraw();
     const p = this.local(e);
     this.zoomAt(p.x, p.y, this.cam.scale * 2);
   };
 
   private readonly context = (e: MouseEvent) => {
     e.preventDefault();
-    if (this.tool === 'draw') this.finishDraw();
   };
 
   private readonly down = (e: PointerEvent) => {
@@ -724,24 +585,18 @@ export class EditRenderer {
       const [a, b] = [...this.pointers.values()];
       this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), scale: this.cam.scale };
       this.grab = null;
-      this.frozen = null;
-      this.preview.clear();
+      this.redraw();
       return;
     }
     this.downAt = p;
     this.moved = false;
-    const hit = this.tool === 'select' ? this.pick(p.x, p.y) : null;
-    this.grab = hit && hit.kind !== 'road' ? hit : { kind: 'pan', last: p };
-    if (this.grab.kind !== 'pan') this.frozen = this.town;
+    if (this.town && this.nearDowntown(p.x, p.y)) this.grab = { kind: 'downtown', at: this.downtownAt(this.town) };
+    else if (e.shiftKey || this.boxMode) this.grab = { kind: 'box', from: p, to: p };
+    else this.grab = { kind: 'pan', last: p };
   };
 
   private readonly move = (e: PointerEvent) => {
     const p = this.local(e);
-    if (this.tool === 'draw') {
-      const t = this.town;
-      this.cursor = t ? snapNode(t, null, this.toWorld(p.x, p.y)).p : this.toWorld(p.x, p.y);
-      this.redraw();
-    }
     if (!this.pointers.has(e.pointerId)) return;
     this.pointers.set(e.pointerId, p);
     if (this.pointers.size === 2 && this.pinch) {
@@ -753,35 +608,18 @@ export class EditRenderer {
     this.moved = true;
     const grab = this.grab;
     if (!grab) return;
-    const w = this.toWorld(p.x, p.y);
-    const t = this.frozen ?? this.town;
     switch (grab.kind) {
       case 'pan':
         this.cam.cx -= (p.x - grab.last.x) / this.cam.scale;
         this.cam.cy -= (p.y - grab.last.y) / this.cam.scale;
         grab.last = p;
         break;
-      case 'center':
-        grab.at = w;
-        this.schedulePause();
+      case 'box':
+        grab.to = p;
         break;
-      case 'node':
-        if (!t) break;
-        grab.snap = snapNode(t, grab.node, w);
-        grab.at = grab.snap.p;
-        this.preview = dragNode(t, grab.node, grab.at);
-        this.warnings = dragWarnings(t, grab.node, grab.at, this.preview, this.water);
-        this.onWarnings(this.warnings);
-        this.schedulePause();
-        break;
-      case 'bend':
-      case 'newBend': {
-        if (!t) break;
-        grab.at = w;
-        const r = t.roads.find((x) => x.id === grab.road)!;
-        const pts = grab.kind === 'bend' ? pullBend(r.pts, grab.index, w) : pullBend(withBend(r.pts, grab.seg, w), grab.seg + 1, w);
-        this.preview = new Map([[r.id, pts]]);
-        this.schedulePause();
+      case 'downtown': {
+        const w = this.toWorld(p.x, p.y);
+        grab.at = this.town ? clampDowntown(w, this.town.center, this.town.townRadius) : w;
         break;
       }
     }
@@ -791,77 +629,22 @@ export class EditRenderer {
   private readonly up = (e: PointerEvent) => {
     if (e.button === 2) return;
     const p = this.local(e);
+    const wasPinch = this.pinch !== null;
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.pinch = null;
     const grab = this.grab;
     this.grab = null;
-    if (this.pauseTimer) clearTimeout(this.pauseTimer);
-    this.pauseTimer = null;
-    this.warnings = [];
-    this.onWarnings([]);
-    if (!this.moved) {
-      this.frozen = null;
-      this.click(p.x, p.y);
-      this.preview.clear();
-      this.redraw();
-      return;
-    }
-    const edit = grab ? this.editOf(grab) : null;
-    const t = this.frozen ?? this.town;
-    if (edit && t) this.onEdit(edit, t);
-    else this.frozen = null;
-    // Kept bent until the answer comes (setTown clears it).
     this.redraw();
+    if (wasPinch || !grab) return;
+    if (!this.moved) {
+      // A click: the block under it picked, or put back.
+      const b = this.blockAt(p.x, p.y);
+      if (b) this.onToggle(b);
+      return;
+    }
+    if (grab.kind === 'box' && this.town) this.onBox(blocksInBox(this.town.blocks, this.toWorld(grab.from.x, grab.from.y), this.toWorld(grab.to.x, grab.to.y)));
+    else if (grab.kind === 'downtown') this.onDowntown(grab.at);
   };
-
-  private editOf(grab: Grab): Edit | null {
-    switch (grab.kind) {
-      case 'center':
-        return { type: 'center', to: grab.at };
-      case 'node':
-        return { type: 'node', node: grab.node, to: grab.at, merge: grab.snap?.merge, join: grab.snap?.join };
-      case 'bend':
-        return { type: 'bend', road: grab.road, index: grab.index, to: grab.at };
-      case 'newBend':
-        return { type: 'newBend', road: grab.road, seg: grab.seg, to: grab.at };
-      default:
-        return null;
-    }
-  }
-
-  private schedulePause(): void {
-    if (this.pauseTimer) clearTimeout(this.pauseTimer);
-    this.pauseTimer = setTimeout(() => {
-      this.pauseTimer = null;
-      const edit = this.grab ? this.editOf(this.grab) : null;
-      const t = this.frozen ?? this.town;
-      if (edit && t) this.onPause(edit, t);
-    }, PAUSE_MS);
-  }
-
-  private click(x: number, y: number): void {
-    const t = this.town;
-    if (!t) return;
-    const w = this.toWorld(x, y);
-    if (this.tool === 'draw') {
-      this.draft.push(snapNode(t, null, w).p);
-      return;
-    }
-    const hit = this.pick(x, y);
-    const road = hit?.kind === 'road' ? hit.road : hit && 'road' in hit ? hit.road : null;
-    if (this.tool === 'delete') {
-      if (road !== null) this.onEdit({ type: 'delete', road }, t);
-      return;
-    }
-    if (this.tool === 'split') {
-      if (road !== null) this.onEdit({ type: 'split', road, at: closestOn(w, t.roads.find((r) => r.id === road)!.pts).point }, t);
-      return;
-    }
-    const j = this.junctionAt(x, y);
-    if (j !== null) this.onSelect({ kind: 'junction', node: j });
-    else if (road !== null) this.onSelect({ kind: 'road', id: road });
-    else this.onSelect(null);
-  }
 }
 
 // --- Drawing helpers ---------------------------------------------------------------------------------
@@ -930,8 +713,4 @@ export function heat(vc: number): string {
   if (vc < 0.9) return '#f6b73c';
   if (vc < 1) return '#ff8c42';
   return '#ff4d4d';
-}
-
-function inBox(p: Pt, b: [number, number, number, number]): boolean {
-  return p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
 }

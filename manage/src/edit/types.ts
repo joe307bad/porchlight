@@ -1,5 +1,6 @@
-// The street editor's wire, as docs/street-editor-api.md has it: the skeleton an editor builds, and the town,
-// problems, changes and day the draft worker answers with. Points are [x, y] in the town's own tiles.
+// The street editor's wire, as docs/street-editor-api.md has it: the skeleton an editor builds (a downtown and
+// the regions to make again), and the town, problems, changes and day the draft worker answers with. Points are
+// [x, y] in the town's own tiles.
 
 export type Pt = [number, number];
 export type RoadClass = 'arterial' | 'collector' | 'local';
@@ -26,14 +27,34 @@ export interface JunctionOverride {
   control: Control;
 }
 
+/** What an editor would like in a region they regenerate (the panel's checkboxes). */
+export interface Want {
+  roundabout: boolean;
+  park: boolean;
+  school: boolean;
+  shops: boolean;
+  houses: boolean;
+}
+
+/** Blocks to be made again: their polygons as they were when picked, a salt (another re-rolls it), and what's wanted. */
+export interface Region {
+  blocks: Pt[][];
+  salt: number;
+  want: Want;
+}
+
 export interface Skeleton {
   v: 1;
+  /** The downtown bullseye (tall buildings, shops, the core), or absent for the generator's own. */
   center?: Pt;
+  /** Applied in order, later ones over earlier. */
+  regions?: Region[];
+  // An older draft's road edits: kept as they are, never made by the edit screen now.
   mains?: SkeletonRoad[];
-  streets: SkeletonRoad[];
-  removed: [Pt, Pt][];
-  roads: RoadOverride[];
-  junctions: JunctionOverride[];
+  streets?: SkeletonRoad[];
+  removed?: [Pt, Pt][];
+  roads?: RoadOverride[];
+  junctions?: JunctionOverride[];
 }
 
 export interface Pocket {
@@ -104,6 +125,8 @@ export interface Town {
   width: number;
   height: number;
   center: Pt;
+  /** The downtown the plan used (the bullseye, or the generator's own). */
+  downtown?: Pt;
   secondCentre: Pt | null;
   townRadius: number;
   gates: Pt[];
@@ -118,8 +141,9 @@ export interface Town {
   stats: Record<string, number | Record<string, number>>;
 }
 
+/** Only warnings now: the worker solves what it can itself. (`error` is kept for an older server's answers.) */
 export interface Problem {
-  level: 'error' | 'warning';
+  level: 'warning' | 'error';
   text: string;
   at: Pt | null;
 }
@@ -143,6 +167,16 @@ export interface PlanAnswer {
   town?: Town;
   problems?: Problem[];
   changes?: Changes;
+  /** The skeleton as it was actually planned (a region's salt moved on, or a region dropped): the draft takes it. */
+  skeleton?: Skeleton;
+  /** Whether each region came out with what was asked. */
+  regions?: RegionResult[];
+}
+
+export interface RegionResult {
+  index: number;
+  ok: boolean;
+  text?: string;
 }
 
 export interface Day {
@@ -188,4 +222,4 @@ export interface CommitAnswer {
   players: number;
 }
 
-export const emptySkeleton = (): Skeleton => ({ v: 1, streets: [], removed: [], roads: [], junctions: [] });
+export const emptySkeleton = (): Skeleton => ({ v: 1 });

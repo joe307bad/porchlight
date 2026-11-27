@@ -1,179 +1,177 @@
-// The edit screen's skeleton rules (src/edit/skeleton.ts), against the mock's made-up town.
+// The edit screen's skeleton (src/edit/skeleton.ts): picking blocks, regions, the downtown bullseye, Commit's
+// rule and rebasing, against the mock's made-up town.
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mockGrow } from '../src/edit/mock.ts';
+import { mockGrow, mockPlan } from '../src/edit/mock.ts';
 import {
+  addBlocks,
+  addRegion,
+  blocksInBox,
+  canCommit,
   changeCount,
-  deleteRoad,
+  clampDowntown,
   dist,
-  drawRoad,
-  dragWarnings,
-  moveBend,
-  moveCenter,
-  moveNode,
+  inPoly,
+  isSelected,
+  latestRegionNote,
+  middle,
+  moveDowntown,
+  NO_WANT,
   normalize,
-  pullEnd,
   rebase,
-  setJunction,
-  setRoad,
-  snapNode,
-  splitRoad,
-  withBend,
-  decodeWater,
-  roadOverride,
+  reselect,
+  sameSkeleton,
+  toggleBlock,
 } from '../src/edit/skeleton.ts';
-import type { Pt, Town } from '../src/edit/types.ts';
+import type { Pt, Skeleton, Town } from '../src/edit/types.ts';
 
 const empty = normalize(null);
 const town: Town = mockGrow(empty);
-const street = town.roads.find((r) => r.kind === 'street' && r.pts.length === 2 && dist(r.pts[0], r.pts[1]) > 8)!;
-const main = town.roads.find((r) => r.kind === 'main' && r.pts.length >= 2)!;
-const inner = town.nodes.find((n) => n.legs >= 3 && !n.gate && town.roads.filter((r) => r.from === n.id || r.to === n.id).every((r) => r.kind === 'street'))!;
+const square: Pt[] = [[0, 0], [10, 0], [10, 10], [0, 10]];
 
-test('the fixture has streets, main roads and a street-only junction', () => {
-  assert.ok(street && main && inner);
+test('a point in a polygon, and a block’s middle', () => {
+  assert.ok(inPoly([5, 5], square));
+  assert.ok(!inPoly([11, 5], square));
+  assert.deepEqual(middle(square), [5, 5]);
+  // An L whose centroid falls in its notch: the middle is still inside it.
+  const ell: Pt[] = [[0, 0], [10, 0], [10, 2], [2, 2], [2, 10], [0, 10]];
+  assert.ok(inPoly(middle(ell), ell));
 });
 
-test('the rubber band moves the end fully and fades to nothing by 6 tiles', () => {
-  const pts: Pt[] = [[0, 0], [2, 0], [4, 0], [6, 0], [8, 0], [10, 0]];
-  const out = pullEnd(pts, true, [0, 3]);
-  assert.deepEqual(out[0], [0, 3]);
-  assert.ok(out[1][1] > out[2][1] && out[2][1] > 0);
-  assert.equal(out[3][1], 0);
-  assert.deepEqual(out[5], [10, 0]);
-  // From the other end too.
-  const back = pullEnd(pts, false, [0, -2]);
-  assert.deepEqual(back[5], [10, -2]);
-  assert.equal(back[0][1], 0);
+test('clicking a block picks it, clicking it again puts it back', () => {
+  const [a, b] = town.blocks;
+  let sel = toggleBlock([], a.poly);
+  sel = toggleBlock(sel, b.poly);
+  assert.equal(sel.length, 2);
+  assert.ok(isSelected(sel, a.poly));
+  sel = toggleBlock(sel, a.poly.map((p) => [p[0], p[1]] as Pt));
+  assert.equal(sel.length, 1, 'the same polygon, though a different array');
+  assert.ok(!isSelected(sel, a.poly) && isSelected(sel, b.poly));
 });
 
-test('a generated street moved is pinned, and its old ends go into removed', () => {
-  const a = street.pts[0], b = street.pts[1];
-  const mid: Pt = [(a[0] + b[0]) / 2 + 2, (a[1] + b[1]) / 2 + 2];
-  const s = moveBend(empty, town, street.id, 1, mid);
-  // A two-point road has no bend to move; a new bend then.
-  assert.equal(s, empty);
-  const s2 = deleteRoad(empty, town, street.id);
-  assert.equal(s2.removed.length, 1);
-  assert.equal(s2.streets.length, 0);
+test('a box picks the blocks whose middle is inside it, added to what’s picked, each once', () => {
+  const box = blocksInBox(town.blocks, [80, 80], [50, 50]);
+  assert.ok(box.length > 0);
+  for (const p of box) {
+    const m = middle(p);
+    assert.ok(m[0] >= 50 && m[0] <= 80 && m[1] >= 50 && m[1] <= 80);
+  }
+  const sel = addBlocks([box[0]], box);
+  assert.equal(sel.length, box.length);
+});
+
+test('a region goes on the end with its blocks, its salt and what’s wanted; nothing picked, nothing added', () => {
+  const blocks = town.blocks.slice(0, 2).map((b) => b.poly);
+  const s = addRegion(empty, blocks, { ...NO_WANT, park: true }, 42);
+  assert.deepEqual(s.regions, [{ blocks, salt: 42, want: { ...NO_WANT, park: true } }]);
+  const s2 = addRegion(s, blocks, NO_WANT);
+  assert.equal(s2.regions!.length, 2);
+  assert.ok(Number.isInteger(s2.regions![1].salt) && s2.regions![1].salt >= 0);
+  assert.equal(addRegion(empty, [], NO_WANT).regions, undefined);
+  // The UI makes no road edits.
+  assert.equal(s2.streets, undefined);
   assert.equal(s2.mains, undefined);
 });
 
-test('moving a junction pins every street meeting there and removes their old ends', () => {
-  const legs = town.roads.filter((r) => r.from === inner.id || r.to === inner.id);
-  const to: Pt = [inner.at[0] + 1.5, inner.at[1] - 1];
-  const s = moveNode(empty, town, inner.id, to);
-  assert.equal(s.streets.length, legs.length);
-  assert.equal(s.removed.length, legs.length);
-  assert.equal(s.mains, undefined);
-  for (const r of s.streets) assert.ok(r.pts.some((p) => dist(p, to) < 0.01), 'each pinned street ends at the new spot');
-  // Moving it again edits the pinned streets in place, not new ones.
-  const s2 = moveNode(s, mockGrow(s), mockGrow(s).nodes.find((n) => dist(n.at, to) < 0.75)!.id, [to[0] + 1, to[1]]);
-  assert.equal(s2.streets.length, legs.length);
-  assert.equal(s2.removed.length, legs.length);
+test('after a plan, the new blocks inside the region are picked again', () => {
+  const picked = blocksInBox(town.blocks, [55, 55], [80, 80]);
+  const s = addRegion(empty, picked, NO_WANT, 7);
+  const after = mockGrow(s);
+  assert.ok(after.blocks.length > town.blocks.length, 'the mock split some of them');
+  const again = reselect(after.blocks, picked);
+  assert.ok(again.length >= picked.length);
+  for (const p of again) assert.ok(picked.some((a) => inPoly(middle(p), a)));
+  // A block outside isn't.
+  const outside = after.blocks.find((b) => !picked.some((a) => inPoly(middle(b.poly), a)))!;
+  assert.ok(!isSelected(again, outside.poly));
+  assert.deepEqual(reselect(after.blocks, []), []);
+  // Another salt makes it differently.
+  const other = mockGrow(addRegion(empty, picked, NO_WANT, 8));
+  assert.notDeepEqual(other.blocks.map((b) => b.poly), after.blocks.map((b) => b.poly));
 });
 
-test('the first main-road edit snapshots every main road into mains', () => {
-  const mains = town.roads.filter((r) => r.kind === 'main').length;
-  const s = deleteRoad(empty, town, main.id);
-  assert.ok(s.mains);
-  assert.ok(s.mains!.length >= mains - 1);
-  assert.equal(s.streets.length, 0);
-  assert.equal(s.removed.length, 0);
+test('the mock says how a region came out, and the screen shows the latest one’s word', () => {
+  const picked = blocksInBox(town.blocks, [55, 55], [80, 80]);
+  const s = addRegion(addRegion(empty, picked, NO_WANT, 1), picked, { ...NO_WANT, roundabout: true, park: true }, 2);
+  const { town: t, regions } = mockPlan(s);
+  assert.equal(regions.length, 2);
+  assert.ok(regions[1].ok, regions[1].text);
+  assert.ok(t.junctions.some((j) => j.form === 'roundabout'));
+  assert.ok(t.blocks.some((b) => b.park && picked.some((a) => inPoly(middle(b.poly), a))));
+  assert.equal(latestRegionNote({ ok: true, regions: [{ index: 0, ok: true }, { index: 1, ok: false, text: 'No room for a roundabout there' }] }, s)?.text, 'No room for a roundabout there');
+  assert.equal(latestRegionNote({ ok: true, regions: [{ index: 0, ok: false, text: 'old' }, { index: 1, ok: true }] }, s), null);
+  assert.equal(latestRegionNote({ ok: true }, empty), null);
 });
 
-test('gates never move', () => {
-  const gate = town.nodes.find((n) => n.gate)!;
-  const snap = snapNode(town, null, [gate.at[0] + 0.5, gate.at[1]]);
-  assert.equal(snap.merge, gate.id);
+test('the bullseye stays within 0.7 of the town’s radius of its centre', () => {
+  const c: Pt = [80, 80];
+  assert.deepEqual(clampDowntown([90, 80], c, 60), [90, 80]);
+  const far = clampDowntown([200, 80], c, 60);
+  assert.ok(Math.abs(dist(far, c) - 42) < 1e-9);
+  assert.ok(Math.abs(far[1] - 80) < 1e-9);
+  const s = moveDowntown(empty, [200, 80.123], town);
+  assert.ok(dist(s.center!, town.center) <= 0.7 * town.townRadius + 0.01);
+  assert.deepEqual(moveDowntown(empty, [70.123, 90.456]).center, [70.12, 90.46]);
 });
 
-test('the bullseye sets center and nothing else', () => {
-  const s = moveCenter(empty, [70.123, 90.456]);
-  assert.deepEqual(s.center, [70.12, 90.46]);
-  assert.equal(changeCount(s), 1);
-  assert.equal(changeCount(s, s), 0, 'nothing changed from itself');
-  // And the mock grows the town round it: the shops follow.
+test('downtown moves the shops, not the town', () => {
+  const s = moveDowntown(empty, [65, 95], town);
   const moved = mockGrow(s);
+  assert.deepEqual(moved.center, town.center);
+  assert.deepEqual(moved.downtown, [65, 95]);
   const shops = moved.buildings.filter((b) => b.kind === 'shop');
-  const mean = shops.reduce((a, b) => [a[0] + b.poly[0][0], a[1] + b.poly[0][1]], [0, 0]).map((v) => v / shops.length);
-  assert.ok(dist(mean as Pt, [70, 90]) < 10, `shops gather near the new centre (${mean})`);
+  const mean = shops.reduce((a, b) => [a[0] + b.poly[0][0], a[1] + b.poly[0][1]], [0, 0]).map((v) => v / shops.length) as Pt;
+  assert.ok(dist(mean, [65, 95]) < 12, `shops gather near downtown (${mean})`);
 });
 
-test('drawing an arterial adds a main road; a local road a street', () => {
-  const pts: Pt[] = [[10, 10], [30, 10]];
-  const a = drawRoad(empty, town, pts, 'arterial');
-  assert.equal(a.mains!.length, town.roads.filter((r) => r.kind === 'main').length + 1);
-  const l = drawRoad(empty, town, pts, 'local');
-  assert.equal(l.streets.length, 1);
-  assert.equal(l.mains, undefined);
-  assert.equal(drawRoad(empty, town, [[1, 1]], 'local').streets.length, 0);
+test('Commit opens with a change and shuts again when undo takes it back, or while a plan’s on its way', () => {
+  const base = empty;
+  assert.equal(canCommit(base, base, false), false, 'nothing to commit');
+  const step1 = addRegion(base, [town.blocks[0].poly], NO_WANT, 3);
+  assert.equal(canCommit(step1, base, false), true);
+  assert.equal(canCommit(step1, base, true), false, 'a plan in flight');
+  const step2 = moveDowntown(step1, [70, 70], town);
+  assert.equal(canCommit(step2, base, false), true);
+  // Undo pops back to the base: shut again.
+  const undo: Skeleton[] = [base, step1];
+  const back = undo.pop()!;
+  assert.equal(canCommit(back, base, false), true);
+  assert.equal(canCommit(undo.pop()!, base, false), false);
+  // An older draft's road edits count as changes too.
+  assert.equal(canCommit(normalize({ junctions: [{ at: [1, 1], control: 'signal' }] }), base, false), true);
 });
 
-test('splitting a street leaves two pinned streets meeting at the cut', () => {
-  const a = street.pts[0], b = street.pts[1];
-  const at: Pt = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-  const s = splitRoad(empty, town, street.id, at);
-  assert.equal(s.streets.length, 2);
-  assert.ok(s.streets.every((r) => r.pts.some((p) => dist(p, at) < 0.02)));
+test('normalize leaves empty lists out, keeps an older draft’s road edits as they are', () => {
+  const old = { v: 1 as const, streets: [{ pts: [[1, 1], [5, 1]] as Pt[], kind: 'street' as const }], removed: [], roads: [], junctions: [{ at: [3, 3] as Pt, control: 'stop' as const }] };
+  const n = normalize(old);
+  assert.deepEqual(n, { v: 1, streets: old.streets, junctions: old.junctions });
+  assert.ok(sameSkeleton(old, n));
+  assert.deepEqual(normalize(null), { v: 1 });
 });
 
-test('a new bend through a ghost handle', () => {
-  assert.deepEqual(withBend([[0, 0], [10, 0]], 0, [5, 2]), [[0, 0], [5, 2], [10, 0]]);
-});
-
-test('side-panel overrides match by ends either way round, and clear back to nothing', () => {
-  const a: Pt = [1, 1], b: Pt = [9, 1];
-  let s = setRoad(empty, a, b, { lanes: 2, divided: true });
-  assert.equal(s.roads.length, 1);
-  s = setRoad(s, [9.4, 1.2], [1.3, 0.8], { oneWay: true });
-  assert.equal(s.roads.length, 1);
-  assert.deepEqual(roadOverride(s, b, a), { a, b, lanes: 2, divided: true, oneWay: true });
-  s = setRoad(s, a, b, { lanes: undefined, divided: false, oneWay: false });
-  assert.equal(s.roads.length, 0);
-  let j = setJunction(empty, [5, 5], 'roundabout');
-  j = setJunction(j, [5.5, 5.5], 'signal');
-  assert.deepEqual(j.junctions, [{ at: [5.5, 5.5], control: 'signal' }]);
-  assert.equal(setJunction(j, [5, 5], 'auto').junctions.length, 0);
-});
-
-test('a junction pulled onto its neighbour warns; one in the lake warns', () => {
-  const water = decodeWater(town);
-  const otherOf = (r: Town['roads'][number]) => town.nodes.find((n) => n.id === (r.from === inner.id ? r.to : r.from))!;
-  const leg = town.roads.find((r) => (r.from === inner.id || r.to === inner.id) && otherOf(r).legs >= 3)!;
-  const other = otherOf(leg);
-  const to: Pt = [other.at[0] + (inner.at[0] - other.at[0]) * 0.15, other.at[1] + (inner.at[1] - other.at[1]) * 0.15];
-  const bent = new Map(town.roads.filter((r) => r.from === inner.id || r.to === inner.id).map((r) => [r.id, r.from === inner.id ? pullEnd(r.pts, true, [to[0] - inner.at[0], to[1] - inner.at[1]]) : pullEnd(r.pts, false, [to[0] - inner.at[0], to[1] - inner.at[1]])]));
-  const w = dragWarnings(town, inner.id, to, bent, water);
-  assert.ok(w.some((x) => x.includes('from the next junction')), w.join('; '));
-  assert.ok(dragWarnings(town, inner.id, [132, 128], new Map(), water).includes('in the water'));
-});
-
-test('snapping: square to a neighbour, onto a junction, onto a road', () => {
-  const near = snapNode(town, null, [inner.at[0] + 0.6, inner.at[1] + 0.6]);
-  assert.equal(near.merge, inner.id);
-  const leg = town.roads.find((r) => r.from === inner.id)!;
-  const far = leg.pts[1];
-  // Dragging the junction a little off level with its neighbour: it snaps level (or plumb).
-  const off: Pt = [inner.at[0] + 0.2, inner.at[1] + 0.3];
-  const s = snapNode(town, inner.id, off);
-  assert.ok(Math.abs(s.p[0] - far[0]) < 1e-6 || Math.abs(s.p[1] - far[1]) < 1e-6 || s.merge !== undefined || s.join !== undefined);
+test('changeCount counts the downtown and each region', () => {
+  const s = addRegion(moveDowntown(empty, [70, 70]), [square], NO_WANT, 1);
+  assert.equal(changeCount(s), 2);
+  assert.equal(changeCount(s, s), 0);
 });
 
 test('rebase lays the draft over a newer revision and lists what both changed', () => {
   const base = empty;
-  const draft = setJunction(moveCenter(base, [70, 70]), [10, 10], 'signal');
-  const current = setJunction(moveCenter(base, [90, 90]), [50, 50], 'stop');
-  const r = rebase(base, draft, current);
+  const mine = addRegion(moveDowntown(base, [70, 70]), [square], NO_WANT, 1);
+  const theirs = addRegion(moveDowntown(base, [90, 90]), [[[20, 20], [30, 20], [30, 30]]], NO_WANT, 2);
+  const r = rebase(base, mine, theirs);
   assert.deepEqual(r.skeleton.center, [70, 70]);
-  assert.equal(r.skeleton.junctions.length, 2);
-  assert.ok(r.clashes.some((c) => c.includes('centre')));
+  assert.equal(r.skeleton.regions!.length, 2);
+  assert.equal(r.skeleton.regions![1].salt, 1, 'the draft’s region goes after theirs');
+  assert.ok(r.clashes.some((c) => c.includes('downtown')));
   // Nothing in common: no clash.
-  const r2 = rebase(base, setJunction(base, [10, 10], 'signal'), setJunction(base, [50, 50], 'stop'));
+  const r2 = rebase(base, addRegion(base, [square], NO_WANT, 1), moveDowntown(base, [90, 90]));
   assert.equal(r2.clashes.length, 0);
-  // Both set the same junction differently.
-  const r3 = rebase(base, setJunction(base, [10, 10], 'signal'), setJunction(base, [10, 10], 'stop'));
+  assert.deepEqual(r2.skeleton.center, [90, 90]);
+  // An older draft's junction set differently by both still clashes.
+  const j = (control: 'signal' | 'stop') => normalize({ junctions: [{ at: [10, 10], control }] });
+  const r3 = rebase(base, j('signal'), j('stop'));
   assert.equal(r3.clashes.length, 1);
   assert.deepEqual(r3.skeleton.junctions, [{ at: [10, 10], control: 'signal' }]);
 });
