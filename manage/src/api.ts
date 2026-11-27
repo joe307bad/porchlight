@@ -22,6 +22,8 @@ export interface CountyMap {
     zoning: { homes: number; residents: number; workers: number; jobs: number } | null;
     /** Each building: [zone (zoning.ts ZONES), x0, y0, x1, y1 (tiles, exclusive), homes, jobs, kind (zoning.ts KINDS)] in the town's tiles. */
     buildings: number[][] | null;
+    /** Its parks (the game's Explore/Parks.cs): each one's middle [x, y], and its outline's rings, each flat [x0, y0, x1, y1, ...], in the town's tiles; null if not known. */
+    parks?: { at: [number, number]; rings: number[][] }[] | null;
   }[];
   spaces: { kind: string; x0: number; y0: number; width: number; height: number }[];
   highways: number[][];

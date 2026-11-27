@@ -68,6 +68,7 @@ static class Hitches
                 var names = StreetNaming.Name(m, layout.roads);
                 these.Add(("names", sw.Elapsed.TotalMilliseconds));
                 Each(Signs.PlanSteps(m, layout, names, x => signs = x), "signs");
+                Each(Parks.PlanSteps(m, layout, x => { }), "parks");
                 if (times == null) times = these;
                 else for (int i = 0; i < times.Count && i < these.Count; i++) times[i] = (times[i].what, Math.Min(times[i].ms, these[i].Item2));
             }

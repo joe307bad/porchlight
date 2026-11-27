@@ -95,6 +95,10 @@ namespace Porchlight.UI
         };
 
         public static readonly Color32 TileBuilding = new Color32(128, 64, 52, 255);
+        /// <summary>A park's tiles on the minimap: a deeper green than the grass round it, its edge deeper still.</summary>
+        public static readonly Color32 TilePark = new Color32(104, 172, 80, 255), TileParkEdge = new Color32(56, 118, 50, 255);
+        /// <summary>The tree marking a park on the big map: its crown, its trunk, and the line round the crown.</summary>
+        public static readonly Color ParkTree = Coords.Hex(0x3f8f3a), ParkTrunk = Coords.Hex(0x6b4a2b), ParkTreeEdge = Coords.Hex(0xf4f9ec);
 
         public static Color32 TileTerrain(byte t) => t < Terrain.Length ? Terrain[t] : new Color32(255, 0, 255, 255);
 

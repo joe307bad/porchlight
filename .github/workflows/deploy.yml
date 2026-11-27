@@ -143,6 +143,10 @@ jobs:
           dotnet run --project "unity/Tools~/Checks" -c Release -- clock
           dotnet run --project "unity/Tools~/Checks" -c Release -- furniture server/towns
           dotnet run --project "unity/Tools~/Checks" -c Release -- names server/towns
+      # The parks' kit (Explore/Parks.cs): every bench, picnic table, bin and playground piece inside its park, off
+      # the roads, sidewalks and buildings, clear of the trees and of each other.
+      - name: Game — the parks' benches, tables, bins and playgrounds where they fit, clear of everything
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- parks server/towns
       # The web build grows and builds the towns ahead a share at a time: no share long enough to stall
       # the car (a shared runner is slower than a desk: twice the limit), and the same towns as all at once.
       - name: Game — the county built a share at a time, as the web build does

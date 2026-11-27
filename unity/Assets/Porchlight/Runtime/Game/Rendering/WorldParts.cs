@@ -716,23 +716,25 @@ namespace Porchlight.Rendering
             var tents = Get(Catalog.TENTS);
             var fires = Get(Catalog.CAMPFIRES);
             ModelLibrary.Model Any(ModelLibrary.Model[] pool) => pool[(int)Math.Floor(rng.Next() * pool.Length)];
-            // Sized by footprint (in tiles), or for trees by height.
-            void Spread(ModelLibrary.Model m, double x, double y, double footprint, bool shadows = true)
+            // Sized by footprint (in tiles), or for trees by height. `show` false: not planted (a tile kept clear for a
+            // park's kit), its random numbers still drawn so every other tile's planting stays as it was.
+            void Spread(ModelLibrary.Model m, double x, double y, double footprint, bool shadows = true, bool show = true)
             {
                 double s = footprint / Math.Max(m.size.x, m.size.z);
-                Props.Place(m, props, x, y, rng.Range(0, Math.PI * 2), s, s, s, castShadows: shadows);
+                double rot = rng.Range(0, Math.PI * 2);
+                if (show) Props.Place(m, props, x, y, rot, s, s, s, castShadows: shadows);
             }
-            void Tree(ModelLibrary.Model t, double x, double y, double spin)
+            void Tree(ModelLibrary.Model t, double x, double y, double spin, bool show = true)
             {
                 double s = rng.Range(1.3, 2.1) / t.size.y;
                 double sy = s * rng.Range(0.9, 1.1);
-                Props.Place(t, props, x, y, spin, s, sy, s);
+                if (show) Props.Place(t, props, x, y, spin, s, sy, s);
             }
-            void Wild(double x, double y)
+            void Wild(double x, double y, bool show = true)
             {
                 var m = Any(wilds);
                 double footprint = m.name.Contains("mushroom") ? rng.Range(0.12, 0.2) : m.name.Contains("stump") ? rng.Range(0.18, 0.3) : rng.Range(0.35, 0.6);
-                Spread(m, x, y, footprint, !m.name.Contains("mushroom"));
+                Spread(m, x, y, footprint, !m.name.Contains("mushroom"), show);
             }
             for (int y = 0; y < h; y++)
             {
@@ -745,14 +747,16 @@ namespace Porchlight.Rendering
                     byte terrain = tiles.terrain[i];
                     if (tiles.overlay[i] != Overlay.NONE) continue;
                     if (use == Use.HOUSE || use == Use.SHED || use == Use.GARDEN || use == Use.COMMUNITY_GARDEN || use == Use.DRIVEWAY || use == Use.CAR_PARK) continue;
+                    // Kept clear for a park's bench, table or playground (Parks.KeptClear): nothing planted.
+                    bool show = !parkClear.Contains(i);
                     if (terrain == Terrain.ROCK)
                     {
                         if (rng.Chance(0.22))
                         {
                             double ax = x + rng.Range(0.25, 0.75);
                             double ay = y + rng.Range(0.25, 0.75);
-                            if (rng.Chance(0.35)) Spread(Any(boulders), ax, ay, rng.Range(0.55, 0.95));
-                            else Spread(Any(rocks), ax, ay, rng.Range(0.4, 0.85));
+                            if (rng.Chance(0.35)) Spread(Any(boulders), ax, ay, rng.Range(0.55, 0.95), show: show);
+                            else Spread(Any(rocks), ax, ay, rng.Range(0.4, 0.85), show: show);
                         }
                         continue;
                     }
@@ -760,16 +764,16 @@ namespace Porchlight.Rendering
                     {
                         double r = rng.Next();
                         double ax = x + rng.Range(0.25, 0.75), ay = y + rng.Range(0.25, 0.75);
-                        if (r < 0.05) Tree(Any(palms), ax, ay, rng.Range(0, Math.PI * 2));
-                        else if (r < 0.1) Spread(Any(rocks), ax, ay, rng.Range(0.2, 0.4));
+                        if (r < 0.05) Tree(Any(palms), ax, ay, rng.Range(0, Math.PI * 2), show);
+                        else if (r < 0.1) Spread(Any(rocks), ax, ay, rng.Range(0.2, 0.4), show: show);
                         continue;
                     }
                     if (terrain == Terrain.DIRT)
                     {
                         double r = rng.Next();
                         double ax = x + rng.Range(0.25, 0.75), ay = y + rng.Range(0.25, 0.75);
-                        if (r < 0.06) Wild(ax, ay);
-                        else if (r < 0.1) Spread(Any(rocks), ax, ay, rng.Range(0.2, 0.45));
+                        if (r < 0.06) Wild(ax, ay, show);
+                        else if (r < 0.1) Spread(Any(rocks), ax, ay, rng.Range(0.2, 0.45), show: show);
                         continue;
                     }
                     if (terrain != Terrain.GRASS) continue;
@@ -790,13 +794,13 @@ namespace Porchlight.Rendering
                     if (roll < chance)
                     {
                         var pool = rng.Chance(0.12) ? fall : !inTown && rng.Chance(0.45) ? pines : trees;
-                        Tree(Any(pool), atX, atY, spin);
+                        Tree(Any(pool), atX, atY, spin, show);
                     }
                     else if (roll < chance + (use == Use.YARD || use == Use.GREEN ? 0.08 : 0.03))
                     {
                         var b = bushes[(int)Math.Floor(rng.Next() * bushes.Length)];
                         double s = rng.Range(0.4, 0.65) / Math.Max(b.size.x, b.size.z);
-                        Props.Place(b, props, atX, atY, spin, s, s, s, castShadows: false);
+                        if (show) Props.Place(b, props, atX, atY, spin, s, s, s, castShadows: false);
                     }
                     else if (roll < chance + 0.14 && (use == Use.YARD || use == Use.GREEN))
                     {
@@ -806,18 +810,19 @@ namespace Porchlight.Rendering
                             const double s = 1.2;
                             double fx = atX + rng.Range(-0.25, 0.25);
                             double fy = atY + rng.Range(-0.25, 0.25);
-                            Props.Place(f, props, fx, fy, rng.Range(0, 6.3), s, s, s, castShadows: false);
+                            double fr = rng.Range(0, 6.3);
+                            if (show) Props.Place(f, props, fx, fy, fr, s, s, s, castShadows: false);
                         }
                     }
-                    else if (!inTown && use == Use.NONE && roll < chance + 0.09) Wild(atX, atY);
+                    else if (!inTown && use == Use.NONE && roll < chance + 0.09) Wild(atX, atY, show);
                     else if (!inTown && use == Use.NONE && !nearStreet && roll > 0.996)
                     {
                         // A campsite: a tent, and its fire a step in front.
                         double dx = Math.Cos(spin), dy = Math.Sin(spin);
                         var tent = Any(tents);
                         double s = rng.Range(0.55, 0.7) / Math.Max(tent.size.x, tent.size.z);
-                        Props.Place(tent, props, x + 0.5 - dx * 0.12, y + 0.5 - dy * 0.12, DetMath.Atan2(dx, dy), s, s, s);
-                        Spread(Any(fires), x + 0.5 + dx * 0.32, y + 0.5 + dy * 0.32, 0.22, false);
+                        if (show) Props.Place(tent, props, x + 0.5 - dx * 0.12, y + 0.5 - dy * 0.12, DetMath.Atan2(dx, dy), s, s, s);
+                        Spread(Any(fires), x + 0.5 + dx * 0.32, y + 0.5 + dy * 0.32, 0.22, false, show);
                     }
                 }
             }
@@ -866,6 +871,34 @@ namespace Porchlight.Rendering
                         Props.Place(p, props, ax, ay, DetMath.Atan2(-dx, -dy), s, s, s);
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// The parks' benches, picnic tables, bins and playgrounds (Explore/Parks.cs), each model fitted to its piece's
+        /// footprint. A model the library doesn't have yet (the kit's are optional) is drawn as its stand-in, or left out.
+        /// </summary>
+        void AddParkKit()
+        {
+            foreach (var piece in parkKit)
+            {
+                string name = Catalog.ParkModel(piece.kind);
+                if (!library.Has(name)) name = Catalog.ParkStandIn(piece.kind);
+                if (!library.Has(name)) continue;
+                var m = library.Get(name);
+                // A model's front is +z and its width along x. Whichever way round it was made, its longer side goes
+                // along the footprint's longer side: if they disagree, it's turned a quarter.
+                double heading = piece.Heading;
+                double across = piece.width, along = piece.depth;
+                bool modelWide = m.size.x >= m.size.z, pieceWide = piece.width >= piece.depth;
+                if (modelWide != pieceWide && Math.Abs(piece.width - piece.depth) > 1e-6)
+                {
+                    heading += Math.PI / 2;
+                    (across, along) = (along, across);
+                }
+                // As big as fits the footprint, keeping its shape.
+                double s = Math.Min(across / Math.Max(1e-3, m.size.x), along / Math.Max(1e-3, m.size.z));
+                Props.Place(m, props, piece.at.x, piece.at.y, heading, s, s, s);
             }
         }
 

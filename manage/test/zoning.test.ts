@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildingAt, describe, landUse, ZONES } from '../src/zoning.ts';
+import { buildingAt, describe, landUse, parkArea, parkAt, ZONES } from '../src/zoning.ts';
 
 const town = {
   zoning: { homes: 10, residents: 25, workers: 12, jobs: 12 },
@@ -47,4 +47,15 @@ test('finds and describes the building under a point', () => {
   assert.equal(describe([5, 0, 0, 3, 3, 0, 12, 8]), 'Fire station (Civic) · 12 jobs');
   assert.equal(describe([0, 0, 0, 2, 2, 1, 0, 0]), 'Residential · 1 home');
   assert.equal(buildingAt(town, 2.5, 2.5), null);
+});
+
+test('a park’s area and whether a point is in it, a hole taken out', () => {
+  // A 10 by 6 park with a 2 by 2 pond in it (its ring the other way round, as the game traces it).
+  const park = { at: [1.5, 1.5] as [number, number], rings: [[0, 0, 10, 0, 10, 6, 0, 6], [4, 2, 4, 4, 6, 4, 6, 2]] };
+  const t = { parks: [park] };
+  assert.equal(parkArea(park), 56);
+  assert.equal(parkAt(t, 1, 1), park);
+  assert.equal(parkAt(t, 5, 3), null, 'in the pond');
+  assert.equal(parkAt(t, 11, 3), null, 'outside');
+  assert.equal(parkAt({ parks: null }, 1, 1), null);
 });

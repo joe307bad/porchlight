@@ -119,13 +119,21 @@ namespace Porchlight.Rendering
 
         public Model Get(string name)
         {
+            if (!ByName().TryGetValue(name, out var model)) throw new Exception("unknown model " + name);
+            return model;
+        }
+
+        /// <summary>Whether the library holds a model: an optional one (Catalog.IsOptional) only once its file's landed.</summary>
+        public bool Has(string name) => name != null && ByName().ContainsKey(name);
+
+        Dictionary<string, Model> ByName()
+        {
             if (byName == null)
             {
                 byName = new Dictionary<string, Model>();
                 foreach (var m in models) byName[m.name] = m;
             }
-            if (!byName.TryGetValue(name, out var model)) throw new Exception("unknown model " + name);
-            return model;
+            return byName;
         }
 
         public Person Character(string name)

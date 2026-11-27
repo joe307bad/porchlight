@@ -698,6 +698,7 @@ namespace Porchlight.App
                 case "yards": return 0.73;
                 case "trees": return 0.75;
                 case "plazas": return 0.77;
+                case "parks": return 0.775;
                 case "parked": return 0.78;
                 case "airport": return 0.781;
                 case "zoo": return 0.782;

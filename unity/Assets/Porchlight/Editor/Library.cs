@@ -63,7 +63,7 @@ namespace Porchlight.EditorTools
             var converted = new Dictionary<Material, Material>();
             var looks = new Dictionary<string, Material>();
             lib.kits = kits = Kits();
-            lib.models = Catalog.Statics.Select(name => StaticModel(name, converted, looks)).ToList();
+            lib.models = Catalog.Statics.Where(Present).Select(name => StaticModel(name, converted, looks)).ToList();
             lib.peopleController = PeopleController();
             lib.people = Catalog.CHARACTERS.Select(name => PersonModel(name, converted, looks, lib.peopleController))
                 .Append(PersonModel(Catalog.FIREFIGHTER_FROM, converted, looks, lib.peopleController, Catalog.FIREFIGHTER, Firefighter.Dress))
@@ -81,10 +81,16 @@ namespace Porchlight.EditorTools
             if (lib == null) return false;
             var models = new HashSet<string>(lib.models.Select(m => m.name));
             var people = new HashSet<string>(lib.people.Select(p => p.name));
-            return Catalog.Statics.All(models.Contains) && Catalog.PEOPLE.All(people.Contains)
+            return Catalog.Statics.Where(Present).All(models.Contains) && Catalog.PEOPLE.All(people.Contains)
                 && lib.models.Where(m => IsBuilding(m.name)).All(m => m.ground != null && m.ground.storey > 0)
                 && !Firefighter.Stale();
         }
+
+        /// <summary>
+        /// Whether a model's file is there to build: always, but for the optional ones (Catalog.IsOptional: the parks'
+        /// kit, made apart from the code), which the library leaves out until they land and builds once they do.
+        /// </summary>
+        static bool Present(string name) => !Catalog.IsOptional(name) || AssetDatabase.LoadAssetAtPath<GameObject>($"{Models}/{name}.glb") != null;
 
         static GameObject Source(string name)
         {

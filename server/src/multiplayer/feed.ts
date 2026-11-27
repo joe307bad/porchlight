@@ -67,7 +67,7 @@ import { openRooms, type CityRoom } from './CityRoom.ts';
 import { starterTowns } from './persistence.ts';
 import { SERVER_HOST } from './protocol.ts';
 import type { SimLink } from '../sim/link.ts';
-import type { SimTown, TownZoning } from '../sim/pool.ts';
+import type { SimTown, TownPark, TownZoning } from '../sim/pool.ts';
 
 const COUNTY = '/mp/traffic/county';
 const FEED = '/mp/traffic/feed';
@@ -114,6 +114,8 @@ export interface CountyMapJson {
     zoning: TownZoning['figures'] | null;
     /** Each building: [zone, x0, y0, x1, y1 (tiles, exclusive), homes, jobs], the town's frame. */
     buildings: number[][] | null;
+    /** Its parks (Parks.cs): each one's middle and outline, the town's frame; as for roads: saved, or the simulation's. */
+    parks: TownPark[] | null;
   }[];
   /** The junction north of Porchlight, and an account's empty places for towns. */
   spaces: { kind: string; x0: number; y0: number; width: number; height: number }[];
@@ -126,6 +128,7 @@ export interface TownMap {
   roads: number[][];
   roadNames?: string[] | null;
   zoning: TownZoning | null;
+  parks?: TownPark[] | null;
 }
 
 /** The maps of the towns that come with the game, by key (towns/*.roads.json, written by `Checks roadmap`). */
@@ -138,8 +141,8 @@ function mapOf(key: string): TownMap | null {
       for (const f of readdirSync(dir)) {
         if (!f.endsWith('.roads.json')) continue;
         try {
-          const doc = JSON.parse(readFileSync(new URL(f, dir), 'utf8')) as { key: string; roads: number[][]; names?: string[]; zoning?: TownZoning['figures']; buildings?: number[][] };
-          starterMaps.set(doc.key, { roads: doc.roads, roadNames: doc.names ?? null, zoning: doc.zoning && doc.buildings ? { figures: doc.zoning, buildings: doc.buildings } : null });
+          const doc = JSON.parse(readFileSync(new URL(f, dir), 'utf8')) as { key: string; roads: number[][]; names?: string[]; zoning?: TownZoning['figures']; buildings?: number[][]; parks?: TownPark[] };
+          starterMaps.set(doc.key, { roads: doc.roads, roadNames: doc.names ?? null, zoning: doc.zoning && doc.buildings ? { figures: doc.zoning, buildings: doc.buildings } : null, parks: doc.parks ?? null });
         } catch (err) {
           console.error(`traffic: couldn't read ${f}:`, (err as Error).message);
         }
@@ -182,7 +185,8 @@ export function countyMapJson(county: County, names: Map<string, string>, made: 
         const roads = saved?.roads ?? sim?.roads ?? null;
         const roadNames = (saved ? saved.roadNames : sim?.roadNames) ?? null;
         const zoning = saved?.zoning ?? sim?.zoning ?? null;
-        return { key, name: names.get(key) ?? 'A town', ...box(s), private: s.isPrivate, roads, roadNames, zoning: zoning?.figures ?? null, buildings: zoning?.buildings ?? null };
+        const parks = saved?.parks ?? sim?.parks ?? null;
+        return { key, name: names.get(key) ?? 'A town', ...box(s), private: s.isPrivate, roads, roadNames, zoning: zoning?.figures ?? null, buildings: zoning?.buildings ?? null, parks };
       }),
     spaces: county.spaces.filter((s) => s.kind === 'junction' || s.kind === 'vacant').map((s) => ({ kind: s.kind, ...box(s) })),
     highways: county.highways.map((h) => h.points.flatMap((p) => [round1(p.x), round1(p.y)])),
@@ -370,7 +374,7 @@ export class TrafficFeed {
       return send(200, {
         ...countyMapJson(county, names, (key) => {
           const t = this.sim?.pool.town(key);
-          return t?.roads ? { roads: t.roads, roadNames: t.roadNames, zoning: t.zoning } : null;
+          return t?.roads ? { roads: t.roads, roadNames: t.roadNames, zoning: t.zoning, parks: t.parks } : null;
         }),
         sim: this.sim !== null,
       });

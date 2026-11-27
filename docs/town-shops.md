@@ -91,6 +91,66 @@ were planned for. The planning checks pass a town at 60% of the target or
 more, which allows for that. In the starter towns the result is 3.4–4.2 acres
 per 1,000 (Lanternport, with no more blocks to spare among its lakes, 3.6).
 
+### What's in a park
+
+`Explore/Parks.cs` furnishes each park from the town as it stands (its model
+and layout), never in the generator, so the saved towns don't change when the
+kit does. It draws on a random stream of its own for each park (the town's
+seed and the park's block), so the same town gets the same kit in the game,
+the simulation and the checks.
+
+- **A playground** in a park of 100 tiles or more (about 1,600 m²). It goes
+  round the spot furthest in from the edge, nearest the park's middle. A
+  climbing frame, swings, a slide, a spinner and a seesaw each take the
+  nearest spot to that middle where they fit, 1.5 m apart, square to a frame
+  the seed picks, facing out. If fewer than three fit, the park tries the
+  next spot in, and after six it has no playground. A bench faces it, with a
+  bin beside it.
+- **Benches** along the edges, one for every 30 tiles (1 to 10), at least
+  10 m apart. By a road, a bench stands square to it, half a metre in from
+  the sidewalk's outer edge and a little further again, its back to the road.
+  Elsewhere it backs onto the park's edge. Either way it faces into the park:
+  there's park 2.4 m in front of it.
+- **Picnic tables** out on the grass, one for every 60 tiles (up to 4), 8 m
+  apart and away from the playground.
+- **Bins** by every other bench along the edge, and at least one in every
+  park.
+
+Every piece stands wholly on the park's grass, 0.3 m in from an edge that
+isn't a road's, half a metre clear of the sidewalks, and half a metre from
+the next piece. The footprints are guesses until the models are measured,
+kept as metre constants at the top of `Parks.cs` (a bench 1.8 × 0.6 m, a
+picnic table 1.8 × 1.5, a slide 1 × 3.5, swings 3.5 × 2, a climbing frame
+3 × 3, a seesaw 0.4 × 3.5, a spinner 2 across, a bin 0.5 square).
+
+The game plants its trees afterwards, a tile at a time from the town's own
+random stream. So the kit doesn't dodge the trees: the game plants nothing in
+the tiles where a tree could stand within 1.5 m of a piece
+(`Parks.KeptClear`). It still draws those tiles' random numbers, so every
+other tree in town stays where it was.
+
+The models are `Models/props/park-bench`, `picnic-table`, `slide`, `swings`,
+`climbing-frame`, `seesaw`, `spinner` and `park-bin` (`Catalog.PARK_KIT`),
+each with its front (where a bench's sitters look, where a slide runs down
+to) facing +z. Each is scaled to fit its footprint, and turned a quarter if
+it was made the other way round. They're optional: the library builds those
+whose files are there, and until a model lands the game draws the room plans'
+bench or bin in its place, or leaves the piece out.
+
+The maps show the parks too. The game's minimap and big map colour a park's
+tiles a deeper green, edged darker, and the big map puts a tree in each.
+Manage fills each park green under the buildings, with a tree and, close in,
+the word, and names it on hover. It gets each park's middle and outline in
+the roadmap file, or from the simulation for players' towns (`Parks.Encode`).
+
+`Checks parks` holds the starter towns to all this. It measures each piece on
+its own terms, with points over its footprint and the sidewalks as the layout
+lays them. No piece may be outside its park, on a road, parking lane,
+sidewalk or building, near where a tree may stand, or over another piece.
+Every park needs a bench and a bin, and the playgrounds must be in big parks
+only, one of each piece, grouped together. Each bench must face into its
+park, and the same town must give the same kit twice.
+
 ### Car parks
 
 Behind the high street, some lots in the centre are left unbuilt and paved.

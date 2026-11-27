@@ -142,6 +142,8 @@ namespace Porchlight.Rendering
             public IsoLayout layout;
             public StreetNames names;
             public List<Signpost> signs;
+            /// <summary>The parks' benches, tables, bins and playgrounds (Explore/Parks.cs); null: worked out as the world's made.</summary>
+            public List<ParkPiece> parks;
 
             /// <summary>The same, a share at a time (for the web, which has no threads: CountyDrive), then `done` with it.</summary>
             public static IEnumerable<string> Steps(TownModel model, Action<Prepared> done)
@@ -152,14 +154,16 @@ namespace Porchlight.Rendering
                 yield return "names";
                 List<Signpost> signs = null;
                 foreach (var part in Signs.PlanSteps(model, layout, names, s => signs = s)) yield return "signposts" + part;
-                done(new Prepared { layout = layout, names = names, signs = signs });
+                List<ParkPiece> parks = null;
+                foreach (var part in Parks.PlanSteps(model, layout, p => parks = p)) yield return "parks" + part;
+                done(new Prepared { layout = layout, names = names, signs = signs, parks = parks });
             }
 
             public static Prepared Of(TownModel model)
             {
                 var layout = Layout.Build(model);
                 var names = StreetNaming.Name(model, layout.roads);
-                return new Prepared { layout = layout, names = names, signs = Signs.Plan(model, layout, names) };
+                return new Prepared { layout = layout, names = names, signs = Signs.Plan(model, layout, names), parks = Parks.Plan(model, layout) };
             }
         }
 
@@ -176,6 +180,8 @@ namespace Porchlight.Rendering
             layout = prepared?.layout ?? Layout.Build(model);
             names = prepared?.names ?? StreetNaming.Name(model, layout.roads);
             plannedSigns = prepared?.signs;
+            parkKit = prepared?.parks ?? Parks.Plan(model, layout);
+            parkClear = Parks.KeptClear(model, parkKit);
             root = new GameObject("town");
             still = new GameObject("still").transform;
             still.SetParent(root.transform, false);
@@ -185,6 +191,11 @@ namespace Porchlight.Rendering
         }
 
         readonly List<Signpost> plannedSigns;
+
+        /// <summary>The parks' benches, tables, bins and playgrounds (Explore/Parks.cs).</summary>
+        public readonly List<ParkPiece> parkKit;
+        /// <summary>The tiles no tree, bush or flower is planted in, so the parks' kit stands clear of them (Parks.KeptClear).</summary>
+        readonly HashSet<int> parkClear;
 
         /// <summary>How long a step of rooms' interiors may run before it stops for the frame.</summary>
         const int ROOMS_MS = 6;
@@ -272,6 +283,9 @@ namespace Porchlight.Rendering
             yield return "trees";
             AddPlazaDecor(rng);
             yield return "plazas";
+            // The parks' kit takes nothing from the town's random stream (its places are Parks.cs's), so nothing after it moves.
+            AddParkKit();
+            yield return "parks";
             AddParkedCars();
             yield return "parked";
             AddAirport();
