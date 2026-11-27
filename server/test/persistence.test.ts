@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { PgPersistence } from '../src/multiplayer/persistence.ts';
+import { PgPersistence, withRev } from '../src/multiplayer/persistence.ts';
 import { eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { sessions, towns } from '../src/multiplayer/tables.ts';
@@ -195,4 +195,59 @@ test('regenerating a town that comes with the game gives everyone a new house, h
   await p.settleStarterTown({ ...next, houses: [[9, 9]] });
   const homed = [(await p.character(me.id, a.id))?.home?.house, (await p.character(them.id, d.id))?.home?.house];
   assert.equal(homed.filter(Boolean).length, 1);
+});
+
+test('the street editor: drafts, a commit (revision, key, households rehoused, notices), and a starter town that keeps its edit', { skip }, async () => {
+  const p = db!;
+  const id = crypto.randomUUID();
+  // A town that comes with the game, made up for the test (the next start clears it away).
+  const town = { name: `Edited ${id}`, place: 'east' as const, key: `seed=edited-${id}`, houses: [[1, 1], [2, 2], [5, 5]] as [number, number][] };
+  await p.settleStarterTown(town);
+  const row = (await p.townOf(town.key))!;
+  assert.equal(row.createdBy, null);
+  const editor = await p.account(`${sub}-editor`, 'Editor');
+  const me = await p.account(`${sub}-edited`, 'Resident');
+  const c = await p.createCharacter(me.id, 'Resident', null);
+  await p.moveToTown(me.id, c.id, row.id);
+  await p.claimHome(me.id, c.id, 1, 1);
+  await p.save([{ characterId: c.id, town: town.key, x: 3, y: 0, z: 4, rotY: 0, look: '', version: 1 }]);
+
+  // Drafts: one per editor and town, kept over.
+  assert.equal(await p.draft(row.id, editor.id), null);
+  await p.saveDraft(row.id, editor.id, 0, { v: 1 }, []);
+  await p.saveDraft(row.id, editor.id, 0, { v: 1, center: [3, 3] }, [{ op: 'centre' }]);
+  assert.deepEqual((await p.draft(row.id, editor.id))?.skeleton, { v: 1, center: [3, 3] });
+
+  // Commit: house (1, 1) is gone; they're in the nearest free one, told so.
+  const skeleton = { v: 1, center: [3, 3] };
+  const done = await p.commit({ townId: row.id, key: town.key, skeleton, houses: [[2, 2], [5, 5]], message: 'East', by: editor.id });
+  const key = withRev(town.key, 1);
+  assert.deepEqual(done, { key, rev: 1, rehoused: 1, moved: [c.id] });
+  assert.deepEqual((await p.character(me.id, c.id))?.home?.house, { x: 2, y: 2 });
+  assert.equal((await p.townOf(town.key))?.key, key);
+  assert.deepEqual(await p.skeletonOf(key), { rev: 1, skeleton, createdBy: null });
+  assert.equal(await p.skeletonOf(town.key), null);
+  assert.deepEqual((await p.history(row.id)).map((h) => [h.rev, h.message, h.by]), [[1, 'East', 'Editor']]);
+  assert.equal((await p.takeNotices(c.id)).length, 1);
+  assert.deepEqual(await p.takeNotices(c.id), []);
+  await assert.rejects(p.commit({ townId: row.id, key: town.key, skeleton, houses: [], message: 'late', by: editor.id }), /changed this town first/);
+  // Houses are the revision's now.
+  await assert.rejects(p.claimHome(me.id, c.id, 1, 1), /no house there/);
+  await p.claimHome(me.id, c.id, 5, 5);
+  // Places carry over to the new key.
+  await p.movePlaces(town.key, key);
+  assert.equal((await p.loadState(c.id))?.town, key);
+  await p.deleteDraft(row.id, editor.id);
+  assert.equal(await p.draft(row.id, editor.id), null);
+
+  // On starting again with the same file, the edit stays.
+  await p.settleStarterTown(town);
+  assert.equal((await p.townOf(town.key))?.key, key);
+  assert.deepEqual((await p.character(me.id, c.id))?.home?.house, { x: 5, y: 5 });
+  // The file's key changed: the edit carries over to it, skeleton and all.
+  const moved = { ...town, key: `${town.key}&width=128` };
+  await p.settleStarterTown(moved);
+  const movedKey = withRev(moved.key, 1);
+  assert.equal((await p.townOf(moved.key))?.key, movedKey);
+  assert.deepEqual((await p.skeletonOf(movedKey))?.skeleton, skeleton);
 });

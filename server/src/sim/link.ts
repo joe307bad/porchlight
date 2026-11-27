@@ -6,7 +6,7 @@
 
 import type { GameDeps } from '../multiplayer/accounts.ts';
 import type { CityRoom } from '../multiplayer/CityRoom.ts';
-import { STARTER_TOWNS } from '../multiplayer/persistence.ts';
+import { revOf, starterTowns } from '../multiplayer/persistence.ts';
 import type { SimPlayer, SimPool, SimTown } from './pool.ts';
 
 const PLAYERS_MS = 100;
@@ -17,6 +17,8 @@ export const SIM_STALE_MS = 1_500;
 export class SimLink {
   private timers: ReturnType<typeof setInterval>[] = [];
   private refreshing = false;
+  /** Asked again while it was at it (a commit's new key): once more when it's done. */
+  private again = false;
 
   readonly pool: SimPool;
   private readonly deps: GameDeps;
@@ -32,7 +34,7 @@ export class SimLink {
   start(): void {
     this.pool.start();
     // The towns that come with the game straight away; the accounts' once the database answers.
-    this.pool.setTowns(STARTER_TOWNS.map((t) => t.key));
+    this.pool.setTowns(starterTowns().filter((t) => revOf(t.key) === 0).map((t) => t.key));
     void this.refreshTowns();
     this.timers.push(setInterval(() => void this.refreshTowns(), TOWNS_MS));
     this.timers.push(setInterval(() => this.sendPlayers(), PLAYERS_MS));
@@ -51,17 +53,31 @@ export class SimLink {
     return town && town.ready && now - town.at < SIM_STALE_MS ? town : null;
   }
 
-  /** Every town in a county, run. */
+  /** Every town in a county, run; an edited one (its key has a `rev`) with its skeleton. */
   async refreshTowns(): Promise<void> {
-    if (this.refreshing || !this.deps.persistence.ready) return;
+    if (!this.deps.persistence.ready) return;
+    if (this.refreshing) {
+      this.again = true;
+      return;
+    }
     this.refreshing = true;
     try {
-      const keys = await this.deps.persistence.countyTownKeys();
-      this.pool.setTowns([...new Set([...STARTER_TOWNS.map((t) => t.key), ...keys])]);
+      const keys = [...new Set([...starterTowns().map((t) => t.key), ...(await this.deps.persistence.countyTownKeys())])];
+      const skeletons = new Map<string, unknown>();
+      for (const key of keys) {
+        if (revOf(key) === 0 || this.pool.town(key)) continue;
+        const found = await this.deps.persistence.skeletonOf(key);
+        if (found) skeletons.set(key, found.skeleton);
+      }
+      this.pool.setTowns(keys, skeletons);
     } catch (err) {
       console.error('sim: couldn\'t list the towns:', (err as Error).message);
     } finally {
       this.refreshing = false;
+      if (this.again) {
+        this.again = false;
+        void this.refreshTowns();
+      }
     }
   }
 

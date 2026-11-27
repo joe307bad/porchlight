@@ -64,7 +64,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { County, mineSlot, NORTH, type Space } from '../county.ts';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { openRooms, type CityRoom } from './CityRoom.ts';
-import { STARTER_TOWNS } from './persistence.ts';
+import { starterTowns } from './persistence.ts';
 import { SERVER_HOST } from './protocol.ts';
 import type { SimLink } from '../sim/link.ts';
 import type { SimTown, TownZoning } from '../sim/pool.ts';
@@ -157,8 +157,9 @@ const round1 = (v: number) => Math.round(v * 10) / 10;
 async function countyOf(deps: GameDeps, accountId: string): Promise<{ county: County; names: Map<string, string> }> {
   const towns = await deps.persistence.listTowns(accountId);
   const names = new Map<string, string>();
-  for (const t of STARTER_TOWNS) names.set(t.key, t.name);
-  const placed = STARTER_TOWNS.map((t) => ({ place: t.place, key: t.key }));
+  const starters = starterTowns();
+  for (const t of starters) names.set(t.key, t.name);
+  const placed = starters.map((t) => ({ place: t.place, key: t.key }));
   for (const t of towns) {
     names.set(t.key, t.name);
     if (t.mine && t.slot !== null && t.slot >= 0 && t.slot < 3) placed.push({ place: mineSlot(t.slot), key: t.key });

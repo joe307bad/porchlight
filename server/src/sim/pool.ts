@@ -58,6 +58,8 @@ export interface SimTown {
   fullDue: boolean;
   /** Its life (LIFE), once the worker's said. */
   life: TownLife | null;
+  /** An edited town's skeleton (its key has a `rev`; docs/street-editor-api.md), sent with it in TOWNS. */
+  skeleton: unknown;
 }
 
 /** A town's life as the worker last said (SimTown.Life in sim/src/SimTown.cs). */
@@ -217,12 +219,12 @@ export class SimPool {
     for (const w of this.workers) w.close();
   }
 
-  /** The towns to run (their keys): new ones are made, gone ones stop. */
-  setTowns(keys: Iterable<string>): void {
+  /** The towns to run (their keys, and an edited one's skeleton): new ones are made, gone ones stop. */
+  setTowns(keys: Iterable<string>, skeletons: ReadonlyMap<string, unknown> = new Map()): void {
     const want = new Set(keys);
     for (const key of want) {
       if (this.byKey.has(key)) continue;
-      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, roadNames: null, zoning: null, error: null, fullDue: false, life: null };
+      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, roadNames: null, zoning: null, error: null, fullDue: false, life: null, skeleton: skeletons.get(key) ?? null };
       this.towns.set(town.id, town);
       this.byKey.set(key, town);
     }
@@ -312,7 +314,7 @@ export class SimPool {
   }
 
   private sendTowns(i: number): void {
-    const mine = [...this.towns.values()].filter((t) => this.workerOf(t.id) === i).map((t) => ({ id: t.id, key: t.key }));
+    const mine = [...this.towns.values()].filter((t) => this.workerOf(t.id) === i).map((t) => (t.skeleton ? { id: t.id, key: t.key, skeleton: t.skeleton } : { id: t.id, key: t.key }));
     this.workers[i].send(IN_TOWNS, json(mine));
   }
 

@@ -171,3 +171,60 @@ export const missionRecords = pgTable(
   },
   (t) => [primaryKey({ columns: [t.townKey, t.missionId, t.playerId] }), index('mission_records_board').on(t.townKey, t.missionId, t.seconds)],
 );
+
+/**
+ * A town's committed street skeletons (docs/street-editor-api.md): revision `rev` is the town grown from its
+ * key with `rev=N` and this skeleton laid over it. `key` is that key in full (so an old revision's skeleton can
+ * still be fetched by it), and `houses` the tile each of its houses goes by (the draft worker's `houses`): what
+ * a character may claim there, as a starter town's file says for revision 0.
+ */
+export const townRevisions = pgTable(
+  'town_revisions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    townId: uuid('town_id')
+      .notNull()
+      .references(() => towns.id, { onDelete: 'cascade' }),
+    rev: integer('rev').notNull(),
+    key: text('key').notNull(),
+    skeleton: jsonb('skeleton').notNull(),
+    houses: jsonb('houses').$type<[number, number][]>().notNull().default([]),
+    committedBy: uuid('committed_by').references(() => players.id, { onDelete: 'set null' }),
+    message: text('message').notNull().default(''),
+    committedAt: at('committed_at').notNull().defaultNow(),
+  },
+  (t) => [unique('town_revisions_town_rev').on(t.townId, t.rev), index('town_revisions_key').on(t.key)],
+);
+
+/** An editor's work in progress on a town: one each, kept as they go. */
+export const townDrafts = pgTable(
+  'town_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    townId: uuid('town_id')
+      .notNull()
+      .references(() => towns.id, { onDelete: 'cascade' }),
+    author: uuid('author')
+      .notNull()
+      .references(() => players.id, { onDelete: 'cascade' }),
+    baseRev: integer('base_rev').notNull(),
+    skeleton: jsonb('skeleton').notNull(),
+    commands: jsonb('commands').notNull().default([]),
+    updatedAt: at('updated_at').notNull().defaultNow(),
+  },
+  (t) => [unique('town_drafts_town_author').on(t.townId, t.author)],
+);
+
+/** Something to tell a character the next time they play (their house moved when the streets changed); gone once told. */
+export const notices = pgTable(
+  'notices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    characterId: uuid('character_id')
+      .notNull()
+      .references(() => characters.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    createdAt: at('created_at').notNull().defaultNow(),
+  },
+  (t) => [index('notices_character').on(t.characterId)],
+);
