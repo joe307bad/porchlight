@@ -42,7 +42,7 @@ namespace Porchlight.Life
     public static class StreetFurniture
     {
         /// <summary>How far out from a lane's middle the kerb post stands: a quarter of the road and a little more.</summary>
-        public static double KerbOut(RoadNet net, Lane l) => net.roads[l.road].width / 4 + 0.35;
+        public static double KerbOut(RoadNet net, Lane l) => net.roads[l.road].width / 2 - net.KerbOffset(l.road) + 0.35;
 
         /// <summary>A signal post at the stop line of each lane into each signal, junctions in node order.</summary>
         public static List<SignalPost> Signals(RoadNet net)
@@ -183,7 +183,7 @@ namespace Porchlight.Life
             }
             // Square across the lane from there: on its sidewalk's line, a little in towards the kerb.
             var (middle, along) = net.LanePoint(l.road, l.dir, best, 0);
-            var at = net.LanePoint(l.road, l.dir, best, side - w / 4 - IN_FROM_MIDDLE).at;
+            var at = net.LanePoint(l.road, l.dir, best, side - net.KerbOffset(l.road) - IN_FROM_MIDDLE).at;
             return (at, along, Towards(at, middle), Geo.Dist(at, middle));
         }
 
@@ -197,7 +197,7 @@ namespace Porchlight.Life
             double w = net.roads[l.road].width, len = net.lengths[l.road];
             var mine = new List<(Vec2 p, double done)>();
             for (double done = Math.Max(0, len - CORNER_REACH - 2); done <= len + 1e-9; done += STEP)
-                mine.Add((net.LanePoint(l.road, l.dir, done, offset - w / 4).at, done));
+                mine.Add((net.LanePoint(l.road, l.dir, done, offset - net.KerbOffset(l.road)).at, done));
             var back = net.LanePoint(l.road, l.dir, Math.Max(0, len - 2), 0).at;
             double best = double.PositiveInfinity;
             foreach (int road in j.legs)
@@ -208,7 +208,7 @@ namespace Porchlight.Life
                 var pts = net.roads[road].points;
                 bool atStart = Geo.Dist(pts[0], j.at) <= Geo.Dist(pts[pts.Count - 1], j.at);
                 // Straight on (within STRAIGHT_ON of the way this lane comes in): not a cross street.
-                var away = net.LanePoint(road, 1, atStart ? Math.Min(lo, 2) : Math.Max(0, lo - 2), -wo / 4).at;
+                var away = net.LanePoint(road, 1, atStart ? Math.Min(lo, 2) : Math.Max(0, lo - 2), -net.KerbOffset(road)).at;
                 double ix = j.at.x - back.x, iy = j.at.y - back.y, ox = away.x - j.at.x, oy = away.y - j.at.y;
                 double cos = (ix * ox + iy * oy) / Math.Max(1e-9, Math.Sqrt((ix * ix + iy * iy) * (ox * ox + oy * oy)));
                 if (cos > STRAIGHT_ON) continue;
@@ -218,7 +218,7 @@ namespace Porchlight.Life
                     for (double s = 0; s <= CORNER_REACH + 2 + 1e-9; s += STEP)
                     {
                         double along = atStart ? s : lo - s;
-                        other.Add(net.LanePoint(road, dir, dir == 1 ? along : lo - along, so - wo / 4).at);
+                        other.Add(net.LanePoint(road, dir, dir == 1 ? along : lo - along, so - net.KerbOffset(road)).at);
                     }
                     for (int a = 0; a + 1 < mine.Count; a++)
                         for (int b = 0; b + 1 < other.Count; b++)

@@ -318,6 +318,34 @@ namespace Porchlight.App
             }
         }
 
+        /// <summary>
+        /// A town the street editor has changed (its key's `rev` above 0) grows from its skeleton: fetched from the
+        /// server (GET /mp/towns/skeleton) before it's grown, and kept in Skeletons. Without an answer in time it
+        /// grows as its key alone would.
+        /// </summary>
+        async Task FetchSkeleton(string key)
+        {
+            if (string.IsNullOrEmpty(key) || Skeletons.RevOf(key) == 0 || Skeletons.Has(key) || string.IsNullOrEmpty(origin)) return;
+            bool answered = false;
+            platform.Request("GET", $"{origin}/mp/towns/skeleton?key={Uri.EscapeDataString(key)}", null, (status, text) =>
+            {
+                try
+                {
+                    if (status >= 200 && status < 300 && Json.Parse(text) is Dictionary<string, object> d && d.TryGetValue("skeleton", out var sk) && sk != null)
+                        Skeletons.Put(key, sk is string str ? str : Json.Serialize(sk));
+                    else Debug.LogWarning($"porchlight: no skeleton for {key} ({status}): growing it from its key alone");
+                }
+                catch (Exception e)
+                {
+                    Debug.LogWarning("porchlight: skeleton: " + e.Message);
+                }
+                answered = true;
+            });
+            // Frame by frame (a web build has no timers on other threads), for eight seconds at most.
+            double until = platform.Now() + 8000;
+            while (!answered && platform.Now() < until) await NextFrame();
+        }
+
         /// <summary>Do the steps now, all of them (timed, if the loader's up).</summary>
         void Drain(IEnumerable<string> steps, string prefix)
         {
@@ -1827,6 +1855,7 @@ namespace Porchlight.App
             net = null;
             if (county != null) county.Net = null;
             if (iso != null) iso.TeleportHook = null;
+            await FetchSkeleton(c.home.townKey);
             await Run(ShowTownSteps(c.home.townKey), "town/");
             // The county's space on screen isn't their town (left out on a highway): their town afresh, as going home does.
             if (county != null && county.Active?.townKey != c.home.townKey) isoTown = null;
@@ -1844,6 +1873,24 @@ namespace Porchlight.App
             ShowWhere();
             enteringTown = true;
             await Explore();
+        }
+
+        /// <summary>
+        /// The streets of the town we're in were changed (the street editor's commit) and the room closed: the
+        /// character fetched again (the server may have moved their household), the town grown from its new key and
+        /// its skeleton, and back in, where they were if that's still ground, else at their door.
+        /// </summary>
+        void TownRebuilt(string key)
+        {
+            var c = playing;
+            if (c == null) return;
+            Account.ListCharacters(platform, origin, (list, err) =>
+            {
+                var fresh = list?.Find(x => x.id == c.id) ?? c;
+                if (fresh.home != null && fresh.home.townKey != key && c.home?.townKey != null && Skeletons.WithRev(fresh.home.townKey, 0) == Skeletons.WithRev(key, 0))
+                    fresh.home.townKey = key;
+                PlayAs(fresh, atDoor: false);
+            });
         }
 
         /// <summary>Into someone else's town as this character, who needn't live anywhere yet.</summary>
@@ -2419,6 +2466,8 @@ namespace Porchlight.App
                 foreach (var t in list.towns)
                 {
                     townNames[t.key] = t.name;
+                    // A town the street editor changed: its skeleton fetched before the county grows it.
+                    if (Skeletons.RevOf(t.key) > 0) _ = FetchSkeleton(t.key);
                     Place? where = null;
                     if (!t.mine && t.place != null && Enum.TryParse(t.place, true, out Place p)) where = p;
                     else if (t.mine && t.slot >= 0 && t.slot < 3) where = CountyMap.MineSlot(t.slot);
@@ -2533,6 +2582,7 @@ namespace Porchlight.App
             net.onUnlockedElsewhere = SayUnlocked;
             net.onGoto = GotoFromManage;
             net.onInUse = () => SwitchCharacter(InUse(playing));
+            net.onTownRebuilt = TownRebuilt;
             iso.TeleportHook = (x, z) =>
             {
                 if (net == null) return false;
@@ -3600,7 +3650,11 @@ namespace Porchlight.App
                 if (hash.TryGetValue(spec.key, out var raw)) partial[spec.key] = Numbers.ParseNumber(raw);
             hash.TryGetValue("seed", out var s);
             s = s?.Trim();
-            return new UrlState { seed = string.IsNullOrEmpty(s) ? null : s, @params = GenParams.Normalize(partial) };
+            var p = GenParams.Normalize(partial);
+            // A town the street editor changed: its revision, and the skeleton fetched for it (FetchSkeleton).
+            p.rev = Skeletons.RevOf(query);
+            if (p.rev > 0) p.skeleton = Skeletons.For(query);
+            return new UrlState { seed = string.IsNullOrEmpty(s) ? null : s, @params = p };
         }
 
         static string EncodeUrlState(string seed, GenParams p)
@@ -3609,6 +3663,8 @@ namespace Porchlight.App
             var pairs = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>("seed", seed) };
             foreach (var spec in ParamSpec.All)
                 if (p[spec.key] != d[spec.key]) pairs.Add(new KeyValuePair<string, string>(spec.key, Numbers.NumberToString(p[spec.key])));
+            // Last, as the server adds it (Skeletons.WithRev): the room's name is the key.
+            if (p.rev > 0) pairs.Add(new KeyValuePair<string, string>("rev", p.rev.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             return EncodeQuery(pairs);
         }
 

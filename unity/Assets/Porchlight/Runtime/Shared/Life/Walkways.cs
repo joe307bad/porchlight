@@ -116,6 +116,7 @@ namespace Porchlight.Life
             double bestD = 5;
             foreach (var j in roads.junctions.Values)
             {
+                if (j.fan) continue;
                 double d = Geo.Dist(j.at, m);
                 if (d < bestD)
                 {

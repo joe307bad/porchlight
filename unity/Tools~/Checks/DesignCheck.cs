@@ -59,11 +59,44 @@ static class DesignCheck
             }
             // The life still runs on it: the road network builds, every lane goes somewhere.
             var net = new RoadNet(model, Porchlight.Explore.Layout.Build(model));
-            if (net.lanes.Count == 0) { bad++; Console.WriteLine($"FAIL {Path.GetFileNameWithoutExtension(f)}: no lanes"); }
+            string town = Path.GetFileNameWithoutExtension(f);
+            if (net.lanes.Count == 0) { bad++; Console.WriteLine($"FAIL {town}: no lanes"); }
+            foreach (var problem in Lanes(net)) { bad++; Console.WriteLine($"FAIL {town}: {problem}"); }
+            int pockets = net.lanes.Count(l => l.pocket), inner = net.lanes.Count(l => l.slot > 0), rings = net.junctions.Values.Count(j => j.roundabout);
+            int held = net.movements.Count(m => m.held), slipping = net.movements.Count(m => m.slip);
+            Console.WriteLine($"    road net: {net.lanes.Count} lanes ({inner} inner, {pockets} pockets), {rings} roundabouts, {held} turns held for a protected left, {slipping} slip turns");
         }
         Console.WriteLine("stage ms (all towns): " + string.Join(", ", stageMs.Select(kv => $"{kv.Key} {kv.Value:0}")));
         Console.WriteLine(bad == 0 ? "design ok" : $"{bad} failures");
         return bad == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// The lanes the design gives the road network: every lane has a way on (or leaves the map) and a way in (or
+    /// starts at a gate), a pocket only turns its own way, and round a roundabout a right turn goes a shorter way
+    /// round than a left from the same lane (the ring circulates the way traffic keeps).
+    /// </summary>
+    static IEnumerable<string> Lanes(RoadNet net)
+    {
+        var into = new HashSet<int>();
+        foreach (var m in net.movements) into.Add(m.to);
+        foreach (var l in net.lanes)
+        {
+            if (l.closed) continue;
+            if (l.outs.Count == 0 && !l.exit) yield return $"lane {l.id} (road {l.road}) goes nowhere";
+            if (!into.Contains(l.id) && !l.entry) yield return $"lane {l.id} (road {l.road}{(l.pocket ? ", a pocket" : l.slot > 0 ? ", inner" : "")}) can't be reached";
+            if (l.pocket) foreach (int id in l.outs) if (net.movements[id].turn != l.pocketTurn) { yield return $"pocket lane {l.id} turns {net.movements[id].turn}"; break; }
+        }
+        foreach (var j in net.junctions.Values)
+        {
+            if (!j.roundabout) continue;
+            foreach (var g in j.movements.Select(id => net.movements[id]).GroupBy(m => m.from))
+            {
+                var right = g.Where(m => m.turn == Turn.Right).Select(m => m.ringSweep).DefaultIfEmpty(double.NaN).Min();
+                var left = g.Where(m => m.turn == Turn.Left).Select(m => m.ringSweep).DefaultIfEmpty(double.NaN).Max();
+                if (!double.IsNaN(right) && !double.IsNaN(left) && right >= left) { yield return $"roundabout at ({j.at.x:0}, {j.at.y:0}): a right turn goes further round ({right:0.00}) than a left ({left:0.00})"; break; }
+            }
+        }
     }
 
     static string Fingerprint(TownModel m)

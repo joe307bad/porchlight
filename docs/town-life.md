@@ -106,6 +106,12 @@ from someone else does too (`Traffic.Restart`).
 are measured along the road's centre line, offset to their side by a
 quarter of the road's width.
 
+The junction design ([street-editor.md](street-editor.md) §5, §12)
+changes this where the traffic needs it. A road with two lanes each way
+has an inner lane beside each kerb lane. A turn pocket is a lane of its
+own past a fan. A roundabout is run as `Control.Yield`. A design's
+control (or an editor's) replaces the rank rule below.
+
 - **The lane's direction is taken over 0.6 tiles either side** (`TANGENT`),
   not at a point. This way a lane rounds a tight corner of the road's line
   instead of looping back on itself on the inside of it.

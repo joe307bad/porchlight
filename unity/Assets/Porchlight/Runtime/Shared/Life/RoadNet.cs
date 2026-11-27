@@ -15,7 +15,8 @@ using Porchlight.Model;
 
 namespace Porchlight.Life
 {
-    public enum Control { Free, Stop, AllWayStop, Signal }
+    /// <summary>Yield: a roundabout, where traffic entering gives way to traffic already going round.</summary>
+    public enum Control { Free, Stop, AllWayStop, Signal, Yield }
 
     /// <summary>Which way a movement turns, as its driver sees it (they drive on the right).</summary>
     public enum Turn { Straight, Right, Left, UTurn }
@@ -39,7 +40,23 @@ namespace Porchlight.Life
         public bool exit;
         /// <summary>Starts at a border: cars come in here.</summary>
         public bool entry;
+        /// <summary>
+        /// Its place across the road (the junction design, docs/street-editor.md §6): slot 0 the kerb lane (where
+        /// cars park and stop for doors), 1 the lane inside it on a road with two lanes each way.
+        /// </summary>
+        public int slot;
+        /// <summary>How far out from the road's centre line its middle runs (tiles), toward its own side.</summary>
+        public double offset;
+        /// <summary>A turn pocket: only `pocketTurn` turns from it.</summary>
+        public bool pocket;
+        public Turn pocketTurn;
+        /// <summary>The through lane past a pocket's fan (none of its turns go from here), or a pocket.</summary>
+        public bool afterFan;
+        /// <summary>The wrong way of a one-way road: nobody drives it.</summary>
+        public bool closed;
         public double Span => Math.Max(0, end - start);
+        /// <summary>The lane its road's spots, doors and driveways are along (LaneOf's).</summary>
+        public bool Kerb => slot == 0 && !afterFan && !closed;
     }
 
     public sealed class Movement
@@ -59,6 +76,12 @@ namespace Porchlight.Life
         public bool stops;
         /// <summary>At a signal (routes count the wait).</summary>
         public bool signal;
+        /// <summary>A slip road's free right turn round a signal: it gives way to whatever it merges with, and never waits for a green.</summary>
+        public bool slip;
+        /// <summary>At a signal with a protected left: held for the first LEAD_MS of its green while the opposing lefts go.</summary>
+        public bool held;
+        /// <summary>Round a roundabout: the angle it joins the ring at, and how far round it goes (radians, the way traffic circulates).</summary>
+        public double ringIn, ringSweep;
         public List<Vec2> points;
         public List<double> at;
     }
@@ -87,6 +110,11 @@ namespace Porchlight.Life
         /// then split by Webster's method from the traffic measured (Signals.cs). The cycle is the two together.
         /// </summary>
         public readonly long[] green = { RoadNet.STAGE_MS, RoadNet.STAGE_MS };
+        /// <summary>A pocket's fan: where a lane splits into its through lane and its pocket (no real junction: no crossing, no signs).</summary>
+        public bool fan;
+        /// <summary>A roundabout (Control.Yield), its ring's radius.</summary>
+        public bool roundabout;
+        public double radius;
     }
 
     /// <summary>Where a car parks: at the kerb, in a house's driveway, or in a car park's bay.</summary>
@@ -173,10 +201,17 @@ namespace Porchlight.Life
         public readonly List<ParkingSpot> spots = new List<ParkingSpot>();
         public readonly Dictionary<int, Access> access = new Dictionary<int, Access>();
         public readonly List<Border> borders = new List<Border>();
+        /// <summary>The junction design (null: one lane each way, controls by rank).</summary>
+        readonly RoadDesign design;
+        /// <summary>Fan junctions' node ids start here (the town's real nodes are below).</summary>
+        public const int FAN_BASE = 1 << 24;
+        /// <summary>A protected left's lead: the opposing traffic held at the start of its green (ms).</summary>
+        public const long LEAD_MS = 7_000;
 
         public RoadNet(TownModel model, IsoLayout layout)
         {
             roads = layout.roads;
+            design = model?.design != null && model.design.edges.Count == layout.roads.Count ? model.design : null;
             int n = roads.Count;
             lengths = new double[n];
             at = new List<double>[n];
@@ -232,28 +267,72 @@ namespace Porchlight.Life
             var borderNodes = new HashSet<int>();
             foreach (var b in borders) borderNodes.Add(b.node);
 
+            var fans = new List<(Lane t1, Lane t2, List<Lane> pockets)>();
             foreach (int i in driven)
             {
                 var r = roads[i];
+                var ed = design?.Edge(i);
                 foreach (int dir in new[] { 1, -1 })
                 {
                     int fromNode = dir > 0 ? r.from : r.to, toNode = dir > 0 ? r.to : r.from;
+                    int count = ed == null ? 1 : dir > 0 ? ed.lanesFwd : ed.lanesBack;
                     var lane = new Lane
                     {
                         id = lanes.Count, road = i, dir = dir, fromNode = fromNode, toNode = toNode, roadLength = lengths[i],
                         speed = r.kind == RoadKind.Main ? MAIN_SPEED : STREET_SPEED, rank = Rank(r),
                         exit = borderNodes.Contains(toNode), entry = borderNodes.Contains(fromNode),
+                        offset = KerbOffset(i), closed = count == 0,
                     };
                     lane.start = Trim(i, fromNode, borderNodes);
                     lane.end = lengths[i] - Trim(i, toNode, borderNodes);
                     laneOf[i * 2 + (dir > 0 ? 0 : 1)] = lane.id;
                     lanes.Add(lane);
+                    for (int k = 1; k < count; k++)
+                    {
+                        lanes.Add(new Lane
+                        {
+                            id = lanes.Count, road = i, dir = dir, fromNode = fromNode, toNode = toNode, roadLength = lengths[i],
+                            speed = lane.speed, rank = lane.rank, exit = lane.exit, entry = lane.entry, start = lane.start, end = lane.end,
+                            slot = k, offset = KerbOffset(i) - k * DesignStage.LANE,
+                        });
+                    }
+                    // Pockets at its end (a single lane's: two lanes each way share their lanes' turns instead).
+                    if (ed == null || count != 1 || borderNodes.Contains(toNode) || degreeAll(allDeg, toNode) < 3) continue;
+                    double longest = 0;
+                    foreach (var pk in ed.pockets) if (pk.atTo == (dir > 0)) longest = Math.Max(longest, pk.length);
+                    if (longest <= 0) continue;
+                    double fanStart = lane.end - longest, fanEnd = fanStart - DesignStage.TAPER;
+                    if (fanEnd < lane.start + 2) continue;
+                    var t2 = new Lane
+                    {
+                        id = lanes.Count, road = i, dir = dir, fromNode = FAN_BASE + lane.id, toNode = toNode, roadLength = lengths[i],
+                        speed = lane.speed, rank = lane.rank, start = fanStart, end = lane.end, offset = lane.offset, afterFan = true,
+                    };
+                    lanes.Add(t2);
+                    var ps = new List<Lane>();
+                    foreach (var pk in ed.pockets)
+                    {
+                        if (pk.atTo != (dir > 0)) continue;
+                        var pl = new Lane
+                        {
+                            id = lanes.Count, road = i, dir = dir, fromNode = t2.fromNode, toNode = toNode, roadLength = lengths[i],
+                            speed = lane.speed, rank = lane.rank, start = fanStart, end = lane.end, afterFan = true, pocket = true,
+                            pocketTurn = pk.left ? Turn.Left : Turn.Right,
+                            offset = pk.left ? Math.Max(0.1, lane.offset - 0.6) : lane.offset + Layout.PARKING * 0.9,
+                        };
+                        lanes.Add(pl);
+                        ps.Add(pl);
+                    }
+                    lane.end = fanEnd;
+                    lane.toNode = t2.fromNode;
+                    fans.Add((lane, t2, ps));
                 }
             }
             foreach (var b in borders)
             {
                 foreach (var lane in lanes)
                 {
+                    if (lane.slot != 0) continue;
                     if (lane.fromNode == b.node) b.entry = lane.id;
                     if (lane.toNode == b.node) b.exit = lane.id;
                 }
@@ -280,12 +359,50 @@ namespace Porchlight.Life
                 if (turn > 0) limit = Math.Min(limit, SWING / turn);
                 lane.speed = Math.Min(lane.speed, Math.Max(UTURN_SPEED / 2, limit));
             }
+            foreach (var (t1, t2, ps) in fans)
+            {
+                nodeAt[t2.fromNode] = LanePoint(t1, t1.end).at;
+                degree[t2.fromNode] = 2;
+            }
             MakeJunctions(model, borderNodes);
+            foreach (var (t1, t2, ps) in fans)
+            {
+                var j = new Junction { node = t2.fromNode, at = nodeAt[t2.fromNode], control = Life.Control.Free, fan = true };
+                j.legs.Add(t1.road);
+                j.legStage.Add(0);
+                j.legPriority.Add(t1.rank);
+                AddMovement(j, t1, t2, uturn: false);
+                foreach (var pl in ps) AddMovement(j, t1, pl, uturn: false);
+                foreach (int id in j.movements) movements[id].turn = Turn.Straight;
+                Conflicts(j);
+                junctions[j.node] = j;
+            }
             MakeSpots(model, layout);
             MakeAccess(model, layout);
         }
 
         static void Bump(Dictionary<int, int> d, int k) => d[k] = d.TryGetValue(k, out int v) ? v + 1 : 1;
+
+        static int degreeAll(Dictionary<int, int> d, int k) => d.TryGetValue(k, out int v) ? v : 0;
+
+        /// <summary>
+        /// How far out from a road's centre line its kerb lane runs: a quarter of its width with one lane each way
+        /// (each lane half the road), else half a lane in from its edge.
+        /// </summary>
+        public double KerbOffset(int road)
+        {
+            var r = roads[road];
+            var d = design?.Edge(road);
+            if (d == null || (Math.Max(d.lanesFwd, d.lanesBack) <= 1 && !d.divided && !d.OneWay)) return r.width / 4;
+            return r.width / 2 - DesignStage.LANE / 2;
+        }
+
+        /// <summary>A roundabout's design at a node, or null.</summary>
+        NodeDesign Ring(int node)
+        {
+            var nd = node >= 0 && node < FAN_BASE ? design?.Node(node) : null;
+            return nd != null && nd.form == JunctionForm.Roundabout ? nd : null;
+        }
 
         static bool NearGate(RoadStroke r, List<Vec2> gates)
         {
@@ -307,6 +424,8 @@ namespace Porchlight.Life
         {
             if (borderNodes.Contains(node)) return 0;
             double len = lengths[road];
+            var ring = Ring(node);
+            if (ring != null && degree[node] >= 3) return Math.Min(ring.radius + 0.8, len / 2);
             return degree[node] == 1 ? Math.Min(UTURN, len / 2) : Math.Min(CORNER, len / 2);
         }
 
@@ -315,12 +434,31 @@ namespace Porchlight.Life
 
         public int LaneOf(int road, int dir) => laneOf[road * 2 + (dir > 0 ? 0 : 1)];
 
+        /// <summary>Every lane of a road one way (its kerb lane, any beside it, past a fan its through lane and pockets), none closed.</summary>
+        public IEnumerable<int> LanesOf(int road, int dir)
+        {
+            if (byRoad == null)
+            {
+                var all = new List<int>[roads.Count * 2];
+                foreach (var l in lanes)
+                {
+                    if (l.closed) continue;
+                    int k = l.road * 2 + (l.dir > 0 ? 0 : 1);
+                    (all[k] = all[k] ?? new List<int>()).Add(l.id);
+                }
+                byRoad = all;
+            }
+            return byRoad[road * 2 + (dir > 0 ? 0 : 1)] ?? (IEnumerable<int>)Array.Empty<int>();
+        }
+
+        List<int>[] byRoad;
+
         public Lane Reverse(Lane l) => lanes[LaneOf(l.road, -l.dir)];
 
         // --- Geometry ---------------------------------------------------------------------------
 
         /// <summary>The middle of a lane `done` tiles along its road from the lane's starting end, and the way along it.</summary>
-        public (Vec2 at, Vec2 along) LanePoint(Lane lane, double done) => LanePoint(lane.road, lane.dir, done, 0);
+        public (Vec2 at, Vec2 along) LanePoint(Lane lane, double done) => LanePoint(lane.road, lane.dir, done, lane.offset - KerbOffset(lane.road));
 
         /// <summary>As LanePoint, `outward` tiles further out toward the kerb (0: the lane's middle).</summary>
         public (Vec2 at, Vec2 along) LanePoint(int road, int dir, double done, double outward)
@@ -339,7 +477,7 @@ namespace Porchlight.Life
             if (l < 1e-6) return (p, new Vec2(1, 0));
             tx /= l;
             ty /= l;
-            double off = r.width / 4 + outward;
+            double off = KerbOffset(road) + outward;
             return (new Vec2(p.x - ty * off, p.y + tx * off), new Vec2(tx, ty));
         }
 
@@ -392,6 +530,7 @@ namespace Porchlight.Life
             var outLanes = new Dictionary<int, List<Lane>>();
             foreach (var l in lanes)
             {
+                if (l.closed) continue;
                 if (!inLanes.TryGetValue(l.toNode, out var a)) inLanes[l.toNode] = a = new List<Lane>();
                 a.Add(l);
                 if (!outLanes.TryGetValue(l.fromNode, out var b)) outLanes[l.fromNode] = b = new List<Lane>();
@@ -401,9 +540,16 @@ namespace Porchlight.Life
             nodes.Sort();
             foreach (int node in nodes)
             {
-                if (borderNodes.Contains(node)) continue;
+                if (borderNodes.Contains(node) || node >= FAN_BASE || !inLanes.ContainsKey(node)) continue;
                 var j = new Junction { node = node, at = nodeAt[node], offset = (long)(Layout.Hash(node, 77) * 2 * STAGE_MS) };
                 foreach (var l in inLanes[node]) if (!j.legs.Contains(l.road)) j.legs.Add(l.road);
+                if (outLanes.TryGetValue(node, out var outs0)) foreach (var l in outs0) if (!j.legs.Contains(l.road)) j.legs.Add(l.road);
+                var ring = degree[node] >= 3 ? Ring(node) : null;
+                if (ring != null)
+                {
+                    j.roundabout = true;
+                    j.radius = ring.radius;
+                }
                 // Legs round the junction, by the way each road leaves it.
                 var angle = new Dictionary<int, double>();
                 foreach (int road in j.legs)
@@ -413,19 +559,70 @@ namespace Porchlight.Life
                     angle[road] = DetMath.Atan2(t.y, t.x);
                 }
                 j.legs.Sort((a, b) => angle[a] != angle[b] ? angle[a].CompareTo(angle[b]) : a.CompareTo(b));
+                var outHere = outLanes.TryGetValue(node, out var oh) ? oh : new List<Lane>();
                 foreach (var l in inLanes[node])
                 {
                     if (degree[node] == 1)
                     {
-                        AddMovement(j, l, Reverse(l), uturn: true);
+                        var back = Reverse(l);
+                        if (!back.closed) AddMovement(j, l, back, uturn: true);
                         continue;
                     }
-                    foreach (var o in outLanes[node]) if (o.road != l.road) AddMovement(j, l, o, uturn: false);
+                    int before = j.movements.Count;
+                    foreach (var o in outHere) if (o.road != l.road && Allowed(l, o, TurnOf(l, o))) AddMovement(j, l, o, uturn: false);
+                    // Never a lane with no way on: any turn, if its own rules left it none.
+                    if (j.movements.Count == before) foreach (var o in outHere) if (o.road != l.road && o.slot == 0) AddMovement(j, l, o, uturn: false);
                 }
                 Control(j);
                 Conflicts(j);
                 junctions[node] = j;
             }
+        }
+
+        /// <summary>Which way a turn from lane `a` into lane `b` goes (AddMovement's measure, from the lanes' ways at their ends).</summary>
+        Turn TurnOf(Lane a, Lane b)
+        {
+            var fa = LanePoint(a, a.end).along;
+            var fb = LanePoint(b, b.start).along;
+            double angle = Math.Atan2(fa.x * fb.y - fa.y * fb.x, fa.x * fb.x + fa.y * fb.y);
+            return Math.Abs(angle) < STRAIGHT_TURN ? Turn.Straight : angle > 0 ? Turn.Right : Turn.Left;
+        }
+
+        /// <summary>
+        /// The lanes' turns (the MUTCD's lane-use rules, as A/B Street gives each lane its turns): a pocket only its
+        /// own turn, and the through lane beside it not that turn; with two lanes, rights from the kerb lane and lefts
+        /// from the inner one, straight on lane to lane; a turn into the nearest lane of the road it's going into.
+        /// </summary>
+        bool Allowed(Lane from, Lane to, Turn turn)
+        {
+            if (to.closed) return false;
+            if (from.pocket) { if (turn != from.pocketTurn) return false; }
+            else if (from.afterFan)
+            {
+                foreach (var l in lanes)
+                    if (l.pocket && l.fromNode == from.fromNode && l.pocketTurn == turn) return false;
+            }
+            bool fromMany = Siblings(from) > 1, toMany = Siblings(to) > 1;
+            if (fromMany)
+            {
+                if (from.slot == 0 && turn == Turn.Left) return false;
+                if (from.slot > 0 && turn == Turn.Right) return false;
+            }
+            if (toMany)
+            {
+                if (turn == Turn.Right && to.slot != 0) return false;
+                if (turn == Turn.Left && to.slot == 0) return false;
+                if (turn == Turn.Straight && fromMany && to.slot != Math.Min(from.slot, Siblings(to) - 1)) return false;
+            }
+            return true;
+        }
+
+        /// <summary>How many lanes run beside this one (its road and way, not pockets, the same stretch).</summary>
+        int Siblings(Lane l)
+        {
+            var d = design?.Edge(l.road);
+            if (d == null || l.afterFan) return 1;
+            return Math.Max(1, l.dir > 0 ? d.lanesFwd : d.lanesBack);
         }
 
         void AddMovement(Junction j, Lane from, Lane to, bool uturn)
@@ -449,6 +646,16 @@ namespace Porchlight.Life
                 for (int i = 1; i <= CURVE_POINTS; i++) pts.Add(Cubic(tip, new Vec2(tip.x + gx * k2, tip.y + gy * k2), new Vec2(b.x + f.x * k1, b.y + f.y * k1), b, i / (double)CURVE_POINTS));
                 m.speed = UTURN_SPEED;
                 m.turn = Turn.UTurn;
+            }
+            else if (j.roundabout)
+            {
+                RingCurve(j, from, to, pts, m);
+                var (_, fa) = LanePoint(from, from.end);
+                var (_, fb) = LanePoint(to, to.start);
+                double angle = Math.Atan2(fa.x * fb.y - fa.y * fb.x, fa.x * fb.x + fa.y * fb.y);
+                m.turn = Math.Abs(angle) < STRAIGHT_TURN ? Turn.Straight : angle > 0 ? Turn.Right : Turn.Left;
+                if (from.road == to.road) m.turn = Turn.UTurn;
+                m.speed = Math.Min(from.speed, to.speed) * TURN_SHARE;
             }
             else
             {
@@ -493,6 +700,51 @@ namespace Porchlight.Life
             j.movements.Add(m.id);
         }
 
+        /// <summary>
+        /// Round a roundabout: in from the lane's end onto the ring, round it the way traffic circulates (keeping
+        /// right, anticlockwise as the town's drawn), and off onto the lane out. The ring's angles are kept for
+        /// who gives way to whom (Conflicts, Cars.GivesWay).
+        /// </summary>
+        void RingCurve(Junction j, Lane from, Lane to, List<Vec2> pts, Movement m)
+        {
+            var c = j.at;
+            double R = j.radius;
+            var (a, fa) = LanePoint(from, from.end);
+            var (b, fb) = LanePoint(to, to.start);
+            double th0 = Math.Atan2(a.y - c.y, a.x - c.x), th1 = Math.Atan2(b.y - c.y, b.x - c.x);
+            // Circulating: the tangent at r̂ is (r̂.y, −r̂.x), the way RoadNet's frame turns right (DesignStage's sign).
+            double sweep = th0 - th1;
+            while (sweep <= 0.15) sweep += 2 * Math.PI;
+            while (sweep > 2 * Math.PI + 0.15) sweep -= 2 * Math.PI;
+            m.ringIn = th0;
+            m.ringSweep = sweep;
+            // Join the ring a little round from the entry, leave it a little before the exit.
+            double join = Math.Min(0.35, sweep * 0.2), leave = Math.Min(0.35, sweep * 0.2);
+            Vec2 On(double th) => new Vec2(c.x + Math.Cos(th) * R, c.y + Math.Sin(th) * R);
+            Vec2 Tan(double th) => new Vec2(Math.Sin(th), -Math.Cos(th));
+            var p0 = On(th0 - join);
+            var t0 = Tan(th0 - join);
+            double k = Math.Max(0.3, Geo.Dist(a, p0) * 0.5);
+            for (int i = 0; i < CURVE_POINTS / 2; i++)
+                pts.Add(Cubic(a, new Vec2(a.x + fa.x * k, a.y + fa.y * k), new Vec2(p0.x - t0.x * k, p0.y - t0.y * k), p0, i / (double)(CURVE_POINTS / 2)));
+            int steps = Math.Max(2, (int)Math.Ceiling((sweep - join - leave) / 0.2));
+            for (int i = 0; i <= steps; i++) pts.Add(On(th0 - join - (sweep - join - leave) * i / steps));
+            var p1 = On(th0 - sweep + leave);
+            var t1 = Tan(th0 - sweep + leave);
+            k = Math.Max(0.3, Geo.Dist(p1, b) * 0.5);
+            for (int i = 1; i <= CURVE_POINTS / 2; i++)
+                pts.Add(Cubic(p1, new Vec2(p1.x + t1.x * k, p1.y + t1.y * k), new Vec2(b.x - fb.x * k, b.y - fb.y * k), b, i / (double)(CURVE_POINTS / 2)));
+        }
+
+        /// <summary>Does a ring movement, from where it joins to where it leaves, pass angle `th`?</summary>
+        public static bool Passes(Movement m, double th)
+        {
+            double d = m.ringIn - th;
+            while (d < 0) d += 2 * Math.PI;
+            while (d >= 2 * Math.PI) d -= 2 * Math.PI;
+            return d > 0.05 && d < m.ringSweep - 0.05;
+        }
+
         static Vec2 Cubic(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, double t)
         {
             double u = 1 - t;
@@ -523,19 +775,21 @@ namespace Porchlight.Life
                 bottom = Math.Min(bottom, rank);
                 j.legPriority.Add(rank);
             }
+            var nd = j.node < FAN_BASE ? design?.Node(j.node) : null;
             if (legs <= 2) j.control = Life.Control.Free;
+            else if (j.roundabout) j.control = Life.Control.Yield;
+            else if (nd != null && nd.control != DesignControl.Auto && nd.control != DesignControl.Yield)
+                j.control = nd.control == DesignControl.Free ? Life.Control.Free : nd.control == DesignControl.Stop ? Life.Control.Stop
+                    : nd.control == DesignControl.AllWayStop ? Life.Control.AllWayStop : Life.Control.Signal;
             else if (arterials >= 3 || (arterials == 2 && collectors >= 2)) j.control = Life.Control.Signal;
             else if (top == bottom && legs >= 4) j.control = Life.Control.AllWayStop;
-            else
+            else j.control = Life.Control.Stop;
+            // Roads of one rank at a two-way stop: the straightest pair runs through, the rest stop.
+            if (j.control == Life.Control.Stop && top == bottom)
             {
-                j.control = Life.Control.Stop;
-                // A T of equal roads: the straightest pair runs through, the stem stops.
-                if (top == bottom)
-                {
-                    var (a, b) = StraightestPair(j);
-                    j.legPriority[a] += 0.5;
-                    j.legPriority[b] += 0.5;
-                }
+                var (a, b) = legs == 3 ? StraightestPair(j) : OppositePair(j);
+                j.legPriority[a] += 0.5;
+                j.legPriority[b] += 0.5;
             }
             // Signal stages: the legs round the junction take turns; at three legs the straightest pair goes together.
             for (int i = 0; i < legs; i++) j.legStage.Add(i % 2);
@@ -558,6 +812,60 @@ namespace Porchlight.Life
                 m.unprotected = j.control == Life.Control.Stop && from.rank < top && to.rank > from.rank;
                 m.signal = j.control == Life.Control.Signal;
             }
+            if (nd == null || j.control != Life.Control.Signal) return;
+            // A slip road round the corner: its right turn's free of the signal.
+            foreach (var slip in nd.slips)
+                foreach (int id in j.movements)
+                {
+                    var m = movements[id];
+                    if (m.turn == Turn.Right && lanes[m.from].road == slip.fromEdge && lanes[m.to].road == slip.toEdge)
+                    {
+                        m.slip = true;
+                        m.signal = false;
+                        m.stops = false;
+                    }
+                }
+            // A protected left: the leg with the left pocket goes first, the way opposite held for the lead.
+            if (!nd.protectedLeft) return;
+            int pocketLeg = -1;
+            foreach (int id in j.movements)
+            {
+                var from = lanes[movements[id].from];
+                if (from.pocket && from.pocketTurn == Turn.Left) { pocketLeg = j.legs.IndexOf(from.road); break; }
+            }
+            if (pocketLeg < 0) return;
+            var pd = LegDir(j, j.legs[pocketLeg]);
+            int opposite = -1;
+            double most_ = -0.5;
+            for (int i = 0; i < legs; i++)
+            {
+                if (i == pocketLeg) continue;
+                var d = LegDir(j, j.legs[i]);
+                double dot = pd.x * d.x + pd.y * d.y;
+                if (dot < most_) { most_ = dot; opposite = i; }
+            }
+            if (opposite < 0 || j.legStage[opposite] != j.legStage[pocketLeg]) return;
+            foreach (int id in j.movements)
+            {
+                var m = movements[id];
+                if (j.legs.IndexOf(lanes[m.from].road) == opposite && m.turn != Turn.Left) m.held = true;
+            }
+        }
+
+        /// <summary>The two legs of a junction (any two) that run most nearly straight on into each other.</summary>
+        (int a, int b) OppositePair(Junction j)
+        {
+            int ba = 0, bb = 1;
+            double bestDot = double.PositiveInfinity;
+            for (int a = 0; a < j.legs.Count; a++)
+                for (int b = a + 1; b < j.legs.Count; b++)
+                {
+                    var da = LegDir(j, j.legs[a]);
+                    var db = LegDir(j, j.legs[b]);
+                    double dot = da.x * db.x + da.y * db.y;
+                    if (dot < bestDot) { bestDot = dot; ba = a; bb = b; }
+                }
+            return (ba, bb);
         }
 
         /// <summary>The two legs of a three-legged junction that run most nearly straight on into each other.</summary>
@@ -598,7 +906,9 @@ namespace Porchlight.Life
                 for (int b = a + 1; b < k; b++)
                 {
                     var mb = movements[j.movements[b]];
-                    bool c = ma.to == mb.to || (ma.from != mb.from && Cross(ma.points, mb.points));
+                    bool c = j.roundabout
+                        ? ma.to == mb.to || (ma.from != mb.from && (Passes(mb, ma.ringIn) || Passes(ma, mb.ringIn)))
+                        : ma.to == mb.to || (ma.from != mb.from && Cross(ma.points, mb.points));
                     j.conflicts[a][b] = j.conflicts[b][a] = c;
                 }
             }
@@ -697,16 +1007,17 @@ namespace Porchlight.Life
             }
             foreach (var lane in lanes)
             {
+                if (!lane.Kerb) continue;
                 var r = roads[lane.road];
                 double len = lengths[lane.road];
-                double outward = r.width / 4 + Layout.PARKING / 2;
+                double outward = r.width / 2 - KerbOffset(lane.road) + Layout.PARKING / 2;
                 for (double s = SPOT_FIRST; s < len - SPOT_FIRST; s += SPOT_EVERY)
                 {
                     // The slot's place along the road is measured from the road's start; this lane may run the other way.
                     double done = lane.dir > 0 ? s : len - s;
                     if (done < lane.start || done > lane.end) continue;
                     var p = LanePoint(lane.road, lane.dir, done, outward).at;
-                    var centre = LanePoint(lane.road, lane.dir, done, -r.width / 4).at;
+                    var centre = LanePoint(lane.road, lane.dir, done, -KerbOffset(lane.road)).at;
                     if (Wet(p) || Wet(centre) || ByDriveway(p)) continue;
                     var spot = new ParkingSpot { id = spots.Count, kind = SpotKind.Kerb, lane = lane.id, s = done, at = p, scenery = Occupied(p) };
                     spots.Add(spot);
@@ -856,7 +1167,9 @@ namespace Porchlight.Life
             var c = AutoDrive.PointAt(roads[road].points, at[road], s);
             // Lane +1 is to the left of the road's own direction (LanePoint's offset).
             double left = -(p.x - c.x) * t.y + (p.y - c.y) * t.x;
-            return left >= 0 ? a : LaneOf(road, -1);
+            int mine = left >= 0 ? a : LaneOf(road, -1), other = left >= 0 ? LaneOf(road, -1) : a;
+            // The wrong way of a one-way road: the other side's lane.
+            return mine >= 0 && lanes[mine].closed ? other : mine;
         }
 
         /// <summary>The two lanes of a building's road, its own side's first.</summary>

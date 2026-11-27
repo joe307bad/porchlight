@@ -155,6 +155,10 @@ namespace Porchlight.App
         public Action<GotoRequest> onGoto;
         /// <summary>Someone else on the account has this character (we lost our connection, or never had them). We've stopped.</summary>
         public Action onInUse;
+        /// <summary>The town's streets were changed and the room closed: its new key (grow it, and join again).</summary>
+        public Action<string> onTownRebuilt;
+        /// <summary>The new key a `town-rebuilding` named, kept for the close that follows.</summary>
+        string rebuiltKey;
         /// <summary>Missions finished before we'd joined: sent once we have.</summary>
         readonly List<string> missionsDone = new List<string>();
 
@@ -383,6 +387,18 @@ namespace Porchlight.App
                 foreach (var what in list)
                     if (what is string s && unlocks.Add(s)) onUnlockedElsewhere?.Invoke(s);
             });
+            r.OnMessage(Protocol.MSG_TOWN_REBUILDING, m =>
+            {
+                if (!(m is Dictionary<string, object> d)) return;
+                rebuiltKey = d.TryGetValue("key", out var k) ? k as string : null;
+                string by = d.TryGetValue("by", out var b) ? b as string : null;
+                double seconds = d.TryGetValue("seconds", out var sec) ? MsgPack.Num(sec) : 10;
+                host.Notify($"{(string.IsNullOrEmpty(by) ? "An editor" : by)} changed the streets here. The town rebuilds in {seconds:0} seconds, and you'll be brought back.");
+            });
+            r.OnMessage(Protocol.MSG_NOTICE, m =>
+            {
+                if (m is Dictionary<string, object> d && d.TryGetValue("text", out var t) && t is string text) host.Notify(text);
+            });
             r.OnMessage(Protocol.MSG_GOTO, m =>
             {
                 if (!(m is Dictionary<string, object> d) || !(d.TryGetValue("town", out var t) && t is string town) || !d.TryGetValue("x", out var x) || !d.TryGetValue("y", out var y)) return;
@@ -463,6 +479,13 @@ namespace Porchlight.App
                     stopped = true;
                     SetStatus(NetStatus.Offline("playing somewhere else"));
                     onInUse?.Invoke();
+                }
+                else if (code == Protocol.CLOSE_TOWN_REBUILT && rebuiltKey != null && onTownRebuilt != null)
+                {
+                    stopped = true;
+                    SetStatus(NetStatus.Offline("the town's being rebuilt"));
+                    host.Notify("Rebuilding the town with its new streets…");
+                    onTownRebuilt(rebuiltKey);
                 }
                 else if (code == Protocol.CLOSE_KICKED)
                 {

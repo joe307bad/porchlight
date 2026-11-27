@@ -44,6 +44,12 @@ namespace Porchlight.Net
 
         public const int CLOSE_SIGNED_IN_ELSEWHERE = 4100;
         public const int CLOSE_KICKED = 4101;
+        /// <summary>The town's streets were changed (the street editor's commit): its reason `rev=N`; the new key came in MSG_TOWN_REBUILDING.</summary>
+        public const int CLOSE_TOWN_REBUILT = 4103;
+        /// <summary>{ name, by, seconds, key }: an editor committed new streets; in `seconds` everyone's sent to `key`.</summary>
+        public const string MSG_TOWN_REBUILDING = "town-rebuilding";
+        /// <summary>{ text }: something that happened while they were away (their house moved when the streets changed), once.</summary>
+        public const string MSG_NOTICE = "notice";
 
         /// <summary>A join refused because someone else is playing this character.</summary>
         public const string IN_USE = "That character is being played on another device.";

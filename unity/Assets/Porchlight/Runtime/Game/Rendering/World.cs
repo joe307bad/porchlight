@@ -648,6 +648,15 @@ namespace Porchlight.Rendering
             // A cul-de-sac's end widens into its bulb.
             double bulb = Gen.Raster.BulbRadius(model.@params);
             bool Bulb(RoadStroke r, bool atEnd) => layout.bulbs.Exists(q => layout.roads[q.edge] == r && q.atEnd == atEnd);
+            var design = model.design != null && model.design.edges.Count == layout.roads.Count ? model.design : null;
+            var rings = new List<(Vec2 at, double radius)>();
+            var slips = new List<List<Vec2>>();
+            if (design != null)
+                foreach (var nd in design.nodes)
+                {
+                    if (nd.form == JunctionForm.Roundabout && nd.radius > 0) rings.Add((model.roads.nodes[nd.node].at, nd.radius));
+                    foreach (var sl in nd.slips) if (sl.points.Count > 1) slips.Add(sl.points);
+                }
             // A share of the streets at a time (Porchlight's every street in one layer was tens of milliseconds on the web).
             IEnumerable<string> Layer(double y, double extra, int color)
             {
@@ -664,6 +673,9 @@ namespace Porchlight.Rendering
                         else b.Disc(p, (r.width + extra) / 2, y, color);
                     }
                 }
+                // The junction design's: a roundabout's ring, a slip road round a corner.
+                foreach (var (at, radius) in rings) b.Disc(at, radius + 0.55 + extra / 2, y, color, 48);
+                foreach (var slip in slips) b.Ribbon(slip, 0.85 + extra, y, color);
             }
             yield return "roads";
             foreach (var br in layout.bridges)
@@ -713,6 +725,9 @@ namespace Porchlight.Rendering
             foreach (var r in streets)
             {
                 if (++dashed % STREETS_A_PART == 0) yield return "roads" + dashed / STREETS_A_PART;
+                int ri = layout.roads.IndexOf(r);
+                var ed = design?.Edge(ri);
+                if (ed != null && (ed.divided || ed.OneWay)) continue;
                 double len = Geo.PolylineLength(r.points);
                 double from = Bulb(r, false) ? bulb + 0.2 : 1.2, to = len - (Bulb(r, true) ? bulb + 0.2 : 1.2);
                 var samples = Geo.SamplePolyline(r.points, 0.1);
@@ -738,7 +753,83 @@ namespace Porchlight.Rendering
                 }
                 Flush();
             }
+            if (design != null)
+            {
+                yield return "roads";
+                Next();
+                foreach (var part in DesignMarks(b, design, streets, rings)) yield return part;
+            }
             done(builders);
         }
-    }
+    
+        /// <summary>
+        /// The junction design's markings (docs/street-editor.md §8): a divided road's median, the dashed line between
+        /// two lanes each way, each pocket's edge and its turn arrow, and a roundabout's island.
+        /// </summary>
+        IEnumerable<string> DesignMarks(MeshBuilder b, RoadDesign design, List<RoadStroke> streets, List<(Vec2 at, double radius)> rings)
+        {
+            const double LANE = Gen.DesignStage.LANE, MEDIAN = Gen.DesignStage.MEDIAN;
+            int laid = 0;
+            foreach (var r in streets)
+            {
+                if (++laid % STREETS_A_PART == 0) yield return "roads";
+                int ri = layout.roads.IndexOf(r);
+                var ed = design.Edge(ri);
+                if (ed == null) continue;
+                double length = Geo.PolylineLength(r.points);
+                if (length < 3) continue;
+                var middle = Geo.SubPolyline(r.points, 1.3, Math.Max(1.4, length - 1.3));
+                if (ed.divided)
+                {
+                    b.Ribbon(middle, MEDIAN, 0.031, C.curb);
+                    b.Ribbon(middle, MEDIAN - 0.14, 0.033, C.grass);
+                }
+                // Between two lanes each way: a dashed line.
+                int most = Math.Max(ed.lanesFwd, ed.lanesBack);
+                if (most >= 2)
+                    foreach (int side in new[] { 1, -1 })
+                        for (int k = 1; k < most; k++)
+                        {
+                            var line = Layout.OffsetPolyline(middle, side * (r.width / 2 - k * LANE));
+                            var samples = Geo.SamplePolyline(line, 0.45);
+                            for (int i = 0; i + 1 < samples.Count; i += 2) b.Ribbon(new List<Vec2> { samples[i], samples[i + 1] }, 0.06, 0.03, C.lane);
+                        }
+                foreach (var pk in ed.pockets)
+                {
+                    // Along its road from the stop line back: its side of the road (the way into its junction), its lane's edge.
+                    double stop = 1.3, back = Math.Min(length - 1.5, stop + pk.length);
+                    if (back - stop < 0.5) continue;
+                    var span = pk.atTo ? Geo.SubPolyline(r.points, length - back, length - stop) : Geo.SubPolyline(r.points, stop, back);
+                    // A lane +1 (from→to) runs on the side OffsetPolyline calls positive (RoadNet.LanePoint's frame).
+                    int side = pk.atTo ? 1 : -1;
+                    double edge = pk.left ? 0.12 : r.width / 2 - 0.05;
+                    double inner = pk.left ? 0.12 + 0.55 : r.width / 2 - 0.6;
+                    b.Ribbon(Layout.OffsetPolyline(span, side * inner), 0.05, 0.031, C.lane);
+                    // Its arrow, a little back from the stop line: a shaft, and its head bent the way it turns.
+                    var along = pk.atTo ? Geo.SubPolyline(r.points, length - stop - 1.2, length - stop - 0.4) : Geo.SubPolyline(r.points, stop + 0.4, stop + 1.2);
+                    double lateral = side * (edge + inner) / 2;
+                    var shaft = Layout.OffsetPolyline(along, lateral);
+                    if (!pk.atTo) shaft.Reverse();
+                    if (shaft.Count < 2) continue;
+                    b.Ribbon(shaft, 0.07, 0.032, C.lane);
+                    var tip = shaft[shaft.Count - 1];
+                    var pre = shaft[shaft.Count - 2];
+                    double dx = tip.x - pre.x, dy = tip.y - pre.y, l = Math.Sqrt(dx * dx + dy * dy);
+                    if (l < 1e-6) continue;
+                    dx /= l;
+                    dy /= l;
+                    // The driver's right is the side +1 lanes are on (RoadNet's mirrored frame): a left bends the other way.
+                    double nx = -dy * side, ny = dx * side;
+                    int turn = pk.left ? -1 : 1;
+                    var head = new Vec2(tip.x + nx * 0.3 * turn * side + dx * 0.05, tip.y + ny * 0.3 * turn * side + dy * 0.05);
+                    b.Ribbon(new List<Vec2> { tip, head }, 0.07, 0.032, C.lane);
+                }
+            }
+            foreach (var (at, radius) in rings)
+            {
+                b.Disc(at, radius - 0.5, 0.031, C.curb, 40);
+                b.Disc(at, radius - 0.62, 0.033, C.grass, 40);
+            }
+        }
+}
 }

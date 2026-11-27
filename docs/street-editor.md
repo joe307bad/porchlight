@@ -40,7 +40,8 @@ A/B Street's ideas are borrowed, not its code: see [Credits](#credits).
 9. [Checks](#9-checks)
 10. [The order to build it in](#10-the-order-to-build-it-in)
 11. [Open questions](#11-open-questions)
-12. [Credits](#credits) and [References](#references)
+12. [What's built](#12-whats-built)
+13. [Credits](#credits) and [References](#references)
 
 ---
 
@@ -387,7 +388,7 @@ points, not gospel.
 
 **Slip roads (channelised right turns)**
 - At arterial × arterial, where the right turn is ≥ 300 an hour **and**
-  the corner's angle is under 75° (so the turn is wide and fast anyway).
+  the turn bends less than 75° (a wide corner, taken fast anyway).
 - The slip is a short one-way road of its own, from one leg to the next,
   yielding where it joins (gap acceptance). The corner lot loses a
   triangle; it is drawn as a raised island with a crossing.
@@ -875,6 +876,70 @@ run side by side once step 1 is in.
   ring) would need bridges over roads, not just water. Later.
 - **Multi-lane roundabouts** (two lanes on the ring) are where real
   towns get it wrong; leave until a town needs one.
+
+---
+
+## 12. What's built
+
+Everything above is in, with these differences from the plan. The
+contract between the parts is [street-editor-api.md](street-editor-api.md).
+
+**Generation** (`Gen/Design.cs`, a stage after Buildings)
+- The warrants are scaled down for a game town (`LEFT_AT_SIGNAL` 40 an
+  hour, the cross-product 15,000, `RIGHT_AT` 120, `SLIP_AT` 150). A town
+  of a few thousand rarely reaches real-world numbers. Widening is at 60%
+  of a lane's capacity, not 85%.
+- Roundabouts also replace a busy four-way stop between collectors, and,
+  outside the old core, a signal quiet enough for one lane round a ring.
+  They never take anything but houses (at most two, unless an editor asks).
+- The roads in from the gates are divided, two lanes each way, to their
+  first junction, but only in a big town (radius 100 tiles or more) and
+  only where they stay out of the middle. Lots keep back from those roads
+  by the width they grow to (the right of way in Lots).
+- Houses taken for a wider road or a ring are removed and the remaining
+  buildings renumbered, with the neighbourhoods' schools and corner shops
+  and the town's services renumbered too.
+- Relief routes are written and checked, but no starter town needs one at
+  the design flows: the worst v/c is about 0.4.
+
+**The road network** (`Life/RoadNet.cs`, `Life/Cars.cs`)
+- **Lanes:** a road with two lanes each way has a kerb lane (rights,
+  straight on) and an inner lane (lefts, straight on). Cars choose their
+  lane at the junction before, not by changing lanes along the road.
+  `LaneOf` is still the kerb lane, where every spot and door is.
+- **Pockets:** a fan splits the lane into a through lane and the pocket.
+  The stretch past the fan has no parking, as on a real road. A pocket is
+  left out where the road is too short for its fan.
+- **Roundabouts:** a junction with `Control.Yield`. Its turns run round
+  the ring; entering gives way to anything already going round past the
+  entry (the HCM's 4.5 s gap). Two turns conflict when one enters where
+  the other is going round.
+- **Protected lefts:** a *leading* left inside the two-stage cycle, not a
+  third stage. The way opposite the left pocket is held for the first
+  7 s of its green (`LEAD_MS`), so the lefts go first. The lamps and the
+  wire still have two stages; the hold isn't shown on the lights.
+- **Slip roads:** the right turn is free of the signal and gives way to
+  what it joins. Cars take the corner's own curve, not the slip's drawn
+  line.
+
+**Drawing:** the game draws each road at its designed width. It also
+draws medians, the dashed line between lanes, each pocket's edge and
+arrow, roundabout rings with grass islands, and slip roads. Manage's
+editor draws the same, plus signals, stop and yield signs. The game
+doesn't draw yield signs yet.
+
+**Commit:** the close code is **4103** (4100 was already taken for
+"signed in elsewhere"). The close reason is `rev=N`, because a WebSocket
+close reason can't hold a whole key; the new key arrives in
+`town-rebuilding`. On 4103 the game fetches the character again (the
+server may have moved their household), grows the new revision from its
+skeleton and goes back in.
+
+**Known gaps:** a town edited without moving anything still loses a few
+dozen houses, because streets re-plan round pinned main roads. `day` in
+the draft worker takes over a minute. Old keys can still be joined after a
+commit. The Ember Crossing plan check fails on block size (10×19 tiles
+against about 15×20) since local generation went in.
 
 ---
 
