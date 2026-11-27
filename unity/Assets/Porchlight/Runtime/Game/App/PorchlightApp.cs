@@ -2736,7 +2736,13 @@ namespace Porchlight.App
         }
 
         /// <summary>The county's space for this town (by its key), if it's one of the county's.</summary>
-        Space TownSpace(string townKey) => county?.map.spaces.Find(s => s.kind == SpaceKind.Town && s.townKey == townKey);
+        Space TownSpace(string townKey) => county?.map.spaces.Find(s => s.kind == SpaceKind.Town && SameTown(s.townKey, townKey));
+
+        /// <summary>
+        /// The same town, whatever its revision: the street editor's commits add `&rev=N` to a key, and the county
+        /// (fetched once, as you start) and Manage (afresh) can know a town by different ones.
+        /// </summary>
+        static bool SameTown(string a, string b) => a != null && b != null && (a == b || Skeletons.WithRev(a, 0) == Skeletons.WithRev(b, 0));
 
         /// <summary>
         /// The way to a house, shown as you go: in another town of the county, out by the right gate and
@@ -2820,6 +2826,20 @@ namespace Porchlight.App
             }
             // Off to the town, and there once it's up (TravelTo, then ArriveFromManage).
             arriving = (g.town, at, label);
+            _ = TravelToLatest(space, g.town);
+        }
+
+        /// <summary>
+        /// To the town as Manage knows it: rebuilt by the street editor since the county was fetched (a newer
+        /// revision), the county takes the new key, and its skeleton is fetched before the town's grown.
+        /// </summary>
+        async Task TravelToLatest(Space space, string key)
+        {
+            if (Skeletons.RevOf(key) > Skeletons.RevOf(space.townKey))
+            {
+                await FetchSkeleton(key);
+                space.townKey = key;
+            }
             TravelTo(space);
         }
 
@@ -2953,7 +2973,7 @@ namespace Porchlight.App
         bool InTown(string townKey)
         {
             var here = county?.Active;
-            return here != null ? here.kind == SpaceKind.Town && here.townKey == townKey : townKey == TownKey;
+            return here != null ? here.kind == SpaceKind.Town && SameTown(here.townKey, townKey) : SameTown(townKey, TownKey);
         }
 
         /// <summary>The county map's line about a town picked: how far by road, or that you're in it.</summary>
