@@ -408,6 +408,9 @@ namespace Porchlight.Model
         /// <summary>Piers out over the lakes, each with its boats (DocksStage).</summary>
         public List<Dock> docks = new List<Dock>();
 
+        /// <summary>The junction design (DesignStage): each road's lanes, pockets and median, each junction's form and control. Null before that stage.</summary>
+        public RoadDesign design;
+
         public TileGrid tiles;
         public Vec2 spawn;
 
