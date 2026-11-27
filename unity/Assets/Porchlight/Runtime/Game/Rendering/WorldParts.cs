@@ -897,6 +897,8 @@ namespace Porchlight.Rendering
         {
             var placed = new List<Vec2>();
             var lampModel = library.Get(Catalog.STREET_LIGHT);
+            // A library built before the street light was made hasn't got it: the plain post, arm and head as before.
+            var post = lampModel?.prefab == null ? Materials.Lit(C.lampPost) : null;
             var bulbMaterial = Materials.Glowing(Coords.Hex(0xfff6e0));
             var poolMaterial = Materials.LightPool();
             var lampsRoot = new GameObject("lamps").transform;
@@ -934,8 +936,20 @@ namespace Porchlight.Rendering
                     lamp.SetParent(props, false);
                     lamp.localPosition = Coords.Map(basePt.x, basePt.y);
                     lamp.localRotation = Coords.Yaw(rot);
-                    lamp.localScale = Vector3.one * LAMP_SCALE;
-                    UnityEngine.Object.Instantiate(lampModel.prefab, lamp, false);
+                    if (post == null)
+                    {
+                        var model = new GameObject("street light").transform;
+                        model.SetParent(lamp, false);
+                        model.localScale = Vector3.one * LAMP_SCALE;
+                        UnityEngine.Object.Instantiate(lampModel.prefab, model, false);
+                    }
+                    else
+                    {
+                        float H = (float)LAMP_HEIGHT, R = (float)LAMP_REACH;
+                        Shape(PrimitiveType.Cylinder, lamp, new Vector3(0, H / 2, 0), new Vector3(0.052f, H / 2, 0.052f), post);
+                        Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.01f, R / 2), new Vector3(0.03f, 0.03f, R), post);
+                        Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.02f, R), new Vector3(0.09f, 0.04f, 0.12f), post);
+                    }
                     // The bulb is the lantern's glass, filling its cage. It moves with nothing but glows per lamp, so it
                     // stays out of the static batch.
                     var bulb = Shape(PrimitiveType.Sphere, lampsRoot, Coords.Map(basePt.x - normal.x * LAMP_REACH, basePt.y - normal.y * LAMP_REACH, LAMP_HEIGHT - 0.05), new Vector3(0.06f, 0.07f, 0.06f), bulbMaterial, false, "bulb");
