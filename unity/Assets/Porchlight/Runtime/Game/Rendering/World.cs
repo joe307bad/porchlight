@@ -58,6 +58,10 @@ namespace Porchlight.Rendering
     public sealed partial class TownWorld
     {
         public const double WATER_Y = -0.14;
+        /// <summary>How high the streets' carriageways are: a kerb below the sidewalks and everything else (Kerbs).</summary>
+        public const double ROAD_Y = -Kerbs.HEIGHT;
+        /// <summary>How far over the sidewalk its kerb stone's top, its edging and its slabs' joints are drawn.</summary>
+        const double PAVING_LIFT = 0.004;
         const double BED_Y = -0.45;
         const double SLAB = 1.6;
         const double LAMP_SPACING = 7;
@@ -76,6 +80,7 @@ namespace Porchlight.Rendering
         {
             public const int grass = 0x86bd5b, lawn = 0x95c964, sand = 0xe6d49a, rock = 0x9c968c, soil = 0x7a5638, paving = 0xbdb6a4;
             public const int plazaA = 0xddd2b6, plazaB = 0xcdc1a2, bed = 0x6f8a86, bank = 0x8f7656, slab = 0x6b5238, asphalt = 0x6b6b6b;
+            public const int kerb = 0xe8e4d8, joint = 0xaaa491, crack = 0x8e8877;
             public const int sidewalk = 0xd8d3bf, curb = 0xb3ad98, lane = 0xece7d2, parking = 0x747472, driveway = 0xb9b2a0, path = 0xc9a46e, stone = 0xa39d8a, stoneShade = 0x7d7768;
             public const int shedWall = 0xb07a4a, shedRoof = 0x5b4636, lampPost = 0x3b3f47, water = 0x5d9bc8;
         }
@@ -97,6 +102,8 @@ namespace Porchlight.Rendering
         public readonly TownModel model;
         public readonly IsoLayout layout;
         public SidewalkNetwork sidewalks => layout.sidewalks;
+        /// <summary>Where the carriageways lie a kerb down, and how high the ground is anywhere (Ground).</summary>
+        public readonly Kerbs kerbs;
         public readonly StreetNames names;
         public List<Signpost> signs = new List<Signpost>();
         public readonly List<Box> boxes = new List<Box>();
@@ -172,9 +179,11 @@ namespace Porchlight.Rendering
             this.inCounty = inCounty;
             palette = new Palette();
             layout = prepared?.layout ?? Layout.Build(model);
+            kerbs = layout.kerbs ?? Kerbs.Of(model, layout);
             names = prepared?.names ?? StreetNaming.Name(model, layout.roads);
             plannedSigns = prepared?.signs;
             root = new GameObject("town");
+            standing[root.transform] = this;
             still = new GameObject("still").transform;
             still.SetParent(root.transform, false);
             props = new GameObject("props").transform;
@@ -183,6 +192,23 @@ namespace Porchlight.Rendering
         }
 
         readonly List<Signpost> plannedSigns;
+
+        /// <summary>The towns built and not yet let go, by their roots: what's drawn in one finds the ground under it (GroundUnder).</summary>
+        static readonly Dictionary<Transform, TownWorld> standing = new Dictionary<Transform, TownWorld>();
+
+        /// <summary>How high this town's ground is at a map point: a kerb down on a carriageway, 0 everywhere else, easing over the kerb.</summary>
+        public double Ground(double x, double y) => kerbs.Ground(x, y);
+
+        /// <summary>
+        /// How high the ground is at a map point for something drawn under `parent` (in its terms): its town's ground
+        /// if `parent` is a town's root or anything under it, else 0 (a portrait, the county's own ground).
+        /// </summary>
+        public static double GroundUnder(Transform parent, double x, double y)
+        {
+            for (var t = parent; t != null; t = t.parent)
+                if (standing.TryGetValue(t, out var town)) return town.Ground(x, y);
+            return 0;
+        }
 
         /// <summary>How long a step of rooms' interiors may run before it stops for the frame.</summary>
         const int ROOMS_MS = 6;
@@ -438,6 +464,7 @@ namespace Porchlight.Rendering
 
         public void Dispose()
         {
+            if (root != null) standing.Remove(root.transform);
             Own();
             foreach (var i in interiors.Values) i.Dispose();
             UnityEngine.Object.Destroy(root);
@@ -452,6 +479,7 @@ namespace Porchlight.Rendering
         public IEnumerable<string> DisposeSteps(int perPart = 200)
         {
             if (root == null) yield break;
+            standing.Remove(root.transform);
             // Everything under it, walked a share at a time (Porchlight's whole tree in one go, twice over, was over
             // half a second on the web), noting its own meshes as it goes, while there's still something drawing
             // them (rooms furnished since it was built too). Nothing changes under it while it's walked: it's no
@@ -548,6 +576,49 @@ namespace Porchlight.Rendering
                 int bl = Numbers.RoundInt((c & 255) * k);
                 return (r << 16) | (g << 8) | bl;
             }
+            // A tile a sidewalk reaches into, cut along the kerbs (Kerbs.Cut): the road a kerb down, the sidewalk
+            // with its kerb stone's top and its edging, and `land` beyond; on a bridge (`land` -1), only its
+            // sidewalks, up from its deck. False for a tile no sidewalk reaches, to draw whole.
+            var pieces = new List<(int band, List<Vec2> poly)>();
+            var faces = new List<(Vec2 a, Vec2 b, Vec2 facing, bool outer)>();
+            bool Kerbed(int x, int y, int land)
+            {
+                pieces.Clear();
+                faces.Clear();
+                if (!kerbs.Cut(x, y, pieces, faces)) return false;
+                bool bridge = land < 0;
+                foreach (var (band, poly) in pieces)
+                {
+                    if (band == Kerbs.SIDEWALK) b.Flat(poly, 0, C.sidewalk);
+                    else if (bridge) continue;
+                    else if (band == Kerbs.ROAD) b.Flat(poly, ROAD_Y, C.asphalt);
+                    else b.Flat(poly, 0, land);
+                }
+                foreach (var (p, q, facing, outer) in faces)
+                {
+                    // Each strip runs back from its line, away from the way the face looks.
+                    double sx = -facing.x * (outer ? Kerbs.EDGING : Kerbs.TOP), sy = -facing.y * (outer ? Kerbs.EDGING : Kerbs.TOP);
+                    var strip = new List<Vec2> { p, q, new Vec2(q.x + sx, q.y + sy), new Vec2(p.x + sx, p.y + sy) };
+                    var look = new V3(facing.x, 0, facing.y);
+                    if (!outer) b.Quad(v(p.x, ROAD_Y, p.y), v(q.x, ROAD_Y, q.y), v(q.x, 0, q.y), v(p.x, 0, p.y), C.kerb, look);
+                    else if (bridge) b.Quad(v(p.x, ROAD_Y, p.y), v(q.x, ROAD_Y, q.y), v(q.x, 0, q.y), v(p.x, 0, p.y), C.curb, look);
+                    b.Flat(strip, PAVING_LIFT, outer ? C.curb : C.kerb);
+                }
+                return true;
+            }
+            // A river's bank along a tile's side, from the ground down to the bed: near a street, a stretch at a
+            // time, each from the road's height where it meets a carriageway.
+            void Bank(double x0, double y0, double x1, double y1, int color, V3 facing, bool near)
+            {
+                int n = near ? 4 : 1;
+                for (int k = 0; k < n; k++)
+                {
+                    double ax = x0 + (x1 - x0) * k / n, ay = y0 + (y1 - y0) * k / n;
+                    double cx = x0 + (x1 - x0) * (k + 1) / n, cy = y0 + (y1 - y0) * (k + 1) / n;
+                    double top = near && kerbs.OnRoad((ax + cx) / 2, (ay + cy) / 2) ? ROAD_Y : 0;
+                    b.Quad(v(ax, top, ay), v(cx, top, cy), v(cx, BED_Y, cy), v(ax, BED_Y, ay), color, facing);
+                }
+            }
             for (int y = 0; y < h; y++)
             {
                 if (y % GROUND_ROWS_A_PART == GROUND_ROWS_A_PART - 1) yield return "ground" + y / GROUND_ROWS_A_PART;
@@ -566,6 +637,7 @@ namespace Porchlight.Rendering
                     if (IsWaterTerrain(terrain))
                     {
                         b.Rect(x, y, x + 1, y + 1, BED_Y, C.bed);
+                        if (overlay == Overlay.BRIDGE) Kerbed(x, y, -1);
                         continue;
                     }
                     int color;
@@ -578,12 +650,13 @@ namespace Porchlight.Rendering
                     else if (terrain == Terrain.ROCK) color = Jitter(C.rock, 0.08);
                     else if (use == Use.YARD || use == Use.SHED) color = Jitter(C.lawn, 0.05);
                     else color = Jitter(C.grass, 0.08);
-                    b.Rect(x, y, x + 1, y + 1, 0, color);
+                    bool near = Kerbed(x, y, color);
+                    if (!near) b.Rect(x, y, x + 1, y + 1, 0, color);
                     int bank = terrain == Terrain.SAND ? C.sand : C.bank;
-                    if (Wet(x, y - 1)) b.Quad(v(x, 0, y), v(x + 1, 0, y), v(x + 1, BED_Y, y), v(x, BED_Y, y), bank, new V3(0, 0, -1));
-                    if (Wet(x, y + 1)) b.Quad(v(x, 0, y + 1), v(x + 1, 0, y + 1), v(x + 1, BED_Y, y + 1), v(x, BED_Y, y + 1), bank, new V3(0, 0, 1));
-                    if (Wet(x - 1, y)) b.Quad(v(x, 0, y), v(x, 0, y + 1), v(x, BED_Y, y + 1), v(x, BED_Y, y), bank, new V3(-1, 0, 0));
-                    if (Wet(x + 1, y)) b.Quad(v(x + 1, 0, y), v(x + 1, 0, y + 1), v(x + 1, BED_Y, y + 1), v(x + 1, BED_Y, y), bank, new V3(1, 0, 0));
+                    if (Wet(x, y - 1)) Bank(x, y, x + 1, y, bank, new V3(0, 0, -1), near);
+                    if (Wet(x, y + 1)) Bank(x, y + 1, x + 1, y + 1, bank, new V3(0, 0, 1), near);
+                    if (Wet(x - 1, y)) Bank(x, y, x, y + 1, bank, new V3(-1, 0, 0), near);
+                    if (Wet(x + 1, y)) Bank(x + 1, y, x + 1, y + 1, bank, new V3(1, 0, 0), near);
                 }
             }
             if (inCounty)
@@ -629,7 +702,7 @@ namespace Porchlight.Rendering
         List<MeshBuilder> BuildRoads() => Gen.Stepwise.Drain<List<MeshBuilder>>(RoadSteps);
 
         /// <summary>Streets dashed between one part and the next (RoadSteps).</summary>
-        const int STREETS_A_PART = 64, GROUND_ROWS_A_PART = 32, GROUND_ROWS_A_MESH = 48;
+        const int STREETS_A_PART = 64, GROUND_ROWS_A_PART = 16, GROUND_ROWS_A_MESH = 48, PAVING_A_PART = 4000;
 
         /// <summary>The streets' mesh, a layer at a time (for the web, with no threads), then `done` with it.</summary>
         IEnumerable<string> RoadSteps(Action<List<MeshBuilder>> done)
@@ -668,29 +741,22 @@ namespace Porchlight.Rendering
             yield return "roads";
             foreach (var br in layout.bridges)
             {
+                // A street's bridge carries its road at the road's height, its sidewalks a kerb up on its deck (drawn with the ground).
+                double deck = br.kind == RoadKind.Path ? 0.01 : ROAD_Y + 0.01;
                 double half = br.width / 2 + Layout.PARKING + Layout.SIDEWALK + 0.25;
-                b.Ribbon(br.points, half * 2, 0.01, C.stone);
-                b.Wall(br.points, half, BED_Y, 0.01, C.stoneShade);
-                b.Wall(br.points, -half, BED_Y, 0.01, C.stoneShade);
-                foreach (int side in new[] { 1, -1 }) b.Parapet(br.points, side * (half - 0.07), 0.12, 0.01, 0.24, C.stone, C.stoneShade);
+                b.Ribbon(br.points, half * 2, deck, C.stone);
+                b.Wall(br.points, half, BED_Y, deck, C.stoneShade);
+                b.Wall(br.points, -half, BED_Y, deck, C.stoneShade);
+                foreach (int side in new[] { 1, -1 }) b.Parapet(br.points, side * (half - 0.07), 0.12, deck, 0.24, C.stone, C.stoneShade);
             }
-            // Out from the middle: the asphalt, a parking lane each side (a shade
-            // lighter, edged with a thin line), the kerb, then the sidewalk.
+            // Out from the middle: the asphalt and a parking lane each side (a shade lighter, edged with a thin
+            // line), down in the road a kerb below the sidewalks; the kerbs and sidewalks are the ground's (Kerbs.Cut).
             double park = Layout.PARKING * 2;
             Next();
-            foreach (var part in Layer(0.012, park + Layout.SIDEWALK * 2 + 0.1, C.curb)) yield return part;
+            foreach (var part in Layer(ROAD_Y + 0.023, park, C.parking)) yield return part;
             yield return "roads";
             Next();
-            foreach (var part in Layer(0.016, park + Layout.SIDEWALK * 2, C.sidewalk)) yield return part;
-            yield return "roads";
-            Next();
-            foreach (var part in Layer(0.02, park + 0.08, C.curb)) yield return part;
-            yield return "roads";
-            Next();
-            foreach (var part in Layer(0.023, park, C.parking)) yield return part;
-            yield return "roads";
-            Next();
-            foreach (var part in Layer(0.026, 0, C.asphalt)) yield return part;
+            foreach (var part in Layer(ROAD_Y + 0.026, 0, C.asphalt)) yield return part;
             yield return "roads";
             Next();
             foreach (var r in streets)
@@ -700,14 +766,23 @@ namespace Porchlight.Rendering
                 double from = Bulb(r, false) ? bulb + 0.3 : 1.3, to = length - (Bulb(r, true) ? bulb + 0.3 : 1.3);
                 if (length < 3 || to - from < 0.4) continue;
                 var middle = Geo.SubPolyline(r.points, from, to);
-                foreach (int side in new[] { 1, -1 }) b.Ribbon(Layout.OffsetPolyline(middle, side * r.width / 2), 0.04, 0.028, C.lane);
+                foreach (int side in new[] { 1, -1 }) b.Ribbon(Layout.OffsetPolyline(middle, side * r.width / 2), 0.04, ROAD_Y + 0.028, C.lane);
             }
             yield return "roads";
             Next();
             foreach (var r in layout.roads.Where(rd => rd.kind == RoadKind.Path))
             {
-                b.Ribbon(r.points, r.width, 0.012, C.path);
-                foreach (var p in new[] { r.points[0], r.points[r.points.Count - 1] }) b.Disc(p, r.width / 2, 0.012, C.path);
+                // Up on the land, stopping at a street's kerb rather than running out over the road below.
+                foreach (var run in kerbs.OffRoad(r.points, r.width / 2)) b.Ribbon(run, r.width, 0.012, C.path);
+                foreach (var p in new[] { r.points[0], r.points[r.points.Count - 1] })
+                    if (kerbs.Edge(p.x, p.y) >= r.width / 2) b.Disc(p, r.width / 2, 0.012, C.path);
+            }
+            // The sidewalks' paving: the joints between their slabs, and a crack here and there.
+            int paved = 0;
+            foreach (var (from, to, crack) in kerbs.Paving(layout, bulb))
+            {
+                if (++paved % PAVING_A_PART == 0) yield return "roads";
+                b.Ribbon(new[] { from, to }, crack ? Kerbs.CRACK : Kerbs.JOINT, PAVING_LIFT, crack ? C.crack : C.joint);
             }
             int dashed = 0;
             foreach (var r in streets)
@@ -720,7 +795,7 @@ namespace Porchlight.Rendering
                 var run = new List<Vec2>();
                 void Flush()
                 {
-                    if (run.Count > 1) b.Ribbon(run, 0.07, 0.03, C.lane);
+                    if (run.Count > 1) b.Ribbon(run, 0.07, ROAD_Y + 0.03, C.lane);
                     run = new List<Vec2>();
                 }
                 for (int k = 1; k < samples.Count; k++)

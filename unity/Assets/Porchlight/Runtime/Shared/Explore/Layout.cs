@@ -32,6 +32,8 @@ namespace Porchlight.Explore
     {
         public int x, y;
         public Facing side;
+        /// <summary>How much is cut off each end (tiles): its west or north end, and its east or south (Kerbs.ClearOf, to keep it off a sidewalk).</summary>
+        public double cut0, cut1;
     }
 
     public struct ParkedCar
@@ -129,6 +131,8 @@ namespace Porchlight.Explore
         public List<Bulb> bulbs = new List<Bulb>();
         /// <summary>A loop round the open water of each lake big enough, for boats to sail (closed: its last point is its first).</summary>
         public List<List<Vec2>> boatLoops = new List<List<Vec2>>();
+        /// <summary>Where the carriageways lie a kerb below everything else, and how high the ground is anywhere.</summary>
+        public Kerbs kerbs;
     }
 
     public static class Layout
@@ -210,6 +214,8 @@ namespace Porchlight.Explore
             foreach (var part in SidewalkNetworkOf(roads, layout.bulbs, Raster.BulbRadius(model.@params), n => layout.sidewalks = n)) yield return part;
             yield return "/sidewalks";
             Ports.Add(model, layout);
+            layout.kerbs = Kerbs.Of(model, layout);
+            layout.fences = layout.kerbs.ClearOf(layout.fences);
             done(layout);
         }
 
@@ -446,6 +452,22 @@ namespace Porchlight.Explore
             double best = double.PositiveInfinity;
             foreach (var p in house.tiles) best = Math.Min(best, -((t % w) - p.x) * fx - (t / w - p.y) * fy);
             return best;
+        }
+
+        /// <summary>How far in from its tile's edge a yard's fence stands.</summary>
+        public const double FENCE_INSET = 0.05;
+
+        /// <summary>A fence's line on the map, its west or north end first, what's cut off its ends left off.</summary>
+        public static (Vec2 a, Vec2 b) FenceLine(Fence f)
+        {
+            double lo = f.cut0, hi = 1 - f.cut1;
+            return f.side switch
+            {
+                Facing.N => (new Vec2(f.x + lo, f.y + FENCE_INSET), new Vec2(f.x + hi, f.y + FENCE_INSET)),
+                Facing.S => (new Vec2(f.x + lo, f.y + 1 - FENCE_INSET), new Vec2(f.x + hi, f.y + 1 - FENCE_INSET)),
+                Facing.W => (new Vec2(f.x + FENCE_INSET, f.y + lo), new Vec2(f.x + FENCE_INSET, f.y + hi)),
+                _ => (new Vec2(f.x + 1 - FENCE_INSET, f.y + lo), new Vec2(f.x + 1 - FENCE_INSET, f.y + hi)),
+            };
         }
 
         static List<Fence> FenceAround(int t, HashSet<int> own, int w, int h, Func<int, int, bool> street)

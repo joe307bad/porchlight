@@ -156,7 +156,9 @@ namespace Porchlight.Rendering
         {
             double k = Math.Max(1e-3, dt);
             // Sat (or sitting down, or getting up) on a seat whose top is their floor: no lift for their feet's soles.
-            root.transform.localPosition = Coords.Map(w.x, w.y, (w.sit > 0 ? FEET * (1 - w.sit) : FEET) + w.floor + w.lift);
+            // On the ground (floor 0: not up on a roof), its height under them: down a kerb on the road, easing over the kerb.
+            double ground = w.floor == 0 ? TownWorld.GroundUnder(root.transform.parent, w.x, w.y) : 0;
+            root.transform.localPosition = Coords.Map(w.x, w.y, (w.sit > 0 ? FEET * (1 - w.sit) : FEET) + w.floor + w.lift + ground);
             Carry(wasSeated, dt);
             wasSeated = false;
             root.transform.localScale = Vector3.one * (float)w.scale;
