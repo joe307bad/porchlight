@@ -84,6 +84,19 @@ namespace Porchlight.Sim
         /// <summary>The town's life (people, trips, the clock).</summary>
         public TownLife life => traffic.life;
 
+        /// <summary>
+        /// The sizes in a town that could grow while it runs (the minute's STATS line): life's cars and people, its
+        /// timetable (keys due / heap entries), and its analytics' tables. One that climbs hour on hour is the leak.
+        /// </summary>
+        public string Sizes()
+        {
+            var l = life;
+            if (l == null) return $"walkers {traffic.walkers.Count}, taken {taken.Count}";
+            var a = l.stats;
+            return $"life {l.cars.Count}c/{l.people.Count}p, events {l.Pending}/{l.EventHeap}, waits {a.carWaits.Count}/{a.walkerWaits.Count}, flow {a.flow.Count}, failures {a.failures.Count}, " +
+                $"walkers {traffic.walkers.Count}, taken {taken.Count}";
+        }
+
         /// <summary>A town's key (its room's name: "seed=porchlight&amp;width=256&amp;…") as the game reads it (PorchlightApp.ParseUrlState).</summary>
         public static (string seed, GenParams p) ParseKey(string key) => TownKey.Parse(key);
 

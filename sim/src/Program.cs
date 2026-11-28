@@ -115,7 +115,16 @@ namespace Porchlight.Sim
                 if (clock.ElapsedMilliseconds >= statsAt)
                 {
                     statsAt = clock.ElapsedMilliseconds + STATS_MS;
-                    Send(OUT_STATS, Json(new { towns = towns.Count, ticks, avgMs = Math.Round(total / Math.Max(1, ticks), 3), maxMs = Math.Round(max, 3) }));
+                    // The heap and each town's sizes, to find what grows: beta #2's ticks slowed hour by hour, then ran out of heap.
+                    var gc = GC.GetGCMemoryInfo();
+                    Send(OUT_STATS, Json(new
+                    {
+                        towns = towns.Count, ticks, avgMs = Math.Round(total / Math.Max(1, ticks), 3), maxMs = Math.Round(max, 3),
+                        heapMb = GC.GetTotalMemory(false) / 1048576, committedMb = gc.TotalCommittedBytes / 1048576,
+                        gc = new[] { GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2) },
+                        pauseMs = Math.Round(GC.GetTotalPauseDuration().TotalMilliseconds),
+                        each = towns.Values.Select(t => new { id = t.id, cars = t.traffic.cars.Count, people = t.people.Count, extra = t.Sizes() }).ToList(),
+                    }));
                     total = max = 0;
                     ticks = 0;
                 }

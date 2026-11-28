@@ -7,9 +7,10 @@ import { Client, type Room } from '@colyseus/sdk';
 import { SESSION_COOKIE } from '../src/app.ts';
 import { seal } from '../src/cookies.ts';
 import { startGameServer, type GameServer } from '../src/multiplayer/index.ts';
+import { joinAck } from '../src/multiplayer/CityRoom.ts';
 import { played } from '../src/multiplayer/played.ts';
 import { MemoryPersistence, STARTER_TOWNS } from '../src/multiplayer/persistence.ts';
-import { CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_GOTO, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_PERF, MSG_PING, MSG_PONG, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type GotoMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
+import { CLOSE_JOIN_UNACKED, CLOSE_SIGNED_IN_ELSEWHERE, HOST_SILENT_MS, IN_USE, MSG_CAR, MSG_CORRECT, MSG_DOTS, MSG_GOTO, MSG_LOOK, MSG_MISSION_DONE, MSG_NIGHT, MSG_PERF, MSG_PING, MSG_PONG, MSG_SPAWN, MSG_TAKE, MSG_UNLOCK, MSG_UNLOCKS, MSG_WORLD, type CorrectMessage, type GotoMessage, type SpawnMessage } from '../src/multiplayer/protocol.ts';
 
 const SECRET = 'x'.repeat(40);
 const APP = 'http://localhost:5173';
@@ -746,4 +747,58 @@ test('an older game that says nothing about itself still plays', async () => {
   await r.leave();
   await until('the session to close', () => row.reason !== null);
   assert.equal(row.end?.perf, undefined);
+});
+
+/**
+ * Joined as far as the socket, and never acking the room's JOIN_ROOM (a hidden web tab, whose loop doesn't run):
+ * the seat's reserved over HTTP like the SDK does, then a bare WebSocket that reads and says nothing.
+ */
+async function silentJoin(sub: string, character: string): Promise<{ ws: WebSocket; sessionId: string; closed: Promise<number> }> {
+  const c = client(sub);
+  const res = await c.http.post('/matchmake/joinOrCreate/city', { headers: { 'Content-Type': 'application/json' }, body: { ...town, character } });
+  const seat = res.data as { sessionId: string };
+  const url = (c as unknown as { buildEndpoint(s: unknown, o: unknown): string }).buildEndpoint(seat, { sessionId: seat.sessionId });
+  const ws = new WebSocket(url);
+  ws.binaryType = 'arraybuffer';
+  const closed = new Promise<number>((r) => ws.addEventListener('close', (e) => r(e.code)));
+  await new Promise<void>((r) => ws.addEventListener('message', () => r(), { once: true })); // the room's JOIN_ROOM: never acked
+  return { ws, sessionId: seat.sessionId, closed };
+}
+
+test("a client that never acked its join drops without taking the server down (beta #2's silent restarts)", async () => {
+  const id = (await api('hidden', 'POST', '/mp/characters', { name: 'Hidden' })).json.id;
+  const { ws } = await silentJoin('hidden', id);
+  await until('the session to open', () => [...persistence.sessions.values()].some((s) => s.characterId === id));
+  const [row] = [...persistence.sessions.values()].filter((s) => s.characterId === id);
+  ws.close(); // a drop, not a leave: the room's onDrop asks Colyseus to hold the seat, which it turns down
+  await until('the session to close', () => row.reason !== null);
+  assert.equal(row.reason, 'timeout');
+  // Still serving, and the character's free to play again.
+  assert.equal((await api('hidden', 'GET', '/mp/characters')).status, 200);
+  const r = await client('hidden').joinOrCreate('city', { ...town, character: id });
+  r.onMessage(MSG_SPAWN, () => {});
+  await r.leave();
+});
+
+test('a client that never acks its join is sent off, so what the room holds for it is freed', async () => {
+  const was = joinAck.ms;
+  joinAck.ms = 300;
+  try {
+    const id = (await api('hidden', 'POST', '/mp/characters', { name: 'Asleep' })).json.id;
+    const { closed } = await silentJoin('hidden', id);
+    assert.equal(await closed, CLOSE_JOIN_UNACKED);
+    const [row] = [...persistence.sessions.values()].filter((s) => s.characterId === id);
+    await until('the session to close', () => row.reason !== null);
+    assert.equal(row.reason, 'kicked');
+    assert.match(row.end?.detail ?? '', /never acked its join/);
+    // A game that acks is left alone.
+    const other = (await api('hidden', 'POST', '/mp/characters', { name: 'Awake' })).json.id;
+    const r = await client('hidden').joinOrCreate('city', { ...town, character: other });
+    r.onMessage(MSG_SPAWN, () => {});
+    await new Promise((done) => setTimeout(done, 600));
+    assert.ok(r.connection.isOpen);
+    await r.leave();
+  } finally {
+    joinAck.ms = was;
+  }
 });

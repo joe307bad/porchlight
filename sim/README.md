@@ -89,7 +89,7 @@ where the image picks it up.
 
 Settings (on the server): `SIM=off`, `SIM_COMMAND` (a worker command of your own),
 `SIM_WORKERS` (default 1), and .NET's own, such as `DOTNET_GCHeapHardLimit`
-(192 MB on the box). For tests only, the worker reads `SIM_CLOCK_SHIFT_MS`: its
+(320 MB on the box, and `DOTNET_DbgEnableMiniDump=0`). For tests only, the worker reads `SIM_CLOCK_SHIFT_MS`: its
 towns' clock runs that far ahead of the real one. The server's end-to-end tests
 set it so their towns are at 10:30 county time whenever CI runs them, since at
 night there's hardly a car on the road to test with.

@@ -62,9 +62,15 @@ services:
       DATABASE_URL: postgres://porchlight:${GAME_DB_PASSWORD}@postgres:5432/porchlight
       # The towns' traffic and townsfolk (sim/): one worker runs every town in
       # every county (about 0.15 ms a town a tick on this box's cores), and its
-      # heap is held to 192 MB.
+      # heap is held to 320 MB. It was 192 MB until beta #2, which ran out five
+      # times in an hour; the box had ~620 MB free. A stopgap while what grows in
+      # it is found (the sim's minute STATS line has the heap and each town's sizes).
       SIM_WORKERS: "1"
-      DOTNET_GCHeapHardLimit: "0xC000000"
+      DOTNET_GCHeapHardLimit: "0x14000000"
+      # No crash dump when it dies (out of memory took 2 min 21 s to exit while
+      # it wrote one, every town's traffic frozen meanwhile). The pool kills it on
+      # "Out of memory." anyway; this is for any other crash.
+      DOTNET_DbgEnableMiniDump: "0"
     # The missions (ink), read afresh on every request: the deploy's copy of
     # server/missions, or a file edited on the box, is live at once.
     volumes:

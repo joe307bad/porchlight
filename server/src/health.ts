@@ -5,7 +5,10 @@
 //   every player at once) and how many are playing;
 // - on a signal: which one, after how long, with how many playing (a deploy
 //   sends SIGTERM; anything else stopping the container sends one too);
-// - on exit: the code. Uncaught exceptions are Colyseus's to print (it exits 1).
+// - on an uncaught exception or unhandled rejection: all of it, stack and cause.
+//   Colyseus prints uncaught exceptions itself, but skips its own ServerErrors,
+//   so in beta #2 the process exited 1 four times with nothing said;
+// - on exit: the code.
 
 import { readFileSync } from 'node:fs';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
@@ -38,6 +41,15 @@ function playing(): { rooms: number; players: number } {
   return { rooms, players };
 }
 
+/** An error as fully as it can be told: its stack (or message), its code, and what caused it. */
+function describe(err: unknown, depth = 0): string {
+  if (!(err instanceof Error)) return String(err);
+  const code = (err as { code?: unknown }).code;
+  let text = `${err.stack ?? `${err.name}: ${err.message}`}${code !== undefined ? ` (code ${String(code)})` : ''}`;
+  if (err.cause !== undefined && depth < 4) text += `\n  caused by: ${describe(err.cause, depth + 1)}`;
+  return text;
+}
+
 const mb = (bytes: number): number => Math.round(bytes / 1048576);
 
 export function watchHealth(): void {
@@ -64,6 +76,16 @@ export function watchHealth(): void {
       console.log(`process: ${signal} after ${uptime()}, ${players} player(s) in ${rooms} room(s): shutting down`);
     });
   }
+  // A monitor: it tells, and leaves what happens next to Colyseus's own handler (which shuts down).
+  process.on('uncaughtExceptionMonitor', (err, origin) => {
+    const { rooms, players } = playing();
+    console.error(`process: ${origin === 'unhandledRejection' ? 'unhandled rejection' : 'uncaught exception'} after ${uptime()}, ${players} player(s) in ${rooms} room(s): ${describe(err)}`);
+  });
+  // A stray promise isn't worth everyone's game: said in full, and play goes on.
+  process.on('unhandledRejection', (reason) => {
+    const { rooms, players } = playing();
+    console.error(`process: unhandled rejection after ${uptime()}, ${players} player(s) in ${rooms} room(s), carrying on: ${describe(reason)}`);
+  });
   process.on('exit', (code) => console.log(`process: exit ${code} after ${uptime()}`));
   process.on('warning', (w) => console.warn(`process: warning: ${w.name}: ${w.message}`));
 }

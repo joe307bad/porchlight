@@ -2115,6 +2115,8 @@ namespace Porchlight.App
             if (focus) net?.Visible();
         }
 
+        void OnApplicationQuit() => net?.Quit();
+
         void OnDestroy() => net?.Close();
 
         /// <summary>An element's box in screen pixels (origin bottom left), for the 3D camera.</summary>

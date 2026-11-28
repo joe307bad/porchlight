@@ -153,7 +153,16 @@ class Worker {
     this.buf = Buffer.alloc(0);
     proc.stdout.on('data', (chunk: Buffer) => this.read(chunk));
     proc.stderr.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split('\n')) if (line.trim()) this.pool.log(`[sim ${this.index}] ${line.trim()}`);
+      for (const line of chunk.toString().split('\n')) {
+        if (!line.trim()) continue;
+        this.pool.log(`[sim ${this.index}] ${line.trim()}`);
+        // The runtime's out of its heap: it'd take minutes more to stop on its own (2 min 21 s each time in
+        // beta #2, with every town's traffic frozen meanwhile). Stopped now, and started again.
+        if (line.includes('Out of memory') && this.proc === proc && !proc.killed) {
+          this.pool.log(`sim ${this.index}: out of memory after ${((Date.now() - this.startedAt) / 60_000).toFixed(1)} min: stopping it now`);
+          proc.kill('SIGKILL');
+        }
+      }
     });
     proc.stdin.on('error', () => {}); // it went: 'exit' says so
     proc.on('error', (err) => this.pool.log(`sim ${this.index}: couldn't start ${this.cmd.command}: ${err.message}`));
@@ -208,6 +217,8 @@ class Worker {
 export class SimPool {
   private readonly workers: Worker[];
   private readonly towns = new Map<number, SimTown>();
+  /** Towns with someone in them (as of the last setPlayers): made first when a worker starts again. */
+  private readonly occupied = new Set<number>();
   private readonly byKey = new Map<string, SimTown>();
   private readonly taken = new Map<number, string[]>();
   private nextId = 1;
@@ -259,6 +270,11 @@ export class SimPool {
 
   /** Where the players are, town by town (tiles, each town's frame): what the traffic stops for. */
   setPlayers(players: Map<string, SimPlayer[]>): void {
+    this.occupied.clear();
+    for (const [key, list] of players) {
+      const town = this.byKey.get(key);
+      if (town && list.length) this.occupied.add(town.id);
+    }
     const parts: Buffer[][] = this.workers.map(() => []);
     const counts = this.workers.map(() => 0);
     for (const [key, list] of players) {
@@ -324,7 +340,12 @@ export class SimPool {
   }
 
   private sendTowns(i: number): void {
-    const mine = [...this.towns.values()].filter((t) => this.workerOf(t.id) === i).map((t) => (t.skeleton ? { id: t.id, key: t.key, skeleton: t.skeleton } : { id: t.id, key: t.key }));
+    // Towns with players first: the worker starts making them in this order, so after a restart the towns people
+    // are waiting in are back before the empty ones (beta #2: all seven at once, with everyone rejoining).
+    const mine = [...this.towns.values()]
+      .filter((t) => this.workerOf(t.id) === i)
+      .sort((a, b) => Number(this.occupied.has(b.id)) - Number(this.occupied.has(a.id)))
+      .map((t) => (t.skeleton ? { id: t.id, key: t.key, skeleton: t.skeleton } : { id: t.id, key: t.key }));
     this.workers[i].send(IN_TOWNS, json(mine));
   }
 
@@ -379,8 +400,20 @@ export class SimPool {
       return;
     }
     if (type === OUT_STATS) {
-      const m = JSON.parse(body.toString()) as { towns: number; ticks: number; avgMs: number; maxMs: number };
-      this.log(`sim: ${m.towns} town(s), ${m.ticks} ticks, avg ${m.avgMs} ms, max ${m.maxMs} ms`);
+      const m = JSON.parse(body.toString()) as {
+        towns: number;
+        ticks: number;
+        avgMs: number;
+        maxMs: number;
+        heapMb?: number;
+        committedMb?: number;
+        gc?: [number, number, number];
+        pauseMs?: number;
+        each?: { id: number; cars: number; people: number; extra?: string }[];
+      };
+      const heap = m.heapMb !== undefined ? `, heap ${m.heapMb} MB (committed ${m.committedMb} MB), gc ${m.gc?.join('/')}, gc pause ${m.pauseMs} ms` : '';
+      const each = m.each?.length ? `; ${m.each.map((t) => `${this.towns.get(t.id)?.key.slice(0, 12) ?? t.id}: ${t.cars}c/${t.people}p${t.extra ? ` ${t.extra}` : ''}`).join(', ')}` : '';
+      this.log(`sim: ${m.towns} town(s), ${m.ticks} ticks, avg ${m.avgMs} ms, max ${m.maxMs} ms${heap}${each}`);
     }
   }
 

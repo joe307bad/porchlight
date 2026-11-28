@@ -42,6 +42,8 @@ export const CLOSE_KICKED = 4101;
 export const CLOSE_IN_USE = 4102;
 /** The town was rebuilt from an editor's commit (docs/street-editor-api.md): the reason is `rev=N`, its new revision (the new key came with MSG_TOWN_REBUILDING). */
 export const CLOSE_TOWN_REBUILT = 4103;
+/** Joined, but never acked the room's JOIN_ROOM (a hidden web tab's loop doesn't run): sent off, to join again once it's running. */
+export const CLOSE_JOIN_UNACKED = 4104;
 
 /** A join refused because someone else is playing this character (the game knows this message: Protocol.IN_USE). */
 export const IN_USE = 'That character is being played on another device.';

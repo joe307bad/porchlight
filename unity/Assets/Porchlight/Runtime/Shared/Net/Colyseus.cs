@@ -361,6 +361,18 @@ namespace Porchlight.Net
             }
         }
 
+        /// <summary>
+        /// Leave at once (the app's quitting): the socket closed with the consented code, without waiting on the
+        /// server's answer to a LEAVE_ROOM, which a quitting app never reads. Otherwise the server sees a dropped
+        /// connection (1006) and holds the seat for its reconnection window.
+        /// </summary>
+        public void LeaveNow()
+        {
+            if (left) return;
+            socket?.Close(CloseCode.CONSENTED);
+            Finish(CloseCode.CONSENTED);
+        }
+
         /// <summary>Leave the room (consented); done(code) when it's closed.</summary>
         public void Leave(Action<int> done = null)
         {

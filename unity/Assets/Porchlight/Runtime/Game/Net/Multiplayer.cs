@@ -140,6 +140,8 @@ namespace Porchlight.App
         string lastCar = "";
         int retries;
         bool stopped;
+        /// <summary>A join's in flight (matchmaking or connecting): Enter for the same town waits on it rather than join twice.</summary>
+        bool joining;
         int generation;
         readonly INetHost host;
         public readonly Character character;
@@ -184,7 +186,8 @@ namespace Porchlight.App
         /// </summary>
         public void Enter(TownKey t, double[] arrive = null)
         {
-            if (town != null && town.key == t.key && (room != null || retry != null)) return;
+            // Already in it, joining it or about to try again: one join at a time (beta #2's native games joined twice, 3-5 s apart).
+            if (town != null && town.key == t.key && (room != null || retry != null || joining)) return;
             town = t;
             arriving = arrive;
             // Already placed: the spawn the room sends isn't where to go.
@@ -203,6 +206,14 @@ namespace Porchlight.App
             town = null;
             stopped = true;
             Disconnect();
+        }
+
+        /// <summary>The app's quitting: out of the room at once, as a leave (not a drop the server holds a seat for).</summary>
+        public void Quit()
+        {
+            town = null;
+            stopped = true;
+            Disconnect(true);
         }
 
         public string Debug()
@@ -254,9 +265,10 @@ namespace Porchlight.App
 
         void SendMissionDone(string id) => room?.Send(Protocol.MSG_MISSION_DONE, new Dictionary<string, object> { ["id"] = id });
 
-        void Disconnect()
+        void Disconnect(bool now = false)
         {
             generation++;
+            joining = false;
             if (retry != null) timers.Cancel(retry);
             retry = null;
             StopTimers();
@@ -264,7 +276,8 @@ namespace Porchlight.App
             room = null;
             spawned = false;
             Offline();
-            r?.Leave();
+            if (now) r?.LeaveNow();
+            else r?.Leave();
         }
 
         void StopTimers()
@@ -307,6 +320,7 @@ namespace Porchlight.App
             if (arriving != null && Array.TrueForAll(arriving, double.IsFinite))
                 options["arrive"] = new Dictionary<string, object> { ["x"] = arriving[0], ["y"] = arriving[1], ["z"] = arriving[2], ["yaw"] = arriving[3] };
             SetStatus(NetStatus.Joining);
+            joining = true;
             // The room can fill up between matchmaking and joining: try once more.
             client.JoinOrCreate(Protocol.CITY_ROOM, options, (r, err) =>
             {
@@ -317,6 +331,7 @@ namespace Porchlight.App
 
         void Joined(int gen, Room r, string err)
         {
+            if (gen == generation) joining = false;
             if (r == null)
             {
                 if (gen != generation) return;

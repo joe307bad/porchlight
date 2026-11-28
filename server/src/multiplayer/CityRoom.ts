@@ -20,7 +20,7 @@
 // joins, and written in batches every 30 s (if it moved), when it leaves, and
 // on shutdown. If the database is down the game goes on and the writes wait.
 
-import { CloseCode, Room, ServerError, type AuthContext, type Client } from '@colyseus/core';
+import { ClientState, CloseCode, Room, ServerError, type AuthContext, type Client, type ClientPrivate } from '@colyseus/core';
 import { StateView } from '@colyseus/schema';
 import { foreignOrigin, readSession, type GameDeps } from './accounts.ts';
 import { Interest } from './interest.ts';
@@ -34,6 +34,7 @@ import {
   ANIM_IDLE,
   CAR_SEATS,
   CLOSE_IN_USE,
+  CLOSE_JOIN_UNACKED,
   IN_USE,
   CLOSE_KICKED,
   CLOSE_SIGNED_IN_ELSEWHERE,
@@ -105,6 +106,12 @@ const TAKE_GAP_MS = 1_000;
 const GROUND_RETRY_MS = 5_000;
 /** Most cars a town's `taken` list holds. */
 const MAX_TAKEN = 4_000;
+/**
+ * Longest a client may go without acking its join (ms). Until it does, Colyseus keeps every message to it
+ * (each patch, dot and ping) and never sends or frees them: a hidden web tab, whose loop doesn't run, held
+ * hundreds of MB that way in beta #2.
+ */
+export const joinAck = { ms: 30_000 };
 
 interface JoinAuth {
   accountId: string;
@@ -143,6 +150,8 @@ interface PlayerRuntime {
   client: Client | null;
   sessionRow: string | null;
   joinedAt: number;
+  /** When this connection opened (joining, or coming back): its join's to be acked within joinAck.ms of it. */
+  connectedAt: number;
   track: Track;
   lastInputAt: number;
   /** When a ride they asked for was last refused (ms). */
@@ -259,6 +268,9 @@ function parseArrive(raw: unknown): { x: number; y: number; z: number; yaw: numb
   const ok = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
   return ok(a.x) && ok(a.z) && ok(a.yaw) ? { x: a.x, y: ok(a.y) ? a.y : 0, z: a.z, yaw: a.yaw } : null;
 }
+
+/** Messages Colyseus is holding for a client that hasn't acked its join (0 once it has). */
+const unsent = (client: Client | null): number => (client as ClientPrivate | null)?._enqueuedMessages?.length ?? 0;
 
 const byteLength = (v: unknown): number => (v instanceof Uint8Array ? v.byteLength : -1);
 
@@ -566,6 +578,7 @@ export class CityRoom extends Room<{ state: CityState }> {
         client,
         sessionRow,
         joinedAt: Date.now(),
+        connectedAt: Date.now(),
         track: newTrack(),
         worldWantAt: 0,
         follows: options.follows === 1 || options.follows === true,
@@ -683,8 +696,15 @@ export class CityRoom extends Room<{ state: CityState }> {
     rt.drops++;
     rt.player.away = true;
     if (rt.player.anim !== ANIM_DRIVE) rt.player.anim = ANIM_IDLE;
-    // Not awaited: Colyseus calls onLeave if the window runs out.
-    this.allowReconnection(client, RECONNECT_SECONDS);
+    // Not awaited: Colyseus calls onLeave if the window runs out. It's turned down at once for a client that
+    // never acked its join (Colyseus calls onLeave straight after): caught, or Node takes the whole process down
+    // with it (beta #2's four silent restarts).
+    this.allowReconnection(client, RECONNECT_SECONDS).catch((err: unknown) => {
+      if (err instanceof Error) {
+        rt.endDetail ??= `no reconnection: ${err.message}`;
+        console.log(`session ${short(rt.sessionRow)}: dropped, and can't come back (${err.message})`);
+      }
+    });
   }
 
   onReconnect(client: Client): void {
@@ -692,6 +712,7 @@ export class CityRoom extends Room<{ state: CityState }> {
     // Signed in elsewhere while they were away: this connection is stale.
     if (!rt || rt.finished) throw new ServerError(CLOSE_SIGNED_IN_ELSEWHERE, 'Signed in elsewhere.');
     rt.client = client;
+    rt.connectedAt = Date.now();
     client.view = rt.view;
     rt.player.away = false;
     rt.lastInputAt = Date.now();
@@ -824,6 +845,16 @@ export class CityRoom extends Room<{ state: CityState }> {
     rt.client?.leave(CLOSE_KICKED, why);
   }
 
+  /** Joined but never acked it: saved, signed off and sent away, freeing what Colyseus held for them. Its game joins again once it runs. */
+  private dropUnacked(rt: PlayerRuntime): void {
+    const held = unsent(rt.client);
+    console.warn(`city: session ${short(rt.sessionRow)} (character ${short(rt.characterId)}) never acked its join: sending it off (${held} message(s) held)`);
+    rt.endDetail ??= `never acked its join (${held} message(s) held)`;
+    const client = rt.client;
+    void this.finish(rt, 'kicked');
+    client?.leave(CLOSE_JOIN_UNACKED, 'never acked its join');
+  }
+
   /** The runtime of a client allowed to send right now, or null (and maybe a kick). */
   private admit(client: Client): PlayerRuntime | null {
     const rt = this.runtime.get(client.sessionId);
@@ -843,6 +874,10 @@ export class CityRoom extends Room<{ state: CityState }> {
     const now = Date.now();
     for (const rt of this.runtime.values()) {
       if (rt.finished || !rt.client) continue;
+      if (rt.client.state === ClientState.JOINING && now - rt.connectedAt > joinAck.ms) {
+        this.dropUnacked(rt);
+        continue;
+      }
       // Gone quiet (a background tab, a sleeping laptop): show them standing.
       if (now - rt.lastInputAt > IDLE_AFTER_MS && rt.player.anim !== ANIM_IDLE && rt.player.anim !== ANIM_DRIVE) {
         rt.player.anim = ANIM_IDLE;
@@ -1090,8 +1125,16 @@ export class CityRoom extends Room<{ state: CityState }> {
     this.tickMax = Math.max(this.tickMax, ms);
     if (this.ticks < 60_000 / TICK_MS) return;
     if (this.runtime.size) {
+      let held = 0;
+      let unacked = 0;
+      for (const rt of this.runtime.values()) {
+        const n = unsent(rt.client);
+        held += n;
+        if (rt.client?.state === ClientState.JOINING) unacked++;
+      }
       console.log(
-        `city ${this.roomId}: ${this.runtime.size} player(s), tick avg ${(this.tickTotal / this.ticks).toFixed(2)} ms, max ${this.tickMax.toFixed(2)} ms`,
+        `city ${this.roomId}: ${this.runtime.size} player(s), tick avg ${(this.tickTotal / this.ticks).toFixed(2)} ms, max ${this.tickMax.toFixed(2)} ms` +
+          (unacked ? `, ${unacked} not acked (${held} message(s) held)` : ''),
       );
     }
     this.ticks = 0;
