@@ -48,6 +48,8 @@ namespace Porchlight.Gen
             public int depth;
             /// <summary>The era it was planned in (TownPlan.EraAt its middle).</summary>
             public Era era;
+            /// <summary>Its own random stream, named by its tiles (Rng.Local): the same land is split the same however it was reached.</summary>
+            public Rng rng;
         }
 
         /// <summary>One end of a street across a region: where it meets a road, or a dead end.</summary>
@@ -82,7 +84,8 @@ namespace Porchlight.Gen
 
             readonly int w, h;
             readonly GenParams p;
-            readonly Rng rng;
+            /// <summary>The stream of the region being split (Region.rng).</summary>
+            Rng rng;
             readonly GraphBuilder g;
             readonly byte[] roadOk;
             /// <summary>The region each tile of land is in; -1 off the land (road, water, rock, out of town), -3 land past a dead end on its line.</summary>
@@ -98,6 +101,10 @@ namespace Porchlight.Gen
             readonly List<Region> queue = new List<Region>();
             readonly TownModel model;
             int nextId;
+            /// <summary>The name of the regions' random streams: "streets", or an editor's regenerated area's (Regions.Stream).</summary>
+            public string stream = "streets";
+            /// <summary>An editor's regenerated area: the blocks turned either way as often as not, and the streets off their places more.</summary>
+            public bool variety;
 
             /// <summary>Streets laid by splits this deep or shallower (0: the first across a piece of land between the main roads) are collectors.</summary>
             public const int COLLECTOR_DEPTH = 2;
@@ -147,7 +154,7 @@ namespace Porchlight.Gen
                     var tiles = Flood(i, -2);
                     var (x0, y0, x1, y1) = Box(tiles);
                     int orient = x1 - x0 >= y1 - y0 ? 0 : 1;
-                    if (rng.Chance(0.2 * p.irregularity)) orient = 1 - orient;
+                    if (queue[queue.Count - 1].rng.Chance(variety ? 0.5 : 0.2 * p.irregularity)) orient = 1 - orient;
                     queue[queue.Count - 1].orient = orient;
                 }
                 yield return "/regions";
@@ -178,7 +185,7 @@ namespace Porchlight.Gen
                         tiles.Add(j);
                     }
                 }
-                queue.Add(new Region { id = id, tiles = tiles });
+                queue.Add(new Region { id = id, tiles = tiles, rng = Rng.Local(model.seed, stream, Signature.OfTiles(tiles)) });
                 return tiles;
             }
 
@@ -198,6 +205,7 @@ namespace Porchlight.Gen
 
             void Split(Region r)
             {
+                rng = r.rng;
                 if (r.tiles.Count < 2 * floor * floor) return;
                 var (x0, y0, x1, y1) = Box(r.tiles);
                 double sx = 0, sy = 0;
@@ -249,7 +257,7 @@ namespace Porchlight.Gen
                 if (n % 2 == 1 && rng.Chance(0.5)) k++;
                 double ideal = lo - 1 - hwT + k * module;
                 // The core's grid is regular: its streets keep to their places.
-                double target = ideal + (r.era == Era.Core ? 0 : p.irregularity) * module * 0.3 * rng.Range(-1, 1);
+                double target = ideal + (r.era == Era.Core ? 0 : variety ? Math.Max(0.6, p.irregularity) : p.irregularity) * module * 0.3 * rng.Range(-1, 1);
                 int window = Math.Max(1, (int)Math.Floor(module * 0.35 + 0.5));
                 int cMin = Math.Max((int)Math.Floor(ideal) - window, lo + hwT + floor);
                 int cMax = Math.Min((int)Math.Ceiling(ideal) + window, hi - hwT - floor);

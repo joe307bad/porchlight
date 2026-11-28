@@ -770,6 +770,10 @@ today's wire with almost no change. 3 waits until it's needed.
   units, the player refuels at shops, and the score ticks down as they go
   (`buildings.rs`). That's a model for a sleigh mission (`Explore/Sleigh.cs`)
   scored by real households from zoning.
+- **`apps/map_editor`** (the raw map editor: drag intersections and road
+  points, then rebuild the map) and **lane-level edits** are the model for
+  the street editor and the turn lanes and roundabouts planned in
+  [street-editor.md](street-editor.md).
 - **The SEIR model** (`sim/src/pandemic`) spreads a state between people
   sharing a building or a bus. A playful version could spread news or
   gossip through townsfolk once they have homes and jobs. That's an idea,

@@ -55,8 +55,10 @@ namespace Porchlight.Gen
             var next = model.With();
             var g = Parcels.Ground(model);
             next.industry = Wedge(model, g.water);
+            // Each neighbourhood's park, and any an editor wanted (PlanStage.Wanted).
             next.parkBlocks = new List<int>();
             foreach (var hood in model.neighbourhoods) if (hood.parkBlockId >= 0) next.parkBlocks.Add(hood.parkBlockId);
+            foreach (int b in model.parkBlocks) if (!next.parkBlocks.Contains(b)) next.parkBlocks.Add(b);
             next.landValue = Value(model, g, next.industry, next.ParkBlockSet());
             next.carParks = CarParks(model, g, next.ParkBlockSet());
             return next;
@@ -141,7 +143,7 @@ namespace Porchlight.Gen
         public static float[] Value(TownModel m, Ground g, IndustryWedge wedge, HashSet<int> parks)
         {
             int w = m.width, h = m.height, n = w * h;
-            var C = m.center;
+            var C = m.downtown;
             double R = Math.Max(1, m.townRadius);
             var arterial = new byte[n];
             var collector = new byte[n];
@@ -205,6 +207,20 @@ namespace Porchlight.Gen
         /// industrial wedge, never the plaza's or the church's. Called by the buildings stage once its buildings stand,
         /// so the residents are counted from them (`households`, a building's), less those on the blocks kept green.
         /// </summary>
+        /// <summary>How near (tiles) a block's middle must be to a park kept in the skeleton (Skeleton.parks) to be that park.</summary>
+        const double PINNED_PARK_REACH = 2;
+
+        /// <summary>The middles of the blocks this town kept green for its park land (MoreParks), to keep them so (Skeleton.parks).</summary>
+        public static List<Vec2> MoreParkMiddles(TownModel m)
+        {
+            var hoods = new HashSet<int>();
+            foreach (var hood in m.neighbourhoods) if (hood.parkBlockId >= 0) hoods.Add(hood.parkBlockId);
+            var o = new List<Vec2>();
+            foreach (int k in m.parkBlocks)
+                if (!hoods.Contains(k) && k < m.blocks.Count) o.Add(PlanStage.Middle(Parcels.TilesIn(m.blocks[k].polygon, m.blocks[k].holes, m.width, m.height), m.width, m.blocks[k]));
+            return o;
+        }
+
         public static List<int> MoreParks(TownModel m, List<Building> list, Func<Building, int> households, HashSet<int> keep)
         {
             int w = m.width, h = m.height;
@@ -219,6 +235,19 @@ namespace Porchlight.Gen
                 var t = Parcels.TilesIn(m.blocks[k].polygon, m.blocks[k].holes, w, h);
                 tiles[k] = t.Count;
                 mids.Add(PlanStage.Middle(t, w, m.blocks[k]));
+            }
+            // A town an editor has regenerated areas of: the blocks it kept green before, where they still are (outside
+            // the areas, which have the parks the editor wanted), and no others.
+            var pinned = m.@params?.skeleton?.parks;
+            if (pinned != null)
+            {
+                for (int k = 0; k < m.blocks.Count; k++)
+                {
+                    if (set.Contains(k) || keep.Contains(k) || Regions.At(m, mids[k]) >= 0) continue;
+                    foreach (var q in pinned)
+                        if (Geo.Dist(q, mids[k]) <= PINNED_PARK_REACH) { more.Add(k); break; }
+                }
+                return more;
             }
             var homesIn = new double[m.blocks.Count];
             double residents = 0;
@@ -309,7 +338,7 @@ namespace Porchlight.Gen
             // Nearest the middle first, each far enough from the last.
             candidates.Sort((a, b) =>
             {
-                int c = Geo.Dist(a.mid, m.center).CompareTo(Geo.Dist(b.mid, m.center));
+                int c = Geo.Dist(a.mid, m.downtown).CompareTo(Geo.Dist(b.mid, m.downtown));
                 return c != 0 ? c : a.lot.id.CompareTo(b.lot.id);
             });
             foreach (var c in candidates)

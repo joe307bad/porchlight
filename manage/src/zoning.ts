@@ -16,6 +16,38 @@ export const ZONES = [
   { label: 'Civic', color: '#4a9ee0', business: false, homes: false },
 ] as const;
 
+/** The parks, drawn under the buildings: a green fill, a lighter edge, and a tree (and the word, close in) in each. */
+export const PARK = { label: 'Park', color: '#3f9a4a', edge: '#7fd28a', crown: '#5cc068', trunk: '#8a6a43' } as const;
+
+export type Park = NonNullable<Town['parks']>[number];
+
+/** A park's area (tiles): its outline's rings by the shoelace, holes taken off (they run the other way round). */
+export function parkArea(p: Pick<Park, 'rings'>): number {
+  let sum = 0;
+  for (const r of p.rings) {
+    for (let i = 0; i + 1 < r.length; i += 2) {
+      const j = (i + 2) % r.length;
+      sum += r[i] * r[j + 1] - r[j] * r[i + 1];
+    }
+  }
+  return Math.abs(sum) / 2;
+}
+
+/** The park of this town at (x, y), the town's frame (inside an odd number of its rings); or null. */
+export function parkAt(t: Pick<Town, 'parks'>, x: number, y: number): Park | null {
+  for (const p of t.parks ?? []) {
+    let inside = false;
+    for (const r of p.rings) {
+      for (let i = 0, j = r.length - 2; i + 1 < r.length; j = i, i += 2) {
+        const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
+        if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+      }
+    }
+    if (inside) return p;
+  }
+  return null;
+}
+
 /** A balanced town (Zoning.JOBS_PER_HOME): a job for every working resident, about 1.2 a household. */
 export const JOBS_PER_HOME = 1.2;
 /** The band planners count as balanced, jobs a household (US EPA EnviroAtlas). */

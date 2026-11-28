@@ -13,6 +13,8 @@ import { SpotMenu, type SpotClick } from './SpotMenu.tsx';
 import { backToApp, backToGame, embedded } from './embed.ts';
 import { DEFAULT_LAYERS, MapRenderer, type Hover, type Layers } from './render.ts';
 import { World } from './world.ts';
+import { EditScreen } from './edit/EditScreen.tsx';
+import { isMock, openEditor } from './edit/api.ts';
 
 type Phase = { state: 'loading' } | { state: 'signedOut' } | { state: 'error'; why: string } | { state: 'ready'; who: Me; map: CountyMap };
 
@@ -50,7 +52,35 @@ function savedHidden(): Set<string> {
   }
 }
 
+/** The town whose streets are being edited (`#edit=<key>`), or null for the county map. */
+function editRoute(): string | null {
+  const m = /^#edit=(.+)$/.exec(location.hash);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 export function App() {
+  const [route, setRoute] = useState<string | null>(editRoute);
+  useEffect(() => {
+    const on = () => setRoute(editRoute());
+    window.addEventListener('hashchange', on);
+    return () => window.removeEventListener('hashchange', on);
+  }, []);
+  // `?mock=1`: the street editor on a made-up town, with no server at all.
+  if (isMock())
+    return route ? (
+      <EditScreen townKey={route} onBack={() => openEditor(null)} />
+    ) : (
+      <Card title="Manage Porchlight (mock)">
+        <p>No server here: the street editor on a made-up town.</p>
+        <button className="btn btn-primary" onClick={() => openEditor('seed=mockton&width=160&height=160')}>
+          Edit Mockton's streets
+        </button>
+      </Card>
+    );
+  return <Signed route={route} />;
+}
+
+function Signed({ route }: { route: string | null }) {
   const [phase, setPhase] = useState<Phase>({ state: 'loading' });
 
   const load = useCallback(async () => {
@@ -80,6 +110,7 @@ export function App() {
         </button>
       </Card>
     );
+  if (route) return <EditScreen townKey={route} onBack={() => openEditor(null)} />;
   return <Live who={phase.who} map={phase.map} onSignedOut={signedOut} />;
 }
 

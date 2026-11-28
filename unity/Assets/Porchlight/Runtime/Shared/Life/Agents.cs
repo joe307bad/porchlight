@@ -49,6 +49,12 @@ namespace Porchlight.Life
         public double stopAt = double.NaN;
         /// <summary>The segment its back is still in (it's that one's laggy head), or -1.</summary>
         public int laggy = -1;
+        /// <summary>
+        /// The segments before that, its back still in them too, the nearest first (or null): it went on from a
+        /// segment shorter than itself and the gap behind it (a tight turn, a short ring lane) before its back was out
+        /// of the one before.
+        /// </summary>
+        public List<int> laggyBefore;
         /// <summary>The way it's going (segments), and which of them it's on.</summary>
         public List<int> route;
         public int step;
@@ -114,6 +120,11 @@ namespace Porchlight.Life
         public readonly List<int> cars = new List<int>();
         /// <summary>A car gone on whose back is still in this one.</summary>
         public int laggy = -1;
+        /// <summary>
+        /// How far that car's front is past this segment's end beyond the start of the segment it's on: 0 when it's on
+        /// the very next one, the length of the one between when it's gone on past a short one (its laggyBefore).
+        /// </summary>
+        public double lagVia;
         public double length;
         /// <summary>Lanes: the cars on it or let into it (each's length and the gap behind).</summary>
         public double committed;

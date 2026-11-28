@@ -26,6 +26,8 @@ namespace Porchlight.Gen
         public const double DRAWN_INSET = 0.04;
         const double SMOOTHING_SLACK = 0.1;
         const double MIN_YARD = 0.5;
+        /// <summary>The narrowest a building is, each way (tiles): nothing thinner is built (LotsStage.MIN_WIDTH keeps lots as wide).</summary>
+        public const int MIN_SIDE = 2;
         const double CHURCH_REACH = 0.45;
         /// <summary>Lots built on between one share of the work and the next (Steps).</summary>
         const int LOTS_A_STEP = 8;
@@ -47,6 +49,7 @@ namespace Porchlight.Gen
             int w = model.width, h = model.height;
             var p = model.@params;
             var C = model.center;
+            var D = model.downtown;
             double R = model.townRadius;
             var g = Parcels.Ground(model);
             var plaza = new HashSet<int>();
@@ -56,7 +59,7 @@ namespace Porchlight.Gen
             double churchArea = 0;
             foreach (var lot in model.lots)
             {
-                if (plaza.Contains(lot.id) || Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) > R * CHURCH_REACH) continue;
+                if (plaza.Contains(lot.id) || Geo.Dist(Geo.PolygonCentroid(lot.polygon), D) > R * CHURCH_REACH) continue;
                 double a = Math.Abs(Geo.PolygonArea(lot.polygon));
                 if (a > churchArea)
                 {
@@ -70,17 +73,17 @@ namespace Porchlight.Gen
             bool Arterial(int e) => e >= 0 && e < model.roads.edges.Count && model.roads.edges[e].cls == RoadClass.Arterial;
             var list = new List<Building>();
             var landmarks = new List<Landmark>(model.landmarks);
-            int seen = 0;
-            foreach (var lot in model.lots)
+            // Each lot's building (or none), a pure function of the lot: shared out over threads where there are some.
+            Building Place(Lot lot)
             {
-                if (++seen % LOTS_A_STEP == 0) yield return "/lots";
-                if (plaza.Contains(lot.id) || parks.Contains(lot.blockId) || carParks.Contains(lot.id)) continue;
+                if (plaza.Contains(lot.id) || parks.Contains(lot.blockId) || carParks.Contains(lot.id)) return null;
                 bool isChurch = lot.id == church;
-                double d = Math.Min(1, Geo.Dist(Geo.PolygonCentroid(lot.polygon), C) / R);
+                var lotRng = Rng.Local(model.seed, Regions.Stream(model, "buildings", Geo.PolygonCentroid(lot.polygon)), Signature.OfPolygon(lot.polygon));
+                double d = Math.Min(1, Geo.Dist(Geo.PolygonCentroid(lot.polygon), D) / R);
                 var rule = TownPlan.Rules(model.blocks[lot.blockId].transect);
-                if (!isChurch && !rng.Chance(p.buildingDensity * (0.7 + 0.3 * (1 - d)))) continue;
+                if (!isChurch && !lotRng.Chance(p.buildingDensity * (0.7 + 0.3 * (1 - d)))) return null;
                 // Some of the centre's lots are left open: courtyards among the towers.
-                if (!isChurch && p.courtyards > 0 && rule.courtyards && rng.Chance(p.courtyards)) continue;
+                if (!isChurch && p.courtyards > 0 && rule.courtyards && lotRng.Chance(p.courtyards)) return null;
                 var tiles = Parcels.TilesIn(lot.polygon, null, w, h);
                 var counts = Parcels.FrontageCounts(tiles, g, w, h);
                 int max = Math.Max(Math.Max(counts[0], counts[1]), Math.Max(counts[2], counts[3]));
@@ -98,17 +101,18 @@ namespace Porchlight.Gen
                     rect = BestRect(tiles, lotTiles, gaps, facingIndex, maxSide, yard, g, w, h);
                     if (rect != null || yard <= MIN_YARD) break;
                 }
-                if (rect == null) continue;
-                SetBack(rect, facingIndex, lotTiles, ReachFor(yard), g, w, h, rng);
+                if (rect == null) return null;
+                SetBack(rect, facingIndex, lotTiles, ReachFor(yard), g, w, h, lotRng);
 
                 var lotMid = Geo.PolygonCentroid(lot.polygon);
                 bool highStreet = false;
                 if (model.blocks[lot.blockId].transect >= Transect.T4 && d < p.downtown + HIGH_STREET_REACH)
                     foreach (var kv in Parcels.AdjacentRoadEdges(tiles, g, w, h)) if (Arterial(kv.Key)) highStreet = true;
                 bool industrial = model.industry != null && model.industry.Contains(C, R, lotMid);
-                var kind = isChurch ? BuildingKind.Church : PickKind(d, p, rule, LandStage.At(model, lotMid), highStreet, industrial, model.industry != null, rng);
+                var kind = isChurch ? BuildingKind.Church : PickKind(d, p, rule, LandStage.At(model, lotMid), highStreet, industrial, model.industry != null, lotRng);
+                if (!isChurch) kind = Wanted(model, lot, kind);
                 // With courtyards about, a lot with no room for a proper tower is one more.
-                if (kind == BuildingKind.Shop && p.courtyards > 0 && rule.courtyards && (rect.x1 - rect.x0 + 1) * (rect.y1 - rect.y0 + 1) < 4) continue;
+                if (kind == BuildingKind.Shop && p.courtyards > 0 && rule.courtyards && (rect.x1 - rect.x0 + 1) * (rect.y1 - rect.y0 + 1) < 4) return null;
                 var footprint = new List<Vec2>
                 {
                     new Vec2(rect.x0 + INSET, rect.y0 + INSET),
@@ -122,17 +126,39 @@ namespace Porchlight.Gen
                         covered.Add(new TilePos(x, y));
                 var building = new Building
                 {
-                    id = list.Count,
                     lotId = lot.id,
                     footprint = footprint,
                     tiles = covered,
                     kind = kind,
-                    floors = FloorsFor(kind, rule, rng),
+                    floors = FloorsFor(kind, rule, lotRng),
                     facing = Parcels.FACINGS[facingIndex],
                 };
-                list.Add(building);
-                if (isChurch) landmarks.Add(new Landmark { id = landmarks.Count, kind = LandmarkKind.Church, at = Geo.PolygonCentroid(footprint), lotIds = new List<int> { lot.id } });
+                return building;
             }
+            Regions.Count(model);
+            if (model.lots.Count > 0) Regions.At(model, Geo.PolygonCentroid(model.lots[0].polygon));
+            var placed = new Building[model.lots.Count];
+            if (Work.ForEach != null)
+            {
+                Work.ForEach(placed.Length, i => placed[i] = Place(model.lots[i]));
+                yield return "/lots";
+            }
+            else
+            {
+                for (int i = 0; i < placed.Length; i++)
+                {
+                    if ((i + 1) % LOTS_A_STEP == 0) yield return "/lots";
+                    placed[i] = Place(model.lots[i]);
+                }
+            }
+            foreach (var building in placed)
+            {
+                if (building == null) continue;
+                building.id = list.Count;
+                list.Add(building);
+                if (building.kind == BuildingKind.Church) landmarks.Add(new Landmark { id = landmarks.Count, kind = LandmarkKind.Church, at = Geo.PolygonCentroid(building.footprint), lotIds = new List<int> { building.lotId } });
+            }
+
 
             // Park land for the people now housed (LandStage.MoreParks): the blocks kept green lose their buildings.
             yield return "/parks";
@@ -231,7 +257,41 @@ namespace Porchlight.Gen
                 hood.schoolBuildingId = list[school].id;
             }
 
+            // A school wherever an editor wanted one (Skeleton.regions) and the area hasn't one: its building nearest
+            // its middle with room enough.
+            for (int r = 0; r < Regions.Count(model); r++)
+            {
+                if (!Regions.Get(model, r).want.school) continue;
+                var middle = Regions.Middle(model, r);
+                int school = -1;
+                bool has = false;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (Regions.At(model, mid[i]) != r) continue;
+                    if (list[i].kind == BuildingKind.School) has = true;
+                    else if (!Civic(list[i]) && list[i].tiles.Count >= SCHOOL_MIN_TILES && (school < 0 || Geo.Dist(mid[i], middle) < Geo.Dist(mid[school], middle))) school = i;
+                }
+                if (has || school < 0) continue;
+                list[school].kind = BuildingKind.School;
+                list[school].floors = 2;
+            }
+
             return hoods;
+        }
+
+        /// <summary>
+        /// A building's kind as an editor wanted its area (Skeleton.regions, and PlanStage.Wanted for its block's zone):
+        /// a shop on a block given to shops, a house on one given to houses.
+        /// </summary>
+        static BuildingKind Wanted(TownModel model, Lot lot, BuildingKind kind)
+        {
+            int r = Regions.At(model, Geo.PolygonCentroid(model.blocks[lot.blockId].polygon));
+            if (r < 0) return kind;
+            var want = Regions.Get(model, r).want;
+            if (!want.shops && !want.houses) return kind;
+            bool shops = want.shops && (!want.houses || model.blocks[lot.blockId].transect >= Transect.T5);
+            if (shops) return kind == BuildingKind.House || kind == BuildingKind.Workshop ? BuildingKind.Shop : kind;
+            return kind == BuildingKind.Shop || kind == BuildingKind.Workshop ? BuildingKind.House : kind;
         }
 
         public List<string> Check(TownModel model)
@@ -280,9 +340,25 @@ namespace Porchlight.Gen
             var p = model.@params;
             var owner = new int[w * h];
             for (int i = 0; i < owner.Length; i++) owner[i] = -1;
+            // Each road's reach and box, and the cul-de-sacs, worked out once: a building only looks at the roads near it.
+            var reachOf = new double[model.roads.edges.Count];
+            var boxOf = new (double x0, double y0, double x1, double y1)[model.roads.edges.Count];
+            for (int k = 0; k < model.roads.edges.Count; k++)
+            {
+                var e = model.roads.edges[k];
+                reachOf[k] = Raster.RoadReach(e.kind, p);
+                var bb = Geo.PolygonBounds(e.points);
+                boxOf[k] = (bb.x0 - reachOf[k], bb.y0 - reachOf[k], bb.x1 + reachOf[k], bb.y1 + reachOf[k]);
+            }
+            var bulbs = Raster.Bulbs(model.roads.edges);
             foreach (var b in model.buildings)
             {
                 if (b.tiles.Count == 0) return new List<string> { $"building {b.id} has no tiles" };
+                {
+                    int sx0 = int.MaxValue, sy0 = int.MaxValue, sx1 = int.MinValue, sy1 = int.MinValue;
+                    foreach (var t in b.tiles) { sx0 = Math.Min(sx0, t.x); sy0 = Math.Min(sy0, t.y); sx1 = Math.Max(sx1, t.x); sy1 = Math.Max(sy1, t.y); }
+                    if (sx1 - sx0 + 1 < MIN_SIDE || sy1 - sy0 + 1 < MIN_SIDE) return new List<string> { $"building {b.id} is only {sx1 - sx0 + 1}x{sy1 - sy0 + 1} tiles (under {MIN_SIDE} a side)" };
+                }
                 foreach (var t in b.tiles)
                 {
                     int i = Grid.Index(t.x, t.y, w);
@@ -306,12 +382,14 @@ namespace Porchlight.Gen
                     new Vec2(bx0 + DRAWN_INSET, by0 + DRAWN_INSET), new Vec2(bx1 - DRAWN_INSET, by0 + DRAWN_INSET), new Vec2(bx1 - DRAWN_INSET, by1 - DRAWN_INSET),
                     new Vec2(bx0 + DRAWN_INSET, by1 - DRAWN_INSET), new Vec2(bx0 + DRAWN_INSET, by0 + DRAWN_INSET),
                 };
-                foreach (var e in model.roads.edges)
+                for (int k = 0; k < model.roads.edges.Count; k++)
                 {
-                    double clearance = Raster.RoadReach(e.kind, p);
-                    if (Geo.PolylineDistance(ring, e.points) < clearance - 1e-6) return new List<string> { $"building {b.id} stands on road {e.id}'s sidewalk" };
+                    var box = boxOf[k];
+                    if (bx1 < box.x0 || bx0 > box.x1 || by1 < box.y0 || by0 > box.y1) continue;
+                    var e = model.roads.edges[k];
+                    if (Geo.PolylineDistance(ring, e.points) < reachOf[k] - 1e-6) return new List<string> { $"building {b.id} stands on road {e.id}'s sidewalk" };
                 }
-                foreach (var bulb in Raster.Bulbs(model.roads.edges))
+                foreach (var bulb in bulbs)
                     if (Geo.DistToPolyline(bulb.at, ring) < Raster.BulbReach(p) - 1e-6) return new List<string> { $"building {b.id} stands on the sidewalk round road {bulb.edge}'s cul-de-sac" };
                 int d = (int)b.facing;
                 var (dx, dy) = Grid.DIRS4[d];
@@ -345,7 +423,11 @@ namespace Porchlight.Gen
         /// the outside of the nearest drawn sidewalk (or footpath), in tiles: below
         /// zero, a building there would stand on it.
         /// </summary>
-        static Dictionary<int, double> KerbGaps(TownModel model, List<int> tiles)
+        /// <summary>The least yard (tiles clear of the sidewalk) a building on a lot of this zone can come down to (Place's loop).</summary>
+        internal static double YardFloor(GenParams p, TransectRule rule) => rule.setback ? Math.Min(p.frontSetback, MIN_YARD) : 0;
+
+        /// <summary>Each tile's clearance (tiles) from the sidewalks: a building may stand on it with a yard no deeper.</summary>
+        internal static Dictionary<int, double> KerbGaps(TownModel model, List<int> tiles)
         {
             int w = model.width;
             var p = model.@params;
@@ -446,7 +528,8 @@ namespace Porchlight.Gen
                         {
                             if (!Filled(ax, ay, bx, by)) break;
                             int area = (bx - ax + 1) * (by - ay + 1);
-                            if (area < 2) continue;
+                            // No sliver of a building: MIN_SIDE tiles each way at least (a lot with no room for one stays grass).
+                            if (bx - ax + 1 < MIN_SIDE || by - ay + 1 < MIN_SIDE) continue;
                             if (area > bestArea && HasFront(ax, ay, bx, by))
                             {
                                 bestArea = area;

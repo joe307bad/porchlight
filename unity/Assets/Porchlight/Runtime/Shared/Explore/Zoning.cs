@@ -89,7 +89,7 @@ namespace Porchlight.Explore
 
         public static TownZoning Plan(TownModel model, IsoLayout layout)
         {
-            var C = model.center;
+            var C = model.downtown;
             double R = Math.Max(1, model.townRadius);
             var byId = new Dictionary<int, Building>();
             foreach (var b in model.buildings) byId[b.id] = b;

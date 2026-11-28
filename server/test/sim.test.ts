@@ -203,9 +203,12 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     const indoors = life.inside.reduce((n, [, k]) => n + k, 0);
     const people = life.summary.people as number;
     assert.ok(people > 100, `a town of people (${people})`);
-    // Everyone's somewhere: indoors, off the map, or out.
+    // Everyone's somewhere: indoors, at the market (a Saturday morning: not a building), off the map, or out.
+    // (Run after 10:30 the shifted clock is tomorrow's 10:30: on a Friday, the Saturday market. Checks life's "Manage's town
+    // view: everyone's in a building, at the market, ..." holds this through a weekday and a market day, whatever the clock.)
     const off = life.offMap.reduce((n, k) => n + k, 0);
-    assert.equal(indoors + off + (life.summary.out as number), people, 'everyone indoors, off the map or out');
+    const atMarket = life.market?.people ?? 0;
+    assert.equal(indoors + atMarket + off + (life.summary.out as number), people, 'everyone indoors, at the market, off the map or out');
     for (const [b] of life.inside) assert.ok(b >= 0 && b < town.zoning!.buildings.length, `building ${b} is one of the town's`);
     // Manage's town table: a row a kind of person, each counted once, by where they are now.
     const table = life.summary.population as [string, ...number[]][];
@@ -219,8 +222,9 @@ test('the town has a life: a clock, people indoors, a day\'s figures, and the wo
     assert.equal(kinds.cars.length, now.cars.byteLength / RECORD, 'a letter a car record');
     assert.ok(kinds.people.length >= now.people.byteLength / RECORD - 2, 'a letter a person record');
     assert.match(kinds.cars, /^[-rctvbgesp]*$/);
-    assert.match(kinds.people, /^[-wshcx]*$/);
-    assert.ok(/[wshc]/.test(kinds.people) || /x/.test(kinds.people), 'some townsfolk of a kind');
+    // (m: browsing at the market, on a Saturday morning: run after 10:30, the shifted clock is tomorrow's 10:30.)
+    assert.match(kinds.people, /^[-wshcxm]*$/);
+    assert.ok(/[wshcm]/.test(kinds.people) || /x/.test(kinds.people), 'some townsfolk of a kind');
     // Who's in the fullest building, and when each next goes out.
     const [fullest, n] = [...life.inside].sort((a, b) => b[1] - a[1])[0];
     const answer = (await pool.ask(key, 'building', fullest)) as { inside: { id: number; kind: string }[] } | null;
@@ -336,7 +340,8 @@ test('Manage focuses on a car or townsperson: found where it\'s drawn, followed 
       // By name, the one their focus has, and what they're doing on its own for the game's tag ("Going to work").
       assert.equal(brief!.name, (f as { name?: string }).name, 'the same name as their focus');
       assert.match(brief!.name, /^\S+( \S+)+$/);
-      assert.match(brief!.doing, /^(Going (home|to work|to school|to the shops)|Out for lunch|Visiting|Leaving town|Passing through)$/);
+      // (Every purpose Focus.PurposeText says: the market and the school run too, whatever day the shifted clock lands on.)
+      assert.match(brief!.doing, /^(Going (home|to work|to school|to the shops|to the market)|Out for lunch|Visiting|Leaving town|Taking the children to school|Fetching the children from school|Passing through)$/);
       assert.equal(brief!.line.startsWith(`${brief!.name} · ${brief!.doing}, by `), true, brief!.line);
       assert.match(brief!.line, / · trip \d+ of \d+ today$/);
       break;

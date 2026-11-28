@@ -106,6 +106,12 @@ from someone else does too (`Traffic.Restart`).
 are measured along the road's centre line, offset to their side by a
 quarter of the road's width.
 
+The junction design ([street-editor.md](street-editor.md) §5, §12)
+changes this where the traffic needs it. A road with two lanes each way
+has an inner lane beside each kerb lane. A turn pocket is a lane of its
+own past a fan. A roundabout is run as `Control.Yield`. A design's
+control (or an editor's) replaces the rank rule below.
+
 - **The lane's direction is taken over 0.6 tiles either side** (`TANGENT`),
   not at a point. This way a lane rounds a tight corner of the road's line
   instead of looping back on itself on the inside of it.
@@ -307,13 +313,23 @@ junction's offset, so its amber comes early with it.
 
 The models come from `unity/Tools~/streets/signals.py`. It's a Blender
 script, run with `blender --background --python unity/Tools~/streets/signals.py`,
-and writes `Models/props/traffic-signal.glb` and `stop-sign.glb`:
+and writes `Models/props/traffic-signal.glb`, `stop-sign.glb` and
+`street-light.glb`. Its shapes are in `shapes.py` beside it, which the park's
+script uses too.
 
 - **traffic-signal:** a mast-arm signal, as American towns hang them. It has
-  a 5.6 m pole on the kerb and a 4.2 m arm with a brace. One three-lamp head
-  hangs over the lane, with a second on the pole for drivers stopped close
-  to it. Its lenses are dark.
-- **stop-sign:** a red octagon with a white border and STOP, on a 2 m post.
+  a 5.6 m pole on the kerb, on a cast base, and a 4.2 m arm with a brace.
+  One three-lamp head hangs over the lane in a backplate with a yellow
+  border, with a second on the pole for drivers stopped close to it. Each
+  lamp has a visor. Its lenses are dark. A pedestrian head and a push button
+  on the pole are dark too, and never change.
+- **stop-sign:** a red octagon with a white border and STOP, bolted on a
+  square post at 2 m, with stiffeners across its back.
+- **street-light:** a 4.75 m lamp with a curved arm reaching 1.5 m over the
+  street, and a lantern hung from its end. `WorldParts.AddLamps` stands one
+  at each lamp, at the same 0.2 tiles a metre. Its glass is the game's own
+  bulb, a glowing sphere in the lantern's cage, so it lights up at night as
+  the bulbs always have.
 
 `Rendering/Signage.cs` stands them in a town (`ExploreView.Populate`):
 

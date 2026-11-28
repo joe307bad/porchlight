@@ -71,5 +71,12 @@ namespace Porchlight.Core
 
         /// <summary>Independent stream for one pipeline stage, so one stage's appetite never reshuffles the others.</summary>
         public static Rng Stage(string seed, string stage) => new Rng(seed + "::" + stage);
+
+        /// <summary>
+        /// A stream of its own for one piece of the town (a street region, a block, a lot), named by its shape
+        /// (Signature), not by the order it was reached in: change one corner of the town and every piece elsewhere
+        /// draws the same numbers, so comes out the same (docs/street-editor.md §4.1).
+        /// </summary>
+        public static Rng Local(string seed, string stage, uint signature) => new Rng(seed + "::" + stage + "::" + signature.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 }

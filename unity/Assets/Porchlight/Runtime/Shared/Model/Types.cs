@@ -359,8 +359,11 @@ namespace Porchlight.Model
         public float[] heightmap;
         public double waterLevel;
 
+        /// <summary>The middle of the town's circle: the main roads meet here, and everything is within townRadius of it.</summary>
         public Vec2 center;
         public double townRadius;
+        /// <summary>Where the town is most built up (the core, the tall buildings, the high street's middle): the centre, unless an editor moved it (the bullseye), always well inside the circle.</summary>
+        public Vec2 downtown;
         /// <summary>A big town's second centre (multiple nuclei: by its airport or its waterfront), or null.</summary>
         public Vec2? secondCentre;
         /// <summary>The town's neighbourhoods (PlanStage); every block is in one.</summary>
@@ -408,6 +411,9 @@ namespace Porchlight.Model
         /// <summary>Piers out over the lakes, each with its boats (DocksStage).</summary>
         public List<Dock> docks = new List<Dock>();
 
+        /// <summary>The junction design (DesignStage): each road's lanes, pockets and median, each junction's form and control. Null before that stage.</summary>
+        public RoadDesign design;
+
         public TileGrid tiles;
         public Vec2 spawn;
 
@@ -446,6 +452,7 @@ namespace Porchlight.Model
                 heightmap = new float[w * h],
                 waterLevel = 0,
                 center = new Vec2(w / 2.0, h / 2.0),
+                downtown = new Vec2(w / 2.0, h / 2.0),
                 townRadius = 0,
                 tiles = TileGrid.Create(w, h),
                 spawn = new Vec2(w / 2.0, h / 2.0),

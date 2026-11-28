@@ -135,7 +135,7 @@ namespace Porchlight.Life
             else if (i >= 0 && q.laggy >= 0 && q.laggy != c.id)
             {
                 var lag = cars[q.laggy];
-                if (lag.seg >= 0) p = Math.Min(p, q.length + Front(lag) - lag.length - FOLLOWING);
+                if (lag.seg >= 0) p = Math.Min(p, q.length + q.lagVia + Front(lag) - lag.length - FOLLOWING);
             }
             if (q.blockFirst == c.id && !double.IsNaN(q.blockStop)) p = Math.Min(p, q.blockStop);
             if (q.held == c.id) p = Math.Min(p, q.heldAt);
@@ -213,10 +213,11 @@ namespace Porchlight.Life
             double beyond = Math.Min(Stoppable(m.length + RoomOn(m.to)), ahead);
             if (m.stops) return 0;
             var j = net.junctions[m.node];
-            if (j.control == Control.Signal)
+            if (j.control == Control.Signal && !m.slip)
             {
                 var (stage, ends) = RoadNet.Stage(j, c.t1 > Now ? c.t1 : Now);
                 if (stage != m.stage || ends - Now < 3000) return 0;
+                if (m.held && (c.t1 > Now ? c.t1 : Now) - (ends - j.green[stage]) < RoadNet.LEAD_MS) return 0;
             }
             // What it can see from here: a turn under way across its own, people crossing, no room beyond. It
             // slows to stop rather than arriving at speed to be told to wait.
@@ -447,9 +448,35 @@ namespace Porchlight.Life
         {
             if (c.seg < Lanes) Measured(c);
             var q = queues[c.seg];
+            // Off a segment shorter than it (and the gap behind it), its back's still over the one before that: that
+            // one stays held, or the car behind there would roll up into its back and be put back on the turn.
+            double reach = c.length + FOLLOWING - Front(c);
             q.cars.Remove(c.id);
-            if (c.laggy >= 0) ClearLaggy(c);
+            if (c.laggy >= 0 && reach > 1e-6)
+            {
+                // Those its back (and gap) still reach stay held, the nearest first; any it's clear of are let go.
+                var held = new List<int> { c.laggy };
+                double past = SegLength(c.laggy);
+                var older = c.laggyBefore;
+                c.laggyBefore = null;
+                c.laggy = -1;
+                if (older != null)
+                    foreach (int s in older)
+                    {
+                        if (reach > past + 1e-6)
+                        {
+                            held.Add(s);
+                            past += SegLength(s);
+                        }
+                        else Release(c, s);
+                    }
+                c.laggyBefore = held;
+                foreach (int s in held)
+                    if (queues[s].laggy == c.id) queues[s].lagVia += SegLength(c.seg);
+            }
+            else if (c.laggy >= 0) ClearLaggy(c);
             q.laggy = c.id;
+            q.lagVia = 0;
             c.laggy = c.seg;
             c.seg = next;
             c.step++;
@@ -503,11 +530,24 @@ namespace Porchlight.Life
             if (seg < 0) return;
             c.laggy = -1;
             Cancel(K_CLEAR, c.id);
+            var older = c.laggyBefore;
+            c.laggyBefore = null;
+            if (older != null) foreach (int s in older) Release(c, s);
+            Release(c, seg);
+        }
+
+        /// <summary>A segment a car's back was still in is let go: the car behind there on, the junction told.</summary>
+        void Release(Car c, int seg)
+        {
             var q = queues[seg];
             // Where the car behind it is, before it's let go (its interval's run on, held back by this one's back).
             int behind = q.cars.Count > 0 && q.cars[0] != c.id ? q.cars[0] : -1;
             double was = behind >= 0 ? Front(cars[behind]) : double.NaN;
-            if (q.laggy == c.id) q.laggy = -1;
+            if (q.laggy == c.id)
+            {
+                q.laggy = -1;
+                q.lagVia = 0;
+            }
             version++;
             if (seg < Lanes) Uncommit(seg, c);
             else
@@ -560,7 +600,7 @@ namespace Porchlight.Life
             going.Add((c.id, m.local));
             Commit(m.to, c);
             Counted(m);
-            stats.Delay(j.node, Now - c.arrived, car: true);
+            if (!j.fan) stats.Delay(j.node, Now - c.arrived, car: true);
             Advance(c, Lanes + mid);
         }
 
@@ -617,7 +657,7 @@ namespace Porchlight.Life
                     return Verdict.StopFirst;
                 }
             }
-            if (j.control == Control.Signal && !urgent)
+            if (j.control == Control.Signal && !urgent && !m.slip)
             {
                 var (stage, ends) = RoadNet.Stage(j, Now);
                 long through = (long)Math.Ceiling((m.length + c.length + FOLLOWING) / m.speed * 1000);
@@ -641,6 +681,15 @@ namespace Porchlight.Life
                 if (!green)
                 {
                     again = ends + 1;
+                    return Verdict.Red;
+                }
+                // A protected left: the way opposite the left pocket waits the lead out, while the lefts go.
+                long lead = ends - j.green[stage] + RoadNet.LEAD_MS;
+                if (m.held && Now < lead)
+                {
+                    explain?.Add(new Why("Is its green held for the protected left?", $"Yes: until {TownClock.FormatSeconds(lead)}", false,
+                        "A leading protected left: the turn from the pocket opposite goes first, its own traffic held."));
+                    again = lead + 1;
                     return Verdict.Red;
                 }
                 bool time = Now + through <= ends;
@@ -761,6 +810,8 @@ namespace Porchlight.Life
         /// the other way, and a right turn, straight across, or a left turn out of the minor road.
         /// </summary>
         const double GAP_MAJOR_LEFT = 4.1, GAP_MINOR_RIGHT = 6.2, GAP_MINOR_THROUGH = 6.5, GAP_MINOR_LEFT = 7.1;
+        /// <summary>Entering a single-lane roundabout (s): the HCM's critical headway, about 4.5 s at a game's pace.</summary>
+        const double GAP_ROUNDABOUT = 4.5;
         /// <summary>
         /// Impatience: the longer a driver's waited, the shorter a gap they'll take (Mahmassani &amp; Sheffi 1981,
         /// "Using gap sequences to estimate gap acceptance functions": the critical gap falls with the wait). Down by
@@ -769,7 +820,7 @@ namespace Porchlight.Life
         const double GAP_CUT = 2, IMPATIENT_S = 60, GAP_FLOOR = 3;
 
         /// <summary>Does anyone give way to anyone at `j`: stop signs on the smaller roads, and lefts at a signal across what's coming.</summary>
-        static bool GivesWayAt(Junction j) => j.control == Control.Stop || j.control == Control.Signal;
+        static bool GivesWayAt(Junction j) => j.control == Control.Stop || j.control == Control.Signal || j.control == Control.Yield;
 
         /// <summary>
         /// Does turn `a` give way to turn `b` at `j` (they cross or merge, and both may go now)? At a two-way stop, a
@@ -779,6 +830,11 @@ namespace Porchlight.Life
         bool GivesWay(Movement a, Movement b, Junction j)
         {
             if (a.id == b.id || a.from == b.from || !j.conflicts[a.local][b.local]) return false;
+            // A roundabout: entering gives way to what's already going round past its entry.
+            if (j.control == Control.Yield) return RoadNet.Passes(b, a.ringIn);
+            // A slip road merges: it gives way to what it joins (on its green), nothing gives way to it.
+            if (a.slip) return !b.slip;
+            if (b.slip) return false;
             if (j.control == Control.Stop)
             {
                 if (a.stops) return !b.stops;
@@ -793,7 +849,7 @@ namespace Porchlight.Life
         /// <summary>The gap car `c` needs to take turn `m` (s): HCM's for the turn, shorter the longer it's waited.</summary>
         double CriticalGap(Car c, Movement m, Junction j)
         {
-            double tc = !m.stops ? GAP_MAJOR_LEFT : m.turn == Turn.Right ? GAP_MINOR_RIGHT : m.turn == Turn.Straight ? GAP_MINOR_THROUGH : GAP_MINOR_LEFT;
+            double tc = j.control == Control.Yield ? GAP_ROUNDABOUT : !m.stops ? GAP_MAJOR_LEFT : m.turn == Turn.Right ? GAP_MINOR_RIGHT : m.turn == Turn.Straight ? GAP_MINOR_THROUGH : GAP_MINOR_LEFT;
             double waited = c.arrived >= 0 ? Math.Max(0, Now - c.arrived) / 1000.0 : 0;
             return Math.Max(GAP_FLOOR, tc - GAP_CUT * Math.Min(1, waited / IMPATIENT_S));
         }
@@ -1012,6 +1068,7 @@ namespace Porchlight.Life
             Commit(lane, c);
             c.seg = lane;
             c.laggy = -1;
+            c.laggyBefore = null;
             c.s0 = c.s1 = d;
             c.t0 = c.t1 = Now;
             c.va = c.vp = c.vb = 0;
@@ -1449,12 +1506,13 @@ namespace Porchlight.Life
                         // Each lane whose cars would pass within reach of them: their own side's, and the other's
                         // too when they're near the middle of the road (a car's no narrower coming the other way).
                         foreach (int dir in new[] { 1, -1 })
+                        foreach (int lane in net.LanesOf(road, dir))
                         {
-                            int lane = net.LaneOf(road, dir);
-                            if (lane < 0) continue;
                             var l = net.lanes[lane];
-                            double along = l.dir > 0 ? s : net.lengths[road] - s;
-                            if (lane != mine && Geo.Dist(net.LanePoint(road, dir, along, 0).at, p) > PASSING) continue;
+                            // Where they are along the lane itself (not where they fall on the road's line: on
+                            // the inside of a bend that can be a tile or more out, and let a car go they're beside).
+                            double along = net.AlongLane(l, p, l.dir > 0 ? s : net.lengths[road] - s);
+                            if (lane != mine && Geo.Dist(net.LanePoint(l, along).at, p) > PASSING) continue;
                             double d = along - l.start;
                             // On the lane (or just before it); in the junction box the turns below are what's blocked.
                             if (d < -1 || d > l.Span + (lane == mine ? 1 : 0)) continue;

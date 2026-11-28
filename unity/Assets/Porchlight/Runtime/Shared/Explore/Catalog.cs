@@ -275,16 +275,40 @@ namespace Porchlight.Explore
         public static readonly string[] CHRISTMAS = { "props/christmas-tree", "props/present" };
         /// <summary>The junctions' traffic signals and stop signs (Tools~/streets/signals.py), placed by Rendering/Signage.cs.</summary>
         public const string TRAFFIC_SIGNAL = "props/traffic-signal", STOP_SIGN = "props/stop-sign";
+        /// <summary>The street lamps' post, arm and lantern (Tools~/streets/signals.py), stood along the sidewalks by Rendering/WorldParts.cs.</summary>
+        public const string STREET_LIGHT = "props/street-light";
         /// <summary>
         /// The Thanksgiving feast (Tools~/thanksgiving), set on every house's dining table once the
         /// turkey mission's done (the `feast` unlock): the roast turkey on its platter first, then the bowls and the pie.
         /// </summary>
         public static readonly string[] FEAST = { "props/roast-turkey", "props/bowl-mash", "props/bowl-cranberry", "props/bowl-beans", "props/bowl-stuffing", "props/pumpkin-pie" };
 
+        /// <summary>
+        /// The parks' kit (Explore/Parks.cs; the models from Tools~/park/park.py, in metres, each centred on its
+        /// footprint), in ParkKit's order: a bench, a picnic table, the playground's slide, swings, climbing frame,
+        /// seesaw and spinner, and a bin. Each model's front (where a bench's sitters look, where a slide runs down to)
+        /// faces +z. The swings' seats ("seat-1", "seat-2"), the seesaw's beam ("beam") and the spinner's deck ("deck")
+        /// are nodes of their own, with their origins where they turn. Optional: the library builds those whose files are there, and the town draws a
+        /// stand-in (ParkStandIn) or nothing for the rest.
+        /// </summary>
+        public static readonly string[] PARK_KIT =
+        {
+            "props/park-bench", "props/picnic-table", "props/slide", "props/swings", "props/climbing-frame", "props/seesaw", "props/spinner", "props/park-bin",
+        };
+
+        /// <summary>A park piece's model.</summary>
+        public static string ParkModel(ParkKit k) => PARK_KIT[(int)k];
+
+        /// <summary>What's drawn for a park piece while its own model isn't there: the room plans' bench and bin, or nothing.</summary>
+        public static string ParkStandIn(ParkKit k) => k == ParkKit.Bench ? "furniture/bench" : k == ParkKit.Bin ? "furniture/trashcan" : null;
+
+        /// <summary>Models the library builds only if their files are there (the parks' kit, made apart from the code).</summary>
+        public static bool IsOptional(string name) => System.Array.IndexOf(PARK_KIT, name) >= 0;
+
         /// <summary>Every static model the town loads.</summary>
         public static IEnumerable<string> Statics =>
             new[] { HOUSES, SHOPS, TOWERS, INDUSTRIAL, CARS, TREES, FALL_TREES, PINES, PALMS, BUSHES, FLOWERS, CROPS, ROCKS, BOULDERS,
-                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, CHRISTMAS, new[] { TRAFFIC_SIGNAL, STOP_SIGN }, FURNISHINGS }.SelectMany(x => x).Distinct();
+                WILDS, TENTS, CAMPFIRES, GARDEN_EXTRAS, STATUES, PARASOLS, PROPS, BINS, new[] { FROZEN_TURKEY }, FEAST, CHRISTMAS, new[] { TRAFFIC_SIGNAL, STOP_SIGN, STREET_LIGHT }, PARK_KIT, FURNISHINGS }.SelectMany(x => x).Distinct();
 
         /// <summary>Which model families suit each kind of building ("office" is a style, not a blueprint kind).</summary>
         public static string[] KindModels(HouseStyle style) => style switch

@@ -229,6 +229,9 @@ namespace Porchlight.Life
         /// <summary>Events waiting in the timetable.</summary>
         public int Pending => events.Count;
 
+        /// <summary>Entries in the timetable's heap, stale ones included (the sim's STATS line, for finding what grows).</summary>
+        public int EventHeap => events.HeapSize;
+
         static long Key(long kind, int id) => (kind << 32) | (uint)id;
 
         void Schedule(long kind, int id, long at) => events.Schedule(Key(kind, id), Math.Max(at, Now));

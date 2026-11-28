@@ -2,13 +2,14 @@
 // this (server/src/sim/pool.ts) and talks to it over stdin and stdout, in frames of
 // a u32 length (little-endian, of what follows it), a u8 type and the rest:
 //
-//   in   1 TOWNS    JSON [{ id, key }]: the towns to run (any not listed stop)
+//   in   1 TOWNS    JSON [{ id, key, skeleton? }]: the towns to run (any not listed stop); an edited
+//                   town's skeleton (docs/street-editor-api.md) beside its key
 //        2 PLAYERS  u16 n, n × (u32 town, u16 count, count × (f32 x, f32 y)): where players are (tiles)
 //        3 TAKEN    JSON { id, taken: ["t3", …] }: the cars someone's in
 //        4 ASK      JSON { ask, town, kind: car|person|building|ground…, i }: about one car, person or building now
-//   out  1 READY    JSON { id, cars, people, roads, roadNames, zoning, buildings } once a town's made (roads: its
+//   out  1 READY    JSON { id, cars, people, roads, roadNames, zoning, buildings, parks } once a town's made (roads: its
 //                   streets, for Manage's map, SimTown.Roads; zoning and buildings: what each building
-//                   is for, Zoning.cs), or { id, error }
+//                   is for, Zoning.cs; parks: each one's middle and outline, Parks.cs), or { id, error }
 //        2 TICK     f64 when (unix ms), u16 n, n × (u32 town, u16 cars, u16 people,
 //                   records (7 bytes each, cars then people), u32 length, delta (Delta.cs))
 //        3 LOOKS    JSON { id, looks }: the townsfolk past those the town came with
@@ -21,6 +22,7 @@
 // (up to a couple of seconds each) and join the ticks once made. Logs go to stderr.
 //
 //   porchlight-sim                          as the server's worker
+//   porchlight-sim --draft                  the street editor's draft worker (Draft.cs): JSON lines
 //   porchlight-sim --bench <towns dir> [n]  each town there n times over, stepped for a
 //                                           minute: what a tick costs (CI's budget check)
 
@@ -66,7 +68,11 @@ namespace Porchlight.Sim
 
         static int Main(string[] args)
         {
+            // Towns are grown here with every core (Gen.Work): the same towns, sooner.
+            Porchlight.Gen.Work.ForEach = (n, body) => System.Threading.Tasks.Parallel.For(0, n, body);
             if (args.Length >= 2 && args[0] == "--follow") return Follow.Run(args[1]);
+            // --draft: the street editor's draft worker (Draft.cs), JSON lines on stdin and stdout.
+            if (args.Length >= 1 && args[0] == "--draft") return Draft.Run(Console.In, Console.Out);
             // --bench <towns dir> [copies] [budget: most ms a town's tick may average]
             if (args.Length >= 2 && args[0] == "--bench")
                 return Bench(args[1], args.Length > 2 ? int.Parse(args[2]) : 1, args.Length > 3 ? double.Parse(args[3], System.Globalization.CultureInfo.InvariantCulture) : double.PositiveInfinity);
@@ -94,7 +100,7 @@ namespace Porchlight.Sim
                     if (takenOf.TryGetValue(town.id, out var taken)) town.SetTaken(taken);
                     Send(OUT_READY, Json(new { id = town.id, cars = town.traffic.cars.Count, people = town.people.Count, roads = town.Roads(), roadNames = town.RoadNames(),
                         zoning = new { homes = town.zoning.homes, residents = town.zoning.residents, workers = town.zoning.workers, jobs = town.zoning.jobs },
-                        buildings = Porchlight.Explore.Zoning.Encode(town.zoning) }));
+                        buildings = Porchlight.Explore.Zoning.Encode(town.zoning), parks = town.parks.Select(p => new { at = p.at, rings = p.rings }) }));
                 }
                 Tick();
                 if (clock.ElapsedMilliseconds >= lifeAt)
@@ -109,7 +115,16 @@ namespace Porchlight.Sim
                 if (clock.ElapsedMilliseconds >= statsAt)
                 {
                     statsAt = clock.ElapsedMilliseconds + STATS_MS;
-                    Send(OUT_STATS, Json(new { towns = towns.Count, ticks, avgMs = Math.Round(total / Math.Max(1, ticks), 3), maxMs = Math.Round(max, 3) }));
+                    // The heap and each town's sizes, to find what grows: beta #2's ticks slowed hour by hour, then ran out of heap.
+                    var gc = GC.GetGCMemoryInfo();
+                    Send(OUT_STATS, Json(new
+                    {
+                        towns = towns.Count, ticks, avgMs = Math.Round(total / Math.Max(1, ticks), 3), maxMs = Math.Round(max, 3),
+                        heapMb = GC.GetTotalMemory(false) / 1048576, committedMb = gc.TotalCommittedBytes / 1048576,
+                        gc = new[] { GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2) },
+                        pauseMs = Math.Round(GC.GetTotalPauseDuration().TotalMilliseconds),
+                        each = towns.Values.Select(t => new { id = t.id, cars = t.traffic.cars.Count, people = t.people.Count, extra = t.Sizes() }).ToList(),
+                    }));
                     total = max = 0;
                     ticks = 0;
                 }
@@ -148,6 +163,8 @@ namespace Porchlight.Sim
             foreach (var t in list)
             {
                 keep.Add(t.id);
+                // An edited town's skeleton (docs/street-editor-api.md), before the town is grown from its key.
+                if (t.skeleton is JsonElement sk && sk.ValueKind == JsonValueKind.Object) Porchlight.Model.Skeletons.Put(t.key, sk.GetRawText());
                 if (wanted.TryGetValue(t.id, out var had) && had == t.key) continue;
                 wanted[t.id] = t.key;
                 towns.Remove(t.id);
@@ -358,6 +375,8 @@ namespace Porchlight.Sim
         {
             public int id { get; set; }
             public string key { get; set; }
+            /// <summary>The skeleton of the key's revision, for a key with `rev` above 0; else absent.</summary>
+            public JsonElement? skeleton { get; set; }
         }
 
         sealed class TakenSpec

@@ -140,6 +140,8 @@ namespace Porchlight.App
         string lastCar = "";
         int retries;
         bool stopped;
+        /// <summary>A join's in flight (matchmaking or connecting): Enter for the same town waits on it rather than join twice.</summary>
+        bool joining;
         int generation;
         readonly INetHost host;
         public readonly Character character;
@@ -155,6 +157,10 @@ namespace Porchlight.App
         public Action<GotoRequest> onGoto;
         /// <summary>Someone else on the account has this character (we lost our connection, or never had them). We've stopped.</summary>
         public Action onInUse;
+        /// <summary>The town's streets were changed and the room closed: its new key (grow it, and join again).</summary>
+        public Action<string> onTownRebuilt;
+        /// <summary>The new key a `town-rebuilding` named, kept for the close that follows.</summary>
+        string rebuiltKey;
         /// <summary>Missions finished before we'd joined: sent once we have.</summary>
         readonly List<string> missionsDone = new List<string>();
 
@@ -180,7 +186,8 @@ namespace Porchlight.App
         /// </summary>
         public void Enter(TownKey t, double[] arrive = null)
         {
-            if (town != null && town.key == t.key && (room != null || retry != null)) return;
+            // Already in it, joining it or about to try again: one join at a time (beta #2's native games joined twice, 3-5 s apart).
+            if (town != null && town.key == t.key && (room != null || retry != null || joining)) return;
             town = t;
             arriving = arrive;
             // Already placed: the spawn the room sends isn't where to go.
@@ -199,6 +206,14 @@ namespace Porchlight.App
             town = null;
             stopped = true;
             Disconnect();
+        }
+
+        /// <summary>The app's quitting: out of the room at once, as a leave (not a drop the server holds a seat for).</summary>
+        public void Quit()
+        {
+            town = null;
+            stopped = true;
+            Disconnect(true);
         }
 
         public string Debug()
@@ -250,9 +265,10 @@ namespace Porchlight.App
 
         void SendMissionDone(string id) => room?.Send(Protocol.MSG_MISSION_DONE, new Dictionary<string, object> { ["id"] = id });
 
-        void Disconnect()
+        void Disconnect(bool now = false)
         {
             generation++;
+            joining = false;
             if (retry != null) timers.Cancel(retry);
             retry = null;
             StopTimers();
@@ -260,7 +276,8 @@ namespace Porchlight.App
             room = null;
             spawned = false;
             Offline();
-            r?.Leave();
+            if (now) r?.LeaveNow();
+            else r?.Leave();
         }
 
         void StopTimers()
@@ -303,6 +320,7 @@ namespace Porchlight.App
             if (arriving != null && Array.TrueForAll(arriving, double.IsFinite))
                 options["arrive"] = new Dictionary<string, object> { ["x"] = arriving[0], ["y"] = arriving[1], ["z"] = arriving[2], ["yaw"] = arriving[3] };
             SetStatus(NetStatus.Joining);
+            joining = true;
             // The room can fill up between matchmaking and joining: try once more.
             client.JoinOrCreate(Protocol.CITY_ROOM, options, (r, err) =>
             {
@@ -313,6 +331,7 @@ namespace Porchlight.App
 
         void Joined(int gen, Room r, string err)
         {
+            if (gen == generation) joining = false;
             if (r == null)
             {
                 if (gen != generation) return;
@@ -382,6 +401,18 @@ namespace Porchlight.App
                 if (!(m is Dictionary<string, object> d) || !d.TryGetValue("unlocks", out var u) || !(u is List<object> list)) return;
                 foreach (var what in list)
                     if (what is string s && unlocks.Add(s)) onUnlockedElsewhere?.Invoke(s);
+            });
+            r.OnMessage(Protocol.MSG_TOWN_REBUILDING, m =>
+            {
+                if (!(m is Dictionary<string, object> d)) return;
+                rebuiltKey = d.TryGetValue("key", out var k) ? k as string : null;
+                string by = d.TryGetValue("by", out var b) ? b as string : null;
+                double seconds = d.TryGetValue("seconds", out var sec) ? MsgPack.Num(sec) : 10;
+                host.Notify($"{(string.IsNullOrEmpty(by) ? "An editor" : by)} changed the streets here. The town rebuilds in {seconds:0} seconds, and you'll be brought back.");
+            });
+            r.OnMessage(Protocol.MSG_NOTICE, m =>
+            {
+                if (m is Dictionary<string, object> d && d.TryGetValue("text", out var t) && t is string text) host.Notify(text);
             });
             r.OnMessage(Protocol.MSG_GOTO, m =>
             {
@@ -463,6 +494,13 @@ namespace Porchlight.App
                     stopped = true;
                     SetStatus(NetStatus.Offline("playing somewhere else"));
                     onInUse?.Invoke();
+                }
+                else if (code == Protocol.CLOSE_TOWN_REBUILT && rebuiltKey != null && onTownRebuilt != null)
+                {
+                    stopped = true;
+                    SetStatus(NetStatus.Offline("the town's being rebuilt"));
+                    host.Notify("Rebuilding the town with its new streets…");
+                    onTownRebuilt(rebuiltKey);
                 }
                 else if (code == Protocol.CLOSE_KICKED)
                 {

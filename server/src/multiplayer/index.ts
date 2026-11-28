@@ -7,6 +7,7 @@
 //   /mp/missions...            the missions, compiled from server/missions (../missions.ts)
 //   /mp/traffic/...            the traffic view's county map and live feed (feed.ts)
 //   /mp/sim/where              where a car or townsperson is right now (the simulation's: ../sim/)
+//   /mp/edit/..., /mp/towns/skeleton  the street editor (edit.ts)
 //   /mp/matchmake/...          Colyseus matchmaking (POST, then a WebSocket)
 //   /mp/<process>/<room>       the room's WebSocket
 //
@@ -26,6 +27,8 @@ import { CITY_ROOM } from './protocol.ts';
 import { SimPool, type SimCommand } from '../sim/pool.ts';
 import { SimLink, setSim } from '../sim/link.ts';
 import { openRooms } from './CityRoom.ts';
+import { createEditRoutes, editorsFrom } from './edit.ts';
+import { DraftWorker, type DraftClient } from '../sim/draft.ts';
 
 export interface GameServerOptions {
   port: number;
@@ -41,6 +44,12 @@ export interface GameServerOptions {
   /** The towns' traffic and townsfolk, run here (sim/pool.ts's findWorker), with this many workers; none: the players run them. */
   sim?: SimCommand | null;
   simWorkers?: number;
+  /** The street editor's draft worker (../sim/draft.ts): by default `sim`'s command with --draft; null: none. */
+  draft?: DraftClient | null;
+  /** Who may edit the towns that come with the game (default: EDITORS). */
+  editors?: string;
+  /** Seconds between a commit's warning and everyone being moved to the new key (default 10). */
+  rebuildSeconds?: number;
 }
 
 export interface GameServer {
@@ -69,6 +78,10 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   const simLink = opts.sim ? new SimLink(new SimPool(opts.sim, opts.simWorkers ?? 1), deps, openRooms) : null;
   setSim(simLink);
   const traffic = new TrafficFeed(deps, undefined, undefined, simLink);
+  const draft = opts.draft !== undefined ? opts.draft : opts.sim ? new DraftWorker(opts.sim) : null;
+  // Days get a worker of their own: a day of Porchlight is over a minute's work, and plans mustn't wait behind it.
+  const days = opts.draft !== undefined ? opts.draft : opts.sim ? new DraftWorker(opts.sim, 'days') : null;
+  const edit = createEditRoutes(deps, { draft, days, editors: editorsFrom(opts.editors ?? process.env.EDITORS), rebuildSeconds: opts.rebuildSeconds });
 
   const httpServer = createServer();
   const server = new Server({
@@ -82,7 +95,7 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
       app.use((req: IncomingMessage, res: ServerResponse) => {
         // A rejection nobody catches ends the process: one bad request mustn't take everyone's game with it.
         void (async () => {
-          if (!(await missions(req, res)) && !(await traffic.routes(req, res)) && !(await characters(req, res))) await opts.handler(req, res);
+          if (!(await missions(req, res)) && !(await traffic.routes(req, res)) && !(await edit(req, res)) && !(await characters(req, res))) await opts.handler(req, res);
         })().catch((err) => {
           console.error(`${req.method} ${req.url}:`, err);
           if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' });
@@ -97,6 +110,8 @@ export async function startGameServer(opts: GameServerOptions): Promise<GameServ
   server.onShutdown(() => {
     traffic.close();
     simLink?.close();
+    draft?.close();
+    if (days !== draft) days?.close();
     setSim(null);
     return opts.persistence.close();
   });

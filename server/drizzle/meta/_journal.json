@@ -50,6 +50,13 @@
       "when": 1795746208814,
       "tag": "0006_session_telemetry",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795781384831,
+      "tag": "0007_street_editor",
+      "breakpoints": true
     }
   ]
 }

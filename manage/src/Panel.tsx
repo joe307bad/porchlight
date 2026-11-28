@@ -17,7 +17,8 @@ import type { CountyMap, Me } from './api.ts';
 import type { FeedStatus } from './feed.ts';
 import { ALL_WAY, LAMPS, PERSON, SPEEDS, STOP_SIGN, type Layers } from './render.ts';
 import { REACH, doing, type PlayerView } from './world.ts';
-import { ZONES } from './zoning.ts';
+import { PARK, ZONES } from './zoning.ts';
+import { editableTowns, openEditor } from './edit/api.ts';
 import { ENTITY_KINDS, describeInside, heldText, holdBars, streetBetween, streetName, streetText, untilText, type BuildingLife, type CongestedStreet, type Congestion, type EntityFocus, type FocusTarget, type TownLife, marketText } from './life.ts';
 import { CALENDAR, CONGESTION, PAGE, TABS, crumbLabel, population, tabEntities, type Crumb, type Memory, type TownMemory } from './crumbs.ts';
 
@@ -93,7 +94,7 @@ const LAYERS: { key: keyof Layers; short: string; label: string; legend?: { colo
       { color: ALL_WAY, label: 'all-way stop', shape: 'stop' },
     ],
   },
-  { key: 'zoning', short: 'Land use', label: 'Land use (a disc on each building, sized by the people inside)', legend: ZONES.map((z) => ({ color: z.color, label: z.label })) },
+  { key: 'zoning', short: 'Land use', label: 'Land use (a disc on each building, sized by the people inside)', legend: [...ZONES.map((z) => ({ color: z.color, label: z.label })), { color: PARK.color, label: PARK.label }] },
   { key: 'players', short: 'Players', label: 'Players', legend: [{ color: '#8ab4ff', label: 'player', shape: 'ring' }] },
   { key: 'roads', short: 'Streets', label: 'Streets' },
   { key: 'names', short: 'Names', label: 'Town and street names' },
@@ -257,9 +258,16 @@ function TownView({
   useEffect(() => {
     picked.current?.scrollIntoView?.({ block: 'center' });
   }, []);
-  if (!life) return <p className="sub line">Not running</p>;
+  if (!life)
+    return (
+      <>
+        <EditStreets townKey={townKey} />
+        <p className="sub line">Not running</p>
+      </>
+    );
   return (
     <div className="sections">
+      <EditStreets townKey={townKey} />
       {life.calendar && life.calendar.length > 0 && (
         <Section title="Calendar" open={m.open === CALENDAR} onToggle={() => toggle(CALENDAR)}>
           <CalendarView life={life} />
@@ -699,4 +707,30 @@ function Status({ status }: { status: FeedStatus }) {
     case 'signedOut':
       return <p className="status bad line">Signed out</p>;
   }
+}
+
+/** The town's key without its revision: the same town whichever revision the map or the editor list has. */
+const townOnly = (key: string) => key.replace(/(^|&)rev=\d+/, '').replace(/^&/, '');
+
+/** "Edit streets", for a town this account may edit (GET /mp/edit/towns says). */
+function EditStreets({ townKey }: { townKey: string }) {
+  const [key, setKey] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    void editableTowns().then((ts) => {
+      const t = ts.find((x) => x.editable && townOnly(x.key) === townOnly(townKey));
+      if (live) setKey(t ? t.key : null);
+    });
+    return () => {
+      live = false;
+    };
+  }, [townKey]);
+  if (!key) return null;
+  return (
+    <div className="edit-entry">
+      <button className="btn btn-small" onClick={() => openEditor(key)} title="Change this town's roads, junctions and centre in a draft, then commit it">
+        Edit streets
+      </button>
+    </div>
+  );
 }

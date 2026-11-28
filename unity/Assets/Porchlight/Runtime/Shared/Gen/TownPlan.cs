@@ -90,7 +90,7 @@ namespace Porchlight.Gen
         public static Era EraAt(TownModel m, Vec2 at)
         {
             if (m.townRadius <= 0) return Era.Core;
-            double share = Geo.Dist(at, m.center) / m.townRadius + ERA_WOBBLE * Wobble(m.seed, 1, at);
+            double share = Geo.Dist(at, m.downtown) / m.townRadius + ERA_WOBBLE * Wobble(m.seed, 1, at);
             return share < CORE_REACH ? Era.Core : share < GARDEN_REACH ? Era.GardenSuburb : Era.PostWar;
         }
 
@@ -100,7 +100,7 @@ namespace Porchlight.Gen
             var p = m.@params;
             if (m.townRadius <= 0) return Transect.T6;
             double wobble = ZONE_WOBBLE * Wobble(m.seed, 2, at);
-            var zone = Zone(Geo.Dist(at, m.center) / m.townRadius + wobble, p);
+            var zone = Zone(Geo.Dist(at, m.downtown) / m.townRadius + wobble, p);
             if (m.secondCentre != null)
             {
                 // The second centre is a T5 centre, never a core.

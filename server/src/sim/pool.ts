@@ -32,6 +32,12 @@ export interface TownZoning {
   buildings: number[][];
 }
 
+/** A park (Parks.cs): its middle [x, y], and its outline's rings, each flat [x0, y0, x1, y1, ...] (tiles, the town's frame). */
+export interface TownPark {
+  at: [number, number];
+  rings: number[][];
+}
+
 export interface SimTown {
   readonly id: number;
   readonly key: string;
@@ -52,12 +58,16 @@ export interface SimTown {
   roadNames: string[] | null;
   /** What its buildings are for once made (Zoning.cs): [zone, x0, y0, x1, y1, homes, jobs] each, and the town's figures. */
   zoning: TownZoning | null;
+  /** Its parks once made (Parks.cs), for Manage's map. */
+  parks: TownPark[] | null;
   /** Why it couldn't be made, if it couldn't. */
   error: string | null;
   /** Its townsfolk changed (LOOKS): this tick goes to its players whole, not as a delta (their counts differ). */
   fullDue: boolean;
   /** Its life (LIFE), once the worker's said. */
   life: TownLife | null;
+  /** An edited town's skeleton (its key has a `rev`; docs/street-editor-api.md), sent with it in TOWNS. */
+  skeleton: unknown;
 }
 
 /** A town's life as the worker last said (SimTown.Life in sim/src/SimTown.cs). */
@@ -76,6 +86,8 @@ export interface TownLife {
   summary: Record<string, unknown>;
   /** What each of the latest tick's car and person records is: a letter each, '-' for an empty one (SimTown.Kinds). */
   kinds?: { cars: string; people: string };
+  /** The market in the plaza (SimTown.Market), null if the town has none: `people` there now aren't in `inside`. */
+  market?: { people: number } | null;
 }
 
 export interface SimPlayer {
@@ -141,7 +153,16 @@ class Worker {
     this.buf = Buffer.alloc(0);
     proc.stdout.on('data', (chunk: Buffer) => this.read(chunk));
     proc.stderr.on('data', (chunk: Buffer) => {
-      for (const line of chunk.toString().split('\n')) if (line.trim()) this.pool.log(`[sim ${this.index}] ${line.trim()}`);
+      for (const line of chunk.toString().split('\n')) {
+        if (!line.trim()) continue;
+        this.pool.log(`[sim ${this.index}] ${line.trim()}`);
+        // The runtime's out of its heap: it'd take minutes more to stop on its own (2 min 21 s each time in
+        // beta #2, with every town's traffic frozen meanwhile). Stopped now, and started again.
+        if (line.includes('Out of memory') && this.proc === proc && !proc.killed) {
+          this.pool.log(`sim ${this.index}: out of memory after ${((Date.now() - this.startedAt) / 60_000).toFixed(1)} min: stopping it now`);
+          proc.kill('SIGKILL');
+        }
+      }
     });
     proc.stdin.on('error', () => {}); // it went: 'exit' says so
     proc.on('error', (err) => this.pool.log(`sim ${this.index}: couldn't start ${this.cmd.command}: ${err.message}`));
@@ -196,6 +217,8 @@ class Worker {
 export class SimPool {
   private readonly workers: Worker[];
   private readonly towns = new Map<number, SimTown>();
+  /** Towns with someone in them (as of the last setPlayers): made first when a worker starts again. */
+  private readonly occupied = new Set<number>();
   private readonly byKey = new Map<string, SimTown>();
   private readonly taken = new Map<number, string[]>();
   private nextId = 1;
@@ -217,12 +240,12 @@ export class SimPool {
     for (const w of this.workers) w.close();
   }
 
-  /** The towns to run (their keys): new ones are made, gone ones stop. */
-  setTowns(keys: Iterable<string>): void {
+  /** The towns to run (their keys, and an edited one's skeleton): new ones are made, gone ones stop. */
+  setTowns(keys: Iterable<string>, skeletons: ReadonlyMap<string, unknown> = new Map()): void {
     const want = new Set(keys);
     for (const key of want) {
       if (this.byKey.has(key)) continue;
-      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, roadNames: null, zoning: null, error: null, fullDue: false, life: null };
+      const town: SimTown = { id: this.nextId++, key, ready: false, cars: new Uint8Array(0), people: new Uint8Array(0), delta: new Uint8Array(0), at: 0, looks: [], roads: null, roadNames: null, zoning: null, parks: null, error: null, fullDue: false, life: null, skeleton: skeletons.get(key) ?? null };
       this.towns.set(town.id, town);
       this.byKey.set(key, town);
     }
@@ -247,6 +270,11 @@ export class SimPool {
 
   /** Where the players are, town by town (tiles, each town's frame): what the traffic stops for. */
   setPlayers(players: Map<string, SimPlayer[]>): void {
+    this.occupied.clear();
+    for (const [key, list] of players) {
+      const town = this.byKey.get(key);
+      if (town && list.length) this.occupied.add(town.id);
+    }
     const parts: Buffer[][] = this.workers.map(() => []);
     const counts = this.workers.map(() => 0);
     for (const [key, list] of players) {
@@ -312,7 +340,12 @@ export class SimPool {
   }
 
   private sendTowns(i: number): void {
-    const mine = [...this.towns.values()].filter((t) => this.workerOf(t.id) === i).map((t) => ({ id: t.id, key: t.key }));
+    // Towns with players first: the worker starts making them in this order, so after a restart the towns people
+    // are waiting in are back before the empty ones (beta #2: all seven at once, with everyone rejoining).
+    const mine = [...this.towns.values()]
+      .filter((t) => this.workerOf(t.id) === i)
+      .sort((a, b) => Number(this.occupied.has(b.id)) - Number(this.occupied.has(a.id)))
+      .map((t) => (t.skeleton ? { id: t.id, key: t.key, skeleton: t.skeleton } : { id: t.id, key: t.key }));
     this.workers[i].send(IN_TOWNS, json(mine));
   }
 
@@ -331,13 +364,14 @@ export class SimPool {
   received(type: number, body: Buffer): void {
     if (type === OUT_TICK) return this.tick(body);
     if (type === OUT_READY) {
-      const m = JSON.parse(body.toString()) as { id: number; cars?: number; people?: number; roads?: number[][]; roadNames?: string[]; zoning?: TownZoning['figures']; buildings?: number[][]; error?: string };
+      const m = JSON.parse(body.toString()) as { id: number; cars?: number; people?: number; roads?: number[][]; roadNames?: string[]; zoning?: TownZoning['figures']; buildings?: number[][]; parks?: TownPark[]; error?: string };
       const town = this.towns.get(m.id);
       if (!town) return;
       town.error = m.error ?? null;
       if (Array.isArray(m.roads)) town.roads = m.roads;
       if (Array.isArray(m.roadNames)) town.roadNames = m.roadNames;
       if (m.zoning && Array.isArray(m.buildings)) town.zoning = { figures: m.zoning, buildings: m.buildings };
+      if (Array.isArray(m.parks)) town.parks = m.parks;
       if (m.error) this.log(`sim: ${town.key} couldn't be made: ${m.error}`);
       return;
     }
@@ -366,8 +400,20 @@ export class SimPool {
       return;
     }
     if (type === OUT_STATS) {
-      const m = JSON.parse(body.toString()) as { towns: number; ticks: number; avgMs: number; maxMs: number };
-      this.log(`sim: ${m.towns} town(s), ${m.ticks} ticks, avg ${m.avgMs} ms, max ${m.maxMs} ms`);
+      const m = JSON.parse(body.toString()) as {
+        towns: number;
+        ticks: number;
+        avgMs: number;
+        maxMs: number;
+        heapMb?: number;
+        committedMb?: number;
+        gc?: [number, number, number];
+        pauseMs?: number;
+        each?: { id: number; cars: number; people: number; extra?: string }[];
+      };
+      const heap = m.heapMb !== undefined ? `, heap ${m.heapMb} MB (committed ${m.committedMb} MB), gc ${m.gc?.join('/')}, gc pause ${m.pauseMs} ms` : '';
+      const each = m.each?.length ? `; ${m.each.map((t) => `${this.towns.get(t.id)?.key.slice(0, 12) ?? t.id}: ${t.cars}c/${t.people}p${t.extra ? ` ${t.extra}` : ''}`).join(', ')}` : '';
+      this.log(`sim: ${m.towns} town(s), ${m.ticks} ticks, avg ${m.avgMs} ms, max ${m.maxMs} ms${heap}${each}`);
     }
   }
 

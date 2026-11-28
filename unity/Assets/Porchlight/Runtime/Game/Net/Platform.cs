@@ -567,9 +567,10 @@ namespace Porchlight.App
                 finally { sending.Release(); }
             }
 
-            public async void Close(int c)
+            public void Close(int c)
             {
-                try { await ws.CloseOutputAsync((System.Net.WebSockets.WebSocketCloseStatus)c, "", System.Threading.CancellationToken.None).ConfigureAwait(false); }
+                // Waited on, briefly: on quitting (Room.LeaveNow) the close frame has to be out before the process is.
+                try { ws.CloseOutputAsync((System.Net.WebSockets.WebSocketCloseStatus)c, "", System.Threading.CancellationToken.None).Wait(300); }
                 catch (Exception) { }
             }
 

@@ -64,7 +64,19 @@ namespace Porchlight.Gen
             var airport = Airfield.Mask(model.airport, w, h);
             var zoo = Menagerie.Mask(model.zoo, w, h, Menagerie.ROAD_CLEAR);
             var g = RoadGraphOps.BuilderFrom(model.roads);
-            double Falloff(Vec2 pt) => Math.Max(0, 1 - Geo.Dist(pt, C) / R);
+            var skeleton = p.skeleton;
+            var pinnedStreets = skeleton?.streets ?? new List<SkeletonRoad>();
+            if (pinnedStreets.Count > 0) AddPinned(g, pinnedStreets);
+            // A street an editor laid stays, whatever the tidying below would make of it.
+            bool IsPinned(RoadEdge e)
+            {
+                if (pinnedStreets.Count == 0 || e.kind == RoadKind.Main) return false;
+                var mid = Geo.PolylinePointAt(e.points, Geo.PolylineLength(e.points) / 2);
+                foreach (var s in pinnedStreets)
+                    if (Geo.DistToPolyline(mid, s.points) < 0.35 && Geo.DistToPolyline(e.points[0], s.points) < 0.35 && Geo.DistToPolyline(e.points[e.points.Count - 1], s.points) < 0.35) return true;
+                return false;
+            }
+            double Falloff(Vec2 pt) => Math.Max(0, 1 - Geo.Dist(pt, model.downtown) / R);
             var keep = new HashSet<int>();
             foreach (var n in g.nodes)
             {
@@ -158,6 +170,12 @@ namespace Porchlight.Gen
                     if (e.id == edge) continue;
                     double room = bulbRadius + (e.kind == RoadKind.Path ? Raster.RoadDrawWidth(e.kind, p) / 2 : Raster.RoadDrawWidth(e.kind, p) / 2 + Raster.PARKING_WIDTH);
                     if (!(Geo.DistToPolyline(at, e.points) >= room)) return false;
+                    // The bulb's own tiles (the tile it's in and those round it) clear of what the other road rasters to.
+                    double claim = Raster.RoadHalfWidth(e.kind, p);
+                    int cx = (int)Math.Floor(at.x), cy = (int)Math.Floor(at.y);
+                    for (int dy = -1; dy <= 1; dy++)
+                        for (int dx = -1; dx <= 1; dx++)
+                            if (Geo.DistToPolyline(new Vec2(cx + dx + 0.5, cy + dy + 0.5), e.points) < claim) return false;
                 }
                 return true;
             }
@@ -167,7 +185,7 @@ namespace Porchlight.Gen
                 if (!(Geo.PolylineLength(e.points) >= CUL_DE_SAC_LENGTH && BulbFits(g.nodes[node].at, e.id))) return false;
                 var era = TownPlan.EraAt(model, g.nodes[node].at);
                 double keepShare = era == Era.Core ? 0 : era == Era.PostWar ? Math.Min(1, p.culDeSacs * 1.5) : p.culDeSacs;
-                return rng.Chance(keepShare);
+                return Rng.Local(model.seed, Regions.Stream(model, "cul-de-sac", g.nodes[node].at), Signature.OfPoint(g.nodes[node].at)).Chance(keepShare);
             }
 
             // The land to plat: what blocks are made of (Parcels.Ground), and where a street may be laid.
@@ -188,6 +206,26 @@ namespace Porchlight.Gen
             var plan = new StreetPlan(model, g, rng, land, roadOk, Falloff, BulbFits, FirstHit);
             int floor = plan.floor;
             if (p.roadDensity > 0) foreach (var part in plan.Run()) yield return "/plan" + part;
+            var collectors = new List<(Vec2 a, Vec2 b)>(plan.collectors);
+            // An editor's regenerated areas, in order: the streets inside cleared, and the land planned again with the
+            // area's own stream. What's outside, and the roads round the edge, stay.
+            for (int r = 0; r < Regions.Count(model) && p.roadDensity > 0; r++)
+            {
+                foreach (var e in RoadGraphOps.LiveEdges(g))
+                    if (e.kind != RoadKind.Main && !IsPinned(e) && Regions.Clears(model, r, e.points)) g.dead.Add(e.id);
+                var mask = Regions.Mask(model, r);
+                var inside = new byte[w * h];
+                for (int i = 0; i < inside.Length; i++) inside[i] = land[i] != 0 && mask[i] != 0 ? (byte)1 : (byte)0;
+                var again = new StreetPlan(model, g, rng, inside, roadOk, Falloff, BulbFits, FirstHit)
+                {
+                    stream = Regions.Stream(model, "streets", Regions.Middle(model, r)),
+                    variety = true,
+                };
+                foreach (var part in again.Run()) yield return "/region" + part;
+                // The collectors the area had are gone with its streets; its own first splits are.
+                collectors.RemoveAll(c => Regions.Clears(model, r, new List<Vec2> { c.a, c.b }));
+                collectors.AddRange(again.collectors);
+            }
 
             // A connector keeps a block's depth from any road alongside it too: one it runs nearly parallel to (a road
             // it meets or crosses doesn't count).
@@ -233,7 +271,7 @@ namespace Porchlight.Gen
                 foreach (var b in Raster.Bulbs(RoadGraphOps.LiveEdges(g)))
                 {
                     var e = g.edges[b.edge];
-                    if (keep.Contains(b.atEnd ? e.to : e.from)) continue;
+                    if (keep.Contains(b.atEnd ? e.to : e.from) || IsPinned(e)) continue;
                     if (!BulbFits(b.at, b.edge) || Geo.PolylineLength(e.points) < Math.Max(CUL_DE_SAC_LENGTH, floor)) cut.Add(b.edge);
                     // The gridded core has no cul-de-sacs: one it couldn't join up goes, unless it's a street down to the water.
                     else if (TownPlan.EraAt(model, b.at) == Era.Core && !NearWater(b.at, water, w, h)) cut.Add(b.edge);
@@ -245,7 +283,8 @@ namespace Porchlight.Gen
             }
             // Cutting dead ends back can leave two streets between the same junctions again: the shorter kept.
             if (RoadGraphOps.DropDoubles(g)) RoadGraphOps.MergePassThrough(g, keep);
-            var roads = KeepConnected(RoadGraphOps.Compact(g), model.center);
+            var roads = KeepConnected(RoadGraphOps.Compact(g), model.center, Regions.Count(model) > 0);
+            bool droppedClose = false;
             // A street laid alongside a main road nearer than MIN_APART (beside a bend in it, say): it goes,
             // the stretch of it between two junctions, and the blocks either side are one. The main roads are where
             // they had to be; the street was only where the plan put it.
@@ -255,6 +294,7 @@ namespace Porchlight.Gen
                 if (close.Count == 0) break;
                 var (ea, eb) = (roads.edges[close[0].a], roads.edges[close[0].b]);
                 var drop = ea.kind == RoadKind.Main ? eb : ea;
+                if (IsPinned(drop)) break;
                 var again = RoadGraphOps.BuilderFrom(roads);
                 again.dead.Add(drop.id);
                 var keepAgain = new HashSet<int>();
@@ -264,14 +304,115 @@ namespace Porchlight.Gen
                     foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) keepAgain.Add(n.id);
                 }
                 RoadGraphOps.MergePassThrough(again, keepAgain);
-                roads = KeepConnected(RoadGraphOps.Compact(again), model.center);
+                roads = KeepConnected(RoadGraphOps.Compact(again), model.center, Regions.Count(model) > 0);
+                droppedClose = true;
             }
-            Classify(roads, model, plan.collectors);
+            // Dropping a street can leave a new dead end, perhaps with no room for its bulb (beside the main road it ran
+            // along): cut back as before.
+            if (droppedClose)
+            {
+                g = RoadGraphOps.BuilderFrom(roads);
+                var keepAgain = new HashSet<int>();
+                foreach (var n in g.nodes)
+                {
+                    if (Geo.Dist(C, n.at) < 0.01) keepAgain.Add(n.id);
+                    foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) keepAgain.Add(n.id);
+                }
+                bool any = false;
+                for (int pass = 0; pass < MAX_PRUNE_PASSES; pass++)
+                {
+                    var cut = new List<int>();
+                    foreach (var b in Raster.Bulbs(RoadGraphOps.LiveEdges(g)))
+                    {
+                        var e = g.edges[b.edge];
+                        if (e.kind == RoadKind.Main || keepAgain.Contains(b.atEnd ? e.to : e.from) || IsPinned(e)) continue;
+                        if (!BulbFits(b.at, b.edge) || Geo.PolylineLength(e.points) < Math.Max(CUL_DE_SAC_LENGTH, floor)) cut.Add(b.edge);
+                    }
+                    if (cut.Count == 0) break;
+                    foreach (int e in cut) g.dead.Add(e);
+                    RoadGraphOps.MergePassThrough(g, keepAgain);
+                    any = true;
+                }
+                if (any) roads = KeepConnected(RoadGraphOps.Compact(g), model.center, Regions.Count(model) > 0);
+            }
+            if (skeleton != null && skeleton.removed.Count > 0) roads = DropRemoved(roads, skeleton, model);
+            Classify(roads, model, collectors);
+            if (skeleton != null) ApplyClasses(roads, skeleton);
             yield return "/compact";
             var next = model.With();
             next.roads = roads;
             next.bridges = RoadGraphOps.ComputeBridges(next, Raster.WaterMask(next));
             done(next);
+        }
+
+        /// <summary>An editor's streets added to the graph before the land is platted, so the plan treats them as roads already there.</summary>
+        static void AddPinned(GraphBuilder g, List<SkeletonRoad> streets)
+        {
+            int NodeAt(Vec2 at)
+            {
+                foreach (var n in g.nodes) if (Geo.Dist(n.at, at) <= RoadsStage.PIN_SNAP) return n.id;
+                g.nodes.Add(new RoadNode { id = g.nodes.Count, at = at });
+                return g.nodes.Count - 1;
+            }
+            foreach (var s in streets)
+            {
+                if (s.points.Count < 2) continue;
+                int a = NodeAt(s.points[0]), b = NodeAt(s.points[s.points.Count - 1]);
+                if (a == b) continue;
+                var pts = new List<Vec2>(s.points);
+                pts[0] = g.nodes[a].at;
+                pts[pts.Count - 1] = g.nodes[b].at;
+                g.edges.Add(new RoadEdge { id = g.edges.Count, from = a, to = b, kind = s.kind == RoadKind.Path ? RoadKind.Path : RoadKind.Street, cls = s.cls ?? RoadClass.Local, points = pts });
+            }
+            RoadsStage.JoinEnds(g);
+            RoadGraphOps.Planarize(g);
+        }
+
+        /// <summary>Generated roads an editor deleted (by their ends) taken out, and the graph tidied after them.</summary>
+        static RoadGraph DropRemoved(RoadGraph roads, Skeleton skeleton, TownModel model)
+        {
+            var g = RoadGraphOps.BuilderFrom(roads);
+            bool any = false;
+            foreach (var e in g.edges)
+            {
+                if (e.kind == RoadKind.Main) continue;
+                if (skeleton.Removed(g.nodes[e.from].at, g.nodes[e.to].at))
+                {
+                    g.dead.Add(e.id);
+                    any = true;
+                }
+            }
+            if (!any) return roads;
+            var keep = new HashSet<int>();
+            foreach (var n in g.nodes)
+            {
+                if (Geo.Dist(model.center, n.at) < 0.01) keep.Add(n.id);
+                foreach (var q in model.gates) if (Geo.Dist(q, n.at) < 0.01) keep.Add(n.id);
+            }
+            RoadGraphOps.MergePassThrough(g, keep);
+            return KeepConnected(RoadGraphOps.Compact(g), model.center, Regions.Count(model) > 0);
+        }
+
+        /// <summary>The classes an editor set: on its own streets, and on any road by its ends.</summary>
+        static void ApplyClasses(RoadGraph roads, Skeleton skeleton)
+        {
+            foreach (var e in roads.edges)
+            {
+                var a = roads.nodes[e.from].at;
+                var b = roads.nodes[e.to].at;
+                var o = skeleton.RoadAt(a, b);
+                if (o?.cls != null) e.cls = o.cls.Value;
+                else
+                    foreach (var s in skeleton.streets)
+                        if (s.cls != null && Geo.DistToPolyline(a, s.points) < 0.35 && Geo.DistToPolyline(b, s.points) < 0.35) e.cls = s.cls.Value;
+            }
+            if (skeleton.mains != null)
+                foreach (var e in roads.edges)
+                {
+                    if (e.kind != RoadKind.Main) continue;
+                    foreach (var s in skeleton.mains)
+                        if (s.cls != null && Geo.DistToPolyline(roads.nodes[e.from].at, s.points) < 0.35 && Geo.DistToPolyline(roads.nodes[e.to].at, s.points) < 0.35) e.cls = s.cls.Value;
+                }
         }
 
         /// <summary>A dead end this near the water (tiles, either way) is a street down to the shore.</summary>
@@ -560,13 +701,29 @@ namespace Porchlight.Gen
             return true;
         }
 
-        static RoadGraph KeepConnected(RoadGraph graph, Vec2 center)
+        /// <summary>
+        /// The roads reached from the node nearest the centre; or, with `biggest` (a town with areas an editor
+        /// regenerated, where the road nearest the centre may be a new street left on its own), the most roads
+        /// reached from any one node.
+        /// </summary>
+        static RoadGraph KeepConnected(RoadGraph graph, Vec2 center, bool biggest)
         {
             if (graph.nodes.Count == 0) return graph;
             int hub = 0;
             for (int i = 0; i < graph.nodes.Count; i++)
                 if (Geo.Dist(graph.nodes[i].at, center) < Geo.Dist(graph.nodes[hub].at, center)) hub = i;
             var reached = RoadGraphOps.ReachableNodes(graph, hub);
+            if (biggest && reached.Count < graph.nodes.Count)
+            {
+                var seen = new HashSet<int>(reached);
+                for (int i = 0; i < graph.nodes.Count; i++)
+                {
+                    if (seen.Contains(i)) continue;
+                    var other = RoadGraphOps.ReachableNodes(graph, i);
+                    seen.UnionWith(other);
+                    if (other.Count > reached.Count) reached = other;
+                }
+            }
             if (reached.Count == graph.nodes.Count) return graph;
             var g = new GraphBuilder();
             foreach (var n in graph.nodes) g.nodes.Add(new RoadNode { id = n.id, at = n.at });

@@ -83,6 +83,8 @@ namespace Porchlight.App
         const string FOCUS = "/mp/traffic/focus";
         /// <summary>The right-click menu's: directions to a spot for one of your characters, or taken there.</summary>
         const string GOTO = "/mp/goto";
+        /// <summary>The street editor's routes (docs/street-editor-api.md): GETs, and from the page itself its POSTs, PUTs and DELETEs.</summary>
+        const string EDIT = "/mp/edit/";
 
         static readonly Dictionary<string, string> TYPES = new Dictionary<string, string>
         {
@@ -171,6 +173,17 @@ namespace Porchlight.App
                         await Reply(stream, ok ? 200 : 501, "text/plain", ok ? "Here." : "Can't from here.").ConfigureAwait(false);
                         return;
                     }
+                    // The street editor: its drafts, plans, days and commits (the server says who may edit).
+                    if (path.StartsWith(EDIT, StringComparison.Ordinal) || path == "/mp/towns/skeleton")
+                    {
+                        if (method != "GET" && (!headers.TryGetValue("origin", out var from) || from != $"http://127.0.0.1:{port}"))
+                        {
+                            await Reply(stream, 403, "text/plain", "Not from here.").ConfigureAwait(false);
+                            return;
+                        }
+                        await Pass(stream, target, headers, method == "GET" ? null : body ?? new byte[0], method).ConfigureAwait(false);
+                        return;
+                    }
                     if (method != "GET" && method != "HEAD")
                     {
                         await Reply(stream, 405, "text/plain", "Only GET.").ConfigureAwait(false);
@@ -252,7 +265,8 @@ namespace Porchlight.App
 
         /// <summary>The request line and headers (lower-cased names); a null method if it isn't one.</summary>
         /// <summary>Most a request's body may be (the page's focus: a few towns' keys).</summary>
-        const int MAX_BODY = 64 * 1024;
+        /// <summary>The largest body taken from the page: a street editor's draft (its skeleton and undo history) runs to a few hundred KB.</summary>
+        const int MAX_BODY = 4 * 1024 * 1024;
 
         static async Task<(string method, string target, Dictionary<string, string> headers, byte[] body)> ReadRequest(NetworkStream stream)
         {
@@ -337,11 +351,12 @@ namespace Porchlight.App
         }
 
         /// <summary>Passed on to the server with the game's session, and its answer streamed back as it comes (the feed never ends).</summary>
-        async Task Pass(NetworkStream stream, string target, Dictionary<string, string> headers, byte[] body = null)
+        async Task Pass(NetworkStream stream, string target, Dictionary<string, string> headers, byte[] body = null, string method = null)
         {
-            using (var req = new HttpRequestMessage(body != null ? HttpMethod.Post : HttpMethod.Get, new Uri(origin, target)))
+            var how = method != null ? new HttpMethod(method) : body != null ? HttpMethod.Post : HttpMethod.Get;
+            using (var req = new HttpRequestMessage(how, new Uri(origin, target)))
             {
-                if (body != null)
+                if (body != null && how != HttpMethod.Get && how != HttpMethod.Delete)
                 {
                     req.Content = new ByteArrayContent(body);
                     req.Content.Headers.TryAddWithoutValidation("Content-Type", "application/json");

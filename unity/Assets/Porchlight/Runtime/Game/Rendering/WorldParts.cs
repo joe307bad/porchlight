@@ -658,16 +658,11 @@ namespace Porchlight.Rendering
             foreach (var f in layout.fences)
             {
                 if (++fenced % FENCES_A_PART == 0) yield return -1;
-                const double inset = 0.05;
-                var at = f.side switch
-                {
-                    Facing.N => new Vec2(f.x + 0.5, f.y + inset),
-                    Facing.S => new Vec2(f.x + 0.5, f.y + 1 - inset),
-                    Facing.W => new Vec2(f.x + inset, f.y + 0.5),
-                    _ => new Vec2(f.x + 1 - inset, f.y + 0.5),
-                };
+                // Its line, cut short where it would have run out over a sidewalk (Kerbs.ClearOf), the model stretched to it.
+                var (a, b) = Layout.FenceLine(f);
+                double length = Geo.Dist(a, b);
                 double rot = f.side == Facing.N || f.side == Facing.S ? 0 : Math.PI / 2;
-                Props.Place(fence, props, at.x, at.y, rot, fsx, 1.3, 1.3);
+                Props.Place(fence, props, (a.x + b.x) / 2, (a.y + b.y) / 2, rot, fsx * length, 1.3, 1.3);
             }
         }
 
@@ -716,23 +711,25 @@ namespace Porchlight.Rendering
             var tents = Get(Catalog.TENTS);
             var fires = Get(Catalog.CAMPFIRES);
             ModelLibrary.Model Any(ModelLibrary.Model[] pool) => pool[(int)Math.Floor(rng.Next() * pool.Length)];
-            // Sized by footprint (in tiles), or for trees by height.
-            void Spread(ModelLibrary.Model m, double x, double y, double footprint, bool shadows = true)
+            // Sized by footprint (in tiles), or for trees by height. `show` false: not planted (a tile kept clear for a
+            // park's kit), its random numbers still drawn so every other tile's planting stays as it was.
+            void Spread(ModelLibrary.Model m, double x, double y, double footprint, bool shadows = true, bool show = true)
             {
                 double s = footprint / Math.Max(m.size.x, m.size.z);
-                Props.Place(m, props, x, y, rng.Range(0, Math.PI * 2), s, s, s, castShadows: shadows);
+                double rot = rng.Range(0, Math.PI * 2);
+                if (show) Props.Place(m, props, x, y, rot, s, s, s, castShadows: shadows);
             }
-            void Tree(ModelLibrary.Model t, double x, double y, double spin)
+            void Tree(ModelLibrary.Model t, double x, double y, double spin, bool show = true)
             {
                 double s = rng.Range(1.3, 2.1) / t.size.y;
                 double sy = s * rng.Range(0.9, 1.1);
-                Props.Place(t, props, x, y, spin, s, sy, s);
+                if (show) Props.Place(t, props, x, y, spin, s, sy, s);
             }
-            void Wild(double x, double y)
+            void Wild(double x, double y, bool show = true)
             {
                 var m = Any(wilds);
                 double footprint = m.name.Contains("mushroom") ? rng.Range(0.12, 0.2) : m.name.Contains("stump") ? rng.Range(0.18, 0.3) : rng.Range(0.35, 0.6);
-                Spread(m, x, y, footprint, !m.name.Contains("mushroom"));
+                Spread(m, x, y, footprint, !m.name.Contains("mushroom"), show);
             }
             for (int y = 0; y < h; y++)
             {
@@ -745,14 +742,16 @@ namespace Porchlight.Rendering
                     byte terrain = tiles.terrain[i];
                     if (tiles.overlay[i] != Overlay.NONE) continue;
                     if (use == Use.HOUSE || use == Use.SHED || use == Use.GARDEN || use == Use.COMMUNITY_GARDEN || use == Use.DRIVEWAY || use == Use.CAR_PARK) continue;
+                    // Kept clear for a park's bench, table or playground (Parks.KeptClear): nothing planted.
+                    bool show = !parkClear.Contains(i);
                     if (terrain == Terrain.ROCK)
                     {
                         if (rng.Chance(0.22))
                         {
                             double ax = x + rng.Range(0.25, 0.75);
                             double ay = y + rng.Range(0.25, 0.75);
-                            if (rng.Chance(0.35)) Spread(Any(boulders), ax, ay, rng.Range(0.55, 0.95));
-                            else Spread(Any(rocks), ax, ay, rng.Range(0.4, 0.85));
+                            if (rng.Chance(0.35)) Spread(Any(boulders), ax, ay, rng.Range(0.55, 0.95), show: show);
+                            else Spread(Any(rocks), ax, ay, rng.Range(0.4, 0.85), show: show);
                         }
                         continue;
                     }
@@ -760,16 +759,16 @@ namespace Porchlight.Rendering
                     {
                         double r = rng.Next();
                         double ax = x + rng.Range(0.25, 0.75), ay = y + rng.Range(0.25, 0.75);
-                        if (r < 0.05) Tree(Any(palms), ax, ay, rng.Range(0, Math.PI * 2));
-                        else if (r < 0.1) Spread(Any(rocks), ax, ay, rng.Range(0.2, 0.4));
+                        if (r < 0.05) Tree(Any(palms), ax, ay, rng.Range(0, Math.PI * 2), show);
+                        else if (r < 0.1) Spread(Any(rocks), ax, ay, rng.Range(0.2, 0.4), show: show);
                         continue;
                     }
                     if (terrain == Terrain.DIRT)
                     {
                         double r = rng.Next();
                         double ax = x + rng.Range(0.25, 0.75), ay = y + rng.Range(0.25, 0.75);
-                        if (r < 0.06) Wild(ax, ay);
-                        else if (r < 0.1) Spread(Any(rocks), ax, ay, rng.Range(0.2, 0.45));
+                        if (r < 0.06) Wild(ax, ay, show);
+                        else if (r < 0.1) Spread(Any(rocks), ax, ay, rng.Range(0.2, 0.45), show: show);
                         continue;
                     }
                     if (terrain != Terrain.GRASS) continue;
@@ -790,13 +789,13 @@ namespace Porchlight.Rendering
                     if (roll < chance)
                     {
                         var pool = rng.Chance(0.12) ? fall : !inTown && rng.Chance(0.45) ? pines : trees;
-                        Tree(Any(pool), atX, atY, spin);
+                        Tree(Any(pool), atX, atY, spin, show);
                     }
                     else if (roll < chance + (use == Use.YARD || use == Use.GREEN ? 0.08 : 0.03))
                     {
                         var b = bushes[(int)Math.Floor(rng.Next() * bushes.Length)];
                         double s = rng.Range(0.4, 0.65) / Math.Max(b.size.x, b.size.z);
-                        Props.Place(b, props, atX, atY, spin, s, s, s, castShadows: false);
+                        if (show) Props.Place(b, props, atX, atY, spin, s, s, s, castShadows: false);
                     }
                     else if (roll < chance + 0.14 && (use == Use.YARD || use == Use.GREEN))
                     {
@@ -806,18 +805,19 @@ namespace Porchlight.Rendering
                             const double s = 1.2;
                             double fx = atX + rng.Range(-0.25, 0.25);
                             double fy = atY + rng.Range(-0.25, 0.25);
-                            Props.Place(f, props, fx, fy, rng.Range(0, 6.3), s, s, s, castShadows: false);
+                            double fr = rng.Range(0, 6.3);
+                            if (show) Props.Place(f, props, fx, fy, fr, s, s, s, castShadows: false);
                         }
                     }
-                    else if (!inTown && use == Use.NONE && roll < chance + 0.09) Wild(atX, atY);
+                    else if (!inTown && use == Use.NONE && roll < chance + 0.09) Wild(atX, atY, show);
                     else if (!inTown && use == Use.NONE && !nearStreet && roll > 0.996)
                     {
                         // A campsite: a tent, and its fire a step in front.
                         double dx = Math.Cos(spin), dy = Math.Sin(spin);
                         var tent = Any(tents);
                         double s = rng.Range(0.55, 0.7) / Math.Max(tent.size.x, tent.size.z);
-                        Props.Place(tent, props, x + 0.5 - dx * 0.12, y + 0.5 - dy * 0.12, DetMath.Atan2(dx, dy), s, s, s);
-                        Spread(Any(fires), x + 0.5 + dx * 0.32, y + 0.5 + dy * 0.32, 0.22, false);
+                        if (show) Props.Place(tent, props, x + 0.5 - dx * 0.12, y + 0.5 - dy * 0.12, DetMath.Atan2(dx, dy), s, s, s);
+                        Spread(Any(fires), x + 0.5 + dx * 0.32, y + 0.5 + dy * 0.32, 0.22, false, show);
                     }
                 }
             }
@@ -869,6 +869,34 @@ namespace Porchlight.Rendering
             }
         }
 
+        /// <summary>
+        /// The parks' benches, picnic tables, bins and playgrounds (Explore/Parks.cs), each model fitted to its piece's
+        /// footprint. A model the library doesn't have yet (the kit's are optional) is drawn as its stand-in, or left out.
+        /// </summary>
+        void AddParkKit()
+        {
+            foreach (var piece in parkKit)
+            {
+                string name = Catalog.ParkModel(piece.kind);
+                if (!library.Has(name)) name = Catalog.ParkStandIn(piece.kind);
+                if (!library.Has(name)) continue;
+                var m = library.Get(name);
+                // A model's front is +z and its width along x. Whichever way round it was made, its longer side goes
+                // along the footprint's longer side: if they disagree, it's turned a quarter.
+                double heading = piece.Heading;
+                double across = piece.width, along = piece.depth;
+                bool modelWide = m.size.x >= m.size.z, pieceWide = piece.width >= piece.depth;
+                if (modelWide != pieceWide && Math.Abs(piece.width - piece.depth) > 1e-6)
+                {
+                    heading += Math.PI / 2;
+                    (across, along) = (along, across);
+                }
+                // As big as fits the footprint, keeping its shape.
+                double s = Math.Min(across / Math.Max(1e-3, m.size.x), along / Math.Max(1e-3, m.size.z));
+                Props.Place(m, props, piece.at.x, piece.at.y, heading, s, s, s);
+            }
+        }
+
         void AddParkedCars()
         {
             foreach (var car in layout.cars)
@@ -880,7 +908,9 @@ namespace Porchlight.Rendering
                 var p = library.Get(Catalog.CARS[m]);
                 double s = CarView.ScaleOf(p);
                 parked.Add(new ParkedPose { x = car.x, y = car.y, heading = heading, model = m });
-                parkedCars.Add(Props.Place(p, props, car.x, car.y, DetMath.Atan2(Math.Cos(heading), Math.Sin(heading)), s, s, s, Catalog.KindOf(m) == VehicleKind.Boat ? CarView.LiftOf(VehicleKind.Boat) : 0));
+                // On the ground where it's parked: down on the road in a parking lane, up on a driveway or in a car park.
+                double lift = Catalog.KindOf(m) == VehicleKind.Boat ? CarView.LiftOf(VehicleKind.Boat) : Ground(car.x, car.y);
+                parkedCars.Add(Props.Place(p, props, car.x, car.y, DetMath.Atan2(Math.Cos(heading), Math.Sin(heading)), s, s, s, lift));
             }
         }
 
@@ -896,7 +926,9 @@ namespace Porchlight.Rendering
         IEnumerable<int> AddLamps(Rng rng)
         {
             var placed = new List<Vec2>();
-            var post = Materials.Lit(C.lampPost);
+            var lampModel = library.Get(Catalog.STREET_LIGHT);
+            // A library built before the street light was made hasn't got it: the plain post, arm and head as before.
+            var post = lampModel?.prefab == null ? Materials.Lit(C.lampPost) : null;
             var bulbMaterial = Materials.Glowing(Coords.Hex(0xfff6e0));
             var poolMaterial = Materials.LightPool();
             var lampsRoot = new GameObject("lamps").transform;
@@ -928,17 +960,29 @@ namespace Porchlight.Rendering
                     if (OnAnyRoad(basePt, LAMP_CLEAR)) continue;
                     placed.Add(on);
                     double rot = DetMath.Atan2(-normal.x, -normal.y);
-                    // A post, an arm reaching out over the street (+z), and the lamp's head.
+                    // The street light (signals.py): a post, an arm reaching out over the street (+z), and the lantern.
+                    // Its foot is its origin, and it's in metres: LAMP_SCALE makes it LAMP_HEIGHT tall, reaching LAMP_REACH.
                     var lamp = new GameObject("lamp").transform;
                     lamp.SetParent(props, false);
                     lamp.localPosition = Coords.Map(basePt.x, basePt.y);
                     lamp.localRotation = Coords.Yaw(rot);
-                    float H = (float)LAMP_HEIGHT, R = (float)LAMP_REACH;
-                    Shape(PrimitiveType.Cylinder, lamp, new Vector3(0, H / 2, 0), new Vector3(0.052f, H / 2, 0.052f), post);
-                    Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.01f, R / 2), new Vector3(0.03f, 0.03f, R), post);
-                    Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.02f, R), new Vector3(0.09f, 0.04f, 0.12f), post);
-                    // The bulb moves with nothing but glows per lamp, so it stays out of the static batch.
-                    var bulb = Shape(PrimitiveType.Sphere, lampsRoot, Coords.Map(basePt.x - normal.x * LAMP_REACH, basePt.y - normal.y * LAMP_REACH, LAMP_HEIGHT - 0.05), Vector3.one * 0.1f, bulbMaterial, false, "bulb");
+                    if (post == null)
+                    {
+                        var model = new GameObject("street light").transform;
+                        model.SetParent(lamp, false);
+                        model.localScale = Vector3.one * LAMP_SCALE;
+                        UnityEngine.Object.Instantiate(lampModel.prefab, model, false);
+                    }
+                    else
+                    {
+                        float H = (float)LAMP_HEIGHT, R = (float)LAMP_REACH;
+                        Shape(PrimitiveType.Cylinder, lamp, new Vector3(0, H / 2, 0), new Vector3(0.052f, H / 2, 0.052f), post);
+                        Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.01f, R / 2), new Vector3(0.03f, 0.03f, R), post);
+                        Shape(PrimitiveType.Cube, lamp, new Vector3(0, H - 0.02f, R), new Vector3(0.09f, 0.04f, 0.12f), post);
+                    }
+                    // The bulb is the lantern's glass, filling its cage. It moves with nothing but glows per lamp, so it
+                    // stays out of the static batch.
+                    var bulb = Shape(PrimitiveType.Sphere, lampsRoot, Coords.Map(basePt.x - normal.x * LAMP_REACH, basePt.y - normal.y * LAMP_REACH, LAMP_HEIGHT - 0.05), new Vector3(0.06f, 0.07f, 0.06f), bulbMaterial, false, "bulb");
                     double lx = basePt.x - normal.x * LAMP_REACH, ly = basePt.y - normal.y * LAMP_REACH;
                     var pool = Shape(PrimitiveType.Quad, lampsRoot, Coords.Map(lx, ly, 0.045), new Vector3(2.4f, 2.4f, 1), poolMaterial, false, "light pool");
                     pool.transform.localRotation = Quaternion.Euler(90, 0, 0);

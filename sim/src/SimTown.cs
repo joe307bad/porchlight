@@ -35,6 +35,8 @@ namespace Porchlight.Sim
         readonly StreetNames streets;
         /// <summary>What each of its buildings is for (Zoning.cs), for Manage's land-use map.</summary>
         public readonly TownZoning zoning;
+        /// <summary>Its parks, for Manage's map: each one's middle and outline (Parks.Encode).</summary>
+        public readonly List<(double[] at, List<double[]> rings)> parks;
         public readonly Traffic traffic;
         public readonly List<Pedestrian> people = new List<Pedestrian>();
         /// <summary>Townsfolk made with the town (the rest got out of cars someone took).</summary>
@@ -62,6 +64,7 @@ namespace Porchlight.Sim
             height = model.height;
             streets = StreetNaming.Name(model, layout.roads);
             zoning = Zoning.Plan(model, layout);
+            parks = Parks.Encode(model);
             // ExploreView.Populate, in the same order, so each car and person here is the game's.
             traffic = new Traffic(model, layout, zoning, new Rng($"{model.seed}::traffic"), Catalog.PickCarModel);
             var rng = new Rng($"{model.seed}::townsfolk");
@@ -80,6 +83,19 @@ namespace Porchlight.Sim
 
         /// <summary>The town's life (people, trips, the clock).</summary>
         public TownLife life => traffic.life;
+
+        /// <summary>
+        /// The sizes in a town that could grow while it runs (the minute's STATS line): life's cars and people, its
+        /// timetable (keys due / heap entries), and its analytics' tables. One that climbs hour on hour is the leak.
+        /// </summary>
+        public string Sizes()
+        {
+            var l = life;
+            if (l == null) return $"walkers {traffic.walkers.Count}, taken {taken.Count}";
+            var a = l.stats;
+            return $"life {l.cars.Count}c/{l.people.Count}p, events {l.Pending}/{l.EventHeap}, waits {a.carWaits.Count}/{a.walkerWaits.Count}, flow {a.flow.Count}, failures {a.failures.Count}, " +
+                $"walkers {traffic.walkers.Count}, taken {taken.Count}";
+        }
 
         /// <summary>A town's key (its room's name: "seed=porchlight&amp;width=256&amp;…") as the game reads it (PorchlightApp.ParseUrlState).</summary>
         public static (string seed, GenParams p) ParseKey(string key) => TownKey.Parse(key);
@@ -154,7 +170,8 @@ namespace Porchlight.Sim
             id,
             clock = traffic.Clock,
             time = TownClock.Format(traffic.Clock),
-            // [building (its place in Zoning.Encode's list, as Manage has them), people inside]
+            // [building (its place in Zoning.Encode's list, as Manage has them), people inside]. The market's crowd
+            // isn't in a building: it's market.people. Everyone's in one of these, at the market, off the map or out.
             inside = traffic.life.inside.Where(kv => BuildingIndex().ContainsKey(kv.Key)).Select(kv => new[] { BuildingIndex()[kv.Key], kv.Value }).OrderBy(x => x[0]).ToList(),
             offMap = traffic.life.offMap ?? new int[0],
             gates = traffic.life.net.borders.Select(b => new[] { Math.Round(b.at.x, 1), Math.Round(b.at.y, 1) }).ToList(),

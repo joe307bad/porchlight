@@ -68,6 +68,7 @@ namespace Porchlight.Gen
             new LotsStage(),
             new LandStage(),
             new BuildingsStage(),
+            new DesignStage(),
             new RasterizeStage(),
             new DocksStage(),
         };

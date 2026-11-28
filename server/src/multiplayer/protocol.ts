@@ -23,6 +23,8 @@ export const MSG_SPAWN = 'spawn'; // SpawnMessage, once after joining
 export const MSG_CORRECT = 'correct'; // CorrectMessage: snap here
 export const MSG_DOTS = 'dots'; // DotsMessage, once a second: everyone in the room, for the minimap
 export const MSG_UNLOCKS = 'unlocks'; // { unlocks }: another of the account's characters earned something
+export const MSG_TOWN_REBUILDING = 'town-rebuilding'; // { name, by, seconds, key }: an editor committed new streets; in `seconds` everyone's sent to `key` (CLOSE_TOWN_REBUILT)
+export const MSG_NOTICE = 'notice'; // { text }: something that happened while they were away (their house moved when the streets changed), once
 export const MSG_GOTO = 'goto'; // GotoMessage: Manage's right-click, for this character: directions to a spot, or taken there
 export const MSG_PERF = 'perf'; // { fps, slow, worstMs, memMb?, host? }: the game's last minute (telemetry.ts)
 export const MSG_PING = 'ping'; // { t }: the room asks for a pong, every 10 s
@@ -38,6 +40,10 @@ export const SERVER_HOST = 'server';
 export const CLOSE_SIGNED_IN_ELSEWHERE = 4100;
 export const CLOSE_KICKED = 4101;
 export const CLOSE_IN_USE = 4102;
+/** The town was rebuilt from an editor's commit (docs/street-editor-api.md): the reason is `rev=N`, its new revision (the new key came with MSG_TOWN_REBUILDING). */
+export const CLOSE_TOWN_REBUILT = 4103;
+/** Joined, but never acked the room's JOIN_ROOM (a hidden web tab's loop doesn't run): sent off, to join again once it's running. */
+export const CLOSE_JOIN_UNACKED = 4104;
 
 /** A join refused because someone else is playing this character (the game knows this message: Protocol.IN_USE). */
 export const IN_USE = 'That character is being played on another device.';

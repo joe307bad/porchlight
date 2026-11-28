@@ -44,11 +44,23 @@ test("given a town's life, then everyone's counted once: indoors, out, or out of
   const f = figures(life);
   assert.equal(f.indoors, 13);
   assert.equal(f.offMap, 3);
-  assert.equal(f.indoors + f.offMap + f.out, f.people);
+  assert.equal(f.atMarket, 0);
+  assert.equal(f.indoors + f.atMarket + f.offMap + f.out, f.people);
   assert.equal(f.busiestHour, 8);
   assert.deepEqual(f.shares.map((x) => Math.round(x * 88)), [40, 45, 3]);
   assert.deepEqual(f.meanMinutes, [4, 6, null]);
   assert.equal(f.parked, 0.25);
+});
+
+test("given market day, then the market's crowd is counted too: it isn't in any building", () => {
+  const saturday: TownLife = {
+    ...life,
+    summary: { ...life.summary, people: 26 },
+    market: { stalls: 12, up: 8, open: true, hours: '9 AM to 12 PM', people: 6, at: [10, 10] },
+  };
+  const f = figures(saturday);
+  assert.equal(f.atMarket, 6);
+  assert.equal(f.indoors + f.atMarket + f.offMap + f.out, f.people);
 });
 
 test('given who is indoors, then each building has its count, and a bigger crowd a bigger disc', () => {

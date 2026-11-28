@@ -116,6 +116,16 @@ jobs:
 
       - name: Game — towns grow (every invariant checked) and repeat
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- towns 60
+      # The lines painted on the streets (Markings.cs): none across another road's carriageway, a roundabout's ring
+      # or a cul-de-sac's bulb, edge lines at the edge round tight bends, dashes straight.
+      - name: Game — street markings keep to the streets
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- marks server/towns 20
+      # The streets' kerbs (Explore/Kerbs.cs): the ground cut along them covers every tile once, what stands off the
+      # road is up on the sidewalk and a parked car down on the road, no jumps; and no yard's fence on a sidewalk.
+      - name: Game — the roads a kerb below the sidewalks, and every fence clear of them
+        run: |
+          dotnet run --project "unity/Tools~/Checks" -c Release -- kerbs server/towns
+          dotnet run --project "unity/Tools~/Checks" -c Release -- fences server/towns 24
       # Road hierarchy (FHWA's shares), the ring road, eras, transect zones, neighbourhood units and a second centre.
       - name: Game — towns planned like real ones
         run: dotnet run --project "unity/Tools~/Checks" -c Release -- plan
@@ -139,6 +149,10 @@ jobs:
           dotnet run --project "unity/Tools~/Checks" -c Release -- clock
           dotnet run --project "unity/Tools~/Checks" -c Release -- furniture server/towns
           dotnet run --project "unity/Tools~/Checks" -c Release -- names server/towns
+      # The parks' kit (Explore/Parks.cs): every bench, picnic table, bin and playground piece inside its park, off
+      # the roads, sidewalks and buildings, clear of the trees and of each other.
+      - name: Game — the parks' benches, tables, bins and playgrounds where they fit, clear of everything
+        run: dotnet run --project "unity/Tools~/Checks" -c Release -- parks server/towns
       # The web build grows and builds the towns ahead a share at a time: no share long enough to stall
       # the car (a shared runner is slower than a desk: twice the limit), and the same towns as all at once.
       - name: Game — the county built a share at a time, as the web build does

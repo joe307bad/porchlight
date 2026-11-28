@@ -36,6 +36,7 @@ export PUBLIC_URL="http://$PUBLIC_HOST:5173"
 export APP_URL="$PUBLIC_URL"
 export KEYCLOAK_ISSUER="$PUBLIC_URL/realms/porchlight"
 export KEYCLOAK_INTERNAL_URL="http://localhost:8080/realms/porchlight"
+export EDITORS="*"
 # Anywhere but localhost: listen for other machines too.
 if [ "$PUBLIC_HOST" != localhost ]; then export HOST=0.0.0.0; fi
 

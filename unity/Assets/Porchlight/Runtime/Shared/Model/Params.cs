@@ -65,6 +65,11 @@ namespace Porchlight.Model
         public double driveways = 0.6;
         public double gardens = 0.5;
 
+        /// <summary>The town's revision (its key's `rev`): 0, as its key grows it; above, with the skeleton of that revision laid over it.</summary>
+        public int rev;
+        /// <summary>The street skeleton of revision `rev` (docs/street-editor.md §4), or null. Not part of the key: fetched or sent beside it.</summary>
+        public Skeleton skeleton;
+
         public static GenParams Defaults => new GenParams();
 
         public GenParams Clone() => (GenParams)MemberwiseClone();
@@ -157,7 +162,7 @@ namespace Porchlight.Model
         public bool SameAs(GenParams o)
         {
             foreach (var s in ParamSpec.All) if (this[s.key] != o[s.key]) return false;
-            return true;
+            return rev == o.rev && skeleton == o.skeleton;
         }
 
         /// <summary>Fill in defaults, snap to each spec's step and clamp to its range.</summary>
@@ -172,6 +177,7 @@ namespace Porchlight.Model
                 o[spec.key] = Math.Min(spec.max, Math.Max(spec.min, fixedV));
             }
             if (o.lotMaxSize < o.lotMinSize * 2) o.lotMaxSize = o.lotMinSize * 2;
+            if (partial != null && partial.TryGetValue("rev", out var rev) && Numbers.IsFinite(rev)) o.rev = Math.Max(0, (int)rev);
             return o;
         }
 
@@ -179,7 +185,10 @@ namespace Porchlight.Model
         {
             var d = new Dictionary<string, double>();
             foreach (var s in ParamSpec.All) d[s.key] = p[s.key];
-            return Normalize(d);
+            var o = Normalize(d);
+            o.rev = p.rev;
+            o.skeleton = p.skeleton;
+            return o;
         }
     }
 

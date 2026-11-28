@@ -16,7 +16,7 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 import type { ClientInfo, SessionEnd } from './telemetry.ts';
-import { accountUnlocks, characterState, characters, homes, missionCompletions, missionRecords, players, sessions, towns } from './tables.ts';
+import { accountUnlocks, characterState, characters, homes, missionCompletions, missionRecords, notices, players, sessions, townDrafts, townRevisions, towns } from './tables.ts';
 
 export interface Account {
   id: string;
@@ -103,7 +103,7 @@ export interface Snapshot {
   version: number;
 }
 
-export type EndReason = 'consented' | 'timeout' | 'kicked' | 'shutdown' | 'crash';
+export type EndReason = 'consented' | 'timeout' | 'kicked' | 'shutdown' | 'crash' | 'rebuilt';
 
 export const MAX_CHARACTERS = 8;
 /** How many towns an account can have made at once: to make another, delete one. */
@@ -130,7 +130,30 @@ export interface StarterTown {
 export const STARTER_TOWNS: StarterTown[] = ['porchlight', 'lanternport', 'ember-crossing', 'juniper-falls'].map((f) =>
   JSON.parse(readFileSync(new URL(`../../towns/${f}.json`, import.meta.url), 'utf8')),
 );
-const placeOf = (key: string): Place | null => STARTER_TOWNS.find((t) => t.key === key)?.place ?? null;
+
+/** The revision a town's key names (its `rev`; docs/street-editor-api.md), or 0. */
+export const revOf = (key: string): number => {
+  const m = /(?:^|&)rev=(\d+)(?:&|$)/.exec(key);
+  return m ? Number(m[1]) : 0;
+};
+/** The key without its `rev`: the town as its seed grows it, before any edit. */
+export const stripRev = (key: string): string => key.split('&').filter((p) => p && !p.startsWith('rev=')).join('&');
+/** The key with its `rev` set (left out at 0), at the end, as the game's Skeletons.WithRev writes it. */
+export const withRev = (key: string, rev: number): string => (rev > 0 ? `${stripRev(key)}&rev=${rev}` : stripRev(key));
+
+/** Each town that comes with the game's key now (its file's key, with the `rev` of its latest edit), by its file's key. */
+const starterKeys = new Map<string, string>();
+/** The towns that come with the game as they are now: an edited one's key has its `rev`. */
+export const starterTowns = (): StarterTown[] => STARTER_TOWNS.map((t) => ({ ...t, key: starterKeys.get(t.key) ?? t.key }));
+/** The town that comes with the game whose key this is (any revision of it), or null. */
+export const starterOf = (key: string): StarterTown | null => STARTER_TOWNS.find((t) => t.key === stripRev(key)) ?? null;
+/** A town that comes with the game has this key now (it was edited, or settled on starting). */
+export function setStarterKey(fileKey: string, key: string): void {
+  if (key === fileKey) starterKeys.delete(fileKey);
+  else starterKeys.set(fileKey, key);
+}
+
+const placeOf = (key: string): Place | null => starterOf(key)?.place ?? null;
 /** The first of an account's three places that's free (or null: all taken). */
 const freeSlot = (taken: (number | null)[]): number | null => {
   for (let s = 0; s < MAX_TOWNS; s++) if (!taken.includes(s)) return s;
@@ -174,9 +197,91 @@ export function cleanTownKey(raw: unknown): string | null {
 const townExists = (name: string | null) => new CharacterError(name ? `That town already exists: it's called ${name}.` : 'That town has been made already. Try another seed.', 409);
 /** Where a town comes with the game, its houses are known: only the tile each goes by will do (so a house can't be claimed twice, by two of its tiles). */
 const starterHouses = new Map(STARTER_TOWNS.map((t) => [t.key, new Set(t.houses.map(([x, y]) => `${x},${y}`))]));
-const checkHouse = (townKey: string, x: number, y: number): void => {
+/** An edited town's houses are its revision's (`revised`: the draft worker's, kept with it). */
+const checkHouse = (townKey: string, x: number, y: number, revised: [number, number][] | null = null): void => {
+  if (revOf(townKey) > 0) {
+    if (revised && !revised.some(([hx, hy]) => hx === x && hy === y)) throw new CharacterError("There's no house there.", 404);
+    return;
+  }
   if (starterHouses.get(townKey)?.has(`${x},${y}`) === false) throw new CharacterError("There's no house there.", 404);
 };
+
+/** A town as the street editor sees it. */
+export interface EditTown {
+  id: string;
+  name: string;
+  key: string;
+  createdBy: string | null;
+}
+
+/** An editor's work in progress on a town (docs/street-editor-api.md). */
+export interface TownDraft {
+  baseRev: number;
+  skeleton: unknown;
+  commands: unknown[];
+  updatedAt: string;
+}
+
+export interface Revision {
+  rev: number;
+  message: string;
+  /** Who committed it (their account's name), or null if they've gone. */
+  by: string | null;
+  at: string;
+}
+
+export interface Commit {
+  townId: string;
+  /** The key it was planned against: if the town's changed since, the commit's turned down. */
+  key: string;
+  skeleton: unknown;
+  /** Each house's tile in the new revision (the draft worker's `houses`). */
+  houses: [number, number][];
+  message: string;
+  by: string;
+}
+
+export interface Committed {
+  key: string;
+  rev: number;
+  /** Households moved to another house (or, with none free, out of theirs). */
+  rehoused: number;
+  /** The characters whose house moved (each told by a notice). */
+  moved: string[];
+}
+
+/** What a character whose house moved is told the next time they play. */
+export const movedNotice = (town: string, to: [number, number] | null): string =>
+  to
+    ? `The streets of ${town} were changed and your house is gone: you live in the nearest free one now.`
+    : `The streets of ${town} were changed and your house is gone, and there was no house free: choose a new one.`;
+
+/**
+ * Where each household goes when a town's houses change: those whose tile is still a house stay; each of
+ * the rest, north to south, goes to the nearest house still free, or nowhere if
+ * none is left. Returns the households that move, by their key, with their new tile (null: none).
+ */
+export function rehouse<K>(households: { key: K; x: number; y: number }[], houses: [number, number][]): Map<K, [number, number] | null> {
+  const tile = (x: number, y: number) => `${x},${y}`;
+  const isHouse = new Set(houses.map(([x, y]) => tile(x, y)));
+  const staying = new Set(households.filter((h) => isHouse.has(tile(h.x, h.y))).map((h) => tile(h.x, h.y)));
+  const free = houses.filter(([x, y]) => !staying.has(tile(x, y)));
+  const moving = households.filter((h) => !isHouse.has(tile(h.x, h.y))).sort((a, b) => a.y - b.y || a.x - b.x);
+  const out = new Map<K, [number, number] | null>();
+  for (const h of moving) {
+    let best = -1;
+    let bestD = Infinity;
+    for (let i = 0; i < free.length; i++) {
+      const d = (free[i][0] - h.x) ** 2 + (free[i][1] - h.y) ** 2;
+      if (d < bestD || (d === bestD && (free[i][1] < free[best][1] || (free[i][1] === free[best][1] && free[i][0] < free[best][0])))) {
+        bestD = d;
+        best = i;
+      }
+    }
+    out.set(h.key, best >= 0 ? free.splice(best, 1)[0] : null);
+  }
+  return out;
+}
 
 export interface Persistence {
   /** Migrated and reachable at least once: until then joins are refused. */
@@ -228,6 +333,27 @@ export interface Persistence {
   openSession(characterId: string, roomId: string, client?: ClientInfo): Promise<string>;
   /** It ends (once: a second close is ignored): why, more on why, and how it ran. */
   closeSession(sessionId: string, characterId: string, reason: EndReason, playSeconds: number, end?: SessionEnd): Promise<void>;
+
+  // The street editor (docs/street-editor-api.md; edit.ts).
+  /** The town this key is any revision of (its key now may name a later one), or null. */
+  townOf(key: string): Promise<EditTown | null>;
+  /** The skeleton committed as this very key, and whose town it is; null if none was. */
+  skeletonOf(key: string): Promise<{ rev: number; skeleton: unknown; createdBy: string | null } | null>;
+  draft(townId: string, author: string): Promise<TownDraft | null>;
+  /** Keep an editor's draft; when it was kept. */
+  saveDraft(townId: string, author: string, baseRev: number, skeleton: unknown, commands: unknown[]): Promise<string>;
+  deleteDraft(townId: string, author: string): Promise<void>;
+  /** The town's revisions, newest first. */
+  history(townId: string): Promise<Revision[]>;
+  /**
+   * In one go, the town's row locked: the next revision, the town's key with its `rev`, and each household whose
+   * house is gone moved to the nearest free one (rehouse), each of them told by a notice.
+   */
+  commit(c: Commit): Promise<Committed>;
+  /** Where characters last stood in the town as one key is where they stand in it as another (a revision on). */
+  movePlaces(from: string, to: string): Promise<void>;
+  /** What the character's to be told, now told (gone). */
+  takeNotices(characterId: string): Promise<string[]>;
   close(): Promise<void>;
 }
 
@@ -307,7 +433,7 @@ export class PgPersistence implements Persistence {
         if (crashed.length) console.log(`game db: closed ${crashed.length} session(s) left open by a crash`);
         for (const town of STARTER_TOWNS) await this.settleStarterTown(town);
         // Only starter towns have no maker: any that no longer come with the game go, and those who lived there choose again.
-        await this.db.delete(towns).where(and(isNull(towns.createdBy), notInArray(towns.key, STARTER_TOWNS.map((t) => t.key))));
+        await this.db.delete(towns).where(and(isNull(towns.createdBy), notInArray(towns.name, STARTER_TOWNS.map((t) => t.name))));
         this.ready = true;
         console.log('game db: ready');
       } catch (err) {
@@ -503,7 +629,7 @@ export class PgPersistence implements Persistence {
   }
 
   async countyFor(room: string): Promise<{ account: string | null; mine: { key: string; slot: number }[] } | null> {
-    if (STARTER_TOWNS.some((t) => t.key === room)) return { account: null, mine: [] };
+    if (starterOf(room)) return { account: null, mine: [] };
     let account: string | null = null;
     if (room.startsWith(`${NORTH}:`)) account = room.slice(NORTH.length + 1);
     else {
@@ -522,6 +648,12 @@ export class PgPersistence implements Persistence {
       const mine = await tx.select({ slot: towns.slot }).from(towns).where(eq(towns.createdBy, accountId));
       const slot = freeSlot(mine.map((t) => t.slot));
       if (mine.length >= MAX_TOWNS || slot === null) throw tooManyTowns();
+      // A revision of a town is that town: its key (with or without a `rev`) is taken.
+      if (key !== undefined) {
+        if (revOf(key) > 0) throw townExists(null);
+        const [edited] = await tx.select({ name: towns.name, createdBy: towns.createdBy }).from(towns).where(sql`starts_with(${towns.key}, ${`${key}&rev=`})`);
+        if (edited) throw townExists(edited.createdBy === null || edited.createdBy === accountId ? edited.name : null);
+      }
       const [town] = await tx.insert(towns).values({ name, key: key ?? newTownKey(), createdBy: accountId, slot }).onConflictDoNothing({ target: towns.key }).returning({ id: towns.id, name: towns.name, key: towns.key, slot: towns.slot });
       if (!town) {
         const [same] = await tx.select({ name: towns.name, createdBy: towns.createdBy }).from(towns).where(eq(towns.key, key ?? ''));
@@ -574,23 +706,42 @@ export class PgPersistence implements Persistence {
    * On starting, nobody's playing: a town that comes with the game, up to date with its file. If it's
    * been regenerated, those who lived there move to a new house each (a household together, wherever
    * the house falls), and where anyone was standing there no longer means anything.
+   *
+   * A town an editor's changed (its key has a `rev`) is never put back as its file has it: with the same
+   * file key it stays as it is (its houses are its revision's, not the file's); if the file's key changed,
+   * the new key takes the edit's `rev` and skeleton, and its households are rehoused as above.
    */
   async settleStarterTown(town: StarterTown): Promise<void> {
     const layout = createHash('sha256').update(JSON.stringify([town.key, town.houses])).digest('hex');
+    let now = town.key;
     await this.db.transaction(async (tx) => {
       const [was] = await tx.select({ id: towns.id, key: towns.key, layout: towns.layout }).from(towns).where(and(isNull(towns.createdBy), eq(towns.name, town.name))).for('update');
-      if (was?.layout === layout) return;
-      const [clash] = await tx.select({ name: towns.name }).from(towns).where(was ? and(eq(towns.key, town.key), ne(towns.id, was.id)) : eq(towns.key, town.key));
+      const rev = was ? revOf(was.key) : 0;
+      if (was && rev > 0 && stripRev(was.key) === town.key) {
+        now = was.key;
+        if (was.layout !== layout) await tx.update(towns).set({ layout }).where(eq(towns.id, was.id));
+        return;
+      }
+      if (was?.layout === layout) {
+        now = was.key;
+        return;
+      }
+      const key = withRev(town.key, rev);
+      const [clash] = await tx.select({ name: towns.name }).from(towns).where(was ? and(eq(towns.key, key), ne(towns.id, was.id)) : eq(towns.key, key));
       if (clash) {
         // A player's already made this very town: keep what we have rather than not start.
         console.error(`game db: can't regenerate ${town.name}: its key is already the town ${clash.name}`);
+        if (was) now = was.key;
         return;
       }
+      now = key;
       if (!was) {
-        await tx.insert(towns).values({ name: town.name, key: town.key, layout });
+        await tx.insert(towns).values({ name: town.name, key, layout });
         return;
       }
-      await tx.update(towns).set({ key: town.key, layout }).where(eq(towns.id, was.id));
+      await tx.update(towns).set({ key, layout }).where(eq(towns.id, was.id));
+      // The edit carries over: its skeleton fetched by the new key, its houses the file's (as they're rehoused below).
+      if (rev > 0) await tx.update(townRevisions).set({ key, houses: town.houses }).where(and(eq(townRevisions.townId, was.id), eq(townRevisions.rev, rev)));
       const residents = await tx.select({ character: characters.id, home: homes.id, playerId: homes.playerId }).from(characters).innerJoin(homes, eq(characters.homeId, homes.id)).where(eq(homes.townId, was.id));
       const households = new Map<string, { playerId: string; characters: string[] }>();
       for (const r of residents) {
@@ -612,9 +763,10 @@ export class PgPersistence implements Persistence {
         await tx.update(characters).set({ homeId: home.id }).where(inArray(characters.id, h.characters));
         housed++;
       }
-      await tx.update(characterState).set({ town: '' }).where(inArray(characterState.town, [was.key, town.key]));
+      await tx.update(characterState).set({ town: '' }).where(inArray(characterState.town, [was.key, key]));
       console.log(`game db: ${town.name} regenerated: ${housed} of ${households.size} household(s) rehoused`);
     });
+    setStarterKey(town.key, now);
   }
 
   async claimHome(accountId: string, characterId: string, x: number, y: number): Promise<void> {
@@ -627,7 +779,10 @@ export class PgPersistence implements Persistence {
       if (!c) throw noSuchCharacter();
       if (!c.townId) throw new CharacterError('Choose a town first.', 409);
       const [town] = await tx.select({ key: towns.key }).from(towns).where(eq(towns.id, c.townId));
-      if (town) checkHouse(town.key, x, y);
+      if (town) {
+        const [revised] = revOf(town.key) > 0 ? await tx.select({ houses: townRevisions.houses }).from(townRevisions).where(eq(townRevisions.key, town.key)) : [];
+        checkHouse(town.key, x, y, revised?.houses ?? null);
+      }
       await tx.insert(homes).values({ townId: c.townId, x, y, playerId: accountId }).onConflictDoNothing();
       const [home] = await tx.select({ id: homes.id, playerId: homes.playerId }).from(homes).where(and(eq(homes.townId, c.townId), eq(homes.x, x), eq(homes.y, y)));
       // Gone already (its last resident moved out between those two lines): they can try again.
@@ -695,6 +850,93 @@ export class PgPersistence implements Persistence {
     });
   }
 
+  async townOf(key: string): Promise<EditTown | null> {
+    const base = stripRev(key);
+    const [town] = await this.db
+      .select({ id: towns.id, name: towns.name, key: towns.key, createdBy: towns.createdBy })
+      .from(towns)
+      .where(or(eq(towns.key, base), sql`starts_with(${towns.key}, ${`${base}&rev=`})`));
+    return town ?? null;
+  }
+
+  async skeletonOf(key: string): Promise<{ rev: number; skeleton: unknown; createdBy: string | null } | null> {
+    const [row] = await this.db
+      .select({ rev: townRevisions.rev, skeleton: townRevisions.skeleton, createdBy: towns.createdBy })
+      .from(townRevisions)
+      .innerJoin(towns, eq(townRevisions.townId, towns.id))
+      .where(eq(townRevisions.key, key));
+    return row ?? null;
+  }
+
+  async draft(townId: string, author: string): Promise<TownDraft | null> {
+    const [d] = await this.db.select().from(townDrafts).where(and(eq(townDrafts.townId, townId), eq(townDrafts.author, author)));
+    return d ? { baseRev: d.baseRev, skeleton: d.skeleton, commands: (d.commands as unknown[]) ?? [], updatedAt: d.updatedAt.toISOString() } : null;
+  }
+
+  async saveDraft(townId: string, author: string, baseRev: number, skeleton: unknown, commands: unknown[]): Promise<string> {
+    const [d] = await this.db
+      .insert(townDrafts)
+      .values({ townId, author, baseRev, skeleton, commands })
+      .onConflictDoUpdate({ target: [townDrafts.townId, townDrafts.author], set: { baseRev, skeleton, commands, updatedAt: sql`now()` } })
+      .returning({ updatedAt: townDrafts.updatedAt });
+    return d.updatedAt.toISOString();
+  }
+
+  async deleteDraft(townId: string, author: string): Promise<void> {
+    await this.db.delete(townDrafts).where(and(eq(townDrafts.townId, townId), eq(townDrafts.author, author)));
+  }
+
+  async history(townId: string): Promise<Revision[]> {
+    const rows = await this.db
+      .select({ rev: townRevisions.rev, message: townRevisions.message, by: players.name, at: townRevisions.committedAt })
+      .from(townRevisions)
+      .leftJoin(players, eq(townRevisions.committedBy, players.id))
+      .where(eq(townRevisions.townId, townId))
+      .orderBy(sql`${townRevisions.rev} desc`);
+    return rows.map((r) => ({ rev: r.rev, message: r.message, by: r.by ?? null, at: r.at.toISOString() }));
+  }
+
+  async commit(c: Commit): Promise<Committed> {
+    let starter: string | null = null;
+    const done = await this.db.transaction(async (tx) => {
+      const [town] = await tx.select({ key: towns.key, name: towns.name, createdBy: towns.createdBy }).from(towns).where(eq(towns.id, c.townId)).for('update');
+      if (!town) throw noSuchTown();
+      if (town.key !== c.key) throw new CharacterError('Someone changed this town first: look at it again.', 409);
+      const rev = revOf(town.key) + 1;
+      const key = withRev(town.key, rev);
+      await tx.insert(townRevisions).values({ townId: c.townId, rev, key, skeleton: c.skeleton, houses: c.houses, committedBy: c.by, message: c.message });
+      await tx.update(towns).set({ key }).where(eq(towns.id, c.townId));
+      const households = await tx.select({ key: homes.id, x: homes.x, y: homes.y }).from(homes).where(eq(homes.townId, c.townId));
+      const moves = rehouse(households, c.houses);
+      const moved: string[] = [];
+      for (const [home, to] of moves) {
+        const living = await tx.select({ id: characters.id }).from(characters).where(eq(characters.homeId, home));
+        // Out of theirs and into the nearest free one, a household together; with none free, out (they choose again).
+        if (to) await tx.update(homes).set({ x: to[0], y: to[1] }).where(eq(homes.id, home));
+        else await tx.delete(homes).where(eq(homes.id, home));
+        for (const l of living) moved.push(l.id);
+        if (living.length) await tx.insert(notices).values(living.map((l) => ({ characterId: l.id, text: movedNotice(town.name, to) })));
+      }
+      if (town.createdBy === null) starter = stripRev(town.key);
+      return { key, rev, rehoused: moves.size, moved };
+    });
+    if (starter) {
+      const file = starterOf(starter);
+      if (file) setStarterKey(file.key, done.key);
+    }
+    return done;
+  }
+
+  async movePlaces(from: string, to: string): Promise<void> {
+    await this.db.update(characterState).set({ town: to }).where(eq(characterState.town, from));
+  }
+
+  async takeNotices(characterId: string): Promise<string[]> {
+    if (!isUuid(characterId)) return [];
+    const rows = await this.db.delete(notices).where(eq(notices.characterId, characterId)).returning({ text: notices.text, at: notices.createdAt });
+    return rows.sort((a, b) => a.at.getTime() - b.at.getTime()).map((r) => r.text);
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     await this.pool.end();
@@ -712,6 +954,10 @@ export class MemoryPersistence implements Persistence {
   /** Each town and mission's times (`town\nmission`), by account. */
   readonly boards = new Map<string, Map<string, { name: string; seconds: number; at: string }>>();
   readonly sessions = new Map<string, { characterId: string; reason: EndReason | null; client?: ClientInfo; end?: SessionEnd }>();
+  /** The street editor's: each town's revisions, drafts (`town\nauthor`), and what each character's to be told. */
+  readonly revisions: { townId: string; rev: number; key: string; skeleton: unknown; houses: [number, number][]; by: string; message: string; at: string }[] = [];
+  readonly drafts = new Map<string, TownDraft>();
+  readonly notices = new Map<string, string[]>();
   /** Set to make every call fail, as if the database were down. */
   down = false;
 
@@ -893,7 +1139,7 @@ export class MemoryPersistence implements Persistence {
 
   async countyFor(room: string): Promise<{ account: string | null; mine: { key: string; slot: number }[] } | null> {
     this.check();
-    if (STARTER_TOWNS.some((t) => t.key === room)) return { account: null, mine: [] };
+    if (starterOf(room)) return { account: null, mine: [] };
     const account = room.startsWith(`${NORTH}:`) ? room.slice(NORTH.length + 1) : ([...this.towns.values()].find((t) => t.key === room)?.createdBy ?? null);
     if (!account) return null;
     const mine = [...this.towns.values()].filter((t) => t.createdBy === account && t.slot !== null).map((t) => ({ key: t.key, slot: t.slot! }));
@@ -905,7 +1151,8 @@ export class MemoryPersistence implements Persistence {
     const mine = [...this.towns.values()].filter((t) => t.createdBy === accountId);
     const slot = freeSlot(mine.map((t) => t.slot));
     if (mine.length >= MAX_TOWNS || slot === null) throw tooManyTowns();
-    const same = [...this.towns.values()].find((t) => t.key === key);
+    if (key !== undefined && revOf(key) > 0) throw townExists(null);
+    const same = [...this.towns.values()].find((t) => t.key === key || (key !== undefined && t.key.startsWith(`${key}&rev=`)));
     if (same) throw townExists(same.createdBy === null || same.createdBy === accountId ? same.name : null);
     const town = { id: crypto.randomUUID(), name, key: key ?? newTownKey(), createdBy: accountId, slot };
     this.towns.set(town.id, town);
@@ -954,7 +1201,7 @@ export class MemoryPersistence implements Persistence {
     if (!c || c.accountId !== accountId) throw noSuchCharacter();
     if (!c.townId) throw new CharacterError('Choose a town first.', 409);
     const town = this.towns.get(c.townId);
-    if (town) checkHouse(town.key, x, y);
+    if (town) checkHouse(town.key, x, y, this.revisions.find((r) => r.key === town.key)?.houses ?? null);
     if (c.house?.x === x && c.house.y === y) return;
     const inside = [...this.characters.values()].filter((o) => o.townId === c.townId && o.house?.x === x && o.house.y === y);
     if (inside.some((o) => o.accountId !== accountId)) throw houseTaken();
@@ -977,6 +1224,88 @@ export class MemoryPersistence implements Persistence {
     s.end = end;
     const state = this.states.get(characterId);
     if (state) state.playSeconds += playSeconds;
+  }
+
+  async townOf(key: string): Promise<EditTown | null> {
+    this.check();
+    const base = stripRev(key);
+    const t = [...this.towns.values()].find((t) => stripRev(t.key) === base);
+    return t ? { id: t.id, name: t.name, key: t.key, createdBy: t.createdBy } : null;
+  }
+
+  async skeletonOf(key: string): Promise<{ rev: number; skeleton: unknown; createdBy: string | null } | null> {
+    this.check();
+    const r = this.revisions.find((r) => r.key === key);
+    const town = r && this.towns.get(r.townId);
+    return r && town ? { rev: r.rev, skeleton: r.skeleton, createdBy: town.createdBy } : null;
+  }
+
+  async draft(townId: string, author: string): Promise<TownDraft | null> {
+    this.check();
+    return this.drafts.get(`${townId}\n${author}`) ?? null;
+  }
+
+  async saveDraft(townId: string, author: string, baseRev: number, skeleton: unknown, commands: unknown[]): Promise<string> {
+    this.check();
+    const updatedAt = new Date().toISOString();
+    this.drafts.set(`${townId}\n${author}`, { baseRev, skeleton, commands, updatedAt });
+    return updatedAt;
+  }
+
+  async deleteDraft(townId: string, author: string): Promise<void> {
+    this.check();
+    this.drafts.delete(`${townId}\n${author}`);
+  }
+
+  async history(townId: string): Promise<Revision[]> {
+    this.check();
+    const nameOf = (id: string) => [...this.accounts.values()].find((a) => a.id === id)?.name ?? null;
+    return this.revisions
+      .filter((r) => r.townId === townId)
+      .sort((a, b) => b.rev - a.rev)
+      .map((r) => ({ rev: r.rev, message: r.message, by: nameOf(r.by), at: r.at }));
+  }
+
+  async commit(c: Commit): Promise<Committed> {
+    this.check();
+    const town = this.towns.get(c.townId);
+    if (!town) throw noSuchTown();
+    if (town.key !== c.key) throw new CharacterError('Someone changed this town first: look at it again.', 409);
+    const rev = revOf(town.key) + 1;
+    const key = withRev(town.key, rev);
+    this.revisions.push({ townId: c.townId, rev, key, skeleton: c.skeleton, houses: c.houses, by: c.by, message: c.message, at: new Date().toISOString() });
+    town.key = key;
+    // A household is those of one account in one house.
+    const living = [...this.characters.values()].filter((ch) => ch.townId === c.townId && ch.house);
+    const households = new Map<string, { key: string; x: number; y: number }>();
+    for (const ch of living) households.set(`${ch.house!.x},${ch.house!.y}`, { key: `${ch.house!.x},${ch.house!.y}`, x: ch.house!.x, y: ch.house!.y });
+    const moves = rehouse([...households.values()], c.houses);
+    const moved: string[] = [];
+    for (const ch of living) {
+      const tile = `${ch.house!.x},${ch.house!.y}`;
+      if (!moves.has(tile)) continue;
+      const to = moves.get(tile)!;
+      ch.house = to ? { x: to[0], y: to[1] } : null;
+      moved.push(ch.id);
+      this.notices.set(ch.id, [...(this.notices.get(ch.id) ?? []), movedNotice(town.name, to)]);
+    }
+    if (town.createdBy === null) {
+      const file = starterOf(key);
+      if (file) setStarterKey(file.key, key);
+    }
+    return { key, rev, rehoused: moves.size, moved };
+  }
+
+  async movePlaces(from: string, to: string): Promise<void> {
+    this.check();
+    for (const s of this.states.values()) if (s.town === from) s.town = to;
+  }
+
+  async takeNotices(characterId: string): Promise<string[]> {
+    this.check();
+    const list = this.notices.get(characterId) ?? [];
+    this.notices.delete(characterId);
+    return list;
   }
 
   async close(): Promise<void> {}

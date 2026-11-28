@@ -65,6 +65,7 @@ static class LifeCheck
         yield return ("turns are named the driver's way: right turns are the tight ones", TurnNames);
         yield return ("vans on their rounds at midday: out, calling, and saying so", VansAtMidday);
         yield return ("Manage's town table: everyone counted once, by who they are and where they are now", PopulationTable);
+        yield return ("Manage's town view: everyone's in a building, at the market, off the map or out, through a weekday and a market day", Everyone);
         yield return ("a parked car stays where it's parked: its driver gets out and walks off from it, and walks back up to it", ParkedStays);
         yield return ("Manage's congestion slider: each hour's hold-ups, and its worst streets worst first", CongestionByHour);
         yield return ("the morning rush travels smart: routes by the traffic, spots held, drivers let in, lights that change for a car, gaps waited for", TravelsSmart);
@@ -306,10 +307,10 @@ static class LifeCheck
         return null;
     }
 
-    static Traffic Rush(TownModel model, IsoLayout layout, TownZoning zoning)
+    static Traffic Rush(TownModel model, IsoLayout layout, TownZoning zoning, long? at = null)
     {
         var t = new Traffic(model, layout, zoning, new Rng("life"), r => 0);
-        t.StartAt(TrafficDay.Morning);
+        t.StartAt(at ?? TrafficDay.Morning);
         return t;
     }
 
@@ -693,6 +694,54 @@ static class LifeCheck
     }
 
     /// <summary>
+    /// Given a town started (as the server starts one, at the time it is) at a quarter to 4, 9, 1 and 6 on a Friday,
+    /// and on the Saturday, a market day, every hour from a quarter to 9 to a quarter to 2, when Manage's town view
+    /// counts who's where (sim/src/SimTown.cs Life), then everyone is in one of its buildings
+    /// (`inside`, by Manage's list), at the market (`market.people`), off the map or out: nobody's left out at any
+    /// hour. (The market's crowd isn't one of the buildings: the server's test, its clock shifted to 10:30, left it out
+    /// and failed whenever that landed on a Saturday.)
+    /// </summary>
+    static string Everyone(TownModel model, IsoLayout layout, TownZoning zoning)
+    {
+        var buildings = new HashSet<int>(zoning.buildings.Select(b => b.buildingId));
+        long midnight = TownClock.At(TownClock.DayOf(TrafficDay.Morning), 0);
+        string Counted(TownLife life)
+        {
+            int inBuildings = life.inside.Where(kv => buildings.Contains(kv.Key)).Sum(kv => kv.Value);
+            var elsewhere = life.inside.Where(kv => !buildings.Contains(kv.Key) && kv.Key != TownLife.MARKET).ToList();
+            if (elsewhere.Count > 0) return $"{TownClock.Format(life.Now)}: people indoors at places that aren't buildings: {string.Join(", ", elsewhere.Select(kv => $"{kv.Key} ({kv.Value})"))}";
+            life.inside.TryGetValue(TownLife.MARKET, out int market);
+            if (market != life.AtMarketNow) return $"{TownClock.Format(life.Now)}: {market} at the market by where they are, {life.AtMarketNow} on the market's own list";
+            int off = life.offMap?.Sum() ?? 0, out_ = life.OutNow();
+            if (inBuildings + market + off + out_ != life.people.Count)
+                return $"{TownClock.Format(life.Now)}: {inBuildings} in buildings, {market} at the market, {off} off the map and {out_} out make {inBuildings + market + off + out_}, of {life.people.Count}";
+            return null;
+        }
+        long At(int hour) => midnight + hour * TownClock.HOUR + 45 * TownClock.MINUTE;
+        // The Friday: night, the rush, lunch, the evening's, each started afresh there.
+        foreach (int hour in new[] { 3, 8, 12, 17 })
+        {
+            var life = new TownLife(model, layout, zoning);
+            life.Start(At(hour));
+            string err = Counted(life);
+            if (err != null) return err;
+        }
+        // The Saturday: from before the market opens to after it's packed up.
+        var saturday = new TownLife(model, layout, zoning);
+        int mostAtMarket = 0;
+        for (int hour = 24 + 8; hour <= 24 + 13; hour++)
+        {
+            if (!saturday.Started) saturday.Start(At(hour));
+            else saturday.RunUntil(At(hour));
+            string err = Counted(saturday);
+            if (err != null) return err;
+            mostAtMarket = Math.Max(mostAtMarket, saturday.AtMarketNow);
+        }
+        if (saturday.market != null && saturday.Today.market && mostAtMarket == 0) return "market day, and nobody at the market at any hour";
+        return null;
+    }
+
+    /// <summary>
     /// Given a town at 10:00 and again at 03:00, when Manage asks for its population table, then each row's places add
     /// up to its people; the rows add up to the town's people, its out (walking, driving and on the bus) to those on a
     /// trip, and its off the map to those off it. At 10:00 workers and students are mostly at work or school; at 03:00
@@ -915,7 +964,10 @@ static class LifeCheck
     /// </summary>
     static string JunctionPlayer(TownModel model, IsoLayout layout, TownZoning zoning)
     {
-        var t = Rush(model, layout, zoning);
+        // From 7:25, so the player stands there from 7:30 through the rush's peak. Not from Morning (8:15) as the
+        // other scenarios: a small town's rush is over by then (Juniper Falls has 35 out at 7:45 and none at 8:15, of
+        // 1213), and whether a car came to its busiest junction in the ten minutes after was luck.
+        var t = Rush(model, layout, zoning, TrafficDay.Morning - 50 * TownClock.MINUTE);
         var life = t.life;
         // The junction most cars went through in five minutes of it.
         for (int f = 0; f < 3000; f++) t.Update(0.1, null);

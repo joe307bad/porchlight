@@ -27,6 +27,12 @@ namespace Porchlight.Gen
         public IEnumerable<string> Steps(TownModel model, Rng rng, Action<TownModel> done)
         {
             int w = model.width, h = model.height;
+            if (model.@params.skeleton?.mains != null)
+            {
+                // An editor has laid the main roads: they're where they put them (docs/street-editor.md §4.2).
+                done(Pinned(model, model.@params.skeleton.mains, RoadKind.Main));
+                yield break;
+            }
             var terrainInfo = Raster.RoadTerrain(model);
             var cost = terrainInfo.cost;
             var segmentOk = Raster.RoadSegmentOk(terrainInfo, model);
@@ -246,6 +252,68 @@ namespace Porchlight.Gen
             next.roads = RoadGraphOps.Compact(builder);
             next.bridges = RoadGraphOps.ComputeBridges(next, Raster.WaterMask(next));
             done(next);
+        }
+
+        /// <summary>How near two roads' ends are (tiles) to be one junction.</summary>
+        public const double PIN_SNAP = 0.75;
+
+        /// <summary>Roads laid where an editor put them: their ends joined where they meet (within PIN_SNAP), crossings made junctions.</summary>
+        public static GraphBuilder PinnedGraph(IEnumerable<SkeletonRoad> roads, RoadKind kind)
+        {
+            var g = new GraphBuilder();
+            int NodeAt(Vec2 at)
+            {
+                foreach (var n in g.nodes) if (Geo.Dist(n.at, at) <= PIN_SNAP) return n.id;
+                g.nodes.Add(new RoadNode { id = g.nodes.Count, at = at });
+                return g.nodes.Count - 1;
+            }
+            foreach (var r in roads)
+            {
+                if (r.points.Count < 2) continue;
+                int a = NodeAt(r.points[0]), b = NodeAt(r.points[r.points.Count - 1]);
+                if (a == b) continue;
+                var pts = new List<Vec2>(r.points);
+                pts[0] = g.nodes[a].at;
+                pts[pts.Count - 1] = g.nodes[b].at;
+                g.edges.Add(new RoadEdge { id = g.edges.Count, from = a, to = b, kind = kind, cls = r.cls ?? RoadClass.Local, points = pts });
+            }
+            JoinEnds(g);
+            RoadGraphOps.Planarize(g);
+            return g;
+        }
+
+        /// <summary>A road's end on another road's side (within PIN_SNAP, clear of its ends): that road is cut there, a T.</summary>
+        public static void JoinEnds(GraphBuilder g)
+        {
+            for (int n = 0; n < g.nodes.Count; n++)
+            {
+                var at = g.nodes[n].at;
+                for (int i = 0; i < g.edges.Count; i++)
+                {
+                    var e = g.edges[i];
+                    if (g.dead.Contains(e.id) || e.from == n || e.to == n) continue;
+                    if (Geo.Dist(g.nodes[e.from].at, at) <= PIN_SNAP || Geo.Dist(g.nodes[e.to].at, at) <= PIN_SNAP) continue;
+                    var hit = Geo.ClosestOnPolyline(at, e.points);
+                    if (hit.d > PIN_SNAP) continue;
+                    var first = e.points.GetRange(0, hit.seg + 1);
+                    first.Add(at);
+                    var second = new List<Vec2> { at };
+                    second.AddRange(e.points.GetRange(hit.seg + 1, e.points.Count - hit.seg - 1));
+                    int to = e.to;
+                    e.points = first;
+                    e.to = n;
+                    g.edges.Add(new RoadEdge { id = g.edges.Count, from = n, to = to, kind = e.kind, cls = e.cls, points = second });
+                    break;
+                }
+            }
+        }
+
+        static TownModel Pinned(TownModel model, List<SkeletonRoad> roads, RoadKind kind)
+        {
+            var next = model.With();
+            next.roads = RoadGraphOps.Compact(PinnedGraph(roads, kind));
+            next.bridges = RoadGraphOps.ComputeBridges(next, Raster.WaterMask(next));
+            return next;
         }
 
         /// <summary>Points round the ring road: RING_STOPS of them, each a dry tile on its circle (or as near it as there is one), clockwise.</summary>

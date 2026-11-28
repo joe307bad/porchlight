@@ -24,6 +24,7 @@
 //   dotnet run --project "unity/Tools~/Checks" -- steering          # your own steering: a tap a nudge, a held turn full, straight easy to hold (SteeringCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- where             # the line under your name says where you are now (WhereCheck.cs)
 //   dotnet run --project "unity/Tools~/Checks" -- calendar [dir]    # weekends, holidays, 180 school days, the school run, market day (CalendarCheck.cs)
+//   dotnet run --project "unity/Tools~/Checks" -- parks [dir]       # the parks' benches, tables, bins and playgrounds inside their parks, clear of roads, sidewalks, buildings, trees and each other (ParksCheck.cs)
 
 using System;
 using Porchlight.County;
@@ -37,6 +38,8 @@ static class Program
 {
     static int Main(string[] args)
     {
+        // THREADS=1: grow towns with every core (Gen.Work), as the simulation does; else one thread, as the game.
+        if (Environment.GetEnvironmentVariable("THREADS") == "1") Porchlight.Gen.Work.ForEach = (n, body) => System.Threading.Tasks.Parallel.For(0, n, body);
         if (args.Length > 1 && args[0] == "net") return NetCheck.Run(args[1]);
         if (args.Length > 1 && args[0] == "mission") return MissionCheck.Run(args[1]);
         if (args.Length > 0 && args[0] == "chase") return ChaseCheck.Run(args.Length > 1 ? int.Parse(args[1]) : 40);
@@ -63,6 +66,9 @@ static class Program
         if (args.Length > 0 && args[0] == "servers") return ServersCheck.Run();
         if (args.Length > 0 && args[0] == "clock") return ClockCheck.Run();
         if (args.Length > 0 && args[0] == "crowd") return CrowdCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "parks") return ParksCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "kerbs") return KerbCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "fences") return FenceCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 24);
         if (args.Length > 0 && args[0] == "furniture") return FurnitureCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 0 && args[0] == "habits") return HabitsCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : "lanternport", args.Length > 3 ? int.Parse(args[3]) : 3);
         if (args.Length > 0 && args[0] == "population") return PopulationCheck.Run(args.Length > 1 ? args[1] : "server/towns");
@@ -75,12 +81,15 @@ static class Program
         if (args.Length > 0 && args[0] == "steering") return SteeringCheck.Run();
         if (args.Length > 0 && args[0] == "sleigh") return SleighCheck.Run();
         if (args.Length > 0 && args[0] == "streets") return StreetsReport.Run(args.Length > 1 ? args[1] : null);
+        if (args.Length > 0 && args[0] == "design") return DesignCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "regions") return RegionCheck.Run(args.Length > 1 ? args[1] : "server/towns");
         if (args.Length > 2 && args[0] == "life-debug") return LifeDebug.Run(args[1], double.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture));
         if (args.Length > 0 && args[0] == "life") return LifeCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? args[2] : null);
         if (args.Length > 0 && args[0] == "traffic-day") return TrafficDay.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 2);
         if (args.Length > 0 && args[0] == "arrival") return ArrivalCheck.Run(args.Length > 1 ? args[1] : "server/towns");
+        if (args.Length > 0 && args[0] == "marks") return MarksCheck.Run(args.Length > 1 ? args[1] : "server/towns", args.Length > 2 ? int.Parse(args[2]) : 20);
         if (args.Length > 0 && args[0] == "towns") return Towns(args.Length > 1 ? int.Parse(args[1]) : 50);
-        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | crowd [towns dir] | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
+        Console.Error.WriteLine("usage: towns [count] | hitches [limit ms] | ride | ways | kerbs [towns dir] | fences [towns dir] [generated count] | crowd [towns dir] | where | fingerprint [towns] | course [picture dir] | chase [count] | net '<json from Tools~/net/server.ts>' | mission <compiled mission json> | sleigh");
         return 2;
     }
 
@@ -252,8 +261,11 @@ static class Program
         var zoning = Porchlight.Explore.Zoning.Plan(model, layout);
         var buildings = Porchlight.Explore.Zoning.Encode(zoning).Select(b => "[" + string.Join(",", b) + "]");
         string summary = $"{{ \"homes\": {zoning.homes}, \"residents\": {zoning.residents}, \"workers\": {zoning.workers}, \"jobs\": {zoning.jobs} }}";
-        System.IO.File.WriteAllText(output, $"{{\n  \"key\": {Quoted(key)},\n  \"roads\": [\n    {string.Join(",\n    ", roads)}\n  ],\n  \"names\": [{string.Join(", ", names)}],\n  \"zoning\": {summary},\n  \"buildings\": [\n    {string.Join(",\n    ", buildings)}\n  ]\n}}\n");
-        Console.WriteLine($"{doc.GetProperty("name").GetString()}: {layout.roads.Count} streets, {zoning.buildings.Count} buildings ({zoning.homes} homes, {zoning.jobs} jobs) to {output}");
+        // And its parks (Parks.cs): each one's middle and outline, Manage's green.
+        var parks = Porchlight.Explore.Parks.Encode(model).Select(p =>
+            $"{{ \"at\": [{R(p.at[0])}, {R(p.at[1])}], \"rings\": [{string.Join(", ", p.rings.Select(r => "[" + string.Join(",", r.Select(R)) + "]"))}] }}");
+        System.IO.File.WriteAllText(output, $"{{\n  \"key\": {Quoted(key)},\n  \"roads\": [\n    {string.Join(",\n    ", roads)}\n  ],\n  \"names\": [{string.Join(", ", names)}],\n  \"zoning\": {summary},\n  \"buildings\": [\n    {string.Join(",\n    ", buildings)}\n  ],\n  \"parks\": [\n    {string.Join(",\n    ", parks)}\n  ]\n}}\n");
+        Console.WriteLine($"{doc.GetProperty("name").GetString()}: {layout.roads.Count} streets, {zoning.buildings.Count} buildings ({zoning.homes} homes, {zoning.jobs} jobs), {parks.Count()} parks to {output}");
         return 0;
     }
 
@@ -466,7 +478,7 @@ static class Program
             int x = (int)Math.Floor(b.at.x), y = (int)Math.Floor(b.at.y);
             for (int dy = -1; dy <= 1; dy++)
                 for (int dx = -1; dx <= 1; dx++)
-                    if (model.tiles.overlay[(y + dy) * w + x + dx] != Overlay.ROAD_STREET) return $"cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0}) isn't all street";
+                    if (model.tiles.overlay[(y + dy) * w + x + dx] != Overlay.ROAD_STREET) return $"cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0}) isn't all street (tile {x + dx},{y + dy} is {model.tiles.overlay[(y + dy) * w + x + dx]}, edge {b.edge} {model.roads.edges[b.edge].kind})";
             int ring = net.paths.FindIndex(q => q.road == b.edge && q.points.Count > 8 && Porchlight.Core.Geo.Dist(q.points[q.points.Count / 2], b.at) < Raster.BulbRadius(model.@params) + 1);
             if (ring < 0) return $"no sidewalk round the cul-de-sac at ({b.at.x:0.0}, {b.at.y:0.0})";
             foreach (int end in new[] { ring * 2, ring * 2 + 1 })

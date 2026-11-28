@@ -120,6 +120,7 @@ namespace Porchlight.County
                 m.gates.Add(pts[0]);
                 m.gates.Add(pts[pts.Count - 1]);
                 m.center = s.ToLocal(CountyMap.PointAt(hw, (s.s0 + s.s1) / 2));
+                m.downtown = m.center;
                 // Each tile is drawn by the stretch whose road it's nearest (the next one along, or another
                 // highway's where two pass close by a small town), and a town, junction or plot draws its own.
                 var near = new List<(Space seg, List<Vec2> road)>();
@@ -207,6 +208,7 @@ namespace Porchlight.County
                     m.gates.Add(e);
                 }
                 m.center = mid;
+                m.downtown = mid;
             }
             m.roads = RoadGraphOps.Compact(g);
             m.spawn = m.center;
